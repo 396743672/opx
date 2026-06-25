@@ -1,13 +1,11 @@
-import en from '../locales/en.json'
-import zh from '../locales/zh-CN.json'
+import zhCN from '../locales/zh-CN'
+import enUS from '../locales/en-US'
+
+export type Messages = typeof zhCN
 
 export function loadMessages() {
   return {
-    'en': en,
-    'zh-CN': zh
+    'zh-CN': zhCN,
+    'en-US': enUS,
   }
-}
-
-export function getLocale() {
-  return navigator.language || 'zh-CN'
 }
