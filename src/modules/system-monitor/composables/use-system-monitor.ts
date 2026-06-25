@@ -26,7 +26,7 @@ export function useSystemMonitor() {
       await loadProcessList()
       return true
     } catch (e) {
-      console.error(e)
+      console.error('Failed to kill process:', e)
       return false
     }
   }

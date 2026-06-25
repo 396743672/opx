@@ -45,7 +45,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { ProcessInfo } from '@/models/system'
-import { useConfirm } from 'vue-climati'
+// import { useConfirm } from 'vue-climati' - package not found, using native confirm
 withDefaults(defineProps<{
   processes: ProcessInfo[]
   onRefresh: () => void
@@ -53,17 +53,12 @@ withDefaults(defineProps<{
 }>(), {})
 
 const { t } = useI18n()
-const { confirm } = useConfirm()
-
 async function refresh() {
   onRefresh()
 }
 
 async function onKill(pid: number) {
-  const ok = await confirm({
-    title: t('killProcess'),
-    description: t('confirmKillProcess'),
-  })
+  const ok = window.confirm(t('confirmKillProcess'))
   if (ok) {
     await onKill(pid)
   }
