@@ -31,6 +31,8 @@ pub enum SoftwareStatus {
     Running,
     Stopped,
     Error,
+    Starting,
+    Stopping,
     Unknown,
 }
 

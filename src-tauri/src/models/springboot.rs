@@ -1,6 +1,8 @@
 use serde::{Serialize, Deserialize};
 use chrono::NaiveDateTime;
 
+pub use super::software::SoftwareStatus as AppStatus;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpringApp {
     pub id: String,
@@ -21,14 +23,6 @@ pub struct SpringApp {
     pub startup_order: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum AppStatus {
-    Running,
-    Stopped,
-    Error,
-    Starting,
-    Stopping,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppGroup {
@@ -63,8 +57,3 @@ impl Default for SpringAppList {
     }
 }
 
-impl Default for AppStatus {
-    fn default() -> Self {
-        AppStatus::Stopped
-    }
-}
