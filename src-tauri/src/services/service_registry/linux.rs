@@ -8,6 +8,8 @@ pub fn register_current() -> Result<()> {
     let executable_path = std::env::current_exe()
         .context("Failed to get current executable path")?;
 
+    let working_dir = executable_path.parent()
+        .ok_or_else(|| anyhow::anyhow!("Cannot get working directory from executable path"))?;
     let unit_content = format!(r#"[Unit]
 Description=OPX - Lightweight cross-platform operations management tool
 After=network.target
@@ -20,7 +22,7 @@ Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
-"#, executable_path.display(), executable_path.parent().unwrap().display());
+"#, executable_path.display(), working_dir.display());
 
     let systemd_dir = Path::new("/etc/systemd/system");
     let unit_path = systemd_dir.join(format!("{}.service", SERVICE_NAME));

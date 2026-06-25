@@ -44,11 +44,18 @@ pub fn unregister_current() -> Result<()> {
 
     if plist_path.exists() {
         // Unload first
-        let _ = std::process::Command::new("launchctl")
+        let output = std::process::Command::new("launchctl")
             .arg("unload")
             .arg("-w")
             .arg(&plist_path)
-            .output();
+            .output()
+            .context("Failed to run launchctl unload");
+
+        if let Err(e) = &output {
+            eprintln!("Warning: launchctl unload failed to execute: {:?}", e);
+        } else if !output.as_ref().unwrap().status.success() {
+            eprintln!("Warning: launchctl unload failed with exit code: {:?}", output.as_ref().unwrap().status.code());
+        }
 
         fs::remove_file(&plist_path)
             .context("Failed to remove launchd plist. Try running with sudo.")?;
