@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: oklch(0.9816 0.0017 247.8390);
+  --foreground: oklch(0.1398 0.0384 269.0969);
+  --card: oklch(1.0000 0 0);
+  --border: oklch(0.8524 0.0178 251.0803);
+}
+
+.dark {
+  --background: oklch(0.1398 0.0384 269.0969);
+  --foreground: oklch(0.9816 0.0017 247.8390);
+  --card: oklch(0.1906 0.0335 266.3079);
+  --border: oklch(0.2741 0.0247 260.0310);
+}
+
+body {
+  @apply bg-background text-foreground;
+}
