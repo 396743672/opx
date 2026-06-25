@@ -1,191 +1,119 @@
 <template>
-  <div class="settings-container">
-    <h2 class="page-title">{{ $t('settings') }}</h2>
-
-    <div class="settings-form">
-      <div class="setting-section">
-        <h3 class="section-title">{{ $t('interfaceSettings') }}</h3>
-
-        <div class="form-group">
-          <label class="form-label">{{ $t('theme') }}</label>
-          <select v-model="localSettings.theme" class="form-control">
+  <div class="space-y-8 max-w-2xl mx-auto p-4">
+    <!-- 外观 -->
+    <div class="bg-card rounded-lg border border-border p-6">
+      <div class="mb-4">
+        <h3 class="text-lg font-semibold">{{ $t('appearance') }}</h3>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">{{ $t('theme') }}</label>
+          <select v-model="settings.theme" class="w-full rounded-md border border-border px-3 py-2 bg-background">
+            <option value="auto">{{ $t('auto') }}</option>
             <option value="light">{{ $t('light') }}</option>
             <option value="dark">{{ $t('dark') }}</option>
-            <option value="auto">{{ $t('auto') }}</option>
           </select>
         </div>
-
-        <div class="form-group">
-          <label class="form-label">{{ $t('language') }}</label>
-          <select v-model="localSettings.language" class="form-control">
+        <div>
+          <label class="block text-sm font-medium mb-1">{{ $t('language') }}</label>
+          <select v-model="settings.language" class="w-full rounded-md border border-border px-3 py-2 bg-background">
             <option value="zh-CN">中文</option>
             <option value="en-US">English</option>
           </select>
         </div>
+      </div>
+    </div>
 
-        <div class="form-group">
-          <label class="form-label">
-            <input
-              type="checkbox"
-              v-model="localSettings.sidebarCollapsed"
-            />
-            {{ $t('defaultSidebarCollapsed') }}
-          </label>
+    <!-- 系统集成 -->
+    <div class="bg-card rounded-lg border border-border p-6">
+      <div class="mb-4">
+        <h3 class="text-lg font-semibold">{{ $t('systemIntegration') }}</h3>
+      </div>
+      <div class="space-y-4">
+        <div class="flex items-center gap-2">
+          <input
+            v-model="settings.register_as_system_service"
+            type="checkbox"
+            class="rounded border-border"
+          />
+          <span>{{ $t('registerAsService') }}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            v-model="settings.auto_start_managed_services"
+            type="checkbox"
+            class="rounded border-border"
+          />
+          <span>{{ $t('autoStartServices') }}</span>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">{{ $t('closeWindowAction') }}</label>
+          <select v-model="settings.close_window_action" class="w-full rounded-md border border-border px-3 py-2 bg-background">
+            <option value="minimize-to-tray">{{ $t('minimizeToTray') }}</option>
+            <option value="exit">{{ $t('exitDirectly') }}</option>
+            <option value="background-service">{{ $t('backgroundService') }}</option>
+          </select>
         </div>
       </div>
+    </div>
 
-      <div class="setting-section">
-        <h3 class="section-title">{{ $t('systemSettings') }}</h3>
-
-        <div class="form-group">
-          <label class="form-label">
-            <input
-              type="checkbox"
-              v-model="autoStart"
-            />
-            {{ $t('autoStartOnLogin') }}
-          </label>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">
-            <input
-              type="checkbox"
-              v-model="checkUpdates"
-            />
-            {{ $t('checkUpdatesAutomatically') }}
-          </label>
+    <!-- 关于 -->
+    <div class="bg-card rounded-lg border border-border p-6">
+      <div class="mb-4">
+        <h3 class="text-lg font-semibold">{{ $t('about') }}</h3>
+      </div>
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between">
+          <span>{{ $t('version') }}</span>
+          <span class="font-medium">__VERSION__</span>
         </div>
       </div>
+    </div>
 
-      <div class="form-actions">
-        <button class="cancel-btn" @click="cancel">
-          {{ $t('cancel') }}
-        </button>
-        <button class="save-btn" @click="save">
-          {{ $t('save') }}
-        </button>
-      </div>
+    <div class="flex justify-end">
+      <button @click="handleSave" class="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90">
+        {{ $t('save') }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
+import { useAppStore } from '@/stores/app'
+import { ref, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const appStore = useAppStore()
 
-const localSettings = ref({
-  theme: 'auto',
-  language: 'zh-CN',
-  sidebarCollapsed: false,
-})
+appStore.setCurrentTitle(t('settings'))
 
-const autoStart = ref(false)
-const checkUpdates = ref(true)
+const settings = ref(settingsStore.settings!)
 
 onMounted(() => {
-  if (settingsStore.settings) {
-    localSettings.value = {
-      ...settingsStore.settings,
-    }
+  // sync theme
+  const currentTheme = settings.value?.theme ?? 'auto'
+  if (currentTheme === 'dark') {
+    document.documentElement.classList.add('dark')
+  } else if (currentTheme === 'light') {
+    document.documentElement.classList.remove('dark')
   }
+  // auto handled by browser
 })
 
-const cancel = () => {
-  // 重置为原始设置
-  if (settingsStore.settings) {
-    localSettings.value = {
-      ...settingsStore.settings,
+async function handleSave() {
+  if (settings.value) {
+    settingsStore.updateSettings(settings.value)
+    await settingsStore.saveSettings()
+    // apply theme change
+    document.documentElement.classList.remove('dark')
+    if (settings.value.theme === 'dark') {
+      document.documentElement.classList.add('dark')
     }
+    // i18n language change will be handled on app level
   }
 }
-
-const save = async () => {
-  settingsStore.updateSettings(localSettings.value)
-  await settingsStore.saveSettings()
-  // TODO: 显示保存成功提示
-}
 </script>
-
-<style scoped>
-.settings-container {
-  padding: 2rem;
-  overflow-y: auto;
-  max-width: 800px;
-}
-
-.page-title {
-  margin: 0 0 2rem 0;
-  font-size: 1.8rem;
-}
-
-.settings-form {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 2rem;
-}
-
-.setting-section {
-  margin-bottom: 2rem;
-}
-
-.section-title {
-  margin: 0 0 1.5rem 0;
-  font-size: 1.2rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.form-group {
-  margin-bottom: 1.5rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.form-label {
-  min-width: 150px;
-  font-weight: 500;
-}
-
-.form-control {
-  flex: 1;
-  max-width: 300px;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--foreground);
-}
-
-.form-actions {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 2rem;
-}
-
-.cancel-btn,
-.save-btn {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
-}
-
-.cancel-btn {
-  background: var(--background);
-  color: var(--foreground);
-}
-
-.save-btn {
-  background: #dcfce7;
-  color: #166534;
-}
-</style>

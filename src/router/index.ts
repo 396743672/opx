@@ -1,9 +1,10 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import SystemMonitorDashboard from '@/modules/system-monitor/pages/DashboardPage.vue'
+import { defineComponent } from 'vue'
+import SystemMonitorDashboard from '@/modules/dashboard/pages/DashboardPage.vue'
 import SoftwareListPage from '@/modules/software-manager/pages/SoftwareListPage.vue'
 import RepositoryPage from '@/modules/software-manager/pages/RepositoryPage.vue'
-import SpringBootPage from '@/modules/springboot-manager/pages/SpringBootPage.vue'
 import SettingsPage from '@/modules/settings/pages/SettingsPage.vue'
+const SpringBootPage = defineComponent({ template: '<div>Spring Boot管理</div>' })
 
 const routes = [
   {
@@ -12,31 +13,31 @@ const routes = [
   },
   {
     path: '/dashboard',
-    name: 'dashboard',
+    name: 'Dashboard',
     component: SystemMonitorDashboard,
     meta: { title: 'systemMonitor' }
   },
   {
     path: '/software',
-    name: 'software',
+    name: 'SoftwareList',
     component: SoftwareListPage,
     meta: { title: 'softwareManagement' }
   },
   {
     path: '/repository',
-    name: 'repository',
+    name: 'Repository',
     component: RepositoryPage,
     meta: { title: 'softwareRepository' }
   },
   {
     path: '/springboot',
-    name: 'springboot',
+    name: 'SpringBoot',
     component: SpringBootPage,
     meta: { title: 'springBoot' }
   },
   {
     path: '/settings',
-    name: 'settings',
+    name: 'Settings',
     component: SettingsPage,
     meta: { title: 'settings' }
   }

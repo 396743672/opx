@@ -39,5 +39,14 @@
   "autoStartOnLogin": "Auto Start on Login",
   "checkUpdatesAutomatically": "Check Updates Automatically",
   "cancel": "Cancel",
-  "save": "Save"
+  "save": "Save",
+  "appearance": "Appearance",
+  "systemIntegration": "System Integration",
+  "registerAsService": "Register as system service",
+  "autoStartServices": "Auto-start managed services",
+  "closeWindowAction": "Close window action",
+  "minimizeToTray": "Minimize to tray",
+  "exitDirectly": "Exit directly",
+  "backgroundService": "Run in background",
+  "about": "About"
 }

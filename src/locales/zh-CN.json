@@ -39,5 +39,14 @@
   "autoStartOnLogin": "登录时自动启动",
   "checkUpdatesAutomatically": "自动检查更新",
   "cancel": "取消",
-  "save": "保存"
+  "save": "保存",
+  "appearance": "外观",
+  "systemIntegration": "系统集成",
+  "registerAsService": "注册为系统服务",
+  "autoStartServices": "自动启动托管服务",
+  "closeWindowAction": "关闭窗口行为",
+  "minimizeToTray": "最小化到托盘",
+  "exitDirectly": "直接退出",
+  "backgroundService": "后台运行",
+  "about": "关于"
 }
