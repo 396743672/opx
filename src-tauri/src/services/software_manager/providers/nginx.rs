@@ -44,7 +44,7 @@ impl SoftwareProvider for NginxProvider {
         let nginx = bin_path.join("sbin").join("nginx");
 
         let mut cmd = Command::new(nginx);
-        cmd.current_dir(install_path);
+        cmd.current_dir(&software.install_path);
         Ok(cmd)
     }
 

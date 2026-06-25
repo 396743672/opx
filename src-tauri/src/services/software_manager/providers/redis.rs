@@ -44,7 +44,7 @@ impl SoftwareProvider for RedisProvider {
         let redis_server = bin_path.join("src").join("redis-server");
 
         let mut cmd = Command::new(redis_server);
-        cmd.current_dir(install_path);
+        cmd.current_dir(&software.install_path);
         Ok(cmd)
     }
 
