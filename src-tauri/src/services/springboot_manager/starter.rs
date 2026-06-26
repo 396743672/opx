@@ -1,10 +1,12 @@
 use crate::models::springboot::{SpringApp, AppGroup};
+use crate::services::springboot_manager::types::ProcessManager;
 use anyhow::{Result, anyhow};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // 按 startupOrder 分组启动，同顺序并行启动
-pub async fn start_ordered(apps: &[SpringApp], on_progress: impl Fn(String) -> ()) -> Result<()> {
+pub async fn start_ordered(apps: &[SpringApp], process_manager: &ProcessManager, on_progress: impl Fn(String) -> ()) -> Result<()> {
     // Group by startup_order
     let mut ordered: BTreeMap<u32, Vec<&SpringApp>> = BTreeMap::new();
 
@@ -23,20 +25,31 @@ pub async fn start_ordered(apps: &[SpringApp], on_progress: impl Fn(String) -> (
         let failed = AtomicBool::new(false);
 
         for app in group {
+            let app_clone = app.clone();
+            let process_manager_ref = process_manager.clone();
+
             let handle = tokio::spawn(async move {
-                // Actually start
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                // caller will do the actual start
-                Result::<(), _>::Ok(())
+                if let Err(e) = process_manager_ref.start(&app_clone) {
+                    eprintln!("Failed to start {}: {}", app_clone.name, e);
+                    return Err(e);
+                }
+                Ok(())
             });
             handles.push(handle);
         }
 
         // Wait for all in this layer
         for handle in handles {
-            if let Err(e) = handle.await {
-                failed.store(true, Ordering::SeqCst);
-                eprintln!("Join error: {}", e);
+            match handle.await {
+                Ok(Ok(_)) => {},
+                Ok(Err(e)) => {
+                    failed.store(true, Ordering::SeqCst);
+                    eprintln!("Start error: {}", e);
+                },
+                Err(e) => {
+                    failed.store(true, Ordering::SeqCst);
+                    eprintln!("Join error: {}", e);
+                }
             }
         }
 

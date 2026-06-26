@@ -1,16 +1,16 @@
 <template>
   <dialog open>
-    <h3 class="text-lg font-semibold mb-4">{{ $t('editConfig') }}</h3>
+    <h3 class="text-lg font-semibold mb-4">{{ t('editConfig') }}</h3>
     <textarea
       v-model="content"
       class="w-full h-64 rounded-md border border-border p-3 font-mono text-sm"
     ></textarea>
     <div class="flex justify-end gap-2 mt-6">
       <button @click="onCancel" class="px-4 py-2 rounded-md bg-secondary">
-        {{ $t('cancel') }}
+        {{ t('cancel') }}
       </button>
       <button @click="handleSave" class="px-4 py-2 rounded-md bg-primary text-primary-foreground">
-        {{ $t('save') }}
+        {{ t('save') }}
       </button>
     </div>
   </dialog>

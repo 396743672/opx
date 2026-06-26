@@ -32,4 +32,5 @@ export interface InstallParams {
   key: string
   version: string
   install_path: string
+  [key: string]: unknown
 }

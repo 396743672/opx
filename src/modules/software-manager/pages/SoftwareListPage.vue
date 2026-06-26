@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h2 class="text-xl font-semibold">{{ $t('installedSoftware') }}</h2>
+      <h2 class="text-xl font-semibold">{{ t('installedSoftware') }}</h2>
       <button @click="openInstallDialog" class="px-4 py-2 rounded-md bg-primary text-primary-foreground">
-        {{ $t('installNewSoftware') }}
+        {{ t('installNewSoftware') }}
       </button>
     </div>
     <software-list

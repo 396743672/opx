@@ -16,7 +16,11 @@
         </div>
         <div>
           <label class="block text-sm font-medium mb-1">{{ $t('language') }}</label>
-          <select v-model="settings.language" class="w-full rounded-md border border-border px-3 py-2 bg-background">
+          <select
+            v-model="settings.language"
+            class="w-full rounded-md border border-border px-3 py-2 bg-background"
+            @change="handleLanguageChange"
+          >
             <option value="zh-CN">中文</option>
             <option value="en-US">English</option>
           </select>
@@ -71,7 +75,7 @@
     </div>
 
     <div class="flex justify-end">
-      <button @click="handleSave" class="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90">
+      <button @click="handleSave" class="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90" :disabled="!settings">
         {{ $t('save') }}
       </button>
     </div>
@@ -82,38 +86,69 @@
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
 import { useAppStore } from '@/stores/app'
-import { ref, onMounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { ref, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import type { AppSettings } from '@/models/settings'
 
-const { t } = useI18n()
+const { t, global } = useI18n()
 const settingsStore = useSettingsStore()
-const appStore = useAppStore()
 
-appStore.setCurrentTitle(t('settings'))
+// 使用storeToRefs保持响应式
+const { settings } = storeToRefs<ReturnType<typeof useSettingsStore>>(settingsStore)
 
-const settings = ref(settingsStore.settings!)
+// 确保设置已加载
+if (!settings.value) {
+  settingsStore.loadSettings()
+}
+
+const { setCurrentTitle } = useAppStore()
+setCurrentTitle(t('settings'))
+
+// 主题切换逻辑提取为函数
+const updateTheme = (theme: string) => {
+  document.documentElement.classList.remove('dark')
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark')
+  }
+}
+
+// 语言切换处理
+function handleLanguageChange() {
+  if (settings.value?.language) {
+    // 直接切换i18n语言
+    global.locale.value = settings.value.language
+    // 可以将语言设置保存到localStorage或其他地方
+    localStorage.setItem('preferred-locale', settings.value.language)
+  }
+}
 
 onMounted(() => {
-  // sync theme
+  // 同步主题
   const currentTheme = settings.value?.theme ?? 'auto'
-  if (currentTheme === 'dark') {
-    document.documentElement.classList.add('dark')
-  } else if (currentTheme === 'light') {
-    document.documentElement.classList.remove('dark')
-  }
-  // auto handled by browser
+  updateTheme(currentTheme)
+
+  // 监听主题变化
+  watch(() => settings.value?.theme, (newTheme) => {
+    if (newTheme) {
+      updateTheme(newTheme)
+    }
+  })
 })
 
 async function handleSave() {
-  if (settings.value) {
+  if (!settings.value) return
+
+  try {
     settingsStore.updateSettings(settings.value)
     await settingsStore.saveSettings()
     // apply theme change
-    document.documentElement.classList.remove('dark')
-    if (settings.value.theme === 'dark') {
-      document.documentElement.classList.add('dark')
-    }
+    updateTheme(settings.value.theme)
     // i18n language change will be handled on app level
+    // 可以添加成功提示
+    alert(t('saveSuccess'))
+  } catch (error) {
+    console.error('保存设置失败:', error)
+    alert(t('saveFailed'))
   }
 }
 </script>

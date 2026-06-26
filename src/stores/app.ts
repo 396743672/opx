@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 export const useAppStore = defineStore('app', () => {
   const sidebarCollapsed = ref(false)
@@ -9,10 +9,14 @@ export const useAppStore = defineStore('app', () => {
     sidebarCollapsed.value = !sidebarCollapsed.value
   }
 
+  const setCurrentTitle = (title: string) => {
+    currentTitle.value = title
+  }
+
   return {
     sidebarCollapsed,
     currentTitle,
     toggleSidebar,
-    setCurrentTitle: (title: string) => currentTitle.value = title,
+    setCurrentTitle
   }
 })

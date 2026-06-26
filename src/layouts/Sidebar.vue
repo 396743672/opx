@@ -28,15 +28,21 @@
 
 <script setup lang="ts">
 import { useAppStore } from '@/stores/app'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const route = useRoute()
 const { sidebarCollapsed, toggleSidebar } = appStore
 
-const menuItems = [
+interface MenuItem {
+  path: string
+  name: string
+  icon: string
+  meta: { title: string }
+}
+
+const menuItems: MenuItem[] = [
   {
     path: '/dashboard',
     name: 'dashboard',
@@ -70,5 +76,3 @@ const menuItems = [
 ]
 </script>
 
-<style scoped>
-</style>

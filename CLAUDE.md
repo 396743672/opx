@@ -40,4 +40,20 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 当任务匹配某个 skill 时，使用 `Skill` 工具加载对应 skill 并严格遵循其流程。绝不要用 Read 工具读取 SKILL.md 文件。
 
 如果你认为哪怕只有 1% 的可能性某个 skill 适用于你正在做的事情，你必须调用该 skill 检查。
+
+## Tauri + Vue 3 + TypeScript 项目最佳实践
+
+- **项目初始化检查清单**：
+  - 必须创建 `src-tauri/icons` 目录并添加应用图标
+  - 必须完善 `Cargo.toml` 中的元数据（license、repository、authors）
+  - 必须安装 `@types/node` 以支持 Node.js 类型提示
+  - 构建命令需在 `package.json` 中正确配置
+- **验证流程**：
+  - 始终先运行 `npm install` 安装依赖
+  - 运行 `npm run build` 验证生产构建
+  - 运行 `npm run tauri info` 检查 Tauri 环境
+- **常见问题**：
+  - 缺少 Rust 环境：需从 https://rustup.rs/ 安装
+  - 缺少 Visual Studio 构建工具：需安装 VS Build Tools
+
 <!-- superpowers-zh:end -->

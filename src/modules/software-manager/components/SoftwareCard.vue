@@ -10,35 +10,35 @@
     <card-content>
       <div class="space-y-2 text-sm">
         <div class="flex justify-between">
-          <span class="text-muted-foreground">{{ $t('port') }}</span>
+          <span class="text-muted-foreground">{{ t('port') }}</span>
           <span>{{ software.port }}</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-muted-foreground">{{ $t('installPath') }}</span>
+          <span class="text-muted-foreground">{{ t('installPath') }}</span>
           <span>{{ software.install_path }}</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-muted-foreground">{{ $t('autoStart') }}</span>
+          <span class="text-muted-foreground">{{ t('autoStart') }}</span>
           <span>{{ software.auto_start_on_app_start ? '✅' : '❌' }}</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-muted-foreground">{{ $t('startupOrder') }}</span>
+          <span class="text-muted-foreground">{{ t('startupOrder') }}</span>
           <span>{{ software.startup_order }}</span>
         </div>
       </div>
     </card-content>
     <card-footer class="flex justify-end gap-2">
       <button v-if="software.status === 'Stopped'" @click="onStart" class="px-3 py-1 rounded-md bg-primary text-primary-foreground">
-        {{ $t('start') }}
+        {{ t('start') }}
       </button>
       <button v-if="software.status === 'Running'" @click="onStop" class="px-3 py-1 rounded-md bg-secondary">
-        {{ $t('stop') }}
+        {{ t('stop') }}
       </button>
       <button @click="onEditConfig" class="px-3 py-1 rounded-md bg-secondary">
-        {{ $t('editConfig') }}
+        {{ t('editConfig') }}
       </button>
       <button @click="onUninstall" class="px-3 py-1 rounded-md bg-destructive/10 text-destructive">
-        {{ $t('uninstall') }}
+        {{ t('uninstall') }}
       </button>
     </card-footer>
   </card>
