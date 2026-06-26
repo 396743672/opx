@@ -1,0 +1,40 @@
+[package]
+name = "opx"
+version = "0.1.0"
+description = "Lightweight cross-platform operations management tool"
+authors = ["opx-dev"]
+license = "MIT"
+repository = "https://github.com/opx-dev/opx"
+edition = "2021"
+
+[lib]
+name = "opx_lib"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.31.0"
+tokio = { version = "1.0", features = ["rt"] }
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+zip = "0.6"
+tar = "0.4"
+flate2 = "1.0"
+walkdir = "2.0"
+chrono = "0.4"
+anyhow = "1.0"
+thiserror = "1.0"
+path-slash = "0.1"
+[target.'cfg(windows)'.dependencies]
+windows-service = { version = "0.6", optional = true }
+winapi = { version = "0.3", features = ["winbase", "winnt", "handleapi"] }
+
+[features]
+default = []
+service = ["windows-service"]
