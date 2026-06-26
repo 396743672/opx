@@ -2566,6 +2566,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "flate2",
+ "once_cell",
  "path-slash",
  "reqwest",
  "serde",
