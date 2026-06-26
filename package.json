@@ -1,0 +1,30 @@
+{
+  "name": "opx",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "naive-ui": "^2.41.0",
+    "@iconify/vue": "^4.3.0",
+    "pinia": "^2.3.1",
+    "vue-router": "^4.5.0",
+    "vue-i18n": "^10.0.4",
+    "chart.js": "^4.4.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10",
+    "@tauri-apps/cli": "^2"
+  }
+}
