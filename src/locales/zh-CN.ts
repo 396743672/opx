@@ -130,4 +130,22 @@ export default {
   // 占位
   comingSoon: '即将实现',
   comingSoonDesc: '该功能正在开发中，敬请期待。',
+
+  // 关闭与退出
+  closeDialogTitle: '关闭窗口',
+  closeToTray: '关闭窗口',
+  exitProgram: '退出程序',
+  exitHint: '将停止所有由本程序管理的服务',
+  rememberChoice: '记住选择（不再询问）',
+  trayShow: '显示窗口',
+  trayQuit: '退出',
+  stoppingServices: '正在停止服务…',
+  stopProgress: '停止 {current}/{total}：{name}',
+  safelyExited: '已安全退出',
+
+  // 设置页
+  closeBehavior: '关闭窗口时',
+  askOnClose: '每次询问',
+  languageLabel: '语言',
+  themeLabel: '主题'
 }

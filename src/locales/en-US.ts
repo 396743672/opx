@@ -130,4 +130,22 @@ export default {
   // placeholder
   comingSoon: 'Coming Soon',
   comingSoonDesc: 'This feature is under development. Stay tuned.',
+
+  // close & exit
+  closeDialogTitle: 'Close Window',
+  closeToTray: 'Close to Tray',
+  exitProgram: 'Exit Program',
+  exitHint: 'All services managed by this app will be stopped',
+  rememberChoice: 'Remember choice (do not ask again)',
+  trayShow: 'Show Window',
+  trayQuit: 'Quit',
+  stoppingServices: 'Stopping services…',
+  stopProgress: 'Stopping {current}/{total}: {name}',
+  safelyExited: 'Safely exited',
+
+  // settings
+  closeBehavior: 'On Window Close',
+  askOnClose: 'Ask every time',
+  languageLabel: 'Language',
+  themeLabel: 'Theme'
 }
