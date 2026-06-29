@@ -14,9 +14,9 @@
         </button>
         <div class="flex items-center gap-2">
           <div
-            class="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground"
+            class="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground flex-shrink-0"
           >
-            <Icon icon="mdi:chart-variant" class="text-lg" />
+            <Icon icon="mdi:monitor" class="text-lg" />
           </div>
           <span class="text-base font-semibold tracking-tight">OPX</span>
         </div>
