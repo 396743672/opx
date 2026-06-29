@@ -30,9 +30,12 @@ pub fn run() {
                 let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
                 let app_handle = app.handle().clone();
-                let _tray = TrayIconBuilder::new()
-                    .menu(&menu)
-                    .show_menu_on_left_click(false)
+                let icon = app.default_window_icon().cloned();
+                let mut builder = TrayIconBuilder::new().menu(&menu).show_menu_on_left_click(false);
+                if let Some(img) = icon {
+                    builder = builder.icon(img);
+                }
+                let _tray = builder
                     .on_menu_event(move |app, event| match event.id.as_ref() {
                         "show" => {
                             if let Some(window) = app.get_webview_window("main") {
