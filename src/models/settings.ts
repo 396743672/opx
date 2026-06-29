@@ -1,20 +1,21 @@
 export enum CloseWindowAction {
-  MinimizeToTray = 'MinimizeToTray',
+  CloseToTray = 'CloseToTray',
   Exit = 'Exit',
-  BackgroundService = 'BackgroundService',
 }
 
 export type ThemeMode = 'auto' | 'light' | 'dark'
+export type Language = 'zh-CN' | 'en-US'
 
 export interface AppSettings {
   theme: string
-  language: string
+  language: Language
   sidebar_collapsed: boolean
   software_root: string
   config_root: string
   mirror_url: string
   auto_check_update: boolean
   close_window_action: CloseWindowAction
+  ask_on_close: boolean
   register_as_system_service: boolean
   auto_start_managed_services: boolean
 }

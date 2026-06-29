@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import type { AppSettings, ThemeMode } from '@/models/settings'
+import type { AppSettings, ThemeMode, Language } from '@/models/settings'
 import { invoke } from '@tauri-apps/api/core'
+import { i18n } from '@/utils/i18n'
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings | null>(null)
 
-  /** 系统当前是否偏好深色（响应式） */
   const systemPrefersDark = ref(
     typeof window !== 'undefined' &&
       window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -22,15 +22,23 @@ export const useSettingsStore = defineStore('settings', () => {
   const theme = computed<ThemeMode>(
     () => (settings.value?.theme as ThemeMode) ?? 'auto'
   )
-  const language = computed(() => settings.value?.language ?? 'zh-CN')
+  const language = computed<Language>(() => settings.value?.language ?? 'zh-CN')
 
   const isDark = computed(
-    () => theme.value === 'dark' || (theme.value === 'auto' && systemPrefersDark.value)
+    () =>
+      theme.value === 'dark' ||
+      (theme.value === 'auto' && systemPrefersDark.value)
   )
 
-  /** 将当前主题应用到 <html> */
   function applyTheme() {
     document.documentElement.classList.toggle('dark', isDark.value)
+  }
+
+  function applyLanguage() {
+    const lang = language.value
+    if (i18n.global.locale.value !== lang) {
+      i18n.global.locale.value = lang
+    }
   }
 
   watch(isDark, applyTheme, { immediate: true })
@@ -38,6 +46,7 @@ export const useSettingsStore = defineStore('settings', () => {
   async function loadSettings() {
     settings.value = await invoke('get_settings')
     applyTheme()
+    applyLanguage()
   }
 
   async function saveSettings() {
@@ -53,6 +62,13 @@ export const useSettingsStore = defineStore('settings', () => {
     await saveSettings()
   }
 
+  async function setLanguage(lang: Language) {
+    if (!settings.value) return
+    settings.value.language = lang
+    applyLanguage()
+    await saveSettings()
+  }
+
   return {
     settings,
     theme,
@@ -62,6 +78,7 @@ export const useSettingsStore = defineStore('settings', () => {
     loadSettings,
     saveSettings,
     setTheme,
+    setLanguage,
     updateSettings: (newSettings: AppSettings) => {
       settings.value = newSettings
     },
