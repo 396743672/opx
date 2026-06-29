@@ -15,7 +15,7 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         0.0
     };
 
-    let mut disks_data = Disks::new_with_refreshed_list();
+    let disks_data = Disks::new_with_refreshed_list();
     let mut disks = Vec::new();
     for disk in disks_data.list() {
         let total = disk.total_space();
@@ -34,7 +34,7 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         });
     }
 
-    let mut networks_data = Networks::new_with_refreshed_list();
+    let networks_data = Networks::new_with_refreshed_list();
     let mut bytes_sent = 0;
     let mut bytes_recv = 0;
     // packets not available in sysinfo 0.31, set to 0
