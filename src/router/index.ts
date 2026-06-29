@@ -12,16 +12,16 @@ const routes = [
     meta: { title: 'systemMonitor' },
   },
   {
-    path: '/software',
-    name: 'software',
-    component: () => import('@/modules/software-manager/pages/SoftwareListPage.vue'),
-    meta: { title: 'softwareManagement' },
-  },
-  {
     path: '/repository',
     name: 'repository',
     component: () => import('@/modules/software-manager/pages/RepositoryPage.vue'),
     meta: { title: 'softwareRepository' },
+  },
+  {
+    path: '/software',
+    name: 'software',
+    component: () => import('@/modules/software-manager/pages/SoftwareListPage.vue'),
+    meta: { title: 'softwareManagement' },
   },
   {
     path: '/springboot',

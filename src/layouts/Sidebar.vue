@@ -79,8 +79,8 @@ const groups: NavGroup[] = [
   {
     label: 'management',
     items: [
-      { path: '/software', titleKey: 'softwareManagement', icon: 'mdi:package-variant-closed' },
       { path: '/repository', titleKey: 'softwareRepository', icon: 'mdi:download-box' },
+      { path: '/software', titleKey: 'softwareManagement', icon: 'mdi:package-variant-closed' },
       { path: '/springboot', titleKey: 'springBoot', icon: 'mdi:leaf' },
     ],
   },
