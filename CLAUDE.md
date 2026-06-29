@@ -52,8 +52,54 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
   - 始终先运行 `npm install` 安装依赖
   - 运行 `npm run build` 验证生产构建
   - 运行 `npm run tauri info` 检查 Tauri 环境
+
+## 打包步骤
+
+本项目用 Tauri v2 打包，`package.json` 已配置 `"tauri": "tauri"` 脚本，`tauri.conf.json` 中 `build.beforeBuildCommand = "npm run build"` 会在打包前自动执行前端构建（vue-tsc 类型检查 + vite 构建），`bundle.targets = "all"` 在 Windows 上生成 `.msi` 与 `-setup.exe` 安装包。
+
+### 环境前置条件（Windows）
+- **Rust 工具链**：`rustup` 安装（https://rustup.rs/），`cargo --version` 可用
+- **Visual Studio Build Tools**：含「使用 C++ 的桌面开发」工作负载（MSVC + Windows SDK），首次打包需编译全部 Rust 依赖，耗时较长
+- **WebView2 Runtime**：Windows 11 已预装；Windows 10 需安装（打包出的安装包会自动引导安装）
+- **Node.js + npm**：`npm install` 安装前端依赖
+
+### 打包命令
+```bash
+# 1. 安装前端依赖（首次或 package.json 变更后）
+npm install
+
+# 2. 一键打包（自动跑前端构建 + Rust release 编译 + 生成安装包）
+npm run tauri build
+
+# 仅生成 MSI 安装包（更快，跳过 NSIS .exe）
+npm run tauri build -- --bundles msi
+
+# 仅生成 NSIS .exe 安装包
+npm run tauri build -- --bundles nsis
+```
+
+### 产物位置
+打包产物在 `src-tauri/target/release/bundle/` 下：
+- `msi/opx_0.1.0_x64_zh-CN.msi` — MSI 安装包（推荐分发，企业部署友好）
+- `nsis/opx_0.1.0_x64-setup.exe` — NSIS 安装程序
+- `src-tauri/target/release/opx.exe` — 免安装可执行文件（需配合 WebView2 运行）
+
+### 打包前检查清单
+1. `npm run build` 必须无类型错误、无构建报错（vue-tsc + vite）
+2. `cargo build --release`（或 `cd src-tauri && cargo build`）后端无编译错误
+3. `src-tauri/icons/` 图标齐全（`tauri.conf.json` 的 `bundle.icon` 引用的文件必须存在）
+4. `tauri.conf.json` 的 `version`、`identifier`、`productName` 正确
+5. `Cargo.toml` 元数据完整（license、repository、authors）
+6. 发版前确认 `git status` 干净、已提交推送
+
+### 版本号管理
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.1.0`）。发新版本时同步更新 `tauri.conf.json` 和 `package.json` 的 `version`，保持一致。
+
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装
   - 缺少 Visual Studio 构建工具：需安装 VS Build Tools
+  - 首次 `npm run tauri build` 很慢：需编译全部 Rust 依赖（含 Tauri、WebView2 绑定），后续增量编译会快很多
+  - 打包报图标错误：检查 `src-tauri/icons/` 下文件是否齐全，必要时用 `npm run tauri icon <源图>` 重新生成全套图标
+  - MSI 打包失败：Windows 上 MSI 需要 WiX，Tauri 会自动下载；若网络受限可改用 `--bundles nsis`
 
 <!-- superpowers-zh:end -->
