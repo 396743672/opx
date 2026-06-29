@@ -1,37 +1,191 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
+/* dark 模式由 .dark class 控制（v4 默认走 prefers-color-scheme，这里覆盖为 class 策略） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   OPX 设计令牌 — 深色专业监控风
+   青蓝主色 + 语义状态色 + 色盲友好图表色板
+   ============================================================ */
 @theme {
-  --color-background: oklch(0.9816 0.0017 247.8390);
-  --color-foreground: oklch(0.1398 0.0384 269.0969);
-  --color-card: oklch(1.0000 0 0);
-  --color-border: oklch(0.8524 0.0178 251.0803);
-  --color-muted: oklch(0.9683 0.0064 247.8956);
-  --color-muted-foreground: oklch(0.5569 0.0234 264.3637);
-  --color-primary: oklch(0.59 0.24 261);
-  --color-primary-foreground: oklch(1.0000 0 0);
-  --color-secondary: oklch(0.9683 0.0064 247.8956);
-  --color-secondary-foreground: oklch(0.1398 0.0384 269.0969);
-  --color-destructive: oklch(0.6368 0.2078 25.3313);
-  --color-destructive-foreground: oklch(1.0000 0 0);
-  --color-accent: oklch(0.9683 0.0064 247.8956);
-  --color-accent-foreground: oklch(0.1398 0.0384 269.0969);
-  --color-popover: oklch(1.0000 0 0);
-  --color-popover-foreground: oklch(0.1398 0.0384 269.0969);
+  /* 字体 */
+  --font-sans: system-ui, 'Segoe UI', 'Inter', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono',
+    'Consolas', monospace;
+
+  /* 圆角 */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* 阴影 */
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.06), 0 1px 1px oklch(0 0 0 / 0.04);
+  --shadow-elevated: 0 4px 12px oklch(0 0 0 / 0.08),
+    0 2px 4px oklch(0 0 0 / 0.06);
+  --shadow-popover: 0 8px 24px oklch(0 0 0 / 0.12),
+    0 4px 8px oklch(0 0 0 / 0.08);
+
+  /* —— 浅色主题 —— */
+  --color-background: oklch(0.98 0.002 247);
+  --color-foreground: oklch(0.18 0.02 265);
+  --color-card: oklch(1 0 0);
+  --color-card-elevated: oklch(0.995 0.001 247);
+  --color-popover: oklch(1 0 0);
+  --color-border: oklch(0.9 0.008 250);
+  --color-input: oklch(0.9 0.008 250);
+  --color-ring: oklch(0.72 0.15 220);
+  --color-muted: oklch(0.96 0.006 248);
+  --color-muted-foreground: oklch(0.52 0.018 264);
+  --color-primary: oklch(0.62 0.16 220);
+  --color-primary-foreground: oklch(0.99 0.01 220);
+  --color-secondary: oklch(0.96 0.006 248);
+  --color-secondary-foreground: oklch(0.18 0.02 265);
+  --color-accent: oklch(0.95 0.02 220);
+  --color-accent-foreground: oklch(0.25 0.05 220);
+  --color-destructive: oklch(0.6 0.21 25);
+  --color-destructive-foreground: oklch(0.99 0.01 25);
+  --color-success: oklch(0.62 0.16 150);
+  --color-success-foreground: oklch(0.99 0.01 150);
+  --color-warning: oklch(0.72 0.16 70);
+  --color-warning-foreground: oklch(0.2 0.04 70);
+  --color-info: oklch(0.65 0.13 220);
+  --color-info-foreground: oklch(0.99 0.01 220);
+
+  /* 图表色板（色盲友好 6 色） */
+  --color-chart-1: oklch(0.7 0.15 220);
+  --color-chart-2: oklch(0.65 0.18 300);
+  --color-chart-3: oklch(0.78 0.15 70);
+  --color-chart-4: oklch(0.7 0.17 150);
+  --color-chart-5: oklch(0.62 0.19 255);
+  --color-chart-6: oklch(0.72 0.17 10);
 }
 
+/* —— 深色主题（默认偏好）—— */
 .dark {
-  --color-background: oklch(0.1398 0.0384 269.0969);
-  --color-foreground: oklch(0.9816 0.0017 247.8390);
-  --color-card: oklch(0.1906 0.0335 266.3079);
-  --color-border: oklch(0.2741 0.0247 260.0310);
-  --color-muted: oklch(0.2741 0.0247 260.0310);
-  --color-muted-foreground: oklch(0.7155 0.0215 260.0310);
-  --color-primary: oklch(0.59 0.24 261);
-  --color-primary-foreground: oklch(1.0000 0 0);
+  --color-background: oklch(0.16 0.02 265);
+  --color-foreground: oklch(0.95 0.005 247);
+  --color-card: oklch(0.205 0.025 264);
+  --color-card-elevated: oklch(0.245 0.028 264);
+  --color-popover: oklch(0.22 0.026 264);
+  --color-border: oklch(0.3 0.02 262);
+  --color-input: oklch(0.3 0.02 262);
+  --color-ring: oklch(0.72 0.15 220);
+  --color-muted: oklch(0.25 0.02 263);
+  --color-muted-foreground: oklch(0.7 0.018 262);
+  --color-primary: oklch(0.72 0.15 220);
+  --color-primary-foreground: oklch(0.14 0.03 260);
+  --color-secondary: oklch(0.25 0.02 263);
+  --color-secondary-foreground: oklch(0.95 0.005 247);
+  --color-accent: oklch(0.28 0.04 220);
+  --color-accent-foreground: oklch(0.85 0.08 220);
+  --color-destructive: oklch(0.65 0.2 25);
+  --color-destructive-foreground: oklch(0.98 0.01 25);
+  --color-success: oklch(0.7 0.16 150);
+  --color-success-foreground: oklch(0.14 0.03 150);
+  --color-warning: oklch(0.78 0.15 70);
+  --color-warning-foreground: oklch(0.16 0.04 70);
+  --color-info: oklch(0.72 0.13 220);
+  --color-info-foreground: oklch(0.14 0.03 220);
+
+  --color-chart-1: oklch(0.72 0.15 220);
+  --color-chart-2: oklch(0.7 0.18 300);
+  --color-chart-3: oklch(0.8 0.15 70);
+  --color-chart-4: oklch(0.72 0.17 150);
+  --color-chart-5: oklch(0.68 0.19 255);
+  --color-chart-6: oklch(0.74 0.17 10);
+
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 1px 1px oklch(0 0 0 / 0.2);
+  --shadow-elevated: 0 4px 12px oklch(0 0 0 / 0.35),
+    0 2px 4px oklch(0 0 0 / 0.25);
+  --shadow-popover: 0 8px 24px oklch(0 0 0 / 0.5),
+    0 4px 8px oklch(0 0 0 / 0.3);
+}
+
+/* ============================================================
+   基础样式
+   ============================================================ */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
 }
 
 body {
-  @apply bg-background text-foreground;
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* 等宽数字：用于 CPU%、字节、PID 等数据列，防止跳动 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 聚焦环 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 滚动条 — 深色专业感 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-muted-foreground);
+}
+
+/* 渐入动画（用于卡片/页面进入） */
+@keyframes opx-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: opx-fade-in 0.24s ease-out both;
+}
+
+/* reduced-motion 兜底 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

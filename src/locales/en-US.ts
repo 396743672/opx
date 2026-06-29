@@ -107,4 +107,27 @@ export default {
   cpu: 'CPU',
   memory: 'Memory',
   softwareDir: 'Software Dir',
+
+  // nav groups
+  monitor: 'Monitor',
+  management: 'Management',
+  system: 'System',
+  toggleSidebar: 'Toggle Sidebar',
+
+  // Dashboard
+  dashboardSubtitle: 'Real-time system resource monitoring',
+  trendHint: 'Recent trend',
+  volumes: 'volumes',
+  networkUp: 'Upload',
+  networkDown: 'Download',
+  packetsSent: 'Packets sent',
+  packetsRecv: 'Packets recv',
+  uptime: 'Uptime',
+  totalProcesses: 'processes',
+  noData: 'No data',
+  searchProcess: 'Search process name...',
+
+  // placeholder
+  comingSoon: 'Coming Soon',
+  comingSoonDesc: 'This feature is under development. Stay tuned.',
 }

@@ -107,4 +107,27 @@ export default {
   cpu: 'CPU',
   memory: '内存',
   softwareDir: '软件目录',
+
+  // 导航分组
+  monitor: '监控',
+  management: '管理',
+  system: '系统',
+  toggleSidebar: '切换侧边栏',
+
+  // Dashboard
+  dashboardSubtitle: '实时系统资源监控',
+  trendHint: '最近趋势',
+  volumes: '个分区',
+  networkUp: '上传',
+  networkDown: '下载',
+  packetsSent: '发送数据包',
+  packetsRecv: '接收数据包',
+  uptime: '运行时长',
+  totalProcesses: '个进程',
+  noData: '暂无数据',
+  searchProcess: '搜索进程名称...',
+
+  // 占位
+  comingSoon: '即将实现',
+  comingSoonDesc: '该功能正在开发中，敬请期待。',
 }

@@ -1,128 +1,172 @@
 <template>
   <div class="flex flex-col h-screen w-screen overflow-hidden">
     <!-- 顶部导航栏 -->
-    <header class="h-14 border-b border-border bg-card flex items-center px-4 justify-between">
-      <div class="flex items-center gap-2">
-        <button @click="toggleSidebar" class="p-2 rounded-md hover:bg-muted transition-colors">
-          <iconify-icon icon="mdi:menu" class="text-xl" />
+    <header
+      class="h-14 border-b border-border bg-card flex items-center px-4 justify-between flex-shrink-0"
+    >
+      <div class="flex items-center gap-3">
+        <button
+          @click="toggleSidebar"
+          class="p-2 rounded-md hover:bg-muted transition-colors cursor-pointer"
+          :aria-label="$t('toggleSidebar')"
+        >
+          <Icon icon="mdi:menu" class="text-xl" />
         </button>
-        <h1 class="text-lg font-semibold">OPX</h1>
+        <div class="flex items-center gap-2">
+          <div
+            class="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground"
+          >
+            <Icon icon="mdi:chart-variant" class="text-lg" />
+          </div>
+          <span class="text-base font-semibold tracking-tight">OPX</span>
+        </div>
+        <div class="hidden sm:block h-5 w-px bg-border mx-1"></div>
+        <span class="hidden sm:block text-sm text-muted-foreground">{{
+          $t(currentTitle)
+        }}</span>
       </div>
-      <div class="flex items-center gap-2">
-        <n-button quaternary @click="toggleTheme">
-          <iconify-icon :icon="isDark ? 'mdi:weather-sunny' : 'mdi:moon-waning-crescent'" class="text-xl" />
-        </n-button>
-        <n-button quaternary @click="goToSettings">
-          <iconify-icon icon="mdi:cog" class="text-xl" />
-        </n-button>
+
+      <div class="flex items-center gap-3">
+        <!-- 实时 CPU / 内存 迷你指示 -->
+        <div class="hidden md:flex items-center gap-4 mr-1">
+          <div class="flex items-center gap-2">
+            <Icon icon="mdi:cpu-64-bit" class="text-base text-muted-foreground" />
+            <div class="w-16">
+              <ProgressBar
+                :value="systemStore.cpuUsage"
+                :show-label="false"
+                variant="linear"
+              />
+            </div>
+            <span class="text-xs tnum w-10 text-right">{{ systemStore.cpuUsage.toFixed(0) }}%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Icon icon="mdi:memory" class="text-base text-muted-foreground" />
+            <div class="w-16">
+              <ProgressBar
+                :value="systemStore.memoryUsage"
+                :show-label="false"
+                variant="linear"
+              />
+            </div>
+            <span class="text-xs tnum w-10 text-right">{{ systemStore.memoryUsage.toFixed(0) }}%</span>
+          </div>
+        </div>
+
+        <button
+          @click="cycleTheme"
+          class="p-2 rounded-md hover:bg-muted transition-colors cursor-pointer"
+          :aria-label="$t('theme')"
+          :title="$t(settingsStore.theme)"
+        >
+          <Icon :icon="themeIcon" class="text-xl" />
+        </button>
+        <button
+          @click="goToSettings"
+          class="p-2 rounded-md hover:bg-muted transition-colors cursor-pointer"
+          :aria-label="$t('settings')"
+        >
+          <Icon icon="mdi:cog" class="text-xl" />
+        </button>
       </div>
     </header>
 
     <!-- 主体内容 -->
     <div class="flex flex-1 overflow-hidden">
-      <!-- 侧边栏 -->
       <Sidebar :collapsed="sidebarCollapsed" />
-      <!-- 主内容区域 -->
-      <main class="flex-1 overflow-auto p-4 bg-background">
-        <router-view />
+      <main class="flex-1 overflow-auto bg-background">
+        <div class="p-6 max-w-[1600px] mx-auto">
+          <router-view />
+        </div>
       </main>
     </div>
 
     <!-- 底部状态栏 -->
-    <footer class="h-8 border-t border-border bg-card flex items-center px-4 text-sm text-muted-foreground">
-      <div class="flex items-center gap-6 w-full">
-        <div>
-          {{ $t('cpu') }}: {{ systemInfo?.cpu_usage.toFixed(1) }}%
-        </div>
-        <div>
-          {{ $t('memory') }}: {{ formatMemory(systemInfo?.memory_used || 0) }} / {{ formatMemory(systemInfo?.memory_total || 0) }} ({{ systemInfo?.memory_usage.toFixed(1) }}%)
-        </div>
-        <div class="ml-auto">
-          {{ $t('softwareDir') }}: {{ softwareRoot }}
-        </div>
+    <footer
+      class="h-7 border-t border-border bg-card flex items-center px-4 text-xs text-muted-foreground flex-shrink-0"
+    >
+      <div class="flex items-center gap-4 w-full">
+        <span class="flex items-center gap-1.5">
+          <Icon icon="mdi:laptop" class="text-sm" />
+          {{ systemInfo?.os_name }} {{ systemInfo?.os_version }}
+        </span>
+        <span class="hidden sm:flex items-center gap-1.5">
+          <Icon icon="mdi:server" class="text-sm" />
+          {{ systemInfo?.hostname }}
+        </span>
+        <span class="flex items-center gap-3 ml-auto">
+          <span class="tnum">{{ $t('cpu') }}: {{ systemStore.cpuUsage.toFixed(1) }}%</span>
+          <span class="tnum">{{ $t('memory') }}: {{ formatBytes(systemInfo?.memory_used || 0) }} / {{ formatBytes(systemInfo?.memory_total || 0) }}</span>
+          <span class="hidden lg:inline tnum">{{ $t('uptime') }}: {{ uptime }}</span>
+          <span class="hidden lg:inline">{{ $t('softwareDir') }}: {{ softwareRoot }}</span>
+        </span>
       </div>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useSettingsStore } from '@/stores/settings'
+import { useSystemStore } from '@/stores/system'
+import type { ThemeMode } from '@/models/settings'
 import Sidebar from './Sidebar.vue'
-import { invoke } from '@tauri-apps/api/core'
+import ProgressBar from '@/components/ProgressBar.vue'
+import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import { NButton } from 'naive-ui'
+import { useRouter, useRoute } from 'vue-router'
+import { formatBytes, formatUptime } from '@/utils/format'
 
-useI18n()
+const { t } = useI18n()
+void t
 const router = useRouter()
+const route = useRoute()
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
+const systemStore = useSystemStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const toggleSidebar = () => appStore.toggleSidebar()
 
-const isDark = ref(false)
-
-const systemInfo = ref<{
-  cpu_usage: number
-  memory_used: number
-  memory_total: number
-  memory_usage: number
-} | null>(null)
-
+const systemInfo = computed(() => systemStore.systemInfo)
 const softwareRoot = computed(() => settingsStore.settings?.software_root || 'apps')
 
-const toggleTheme = () => {
-  const html = document.documentElement
-  if (html.classList.contains('dark')) {
-    html.classList.remove('dark')
-    isDark.value = false
-  } else {
-    html.classList.add('dark')
-    isDark.value = true
-  }
+const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
+
+/* —— 主题切换（auto → light → dark 循环）—— */
+const themeOrder: ThemeMode[] = ['auto', 'light', 'dark']
+const themeIconMap: Record<ThemeMode, string> = {
+  auto: 'mdi:theme-light-dark',
+  light: 'mdi:weather-sunny',
+  dark: 'mdi:moon-waning-crescent',
+}
+const themeIcon = computed(() => themeIconMap[settingsStore.theme])
+function cycleTheme() {
+  const i = themeOrder.indexOf(settingsStore.theme)
+  settingsStore.setTheme(themeOrder[(i + 1) % themeOrder.length])
 }
 
-const goToSettings = () => {
-  router.push('/settings')
-}
+/* —— 运行时长 —— */
+const nowTick = ref(Date.now())
+let tickTimer: number | null = null
+const uptime = computed(() => {
+  const boot = systemInfo.value?.boot_time
+  if (!boot) return '-'
+  return formatUptime(Math.floor(nowTick.value / 1000) - boot)
+})
 
-const updateSystemInfo = async () => {
-  systemInfo.value = await invoke('system_info')
-}
-
-const formatMemory = (bytes: number): string => {
-  const mb = bytes / (1024 * 1024)
-  if (mb < 1024) {
-    return `${mb.toFixed(1)} MB`
-  } else {
-    const gb = mb / 1024
-    return `${gb.toFixed(1)} GB`
-  }
-}
-
-let interval: number | null = null
+const goToSettings = () => router.push('/settings')
 
 onMounted(() => {
-  updateSystemInfo()
-  interval = window.setInterval(updateSystemInfo, 2000)
-
-  // 初始化主题
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-  if (prefersDark) {
-    document.documentElement.classList.add('dark')
-    isDark.value = true
-  }
+  systemStore.startPolling()
+  tickTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
 })
 
 onUnmounted(() => {
-  if (interval) {
-    clearInterval(interval)
-  }
+  systemStore.stopPolling()
+  if (tickTimer) clearInterval(tickTimer)
 })
 </script>
-
-<style scoped>
-</style>

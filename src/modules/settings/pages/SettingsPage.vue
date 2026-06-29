@@ -1,14 +1,22 @@
 <template>
-  <div class="space-y-6">
-    <h1 class="text-2xl font-bold">{{ $t('settings') }}</h1>
-    <p class="text-muted-foreground">Settings page will be implemented here.</p>
+  <div class="animate-fade-in">
+    <PageHeader
+      icon="mdi:cog"
+      :title="$t('settings')"
+      :subtitle="$t('appearance')"
+    />
+    <EmptyState
+      icon="mdi:cog"
+      :title="$t('comingSoon')"
+      :description="$t('comingSoonDesc')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+
 useI18n()
 </script>
-
-<style scoped>
-</style>

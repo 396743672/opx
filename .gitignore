@@ -17,10 +17,11 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
-/.claude/
 .DS_Store
 .superpowers
 .codegraph
+.claude
+design-mockup.html
 *.suo
 *.ntvs*
 *.njsproj

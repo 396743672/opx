@@ -1,14 +1,22 @@
 <template>
-  <div class="space-y-4">
-    <h1 class="text-2xl font-bold">{{ $t('softwareRepository') }}</h1>
-    <p class="text-muted-foreground">Software repository for installing new software will be implemented here.</p>
+  <div class="animate-fade-in">
+    <PageHeader
+      icon="mdi:download-box"
+      :title="$t('softwareRepository')"
+      :subtitle="$t('installNewSoftware')"
+    />
+    <EmptyState
+      icon="mdi:store-search"
+      :title="$t('comingSoon')"
+      :description="$t('comingSoonDesc')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+
 useI18n()
 </script>
-
-<style scoped>
-</style>

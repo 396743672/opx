@@ -4,6 +4,8 @@ export enum CloseWindowAction {
   BackgroundService = 'BackgroundService',
 }
 
+export type ThemeMode = 'auto' | 'light' | 'dark'
+
 export interface AppSettings {
   theme: string
   language: string
