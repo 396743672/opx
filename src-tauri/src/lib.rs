@@ -82,6 +82,7 @@ pub fn run() {
             commands::config::get_settings,
             commands::config::save_settings,
             commands::app::quit_app,
+            commands::app::exit_app,
             commands::app::hide_main_window,
         ])
         .run(tauri::generate_context!())

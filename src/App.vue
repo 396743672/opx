@@ -34,12 +34,16 @@ const defaultChoice = computed<'tray' | 'exit'>(() =>
 )
 
 let unlistenClose: UnlistenFn | null = null
+let unlistenStopComplete: UnlistenFn | null = null
+let exitTimer: number | null = null
 
 async function executeTray() {
   await invoke('hide_main_window')
 }
 
 async function executeExit() {
+  // 先显示进度对话框，再触发后端停止流程。
+  // stop-complete 监听在 App 挂载时已注册，确保不遗漏事件。
   showStopProgress.value = true
   await invoke('quit_app')
 }
@@ -81,9 +85,18 @@ onMounted(async () => {
   unlistenClose = await listen('close-requested', () => {
     onCloseRequested()
   })
+  // 监听停止完成：展示「已安全退出」后真正退出
+  unlistenStopComplete = await listen('stop-complete', () => {
+    if (exitTimer) clearTimeout(exitTimer)
+    exitTimer = window.setTimeout(() => {
+      invoke('exit_app')
+    }, 600)
+  })
 })
 
 onUnmounted(() => {
   unlistenClose?.()
+  unlistenStopComplete?.()
+  if (exitTimer) clearTimeout(exitTimer)
 })
 </script>
