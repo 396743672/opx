@@ -5,6 +5,7 @@ use std::time::Duration;
 use sysinfo::System;
 use crate::models::system::{SystemInfo, HistoryPoint};
 use crate::services::system_monitor;
+use crate::utils::paths;
 use anyhow::Result;
 
 /// 初始化时 refresh 两次（间隔 200ms）建立 CPU 采样基准，
@@ -25,12 +26,7 @@ pub fn system_info() -> SystemInfo {
 
 #[tauri::command]
 pub fn system_history() -> Result<Vec<HistoryPoint>, String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| e.to_string())?;
-    let app_dir = current_exe
-        .parent()
-        .ok_or("Cannot get app directory".to_string())?;
-    let history_path = app_dir.join("data").join("system_history.json");
+    let history_path = paths::data_dir().join("system_history.json");
     let history = system_monitor::history::load_history(&history_path)
         .map_err(|e| e.to_string())?;
     Ok(history)
