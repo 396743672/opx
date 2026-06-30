@@ -7,7 +7,13 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:nsis": "tauri build --bundles nsis",
+    "tauri:build:msi": "tauri build --bundles msi",
+    "tauri:build:debug": "tauri build --debug",
+    "tauri:info": "tauri info"
   },
   "dependencies": {
     "@iconify/vue": "^4.3.0",
