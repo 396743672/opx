@@ -29,6 +29,7 @@ pub struct AppSettings {
     pub ask_on_close: bool,
     pub register_as_system_service: bool,
     pub auto_start_managed_services: bool,
+    pub jre_default_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -45,6 +46,7 @@ impl Default for AppSettings {
             ask_on_close: true,
             register_as_system_service: false,
             auto_start_managed_services: true,
+            jre_default_id: None,
         }
     }
 }
