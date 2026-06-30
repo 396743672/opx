@@ -293,7 +293,8 @@ pub async fn install_custom(
     params: CustomInstallParams,
     install_id: String,
 ) {
-    let install_path = paths::apps_dir().join("custom").join(&params.name);
+    let name_trimmed = params.name.trim();
+    let install_path = paths::apps_dir().join("custom").join(name_trimmed);
     let archive_path = Path::new(&params.archive_path);
 
     // 校验压缩包存在
@@ -329,7 +330,6 @@ pub async fn install_custom(
     }
 
     // 校验名称非空（custom 的 name 存在 InstalledSoftware.key，version 存 name 用于查重）
-    let name_trimmed = params.name.trim();
     if name_trimmed.is_empty() {
         emit_event(
             &app,
