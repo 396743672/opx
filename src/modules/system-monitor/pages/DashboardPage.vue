@@ -7,13 +7,25 @@
     >
       <template #actions>
         <span class="text-xs text-muted-foreground tnum">
-          {{ systemInfo?.hostname }}
+          {{ systemInfo?.hostname || '—' }}
         </span>
       </template>
     </PageHeader>
 
+    <!-- 数据未就绪时显示骨架屏 -->
+    <div v-if="!systemInfo" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      <div
+        v-for="i in 4"
+        :key="i"
+        class="rounded-lg border border-border bg-card p-4 shadow-card h-[110px] animate-pulse"
+      >
+        <div class="h-3 w-20 bg-muted rounded mb-3"></div>
+        <div class="h-7 w-24 bg-muted rounded"></div>
+      </div>
+    </div>
+
     <!-- 概览 StatCard 行 -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+    <div v-else class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
       <StatCard
         :label="$t('cpuUsage')"
         :value="systemStore.cpuUsage.toFixed(0)"
@@ -26,7 +38,7 @@
         :label="$t('memoryUsage')"
         :value="systemStore.memoryUsage.toFixed(0)"
         unit="%"
-        :sub="`${formatBytes(systemInfo?.memory_used || 0)} / ${formatBytes(systemInfo?.memory_total || 0)}`"
+        :sub="`${formatBytes(systemInfo.memory_used)} / ${formatBytes(systemInfo.memory_total)}`"
         icon="mdi:memory"
         accent="chart-2"
         :progress="systemStore.memoryUsage"
@@ -35,7 +47,7 @@
         :label="$t('diskUsage')"
         :value="systemStore.diskUsage.toFixed(0)"
         unit="%"
-        :sub="`${systemInfo?.disks.length || 0} ${$t('volumes')}`"
+        :sub="`${systemInfo.disks.length} ${$t('volumes')}`"
         icon="mdi:harddisk"
         accent="chart-3"
         :progress="systemStore.diskUsage"

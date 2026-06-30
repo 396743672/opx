@@ -146,5 +146,8 @@ export default {
 
   // network totals
   totalSent: 'Total Sent',
-  totalRecv: 'Total Received'
+  totalRecv: 'Total Received',
+
+  // loading
+  loading: 'Loading…'
 }

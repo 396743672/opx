@@ -1,5 +1,16 @@
 <template>
-  <MainLayout />
+  <!-- 启动加载遮罩：设置与首次系统数据就绪前显示 -->
+  <div
+    v-if="booting"
+    class="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-background text-foreground"
+  >
+    <div class="flex items-center justify-center w-14 h-14 rounded-xl bg-primary text-primary-foreground mb-4 animate-pulse">
+      <Icon icon="mdi:monitor" class="text-3xl" />
+    </div>
+    <div class="text-base font-semibold mb-1">OPX</div>
+    <div class="text-xs text-muted-foreground">{{ $t('loading') }}</div>
+  </div>
+  <MainLayout v-show="!booting" />
   <CloseDialog
     v-if="showCloseDialog"
     :default-choice="defaultChoice"
@@ -10,22 +21,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { Icon } from '@iconify/vue'
 import MainLayout from '@/layouts/MainLayout.vue'
 import CloseDialog from '@/components/CloseDialog.vue'
 import StopProgressDialog from '@/components/StopProgressDialog.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { useSystemStore } from '@/stores/system'
 import { useAppStore } from '@/stores/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
+const systemStore = useSystemStore()
 const appStore = useAppStore()
 void appStore
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)
+/** 启动加载态：设置加载 + 首次系统数据就绪前显示遮罩 */
+const booting = ref(true)
 
 const defaultChoice = computed<'tray' | 'exit'>(() =>
   settingsStore.settings?.close_window_action === CloseWindowAction.Exit
@@ -81,17 +97,37 @@ async function onChoose(choice: 'tray' | 'exit', remember: boolean) {
 }
 
 onMounted(async () => {
+  // 监听首次系统数据就绪，解除启动遮罩
+  const stopBootWatch = watch(
+    () => systemStore.systemInfo,
+    (info) => {
+      if (info) {
+        booting.value = false
+        stopBootWatch()
+      }
+    }
+  )
+  // 超时兜底：3s 后强制解除，避免后端异常导致永久白屏
+  const bootTimeout = window.setTimeout(() => {
+    booting.value = false
+    stopBootWatch()
+  }, 3000)
+
   await settingsStore.loadSettings()
+  // 启动系统数据轮询（首次 fetchAll 完成后 watch 会触发解除遮罩）
+  systemStore.startPolling()
+
   unlistenClose = await listen('close-requested', () => {
     onCloseRequested()
   })
-  // 监听停止完成：展示「已安全退出」后真正退出
   unlistenStopComplete = await listen('stop-complete', () => {
     if (exitTimer) clearTimeout(exitTimer)
     exitTimer = window.setTimeout(() => {
       invoke('exit_app')
     }, 600)
   })
+
+  window.clearTimeout(bootTimeout)
 })
 
 onUnmounted(() => {

@@ -146,5 +146,8 @@ export default {
 
   // 网络累计
   totalSent: '累计上传',
-  totalRecv: '累计下载'
+  totalRecv: '累计下载',
+
+  // 加载
+  loading: '正在加载…'
 }
