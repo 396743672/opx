@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod installer;
 pub mod providers;
 
 use std::collections::HashMap;
