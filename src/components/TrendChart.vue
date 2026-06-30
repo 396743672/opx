@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import Chart from 'chart.js/auto'
 import type { ChartConfiguration } from 'chart.js'
 import { useI18n } from 'vue-i18n'
@@ -46,6 +46,9 @@ function prefersReduced(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
+/** 青蓝主色 fallback，避免 CSS 变量读取时机问题导致黑色 */
+const COLOR_FALLBACK = '#3b82f6'
+
 function labels(): string[] {
   return props.points.map((p) => {
     const d = new Date(p.timestamp)
@@ -62,8 +65,8 @@ function values(): number[] {
 }
 
 function buildConfig(): ChartConfiguration {
-  const color = cssVar(props.colorVar) || '#3b82f6'
-  const grid = cssVar('--color-border') || 'rgba(0,0,0,0.1)'
+  const color = cssVar(props.colorVar) || COLOR_FALLBACK
+  const grid = cssVar('--color-border') || 'rgba(128,128,128,0.15)'
   const tick = cssVar('--color-muted-foreground') || '#888'
   return {
     type: 'line',
@@ -133,7 +136,8 @@ function update() {
   chart.update(prefersReduced() ? 'none' : undefined)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await nextTick()
   if (canvasRef.value) {
     chart = new Chart(canvasRef.value, buildConfig())
   }

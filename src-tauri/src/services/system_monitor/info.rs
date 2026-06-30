@@ -1,8 +1,18 @@
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use sysinfo::{System, Disks, Networks, ProcessesToUpdate, Pid};
 use crate::models::system::{SystemInfo, DiskInfo, NetworkInfo, ProcessInfo};
 
+/// 全局复用的 Networks 句柄，避免每次新建导致统计重置
+static NETWORKS: Lazy<Mutex<Networks>> =
+    Lazy::new(|| Mutex::new(Networks::new_with_refreshed_list()));
+
 pub fn get_system_info(system: &mut System) -> SystemInfo {
     system.refresh_all();
+    // 单独刷新网络（refresh_all 不含 Networks）
+    if let Ok(mut nets) = NETWORKS.lock() {
+        nets.refresh();
+    }
 
     let cpu_usage = system.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / system.cpus().len() as f32;
     let cpu_usage = cpu_usage as f64;
@@ -34,15 +44,13 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         });
     }
 
-    let networks_data = Networks::new_with_refreshed_list();
-    let mut bytes_sent = 0;
-    let mut bytes_recv = 0;
-    // packets not available in sysinfo 0.31, set to 0
-    let packets_sent = 0;
-    let packets_recv = 0;
-    for (_, network) in networks_data.iter() {
-        bytes_sent += network.total_transmitted();
-        bytes_recv += network.total_received();
+    let mut bytes_sent = 0u64;
+    let mut bytes_recv = 0u64;
+    if let Ok(nets) = NETWORKS.lock() {
+        for (_, network) in nets.iter() {
+            bytes_sent += network.total_transmitted();
+            bytes_recv += network.total_received();
+        }
     }
 
     let os_name = System::name().unwrap_or_else(|| "Unknown".to_string());
@@ -59,8 +67,8 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         network: NetworkInfo {
             bytes_sent,
             bytes_recv,
-            packets_sent,
-            packets_recv,
+            packets_sent: 0,
+            packets_recv: 0,
         },
         os_name,
         os_version,
@@ -70,14 +78,18 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
 }
 
 pub fn get_process_list(system: &mut System) -> Vec<ProcessInfo> {
+    // 复用 system_info 已 refresh 的状态，不再额外 refresh_processes（避免重置 CPU 基准）
     system.refresh_processes(ProcessesToUpdate::All);
 
+    let cpu_cores = system.cpus().len().max(1) as f64;
     let mut processes = Vec::new();
     for (pid, process) in system.processes() {
+        // process.cpu_usage() 返回单核百分比（0-100 per core），归一化到总 CPU 百分比
+        let cpu_normalized = (process.cpu_usage() as f64) / cpu_cores;
         processes.push(ProcessInfo {
             pid: pid.as_u32(),
             name: process.name().to_string_lossy().to_string(),
-            cpu_usage: process.cpu_usage() as f64,
+            cpu_usage: cpu_normalized,
             memory_usage: (process.memory() as f64) / (1024 * 1024) as f64,
             status: process.status().to_string(),
         });
