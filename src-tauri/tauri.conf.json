@@ -14,9 +14,9 @@
       {
         "title": "opx",
         "width": 1280,
-        "height": 800,
-        "minWidth": 1100,
-        "minHeight": 680
+        "height": 820,
+        "minWidth": 1200,
+        "minHeight": 820
       }
     ],
     "security": {
