@@ -64,25 +64,70 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 - **Node.js + npm**：`npm install` 安装前端依赖
 
 ### 打包命令
-```bash
-# 1. 安装前端依赖（首次或 package.json 变更后）
-npm install
 
-# 2. 一键打包（自动跑前端构建 + Rust release 编译 + 生成安装包）
+#### 1. 准备依赖（首次或 package.json/Cargo.toml 变更后）
+```bash
+npm install              # 安装前端依赖
+```
+
+#### 2. Release 打包（生成可分发安装包）
+```bash
+# 一键打包：自动跑前端构建(vue-tsc+vite) + Rust release 编译 + 生成 MSI 与 NSIS 安装包
 npm run tauri build
 
-# 仅生成 MSI 安装包（更快，跳过 NSIS .exe）
+# 仅生成 MSI 安装包（跳过 NSIS，需 WiX 工具）
 npm run tauri build -- --bundles msi
 
-# 仅生成 NSIS .exe 安装包
+# 仅生成 NSIS .exe 安装包（跳过 MSI，无需 WiX）
 npm run tauri build -- --bundles nsis
 ```
 
-### 产物位置
+#### 3. Debug 打包（快速验证，不优化，编译快）
+```bash
+# Debug 模式打包，产物在 target/debug/ 下（不生成安装包，仅 exe）
+npm run tauri build -- --debug
+
+# Debug 模式直接运行（开发调试用，不打包）
+npm run tauri dev
+```
+
+#### 4. 仅构建不打包（只生成可执行文件，不做安装包）
+```bash
+# 仅 Rust release 编译，产出 opx.exe，不触发 bundler
+cd src-tauri && cargo build --release
+
+# 仅前端构建，产出 dist/ 静态资源
+npm run build
+```
+
+#### 5. 清理构建产物
+```bash
+# 清理 Rust 构建缓存（release + debug），下次打包会全量重编译
+cd src-tauri && cargo clean
+
+# 仅清理前端 dist
+rm -rf dist
+```
+
+### 命令-产物对照表
+
+| 命令 | 产物 | 路径 | 用途 |
+|---|---|---|---|
+| `npm run tauri build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
+| `npm run tauri build -- --bundles msi` | 仅 MSI 安装包 | `src-tauri/target/release/bundle/msi/opx_0.1.0_x64_zh-CN.msi` | 企业部署（组策略友好） |
+| `npm run tauri build -- --bundles nsis` | 仅 NSIS 安装包 | `src-tauri/target/release/bundle/nsis/opx_0.1.0_x64-setup.exe` | 普通用户安装（无需 WiX） |
+| `npm run tauri build -- --debug` | Debug 免安装 exe | `src-tauri/target/debug/opx.exe` | 快速验证打包流程 |
+| `npm run tauri dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
+| `cd src-tauri && cargo build --release` | 免安装 exe | `src-tauri/target/release/opx.exe` | 仅要 exe，不要安装包 |
+| `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
+
+### 产物位置总览
 打包产物在 `src-tauri/target/release/bundle/` 下：
-- `msi/opx_0.1.0_x64_zh-CN.msi` — MSI 安装包（推荐分发，企业部署友好）
-- `nsis/opx_0.1.0_x64-setup.exe` — NSIS 安装程序
-- `src-tauri/target/release/opx.exe` — 免安装可执行文件（需配合 WebView2 运行）
+- `msi/opx_0.1.0_x64_zh-CN.msi` — MSI 安装包（推荐企业分发，组策略部署友好）
+- `nsis/opx_0.1.0_x64-setup.exe` — NSIS 安装程序（推荐普通用户分发）
+- `src-tauri/target/release/opx.exe` — 免安装可执行文件（需目标机有 WebView2，Win11 自带）
+
+> **注意**：MSI 与 NSIS 安装包内已内嵌 WebView2 Bootstrapper，安装时会自动引导安装 WebView2 Runtime。免安装 exe 不含，需目标机预装 WebView2。
 
 ### 打包前检查清单
 1. `npm run build` 必须无类型错误、无构建报错（vue-tsc + vite）
