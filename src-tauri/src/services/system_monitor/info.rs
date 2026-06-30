@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
-use sysinfo::{System, Disks, Networks, ProcessesToUpdate, Pid};
-use crate::models::system::{SystemInfo, DiskInfo, NetworkInfo, ProcessInfo};
+use sysinfo::{System, Disks, Networks};
+use crate::models::system::{SystemInfo, DiskInfo, NetworkInfo};
 
 /// 全局复用的 Networks 句柄，避免每次新建导致统计重置
 static NETWORKS: Lazy<Mutex<Networks>> =
@@ -74,37 +74,5 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         os_version,
         hostname,
         boot_time,
-    }
-}
-
-pub fn get_process_list(system: &mut System) -> Vec<ProcessInfo> {
-    // 复用 system_info 已 refresh 的状态，不再额外 refresh_processes（避免重置 CPU 基准）
-    system.refresh_processes(ProcessesToUpdate::All);
-
-    let cpu_cores = system.cpus().len().max(1) as f64;
-    let mut processes = Vec::new();
-    for (pid, process) in system.processes() {
-        // process.cpu_usage() 返回单核百分比（0-100 per core），归一化到总 CPU 百分比
-        let cpu_normalized = (process.cpu_usage() as f64) / cpu_cores;
-        processes.push(ProcessInfo {
-            pid: pid.as_u32(),
-            name: process.name().to_string_lossy().to_string(),
-            cpu_usage: cpu_normalized,
-            memory_usage: (process.memory() as f64) / (1024 * 1024) as f64,
-            status: process.status().to_string(),
-        });
-    }
-
-    processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
-    processes
-}
-
-pub fn kill_process(pid: u32) -> bool {
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::All);
-    if let Some(process) = system.process(Pid::from_u32(pid)) {
-        process.kill()
-    } else {
-        false
     }
 }

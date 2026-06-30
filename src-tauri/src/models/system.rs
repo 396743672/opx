@@ -31,15 +31,6 @@ pub struct NetworkInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub name: String,
-    pub cpu_usage: f64,
-    pub memory_usage: f64,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryPoint {
     pub timestamp: u64,
     pub cpu_usage: f64,

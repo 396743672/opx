@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use sysinfo::System;
-use crate::models::system::{SystemInfo, ProcessInfo, HistoryPoint};
+use crate::models::system::{SystemInfo, HistoryPoint};
 use crate::services::system_monitor;
 use anyhow::Result;
 
@@ -21,22 +21,6 @@ static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| {
 pub fn system_info() -> SystemInfo {
     let mut system = SYSTEM.lock().unwrap();
     system_monitor::info::get_system_info(&mut system)
-}
-
-#[tauri::command]
-pub fn process_list() -> Vec<ProcessInfo> {
-    let mut system = SYSTEM.lock().unwrap();
-    system_monitor::info::get_process_list(&mut system)
-}
-
-#[tauri::command]
-pub fn kill_process(pid: u32) -> Result<bool, String> {
-    let success = system_monitor::info::kill_process(pid);
-    if success {
-        Ok(true)
-    } else {
-        Err("Failed to kill process".to_string())
-    }
 }
 
 #[tauri::command]

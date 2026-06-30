@@ -41,13 +41,10 @@ export default {
   memoryUsage: '内存使用率',
   diskUsage: '磁盘使用率',
   networkTraffic: '网络流量',
-  processList: '进程列表',
   systemInfo: '系统信息',
   os: '操作系统',
   hostname: '主机名',
   bootTime: '启动时间',
-  killProcess: '结束进程',
-  confirmKillProcess: '确认要结束这个进程吗？',
 
   // 软件管理
   installedSoftware: '已安装软件',
@@ -123,9 +120,7 @@ export default {
   packetsSent: '发送数据包',
   packetsRecv: '接收数据包',
   uptime: '运行时长',
-  totalProcesses: '个进程',
   noData: '暂无数据',
-  searchProcess: '搜索进程名称...',
 
   // 占位
   comingSoon: '即将实现',

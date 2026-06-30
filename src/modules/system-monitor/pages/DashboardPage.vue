@@ -135,17 +135,6 @@
       </div>
     </div>
 
-    <!-- 进程列表 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-      <CardHeader
-        :title="$t('processList')"
-        :subtitle="`${systemStore.processes.length} ${$t('totalProcesses')}`"
-        hide-refresh
-      />
-      <div class="h-80">
-        <ProcessTable :processes="systemStore.topProcesses" @kill="confirmKill" />
-      </div>
-    </div>
   </div>
 </template>
 
@@ -157,12 +146,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
 import TrendChart from '@/components/TrendChart.vue'
-import ProcessTable from '@/components/ProcessTable.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
 const { t } = useI18n()
+void t
 const systemStore = useSystemStore()
 
 const systemInfo = computed(() => systemStore.systemInfo)
@@ -179,12 +168,6 @@ const uptime = computed(() => {
   if (!boot) return '-'
   return formatUptime(Math.floor(nowTick.value / 1000) - boot)
 })
-
-async function confirmKill(pid: number) {
-  if (window.confirm(t('confirmKillProcess'))) {
-    await systemStore.killProcess(pid)
-  }
-}
 
 onMounted(() => {
   tickTimer = window.setInterval(() => {

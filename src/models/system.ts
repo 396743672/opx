@@ -25,14 +25,6 @@ export interface NetworkInfo {
   packets_recv: number
 }
 
-export interface ProcessInfo {
-  pid: number
-  name: string
-  cpu_usage: number
-  memory_usage: number
-  status: string
-}
-
 export interface HistoryPoint {
   timestamp: number
   cpu_usage: number

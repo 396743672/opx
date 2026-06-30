@@ -41,13 +41,10 @@ export default {
   memoryUsage: 'Memory Usage',
   diskUsage: 'Disk Usage',
   networkTraffic: 'Network Traffic',
-  processList: 'Process List',
   systemInfo: 'System Info',
   os: 'OS',
   hostname: 'Hostname',
   bootTime: 'Boot Time',
-  killProcess: 'Kill Process',
-  confirmKillProcess: 'Confirm to kill this process?',
 
   // software management
   installedSoftware: 'Installed Software',
@@ -123,9 +120,7 @@ export default {
   packetsSent: 'Packets sent',
   packetsRecv: 'Packets recv',
   uptime: 'Uptime',
-  totalProcesses: 'processes',
   noData: 'No data',
-  searchProcess: 'Search process name...',
 
   // placeholder
   comingSoon: 'Coming Soon',

@@ -1,11 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type {
-  SystemInfo,
-  ProcessInfo,
-  HistoryPoint,
-} from '@/models/system'
+import type { SystemInfo, HistoryPoint } from '@/models/system'
 
 const POLL_INTERVAL = 2000
 /** 趋势图最多保留的点数，超出后丢弃最旧的 */
@@ -13,7 +9,6 @@ const MAX_HISTORY = 120
 
 export const useSystemStore = defineStore('system', () => {
   const systemInfo = ref<SystemInfo | null>(null)
-  const processes = ref<ProcessInfo[]>([])
   const history = ref<HistoryPoint[]>([])
 
   const loading = ref(false)
@@ -36,20 +31,11 @@ export const useSystemStore = defineStore('system', () => {
     return disks.reduce((s, d) => s + d.usage, 0) / disks.length
   })
 
-  /** 排序后的进程列表（按 CPU 降序） */
-  const topProcesses = computed(() =>
-    [...processes.value].sort((a, b) => b.cpu_usage - a.cpu_usage)
-  )
-
   async function fetchAll() {
     loading.value = true
     try {
-      const [info, procs] = await Promise.all([
-        invoke<SystemInfo>('system_info'),
-        invoke<ProcessInfo[]>('process_list'),
-      ])
+      const info = await invoke<SystemInfo>('system_info')
       systemInfo.value = info
-      processes.value = procs
 
       // 计算网络速率
       const now = Date.now()
@@ -101,16 +87,6 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
 
-  async function killProcess(pid: number): Promise<boolean> {
-    try {
-      await invoke('kill_process', { pid })
-      await fetchAll()
-      return true
-    } catch {
-      return false
-    }
-  }
-
   function startPolling() {
     if (timer !== null) return
     loadHistory()
@@ -127,7 +103,6 @@ export const useSystemStore = defineStore('system', () => {
 
   return {
     systemInfo,
-    processes,
     history,
     loading,
     lastUpdated,
@@ -136,10 +111,8 @@ export const useSystemStore = defineStore('system', () => {
     cpuUsage,
     memoryUsage,
     diskUsage,
-    topProcesses,
     fetchAll,
     loadHistory,
-    killProcess,
     startPolling,
     stopPolling,
   }

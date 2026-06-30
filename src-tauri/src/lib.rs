@@ -79,8 +79,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::system::system_info,
-            commands::system::process_list,
-            commands::system::kill_process,
             commands::system::system_history,
             commands::config::get_settings,
             commands::config::save_settings,
