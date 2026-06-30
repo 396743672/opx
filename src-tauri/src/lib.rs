@@ -22,6 +22,23 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            // 便携布局：启动时主动创建所有运行目录（exe 同级）
+            {
+                let _ = crate::utils::paths::apps_dir();
+                let _ = crate::utils::paths::config_dir();
+                let _ = crate::utils::paths::data_dir();
+                let _ = crate::utils::paths::tmp_dir();
+                let _ = crate::utils::paths::logs_dir();
+                // settings.json 不存在时写入默认值，确保便携目录有可见配置
+                let sp = crate::utils::paths::settings_path();
+                if !sp.exists() {
+                    let default = crate::models::settings::AppSettings::default();
+                    if let Ok(json) = serde_json::to_string_pretty(&default) {
+                        let _ = std::fs::write(&sp, json);
+                    }
+                }
+            }
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单
