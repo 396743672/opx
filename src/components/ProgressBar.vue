@@ -22,26 +22,26 @@
     <!-- 环形进度条 -->
     <div v-else class="relative inline-flex items-center justify-center">
       <svg
-        :width="size"
-        :height="size"
-        :viewBox="`0 0 ${size} ${size}`"
+        :width="size ?? 56"
+        :height="size ?? 56"
+        :viewBox="`0 0 ${size ?? 56} ${size ?? 56}`"
         class="-rotate-90"
       >
         <circle
-          :cx="size / 2"
-          :cy="size / 2"
+          :cx="(size ?? 56) / 2"
+          :cy="(size ?? 56) / 2"
           :r="radius"
           fill="none"
           stroke="var(--color-muted)"
-          :stroke-width="strokeWidth"
+          :stroke-width="strokeWidth ?? 6"
         />
         <circle
-          :cx="size / 2"
-          :cy="size / 2"
+          :cx="(size ?? 56) / 2"
+          :cy="(size ?? 56) / 2"
           :r="radius"
           fill="none"
           :stroke="`var(--color-${activeToken})`"
-          :stroke-width="strokeWidth"
+          :stroke-width="strokeWidth ?? 6"
           stroke-linecap="round"
           :stroke-dasharray="circumference"
           :stroke-dashoffset="dashOffset"
@@ -50,7 +50,7 @@
       </svg>
       <span
         class="absolute text-xs font-semibold tnum"
-        :style="{ fontSize: `${size * 0.22}px` }"
+        :style="{ fontSize: `${(size ?? 56) * 0.22}px` }"
       >
         {{ value.toFixed(0) }}<span class="opacity-60">%</span>
       </span>
@@ -88,7 +88,7 @@ const activeToken = computed(() => {
   return 'primary'
 })
 
-const radius = computed(() => (props.size - props.strokeWidth) / 2)
+const radius = computed(() => ((props.size ?? 56) - (props.strokeWidth ?? 6)) / 2)
 const circumference = computed(() => 2 * Math.PI * radius.value)
 const dashOffset = computed(
   () => circumference.value * (1 - Math.min(props.value, 100) / 100)
