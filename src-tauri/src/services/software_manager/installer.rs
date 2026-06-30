@@ -47,6 +47,14 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
     let _ = app.emit("install-progress", payload);
 }
 
+/// 校验自定义软件名称：仅允许字母、数字、下划线、连字符
+fn is_valid_custom_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// 安装预置软件（在线镜像）
 pub async fn install_software(
     app: AppHandle,
@@ -329,14 +337,14 @@ pub async fn install_custom(
         return;
     }
 
-    // 校验名称非空（custom 的 name 存在 InstalledSoftware.key，version 存 name 用于查重）
-    if name_trimmed.is_empty() {
+    // 校验名称字符集（防止路径遍历：仅允许字母、数字、下划线、连字符）
+    if !is_valid_custom_name(name_trimmed) {
         emit_event(
             &app,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
-                "error": "名称不能为空",
+                "error": "名称仅允许字母、数字、下划线、连字符",
                 "stage": "extract"
             }),
         );
