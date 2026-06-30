@@ -39,6 +39,11 @@ pub fn run() {
                 }
             }
 
+            // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
+            app.manage(std::sync::Arc::new(
+                crate::services::software_manager::SoftwareManager::new(),
+            ));
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单
@@ -102,6 +107,11 @@ pub fn run() {
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,
+            commands::software::list_available_software,
+            commands::software::refresh_catalog,
+            commands::software::list_installed_software,
+            commands::software::install_software,
+            commands::software::install_custom,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
