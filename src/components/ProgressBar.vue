@@ -85,7 +85,7 @@ const props = withDefaults(defineProps<Props>(), {
 const activeToken = computed(() => {
   if (props.value >= props.dangerThreshold) return 'destructive'
   if (props.value >= props.warningThreshold) return 'warning'
-  return 'success'
+  return 'primary'
 })
 
 const radius = computed(() => (props.size - props.strokeWidth) / 2)

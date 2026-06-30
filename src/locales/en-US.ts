@@ -147,5 +147,9 @@ export default {
   closeBehavior: 'On Window Close',
   askOnClose: 'Ask every time',
   languageLabel: 'Language',
-  themeLabel: 'Theme'
+  themeLabel: 'Theme',
+
+  // network totals
+  totalSent: 'Total Sent',
+  totalRecv: 'Total Received'
 }

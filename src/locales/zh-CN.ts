@@ -147,5 +147,9 @@ export default {
   closeBehavior: '关闭窗口时',
   askOnClose: '每次询问',
   languageLabel: '语言',
-  themeLabel: '主题'
+  themeLabel: '主题',
+
+  // 网络累计
+  totalSent: '累计上传',
+  totalRecv: '累计下载'
 }

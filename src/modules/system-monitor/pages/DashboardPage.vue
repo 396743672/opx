@@ -113,22 +113,22 @@
             <span class="flex items-center gap-2 text-muted-foreground">
               <Icon icon="mdi:arrow-up-bold" class="text-success" />{{ $t('networkUp') }}
             </span>
-            <span class="tnum">{{ formatBytes(systemInfo?.network.bytes_sent || 0) }}</span>
+            <span class="tnum">{{ formatRate(systemStore.netSentRate) }}</span>
           </div>
           <div class="flex items-center justify-between">
             <span class="flex items-center gap-2 text-muted-foreground">
               <Icon icon="mdi:arrow-down-bold" class="text-info" />{{ $t('networkDown') }}
             </span>
-            <span class="tnum">{{ formatBytes(systemInfo?.network.bytes_recv || 0) }}</span>
+            <span class="tnum">{{ formatRate(systemStore.netRecvRate) }}</span>
           </div>
           <div class="border-t border-border pt-3 space-y-2 text-xs text-muted-foreground">
             <div class="flex justify-between">
-              <span>{{ $t('packetsSent') }}</span>
-              <span class="tnum">{{ formatNumber(systemInfo?.network.packets_sent || 0) }}</span>
+              <span>{{ $t('totalSent') }}</span>
+              <span class="tnum">{{ formatBytes(systemInfo?.network.bytes_sent || 0) }}</span>
             </div>
             <div class="flex justify-between">
-              <span>{{ $t('packetsRecv') }}</span>
-              <span class="tnum">{{ formatNumber(systemInfo?.network.packets_recv || 0) }}</span>
+              <span>{{ $t('totalRecv') }}</span>
+              <span class="tnum">{{ formatBytes(systemInfo?.network.bytes_recv || 0) }}</span>
             </div>
           </div>
         </div>
@@ -179,10 +179,6 @@ const uptime = computed(() => {
   if (!boot) return '-'
   return formatUptime(Math.floor(nowTick.value / 1000) - boot)
 })
-
-function formatNumber(n: number): string {
-  return n.toLocaleString()
-}
 
 async function confirmKill(pid: number) {
   if (window.confirm(t('confirmKillProcess'))) {

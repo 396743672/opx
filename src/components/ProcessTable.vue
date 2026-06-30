@@ -17,12 +17,12 @@
     <!-- 表头 -->
     <div
       class="grid gap-2 px-2 py-1.5 text-xs text-muted-foreground border-b border-border"
-      style="grid-template-columns: 1fr 70px 70px 90px 110px"
+      style="grid-template-columns: 1fr 70px 70px 100px 110px"
     >
       <span>{{ $t('name') }}</span>
       <span class="text-right">PID</span>
       <span class="text-right">CPU%</span>
-      <span class="text-right">{{ $t('memory') }}%</span>
+      <span class="text-right">{{ $t('memory') }}</span>
       <span class="text-right">{{ $t('status') }}</span>
     </div>
 
@@ -32,12 +32,12 @@
         v-for="p in filtered"
         :key="p.pid"
         class="group grid gap-2 px-2 py-1.5 text-sm items-center rounded-sm hover:bg-muted/60 transition-colors"
-        style="grid-template-columns: 1fr 70px 70px 90px 110px"
+        style="grid-template-columns: 1fr 70px 70px 100px 110px"
       >
         <span class="truncate" :title="p.name">{{ p.name }}</span>
         <span class="text-right tnum text-muted-foreground">{{ p.pid }}</span>
         <span class="text-right tnum">{{ p.cpu_usage.toFixed(1) }}</span>
-        <span class="text-right tnum">{{ p.memory_usage.toFixed(1) }}</span>
+        <span class="text-right tnum">{{ formatBytes(p.memory_usage * 1024 * 1024) }}</span>
         <span class="flex items-center justify-end gap-1.5">
           <span
             class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border"
@@ -71,6 +71,7 @@ import { ref, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import type { ProcessInfo } from '@/models/system'
+import { formatBytes } from '@/utils/format'
 
 const { t } = useI18n()
 
