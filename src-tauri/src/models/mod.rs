@@ -10,7 +10,7 @@ mod tests {
         InstallParams, InstalledSoftware, InstalledSoftwareList, SoftwareMeta, SoftwareStatus,
     };
     use super::springboot::{AppGroup, AppStatus, JvmInfo, SpringApp, SpringAppList};
-    use super::system::{DiskInfo, HistoryPoint, NetworkInfo, ProcessInfo, SystemInfo};
+    use super::system::{DiskInfo, HistoryPoint, NetworkInfo, SystemInfo};
     use chrono::NaiveDate;
     use serde::{de::DeserializeOwned, Serialize};
 
@@ -35,7 +35,7 @@ mod tests {
         assert!(settings.auto_check_update);
         assert!(matches!(
             settings.close_window_action,
-            CloseWindowAction::MinimizeToTray
+            CloseWindowAction::CloseToTray
         ));
         assert!(!settings.register_as_system_service);
         assert!(settings.auto_start_managed_services);
@@ -76,13 +76,6 @@ mod tests {
             hostname: "opx".to_string(),
             boot_time: 123456,
         };
-        let process = ProcessInfo {
-            pid: 123,
-            name: "opx".to_string(),
-            cpu_usage: 3.5,
-            memory_usage: 4.5,
-            status: "Running".to_string(),
-        };
         let history = HistoryPoint {
             timestamp: 123456,
             cpu_usage: 12.5,
@@ -90,12 +83,10 @@ mod tests {
         };
 
         let system_roundtrip = assert_json_roundtrip(&system);
-        let process_roundtrip = assert_json_roundtrip(&process);
         let history_roundtrip = assert_json_roundtrip(&history);
 
         assert_eq!(system_roundtrip.disks[0].mount_point, "/");
         assert_eq!(system_roundtrip.network.bytes_recv, 20);
-        assert_eq!(process_roundtrip.pid, 123);
         assert_eq!(history_roundtrip.timestamp, 123456);
     }
 
