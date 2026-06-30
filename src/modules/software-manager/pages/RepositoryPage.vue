@@ -91,6 +91,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareCard from '../components/SoftwareCard.vue'
@@ -101,6 +102,9 @@ import CustomInstallDialog from '../components/CustomInstallDialog.vue'
 import { useCatalogStore } from '../stores/catalog'
 import { useInstallStore } from '../stores/install'
 import { SoftwareCategory, type CatalogEntry, type InstalledSoftware } from '@/models/software'
+import type { AppSettings } from '@/models/settings'
+
+const { t } = useI18n()
 
 const catalogStore = useCatalogStore()
 const installStore = useInstallStore()
@@ -117,10 +121,10 @@ function getInstalledVersion(key: string): string | null {
 }
 
 function categoryName(cat: SoftwareCategory): string {
-  if (cat === SoftwareCategory.Database) return '数据库'
-  if (cat === SoftwareCategory.Runtime) return '运行时'
-  if (cat === SoftwareCategory.Cache) return '缓存'
-  if (cat === SoftwareCategory.WebServer) return 'Web 服务器'
+  if (cat === SoftwareCategory.Database) return t('categoryDatabase')
+  if (cat === SoftwareCategory.Runtime) return t('categoryRuntime')
+  if (cat === SoftwareCategory.Cache) return t('categoryCache')
+  if (cat === SoftwareCategory.WebServer) return t('categoryWebServer')
   return cat
 }
 
@@ -162,7 +166,7 @@ async function loadInstalled() {
 
 async function loadDefaultJre() {
   try {
-    const settings = await invoke('get_settings') as any
+    const settings = await invoke('get_settings') as AppSettings
     defaultJreId.value = settings.jre_default_id ?? null
   } catch (e) {
     console.error('Failed to load settings:', e)

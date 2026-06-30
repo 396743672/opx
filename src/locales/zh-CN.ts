@@ -77,6 +77,10 @@ export default {
   canUpdate: '可更新',
   latestVersion: '最新',
   retry: '重试',
+  categoryDatabase: '数据库',
+  categoryRuntime: '运行时',
+  categoryCache: '缓存',
+  categoryWebServer: 'Web 服务器',
 
   // SpringBoot
   applicationList: '应用列表',

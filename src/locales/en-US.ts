@@ -77,6 +77,10 @@ export default {
   canUpdate: 'Can Update',
   latestVersion: 'Latest',
   retry: 'Retry',
+  categoryDatabase: 'Database',
+  categoryRuntime: 'Runtime',
+  categoryCache: 'Cache',
+  categoryWebServer: 'Web Server',
 
   // SpringBoot
   applicationList: 'Applications',

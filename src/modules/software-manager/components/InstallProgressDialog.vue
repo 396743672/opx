@@ -29,6 +29,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Icon } from '@iconify/vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   task: {
@@ -52,10 +55,10 @@ const phaseIcon = computed(() => {
 })
 
 const phaseText = computed(() => {
-  if (props.task.phase === 'downloading') return '下载中'
-  if (props.task.phase === 'extracting') return '解压中'
-  if (props.task.phase === 'completed') return '安装完成'
-  if (props.task.phase === 'failed') return '安装失败'
+  if (props.task.phase === 'downloading') return t('downloading')
+  if (props.task.phase === 'extracting') return t('extracting')
+  if (props.task.phase === 'completed') return t('installCompleted')
+  if (props.task.phase === 'failed') return t('installFailed')
   return ''
 })
 

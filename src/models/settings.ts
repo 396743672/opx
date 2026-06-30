@@ -18,4 +18,5 @@ export interface AppSettings {
   ask_on_close: boolean
   register_as_system_service: boolean
   auto_start_managed_services: boolean
+  jre_default_id: string | null
 }
