@@ -76,7 +76,7 @@ function buildConfig(): ChartConfiguration {
         {
           data: values(),
           borderColor: color,
-          backgroundColor: color + '22',
+          backgroundColor: color,
           borderWidth: 2,
           fill: true,
           tension: 0.35,
