@@ -60,6 +60,24 @@ export default {
   dragFileHere: '拖拽压缩包到这里，或点击选择',
   supportedFormats: '支持 zip、tar.gz 格式',
 
+  // 软件仓库新增
+  selectMirror: '选择镜像源',
+  setAsDefaultJre: '设为全局默认 JRE',
+  defaultJre: '默认 JRE',
+  installing: '安装中',
+  downloading: '下载中',
+  extracting: '解压中',
+  installCompleted: '安装完成',
+  installFailed: '安装失败',
+  customName: '名称',
+  selectArchive: '选择压缩包',
+  refreshCatalog: '刷新目录',
+  catalogUpdateFailed: '目录更新失败',
+  versionAvailable: '可选 {count} 个版本',
+  canUpdate: '可更新',
+  latestVersion: '最新',
+  retry: '重试',
+
   // SpringBoot
   applicationList: '应用列表',
   addApplication: '添加应用',

@@ -60,6 +60,24 @@ export default {
   dragFileHere: 'Drag file here, or click to select',
   supportedFormats: 'Supported formats: zip, tar.gz',
 
+  // software repository additions
+  selectMirror: 'Select Mirror',
+  setAsDefaultJre: 'Set as Global Default JRE',
+  defaultJre: 'Default JRE',
+  installing: 'Installing',
+  downloading: 'Downloading',
+  extracting: 'Extracting',
+  installCompleted: 'Install Completed',
+  installFailed: 'Install Failed',
+  customName: 'Name',
+  selectArchive: 'Select Archive',
+  refreshCatalog: 'Refresh Catalog',
+  catalogUpdateFailed: 'Catalog Update Failed',
+  versionAvailable: '{count} versions available',
+  canUpdate: 'Can Update',
+  latestVersion: 'Latest',
+  retry: 'Retry',
+
   // SpringBoot
   applicationList: 'Applications',
   addApplication: 'Add Application',
