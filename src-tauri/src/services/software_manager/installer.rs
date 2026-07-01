@@ -1,0 +1,728 @@
+use anyhow::Result;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::Read;
+use std::path::Path;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::models::software::{
+    CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
+    InstalledSoftware, MirrorSource, SoftwareStatus,
+};
+use crate::models::software::ArchiveFormat;
+use crate::services::software_manager::providers::{all_providers, InstallContext};
+use crate::services::software_manager::SoftwareManager;
+use crate::utils::{archive, download, paths};
+use chrono::Utc;
+
+fn compute_sha256(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn cleanup_path(path: &Path) {
+    if path.exists() {
+        if let Err(e) = fs::remove_dir_all(path) {
+            eprintln!("清理 {} 失败: {}", path.display(), e);
+        }
+    }
+}
+
+fn cleanup_file(path: &Path) {
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn emit_event(app: &AppHandle, payload: serde_json::Value) {
+    let _ = app.emit("install-progress", payload);
+}
+
+/// 校验自定义软件名称：仅允许字母、数字、下划线、连字符
+fn is_valid_custom_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// 安装预置软件（在线镜像）
+pub async fn install_software(
+    app: AppHandle,
+    manager: Arc<SoftwareManager>,
+    params: InstallParams,
+    install_id: String,
+) {
+    // 缓存路径：cache/{key}/{version}.zip（持久保留，复用避免重复下载）
+    let cache_key_dir = paths::cache_dir().join(&params.key);
+    if let Err(e) = fs::create_dir_all(&cache_key_dir) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建缓存目录失败: {}", e),
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+    let cache_path = cache_key_dir.join(format!("{}.zip", params.version));
+    let install_path = paths::apps_dir()
+        .join(&params.key)
+        .join(&params.version);
+
+    let catalog = manager.get_catalog();
+    let entry = match catalog.entries.iter().find(|e| e.key == params.key) {
+        Some(e) => e,
+        None => {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id,
+                    "phase": "failed",
+                    "error": format!("未知软件：{}", params.key),
+                    "stage": "download"
+                }),
+            );
+            return;
+        }
+    };
+    let version_info = match entry.versions.iter().find(|v| v.version == params.version) {
+        Some(v) => v,
+        None => {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id,
+                    "phase": "failed",
+                    "error": format!("{} 不支持版本 {}", entry.name, params.version),
+                    "stage": "download"
+                }),
+            );
+            return;
+        }
+    };
+    if params.mirror_index >= version_info.mirrors.len() {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "镜像源选择无效",
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+    let mirror = &version_info.mirrors[params.mirror_index];
+
+    // builtin 分流：若选中的镜像带 builtin 标记，走本地解压
+    if mirror.builtin.is_some() {
+        install_from_builtin(
+            app,
+            manager,
+            params,
+            install_id,
+            entry,
+            version_info,
+            mirror,
+        )
+        .await;
+        return;
+    }
+
+    if manager.is_installed(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 已安装", entry.name, params.version),
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+    if manager.is_installing(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 正在安装中", entry.name, params.version),
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+
+    if let Err(e) = fs::create_dir_all(&install_path) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建安装目录失败: {}", e),
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+
+    manager.add_install_task(
+        install_id.clone(),
+        params.key.clone(),
+        params.version.clone(),
+    );
+
+    let result: Result<()> = async {
+        // 检查缓存：若 cache_path 存在则跳过下载
+        let cache_hit = cache_path.exists();
+        if cache_hit {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id.clone(),
+                    "phase": "downloading",
+                    "downloaded": 0,
+                    "total": serde_json::Value::Null,
+                    "percent": 100,
+                    "cached": true
+                }),
+            );
+        } else {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id.clone(),
+                    "phase": "downloading",
+                    "downloaded": 0,
+                    "total": serde_json::Value::Null,
+                    "percent": serde_json::Value::Null
+                }),
+            );
+
+            let app_for_progress = app.clone();
+            let install_id_for_progress = install_id.clone();
+            download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
+                let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+                emit_event(
+                    &app_for_progress,
+                    serde_json::json!({
+                        "install_id": install_id_for_progress.clone(),
+                        "phase": "downloading",
+                        "downloaded": downloaded,
+                        "total": total,
+                        "percent": percent
+                    }),
+                );
+            })
+            .await?;
+        }
+
+        if let Some(expected_sha) = &version_info.archive.sha256 {
+            let computed = compute_sha256(&cache_path)?;
+            if computed != expected_sha.to_lowercase() {
+                // 校验失败：缓存可能损坏，删除缓存让下次重新下载
+                let _ = fs::remove_file(&cache_path);
+                return Err(anyhow::anyhow!("SHA256 校验失败"));
+            }
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 0
+            }),
+        );
+
+        match version_info.archive.format {
+            ArchiveFormat::Zip => archive::extract_zip(&cache_path, &install_path)?,
+            ArchiveFormat::TarGz => archive::extract_tar_gz(&cache_path, &install_path)?,
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 50
+            }),
+        );
+
+        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+            let ctx = InstallContext::new(
+                params.key.clone(),
+                params.version.clone(),
+                install_path.to_string_lossy().to_string(),
+            );
+            provider.post_install(&ctx)?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 100
+            }),
+        );
+
+        // 关键：在 move 进 InstalledSoftware 之前克隆 installed_id，
+        // 后续的 jre_default 更新和 completed 事件需要使用这个 id。
+        let installed_id = uuid::Uuid::new_v4().to_string();
+        let installed_id_for_event = installed_id.clone();
+        let now = Utc::now().naive_utc();
+        let installed = InstalledSoftware {
+            id: installed_id,
+            key: params.key.clone(),
+            version: params.version.clone(),
+            name: format!("{} {}", entry.name, params.version),
+            install_path: install_path.to_string_lossy().to_string(),
+            install_time: now,
+            status: SoftwareStatus::Unknown,
+            port: 0,
+            config: serde_json::json!({}),
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Mirror {
+                mirror_name: mirror.name.clone(),
+                url: mirror.url.clone(),
+            },
+        };
+        manager.add_installed(installed)?;
+
+        if params.key == "jre" && params.set_as_default_jre {
+            manager.update_jre_default(Some(installed_id_for_event.clone()))?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "completed",
+                "installed_id": installed_id_for_event
+            }),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(e) = result {
+        eprintln!(
+            "[software] install failed: key={}, version={}, error={}",
+            params.key, params.version, e
+        );
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "failed",
+                "error": format!("{}", e),
+                "stage": "download"
+            }),
+        );
+        cleanup_file(&cache_path); // 失败时删缓存（可能不完整）
+        cleanup_path(&install_path);
+    } else {
+        // 成功：保留 cache_path 供下次复用，不删除
+    }
+
+    manager.remove_install_task(&install_id);
+}
+
+/// 安装用户上传的自定义压缩包
+pub async fn install_custom(
+    app: AppHandle,
+    manager: Arc<SoftwareManager>,
+    params: CustomInstallParams,
+    install_id: String,
+) {
+    let name_trimmed = params.name.trim();
+    let install_path = paths::apps_dir().join("custom").join(name_trimmed);
+    let archive_path = Path::new(&params.archive_path);
+
+    // 校验压缩包存在
+    if !archive_path.exists() {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "压缩包不存在",
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 校验扩展名
+    let path_str = &params.archive_path;
+    let is_zip = path_str.to_lowercase().ends_with(".zip");
+    let is_tar_gz = path_str.to_lowercase().ends_with(".tar.gz")
+        || path_str.to_lowercase().ends_with(".tgz");
+    if !is_zip && !is_tar_gz {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "仅支持 .zip 和 .tar.gz 格式",
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 校验名称字符集（防止路径遍历：仅允许字母、数字、下划线、连字符）
+    if !is_valid_custom_name(name_trimmed) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "名称仅允许字母、数字、下划线、连字符",
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 查重：custom 用 key="custom" + version=name 查重
+    if manager.is_installed("custom", name_trimmed) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("名称 {} 已存在", name_trimmed),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    if let Err(e) = fs::create_dir_all(&install_path) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建安装目录失败: {}", e),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    manager.add_install_task(
+        install_id.clone(),
+        "custom".to_string(),
+        name_trimmed.to_string(),
+    );
+
+    let result: Result<()> = async {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 0
+            }),
+        );
+
+        if is_zip {
+            archive::extract_zip(archive_path, &install_path)?;
+        } else {
+            archive::extract_tar_gz(archive_path, &install_path)?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 100
+            }),
+        );
+
+        let installed_id = uuid::Uuid::new_v4().to_string();
+        let installed_id_for_event = installed_id.clone();
+        let now = Utc::now().naive_utc();
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let installed = InstalledSoftware {
+            id: installed_id,
+            key: "custom".to_string(),
+            version: name_trimmed.to_string(),
+            name: name_trimmed.to_string(),
+            install_path: install_path.to_string_lossy().to_string(),
+            install_time: now,
+            status: SoftwareStatus::Unknown,
+            port: 0,
+            config: serde_json::json!({}),
+            is_custom: true,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Custom { archive_name },
+        };
+        manager.add_installed(installed)?;
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "completed",
+                "installed_id": installed_id_for_event
+            }),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(e) = result {
+        eprintln!(
+            "[software] custom install failed: name={}, error={}",
+            name_trimmed, e
+        );
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "failed",
+                "error": format!("{}", e),
+                "stage": "extract"
+            }),
+        );
+        cleanup_path(&install_path);
+    }
+
+    manager.remove_install_task(&install_id);
+}
+
+/// 从内置 zip 安装（离线安装）
+async fn install_from_builtin(
+    app: AppHandle,
+    manager: Arc<SoftwareManager>,
+    params: InstallParams,
+    install_id: String,
+    entry: &CatalogEntry,
+    version_info: &CatalogVersion,
+    mirror: &MirrorSource,
+) {
+    let builtin = match &mirror.builtin {
+        Some(b) => b,
+        None => return,
+    };
+    let install_path = paths::apps_dir().join(&params.key).join(&params.version);
+
+    // 1. 解析 resource 路径
+    let resource_zip = match app.path().resource_dir() {
+        Ok(d) => d
+            .join("software")
+            .join(&params.key)
+            .join(format!("{}.zip", &params.version)),
+        Err(e) => {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id,
+                    "phase": "failed",
+                    "error": format!("无法定位资源目录: {}", e),
+                    "stage": "extract"
+                }),
+            );
+            return;
+        }
+    };
+
+    // 2. 校验文件存在
+    if !resource_zip.exists() {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "内置安装包缺失，请重新安装应用",
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 3. 查重
+    if manager.is_installed(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 已安装", entry.name, params.version),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+    if manager.is_installing(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 正在安装中", entry.name, params.version),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 4. 创建 install_path
+    if let Err(e) = fs::create_dir_all(&install_path) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建安装目录失败: {}", e),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    manager.add_install_task(
+        install_id.clone(),
+        params.key.clone(),
+        params.version.clone(),
+    );
+
+    let result: Result<()> = async {
+        // 5. sha256 校验（仅当 manifest 提供了非空 sha256）
+        if !builtin.sha256.is_empty() {
+            let computed = compute_sha256(&resource_zip)?;
+            if computed != builtin.sha256.to_lowercase() {
+                return Err(anyhow::anyhow!("内置安装包校验失败，文件可能损坏"));
+            }
+        }
+
+        // 6. 解压（跳过 downloading，直接 extracting）
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 0
+            }),
+        );
+
+        match version_info.archive.format {
+            ArchiveFormat::Zip => archive::extract_zip(&resource_zip, &install_path)?,
+            ArchiveFormat::TarGz => archive::extract_tar_gz(&resource_zip, &install_path)?,
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 50
+            }),
+        );
+
+        // 7. post_install
+        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+            let ctx = InstallContext::new(
+                params.key.clone(),
+                params.version.clone(),
+                install_path.to_string_lossy().to_string(),
+            );
+            provider.post_install(&ctx)?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 100
+            }),
+        );
+
+        // 8. 登记 InstalledSoftware（source = Builtin）
+        let installed_id = uuid::Uuid::new_v4().to_string();
+        let installed_id_for_event = installed_id.clone();
+        let now = Utc::now().naive_utc();
+        let installed = InstalledSoftware {
+            id: installed_id,
+            key: params.key.clone(),
+            version: params.version.clone(),
+            name: format!("{} {}", entry.name, params.version),
+            install_path: install_path.to_string_lossy().to_string(),
+            install_time: now,
+            status: SoftwareStatus::Unknown,
+            port: 0,
+            config: serde_json::json!({}),
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Builtin {
+                version: builtin.version.clone(),
+            },
+        };
+        manager.add_installed(installed)?;
+
+        if params.key == "jre" && params.set_as_default_jre {
+            manager.update_jre_default(Some(installed_id_for_event.clone()))?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "completed",
+                "installed_id": installed_id_for_event
+            }),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(e) = result {
+        eprintln!(
+            "[software] builtin install failed: key={}, version={}, error={}",
+            params.key, params.version, e
+        );
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "failed",
+                "error": format!("{}", e),
+                "stage": "extract"
+            }),
+        );
+        cleanup_path(&install_path);
+    }
+
+    manager.remove_install_task(&install_id);
+}

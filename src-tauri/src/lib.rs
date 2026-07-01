@@ -13,6 +13,7 @@ use tauri::{
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // 单例：第二实例启动时激活已有窗口
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -24,6 +25,16 @@ pub fn run() {
         .setup(|app| {
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
+                // 初始化内置 zip manifest（resource_dir/software/manifest.json）
+                let manifest_path = app
+                    .path()
+                    .resource_dir()
+                    .ok()
+                    .map(|d| d.join("software").join("manifest.json"));
+                if let Some(mp) = manifest_path {
+                    crate::services::software_manager::providers::init_builtin_manifest(&mp);
+                }
+
                 let _ = crate::utils::paths::apps_dir();
                 let _ = crate::utils::paths::config_dir();
                 let _ = crate::utils::paths::data_dir();
@@ -38,6 +49,11 @@ pub fn run() {
                     }
                 }
             }
+
+            // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
+            app.manage(std::sync::Arc::new(
+                crate::services::software_manager::SoftwareManager::new(),
+            ));
 
             #[cfg(desktop)]
             {
@@ -102,6 +118,12 @@ pub fn run() {
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,
+            commands::software::list_available_software,
+            commands::software::refresh_catalog,
+            commands::software::list_installed_software,
+            commands::software::install_software,
+            commands::software::install_custom,
+            commands::software::uninstall_software,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");

@@ -7,7 +7,9 @@ pub mod system;
 mod tests {
     use super::settings::{AppSettings, CloseWindowAction};
     use super::software::{
-        InstallParams, InstalledSoftware, InstalledSoftwareList, SoftwareMeta, SoftwareStatus,
+        ArchiveFormat, ArchiveInfo, Catalog, CatalogEntry, CatalogVersion, CustomInstallParams,
+        InstallParams, InstallSource, InstalledSoftware, InstalledSoftwareList, MirrorSource,
+        SoftwareCategory, SoftwareMeta, SoftwareStatus,
     };
     use super::springboot::{AppGroup, AppStatus, JvmInfo, SpringApp, SpringAppList};
     use super::system::{DiskInfo, HistoryPoint, NetworkInfo, SystemInfo};
@@ -116,11 +118,16 @@ mod tests {
             is_custom: false,
             auto_start_on_app_start: true,
             startup_order: 10,
+            source: InstallSource::Mirror {
+                mirror_name: "清华镜像".to_string(),
+                url: "https://example.com/mysql.zip".to_string(),
+            },
         };
         let params = InstallParams {
             key: "mysql".to_string(),
             version: "8.0".to_string(),
-            install_path: "apps/mysql".to_string(),
+            mirror_index: 0,
+            set_as_default_jre: false,
         };
 
         let meta_roundtrip = assert_json_roundtrip(&meta);
@@ -130,7 +137,56 @@ mod tests {
         assert_eq!(meta_roundtrip.default_version, "8.0");
         assert_eq!(software_roundtrip.status, SoftwareStatus::Running);
         assert_eq!(software_roundtrip.startup_order, 10);
-        assert_eq!(params_roundtrip.install_path, "apps/mysql");
+        assert_eq!(params_roundtrip.mirror_index, 0);
+
+        // Catalog / 安装来源相关模型的 round-trip
+        let catalog_entry = CatalogEntry {
+            key: "mysql".to_string(),
+            name: "MySQL".to_string(),
+            description: "Relational database".to_string(),
+            category: SoftwareCategory::Database,
+            icon: "mysql.svg".to_string(),
+            versions: vec![CatalogVersion {
+                version: "8.0".to_string(),
+                mirrors: vec![MirrorSource {
+                    name: "清华镜像".to_string(),
+                    url: "https://example.com/mysql.zip".to_string(),
+                    builtin: None,
+                }],
+                archive: ArchiveInfo {
+                    format: ArchiveFormat::Zip,
+                    size: Some(1024),
+                    sha256: Some(
+                        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                            .to_string(),
+                    ),
+                },
+            }],
+            default_version: "8.0".to_string(),
+        };
+        let catalog = Catalog {
+            entries: vec![catalog_entry],
+            updated_at: Some("2026-06-30T00:00:00Z".to_string()),
+        };
+        let custom_params = CustomInstallParams {
+            name: "自定义 JRE".to_string(),
+            archive_path: "D:/uploads/jdk.tar.gz".to_string(),
+        };
+
+        let catalog_roundtrip = assert_json_roundtrip(&catalog);
+        let custom_params_roundtrip = assert_json_roundtrip(&custom_params);
+
+        assert_eq!(catalog_roundtrip.entries.len(), 1);
+        assert_eq!(
+            catalog_roundtrip.entries[0].category,
+            SoftwareCategory::Database
+        );
+        assert_eq!(
+            catalog_roundtrip.entries[0].versions[0].archive.format,
+            ArchiveFormat::Zip
+        );
+        assert_eq!(catalog_roundtrip.updated_at.as_deref(), Some("2026-06-30T00:00:00Z"));
+        assert_eq!(custom_params_roundtrip.name, "自定义 JRE");
     }
 
     #[test]
