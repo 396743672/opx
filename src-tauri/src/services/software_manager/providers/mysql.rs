@@ -36,16 +36,8 @@ impl SoftwareProvider for MySqlProvider {
                 version: "8.4.0".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "清华镜像".to_string(),
-                        url: "https://mirrors.tuna.tsinghua.edu.cn/mysql/downloads/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
-                    },
-                    MirrorSource {
-                        name: "华为镜像".to_string(),
-                        url: "https://mirrors.huaweicloud.com/mysql/Downloads/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
-                    },
-                    MirrorSource {
-                        name: "官方".to_string(),
-                        url: "https://dev.mysql.com/get/Downloads/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
+                        name: "MySQL 官方 CDN".to_string(),
+                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
                     },
                 ],
                 archive: ArchiveInfo {
@@ -58,12 +50,8 @@ impl SoftwareProvider for MySqlProvider {
                 version: "8.0.36".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "清华镜像".to_string(),
-                        url: "https://mirrors.tuna.tsinghua.edu.cn/mysql/downloads/mysql-8.0/mysql-8.0.36-winx64.zip".to_string(),
-                    },
-                    MirrorSource {
-                        name: "华为镜像".to_string(),
-                        url: "https://mirrors.huaweicloud.com/mysql/Downloads/mysql-8.0/mysql-8.0.36-winx64.zip".to_string(),
+                        name: "MySQL 官方 CDN".to_string(),
+                        url: "https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.36-winx64.zip".to_string(),
                     },
                 ],
                 archive: ArchiveInfo {
@@ -80,12 +68,8 @@ impl SoftwareProvider for MySqlProvider {
                 version: "8.4.0".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "清华镜像".to_string(),
-                        url: "https://mirrors.tuna.tsinghua.edu.cn/mysql/downloads/mysql-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.gz".to_string(),
-                    },
-                    MirrorSource {
-                        name: "华为镜像".to_string(),
-                        url: "https://mirrors.huaweicloud.com/mysql/Downloads/mysql-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.gz".to_string(),
+                        name: "MySQL 官方 CDN".to_string(),
+                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.gz".to_string(),
                     },
                 ],
                 archive: ArchiveInfo {
@@ -108,12 +92,23 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        let my_ini_path = ctx.install_dir().join("my.ini");
+        // MySQL zip 解压后包含 mysql-{version}-winx64 子目录
+        // my.ini 应放在该子目录内（MySQL 程序目录根），basedir/datadir 也指向该子目录
+        let mysql_subdir_name = format!("mysql-{}-winx64", ctx.version);
+        let mysql_dir = ctx.install_dir().join(&mysql_subdir_name);
+
+        let (my_ini_path, basedir) = if mysql_dir.is_dir() {
+            (mysql_dir.join("my.ini"), mysql_dir)
+        } else {
+            // 兜底：解压结构不同时，放到 install_dir 根
+            (ctx.install_dir().join("my.ini"), ctx.install_dir().to_path_buf())
+        };
+
+        let basedir_forward = basedir.to_string_lossy().replace('\\', "/");
         let mut file = File::create(&my_ini_path)?;
-        let install_path_forward = ctx.install_path.replace('\\', "/");
         let content = format!(
             "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\nport=3306\nbasedir={}\ndatadir={}/data\ncharacter-set-server=utf8mb4\ndefault-storage-engine=INNODB\n",
-            install_path_forward, install_path_forward
+            basedir_forward, basedir_forward
         );
         file.write_all(content.as_bytes())?;
         Ok(())

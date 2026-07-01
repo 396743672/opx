@@ -1,6 +1,7 @@
 <template>
-  <div class="overlay" @click.self="$emit('cancel')">
-    <div class="dialog">
+  <Teleport to="body">
+    <div class="overlay" @click.self="$emit('cancel')">
+      <div class="dialog">
       <div class="dialog-head">
         <div class="dialog-title">
           <Icon icon="mdi:plus-box" />
@@ -47,6 +48,7 @@
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

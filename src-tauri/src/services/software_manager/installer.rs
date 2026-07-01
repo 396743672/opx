@@ -276,6 +276,10 @@ pub async fn install_software(
     .await;
 
     if let Err(e) = result {
+        eprintln!(
+            "[software] install failed: key={}, version={}, error={}",
+            params.key, params.version, e
+        );
         emit_event(
             &app,
             serde_json::json!({
@@ -448,6 +452,10 @@ pub async fn install_custom(
     .await;
 
     if let Err(e) = result {
+        eprintln!(
+            "[software] custom install failed: name={}, error={}",
+            name_trimmed, e
+        );
         emit_event(
             &app,
             serde_json::json!({

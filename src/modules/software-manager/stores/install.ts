@@ -21,7 +21,10 @@ export const useInstallStore = defineStore('install', () => {
 
   const activeTasks = computed(() => {
     return Object.values(tasks.value).filter(
-      (t) => t.phase === 'downloading' || t.phase === 'extracting',
+      (t) =>
+        t.phase === 'downloading' ||
+        t.phase === 'extracting' ||
+        t.phase === 'failed',
     )
   })
 
@@ -43,6 +46,10 @@ export const useInstallStore = defineStore('install', () => {
     }
   }
 
+  function removeTask(id: string) {
+    delete tasks.value[id]
+  }
+
   function updateTask(id: string, payload: any) {
     const task = tasks.value[id]
     if (!task) return
@@ -62,6 +69,10 @@ export const useInstallStore = defineStore('install', () => {
       }, 3000)
     } else if (payload.phase === 'failed') {
       task.error = payload.error ?? '未知错误'
+      // 失败 8 秒后清理，给用户时间查看错误信息
+      setTimeout(() => {
+        delete tasks.value[id]
+      }, 8000)
     }
   }
 
@@ -91,6 +102,7 @@ export const useInstallStore = defineStore('install', () => {
     hasActiveTask,
     createTask,
     updateTask,
+    removeTask,
     initEvents,
     cleanup,
   }

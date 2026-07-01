@@ -1,6 +1,7 @@
 <template>
-  <div class="overlay" @click.self="$emit('cancel')">
-    <div class="dialog">
+  <Teleport to="body">
+    <div class="overlay" @click.self="$emit('cancel')">
+      <div class="dialog">
       <div class="dialog-head">
         <div class="dialog-title">
           <Icon icon="mdi:play-circle" />
@@ -22,7 +23,7 @@
             @click="selectedVersionIdx = idx"
           >
             <span class="v-name">{{ v.version }}</span>
-            <span v-if="v.version === entry.default_version" class="v-badge">{{ $t('latestVersion') }}</span>
+            <span v-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
             <Icon v-if="selectedVersionIdx === idx" icon="mdi:check" class="v-check" />
           </div>
         </div>
@@ -65,6 +66,7 @@
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

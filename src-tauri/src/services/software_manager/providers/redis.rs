@@ -31,15 +31,11 @@ impl SoftwareProvider for RedisProvider {
         #[cfg(windows)]
         {
             versions.push(CatalogVersion {
-                version: "7.4.0".to_string(),
+                version: "8.8.0".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "华为镜像".to_string(),
-                        url: "https://mirrors.huaweicloud.com/redis-for-windows/7.4.0/redis-7.4.0-windows-x64.zip".to_string(),
-                    },
-                    MirrorSource {
-                        name: "GitHub Releases".to_string(),
-                        url: "https://github.com/redis/redis-windows/releases/download/7.4.0/redis-7.4.0-windows-x64.zip".to_string(),
+                        name: "redis-windows GitHub".to_string(),
+                        url: "https://github.com/redis-windows/redis-windows/releases/download/8.8.0/Redis-8.8.0-Windows-x64-cygwin.zip".to_string(),
                     },
                 ],
                 archive: ArchiveInfo {
@@ -49,11 +45,27 @@ impl SoftwareProvider for RedisProvider {
                 },
             });
             versions.push(CatalogVersion {
-                version: "7.2.4".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "华为镜像".to_string(),
-                    url: "https://mirrors.huaweicloud.com/redis-for-windows/7.2.4/redis-7.2.4-windows-x64.zip".to_string(),
-                }],
+                version: "8.2.7".to_string(),
+                mirrors: vec![
+                    MirrorSource {
+                        name: "redis-windows GitHub".to_string(),
+                        url: "https://github.com/redis-windows/redis-windows/releases/download/8.2.7/Redis-8.2.7-Windows-x64-cygwin.zip".to_string(),
+                    },
+                ],
+                archive: ArchiveInfo {
+                    format: ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            });
+            versions.push(CatalogVersion {
+                version: "7.4.9".to_string(),
+                mirrors: vec![
+                    MirrorSource {
+                        name: "redis-windows GitHub".to_string(),
+                        url: "https://github.com/redis-windows/redis-windows/releases/download/7.4.9/Redis-7.4.9-Windows-x64-cygwin.zip".to_string(),
+                    },
+                ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     size: None,
@@ -65,7 +77,7 @@ impl SoftwareProvider for RedisProvider {
         #[cfg(unix)]
         {
             versions.push(CatalogVersion {
-                version: "7.4.0".to_string(),
+                version: "8.8.0".to_string(),
                 mirrors: vec![],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::TarGz,
@@ -82,7 +94,7 @@ impl SoftwareProvider for RedisProvider {
             category: SoftwareCategory::Cache,
             icon: "mdi:database".to_string(),
             versions,
-            default_version: "7.4.0".to_string(),
+            default_version: "8.8.0".to_string(),
         }
     }
 

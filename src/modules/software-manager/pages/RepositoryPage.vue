@@ -91,6 +91,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -114,6 +115,8 @@ const showCustomDialog = ref(false)
 const selectedEntry = ref<CatalogEntry | null>(null)
 const installedList = ref<InstalledSoftware[]>([])
 const defaultJreId = ref<string | null>(null)
+
+let completedUnlisten: UnlistenFn | null = null
 
 function getInstalledVersion(key: string): string | null {
   const found = installedList.value.find((s) => s.key === key && !s.is_custom)
@@ -178,10 +181,22 @@ onMounted(async () => {
   await loadInstalled()
   await loadDefaultJre()
   await installStore.initEvents()
+  // 监听安装完成事件，自动刷新已安装列表与默认 JRE
+  completedUnlisten = await listen('install-progress', (event) => {
+    const payload = event.payload as any
+    if (payload.phase === 'completed') {
+      loadInstalled()
+      loadDefaultJre()
+    }
+  })
 })
 
 onUnmounted(() => {
   installStore.cleanup()
+  if (completedUnlisten) {
+    completedUnlisten()
+    completedUnlisten = null
+  }
 })
 </script>
 
