@@ -23,7 +23,7 @@
             @click="selectedVersionIdx = idx"
           >
             <span class="v-name">{{ v.version }}</span>
-            <span v-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
+            <span v-if="v.version === entry.default_version && entry.key !== 'jre' && !v.mirrors.some((m: any) => m.builtin)" class="v-badge">{{ $t('latestVersion') }}</span>
             <Icon v-if="selectedVersionIdx === idx" icon="mdi:check" class="v-check" />
           </div>
         </div>
