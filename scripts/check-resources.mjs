@@ -31,8 +31,8 @@ const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
 
 for (const [key, versions] of Object.entries(manifest)) {
   for (const [version, info] of Object.entries(versions)) {
-    // 文件扩展名：minio 用 .exe，其他用 .zip
-    const ext = key === 'minio' ? '.exe' : '.zip'
+    // 文件扩展名：统一用 .zip（minio 内置是 zip，rustfs/jre/mysql/redis/nginx 也是 zip）
+    const ext = '.zip'
     const zipPath = join(RESOURCES_DIR, key, `${version}${ext}`)
     if (!existsSync(zipPath)) {
       console.error(`✗ 缺失: ${key}/${version}${ext}`)

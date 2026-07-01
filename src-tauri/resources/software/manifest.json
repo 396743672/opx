@@ -28,9 +28,9 @@
     }
   },
   "minio": {
-    "latest": {
-      "sha256": "8157de6c77c01deb4a9ad24d84f47c5e407eb5a5622b0e54c2bb3d7ede67a3ad",
-      "size": 52350696
+    "RELEASE.2021-04-22": {
+      "sha256": "5359e0ebf24e5c0c86cd90f4dfddeced1b8163ea2d875fdab706232ac5ea83ea",
+      "size": 16328790
     }
   },
   "rustfs": {

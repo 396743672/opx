@@ -32,6 +32,7 @@ impl SoftwareProvider for RustfsProvider {
 
         #[cfg(windows)]
         {
+            // 版本 1：1.0.0-beta.8（内置 zip，离线）
             versions.push(CatalogVersion {
                 version: "1.0.0-beta.8".to_string(),
                 mirrors: {
@@ -53,13 +54,22 @@ impl SoftwareProvider for RustfsProvider {
                             size: size,
                         }),
                     });
-                    m.push(MirrorSource {
-                        name: "RustFS 官方".to_string(),
-                        url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-latest.zip".to_string(),
-                        builtin: None,
-                    });
                     m
                 },
+                archive: ArchiveInfo {
+                    format: ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            });
+            // 版本 2：latest（网络 zip）
+            versions.push(CatalogVersion {
+                version: "latest".to_string(),
+                mirrors: vec![MirrorSource {
+                    name: "RustFS 官方".to_string(),
+                    url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-latest.zip".to_string(),
+                    builtin: None,
+                }],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     size: None,
@@ -102,7 +112,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rustfs_has_builtin_as_first_mirror() {
+    fn rustfs_has_two_versions() {
+        let entry = RustfsProvider::new().catalog_entry();
+        assert_eq!(entry.versions.len(), 2);
+        let versions: Vec<_> = entry.versions.iter().map(|v| v.version.as_str()).collect();
+        assert!(versions.contains(&"1.0.0-beta.8"));
+        assert!(versions.contains(&"latest"));
+    }
+
+    #[test]
+    fn rustfs_beta_version_has_builtin_zip() {
         let entry = RustfsProvider::new().catalog_entry();
         let v = entry
             .versions
@@ -110,20 +129,24 @@ mod tests {
             .find(|v| v.version == "1.0.0-beta.8")
             .expect("应有 1.0.0-beta.8 版本");
         assert!(v.mirrors[0].builtin.is_some());
-        assert_eq!(
-            v.mirrors[0].builtin.as_ref().unwrap().version,
-            "1.0.0-beta.8"
-        );
+        assert_eq!(v.archive.format, ArchiveFormat::Zip);
     }
 
     #[test]
-    fn rustfs_uses_zip_format() {
+    fn rustfs_latest_version_is_network_zip() {
         let entry = RustfsProvider::new().catalog_entry();
         let v = entry
             .versions
             .iter()
-            .find(|v| v.version == "1.0.0-beta.8")
-            .expect("应有 1.0.0-beta.8 版本");
+            .find(|v| v.version == "latest")
+            .expect("应有 latest 版本");
+        assert!(v.mirrors[0].builtin.is_none());
         assert_eq!(v.archive.format, ArchiveFormat::Zip);
+    }
+
+    #[test]
+    fn rustfs_default_version_is_beta() {
+        let entry = RustfsProvider::new().catalog_entry();
+        assert_eq!(entry.default_version, "1.0.0-beta.8");
     }
 }
