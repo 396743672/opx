@@ -239,8 +239,18 @@ onUnmounted(() => {
 }
 .sw-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
+}
+@media (max-width: 1100px) {
+  .sw-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .sw-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .custom-card {
   border: 1px dashed var(--color-border);
