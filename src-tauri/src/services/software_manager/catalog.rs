@@ -81,6 +81,7 @@ mod tests {
                 mirrors: vec![MirrorSource {
                     name: "test".to_string(),
                     url: "https://example.com/test.zip".to_string(),
+                    builtin: None,
                 }],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,

@@ -38,6 +38,7 @@ impl SoftwareProvider for MySqlProvider {
                     MirrorSource {
                         name: "MySQL 官方 CDN".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -52,6 +53,7 @@ impl SoftwareProvider for MySqlProvider {
                     MirrorSource {
                         name: "MySQL 官方 CDN".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.36-winx64.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {

@@ -151,6 +151,7 @@ mod tests {
                 mirrors: vec![MirrorSource {
                     name: "清华镜像".to_string(),
                     url: "https://example.com/mysql.zip".to_string(),
+                    builtin: None,
                 }],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,

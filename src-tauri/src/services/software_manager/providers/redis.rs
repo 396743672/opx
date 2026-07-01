@@ -36,6 +36,7 @@ impl SoftwareProvider for RedisProvider {
                     MirrorSource {
                         name: "redis-windows GitHub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/8.8.0/Redis-8.8.0-Windows-x64-cygwin.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -50,6 +51,7 @@ impl SoftwareProvider for RedisProvider {
                     MirrorSource {
                         name: "redis-windows GitHub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/8.2.7/Redis-8.2.7-Windows-x64-cygwin.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -64,6 +66,7 @@ impl SoftwareProvider for RedisProvider {
                     MirrorSource {
                         name: "redis-windows GitHub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/7.4.9/Redis-7.4.9-Windows-x64-cygwin.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {

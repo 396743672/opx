@@ -15,9 +15,18 @@ pub struct ArchiveInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuiltinInfo {
+    pub version: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MirrorSource {
     pub name: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<BuiltinInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,11 +75,14 @@ impl Default for SoftwareStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum InstallSource {
     Mirror {
         mirror_name: String,
         url: String,
+    },
+    Builtin {
+        version: String,
     },
     Custom {
         archive_name: String,
@@ -129,4 +141,57 @@ pub struct SoftwareMeta {
     pub description: String,
     pub available_versions: Vec<String>,
     pub default_version: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuiltinInfo, InstallSource, MirrorSource};
+
+    #[test]
+    fn mirror_source_with_builtin_serializes_correctly() {
+        let mirror = MirrorSource {
+            name: "内置默认版本（离线）".to_string(),
+            url: "builtin://software/jre/17.0.15.zip".to_string(),
+            builtin: Some(BuiltinInfo {
+                version: "17.0.15".to_string(),
+                sha256: "abc123".to_string(),
+                size: 43478873,
+            }),
+        };
+        let json = serde_json::to_string(&mirror).unwrap();
+        assert!(json.contains("\"builtin\""));
+        assert!(json.contains("\"sha256\":\"abc123\""));
+
+        let deserialized: MirrorSource = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.builtin.is_some());
+        assert_eq!(deserialized.builtin.unwrap().sha256, "abc123");
+    }
+
+    #[test]
+    fn mirror_source_without_builtin_omits_field() {
+        let mirror = MirrorSource {
+            name: "Adoptium(清华)".to_string(),
+            url: "https://github.com/...".to_string(),
+            builtin: None,
+        };
+        let json = serde_json::to_string(&mirror).unwrap();
+        // None 字段应被 skip_serializing_if 跳过，不出现在 JSON 中
+        assert!(!json.contains("builtin"));
+    }
+
+    #[test]
+    fn install_source_builtin_serializes_correctly() {
+        let source = InstallSource::Builtin {
+            version: "17.0.15".to_string(),
+        };
+        let json = serde_json::to_string(&source).unwrap();
+        assert!(json.contains("\"Builtin\""));
+        assert!(json.contains("\"version\":\"17.0.15\""));
+
+        let deserialized: InstallSource = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            InstallSource::Builtin { version } => assert_eq!(version, "17.0.15"),
+            _ => panic!("应反序列化为 Builtin 变体"),
+        }
+    }
 }

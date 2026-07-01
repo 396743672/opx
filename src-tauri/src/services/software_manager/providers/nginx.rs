@@ -36,10 +36,12 @@ impl SoftwareProvider for NginxProvider {
                     MirrorSource {
                         name: "华为镜像".to_string(),
                         url: "https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip".to_string(),
+                        builtin: None,
                     },
                     MirrorSource {
                         name: "官方".to_string(),
                         url: "https://nginx.org/download/nginx-1.31.2.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {

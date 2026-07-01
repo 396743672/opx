@@ -36,6 +36,7 @@ impl SoftwareProvider for JreProvider {
                     MirrorSource {
                         name: "Adoptium(清华)".to_string(),
                         url: "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_windows_hotspot_21.0.2_13.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -50,6 +51,7 @@ impl SoftwareProvider for JreProvider {
                     MirrorSource {
                         name: "Adoptium(清华)".to_string(),
                         url: "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jre_x64_windows_hotspot_17.0.10_7.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -64,6 +66,7 @@ impl SoftwareProvider for JreProvider {
                     MirrorSource {
                         name: "Adoptium(清华)".to_string(),
                         url: "https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.22%2B7/OpenJDK11U-jre_x64_windows_hotspot_11.0.22_7.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
@@ -78,6 +81,7 @@ impl SoftwareProvider for JreProvider {
                     MirrorSource {
                         name: "Adoptium(清华)".to_string(),
                         url: "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u422-b05/OpenJDK8U-jre_x64_windows_hotspot_8u422b05.zip".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
