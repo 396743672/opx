@@ -4,10 +4,11 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::software::{
-    CustomInstallParams, InstallParams, InstallSource, InstalledSoftware, SoftwareStatus,
+    CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
+    InstalledSoftware, MirrorSource, SoftwareStatus,
 };
 use crate::models::software::ArchiveFormat;
 use crate::services::software_manager::providers::{all_providers, InstallContext};
@@ -111,6 +112,21 @@ pub async fn install_software(
         return;
     }
     let mirror = &version_info.mirrors[params.mirror_index];
+
+    // builtin 分流：若选中的镜像带 builtin 标记，走本地解压
+    if mirror.builtin.is_some() {
+        install_from_builtin(
+            app,
+            manager,
+            params,
+            install_id,
+            entry,
+            version_info,
+            mirror,
+        )
+        .await;
+        return;
+    }
 
     if manager.is_installed(&params.key, &params.version) {
         emit_event(
@@ -469,4 +485,241 @@ pub async fn install_custom(
     }
 
     manager.remove_install_task(&install_id);
+}
+
+/// 从内置 zip 安装（离线安装）
+async fn install_from_builtin(
+    app: AppHandle,
+    manager: Arc<SoftwareManager>,
+    params: InstallParams,
+    install_id: String,
+    entry: &CatalogEntry,
+    version_info: &CatalogVersion,
+    mirror: &MirrorSource,
+) {
+    let builtin = match &mirror.builtin {
+        Some(b) => b,
+        None => return,
+    };
+    let install_path = paths::apps_dir().join(&params.key).join(&params.version);
+
+    // 1. 解析 resource 路径
+    let resource_zip = match app.path().resource_dir() {
+        Ok(d) => d
+            .join("software")
+            .join(&params.key)
+            .join(format!("{}.zip", &params.version)),
+        Err(e) => {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id,
+                    "phase": "failed",
+                    "error": format!("无法定位资源目录: {}", e),
+                    "stage": "extract"
+                }),
+            );
+            return;
+        }
+    };
+
+    // 2. 校验文件存在
+    if !resource_zip.exists() {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": "内置安装包缺失，请重新安装应用",
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 3. 查重
+    if manager.is_installed(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 已安装", entry.name, params.version),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+    if manager.is_installing(&params.key, &params.version) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("{} {} 正在安装中", entry.name, params.version),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    // 4. 创建 install_path
+    if let Err(e) = fs::create_dir_all(&install_path) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建安装目录失败: {}", e),
+                "stage": "extract"
+            }),
+        );
+        return;
+    }
+
+    manager.add_install_task(
+        install_id.clone(),
+        params.key.clone(),
+        params.version.clone(),
+    );
+
+    let result: Result<()> = async {
+        // 5. sha256 校验（仅当 manifest 提供了非空 sha256）
+        if !builtin.sha256.is_empty() {
+            let computed = compute_sha256(&resource_zip)?;
+            if computed != builtin.sha256.to_lowercase() {
+                return Err(anyhow::anyhow!("内置安装包校验失败，文件可能损坏"));
+            }
+        }
+
+        // 6. 解压（跳过 downloading，直接 extracting）
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 0
+            }),
+        );
+
+        match version_info.archive.format {
+            ArchiveFormat::Zip => archive::extract_zip(&resource_zip, &install_path)?,
+            ArchiveFormat::TarGz => archive::extract_tar_gz(&resource_zip, &install_path)?,
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 50
+            }),
+        );
+
+        // 7. post_install
+        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+            let ctx = InstallContext::new(
+                params.key.clone(),
+                params.version.clone(),
+                install_path.to_string_lossy().to_string(),
+            );
+            provider.post_install(&ctx)?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "extracting",
+                "percent": 100
+            }),
+        );
+
+        // 8. 登记 InstalledSoftware（source = Builtin）
+        let installed_id = uuid::Uuid::new_v4().to_string();
+        let installed_id_for_event = installed_id.clone();
+        let now = Utc::now().naive_utc();
+        let installed = InstalledSoftware {
+            id: installed_id,
+            key: params.key.clone(),
+            version: params.version.clone(),
+            name: format!("{} {}", entry.name, params.version),
+            install_path: install_path.to_string_lossy().to_string(),
+            install_time: now,
+            status: SoftwareStatus::Unknown,
+            port: 0,
+            config: serde_json::json!({}),
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Builtin {
+                version: builtin.version.clone(),
+            },
+        };
+        manager.add_installed(installed)?;
+
+        if params.key == "jre" && params.set_as_default_jre {
+            manager.update_jre_default(Some(installed_id_for_event.clone()))?;
+        }
+
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "completed",
+                "installed_id": installed_id_for_event
+            }),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(e) = result {
+        eprintln!(
+            "[software] builtin install failed: key={}, version={}, error={}",
+            params.key, params.version, e
+        );
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id.clone(),
+                "phase": "failed",
+                "error": format!("{}", e),
+                "stage": "extract"
+            }),
+        );
+        cleanup_path(&install_path);
+    }
+
+    manager.remove_install_task(&install_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::software::{BuiltinInfo, MirrorSource};
+
+    #[test]
+    fn mirror_with_builtin_is_detected() {
+        let mirror = MirrorSource {
+            name: "内置".to_string(),
+            url: "builtin://software/jre/17.0.15.zip".to_string(),
+            builtin: Some(BuiltinInfo {
+                version: "17.0.15".to_string(),
+                sha256: "abc".to_string(),
+                size: 100,
+            }),
+        };
+        assert!(mirror.builtin.is_some());
+    }
+
+    #[test]
+    fn mirror_without_builtin_is_detected() {
+        let mirror = MirrorSource {
+            name: "网络".to_string(),
+            url: "https://example.com/test.zip".to_string(),
+            builtin: None,
+        };
+        assert!(mirror.builtin.is_none());
+    }
 }
