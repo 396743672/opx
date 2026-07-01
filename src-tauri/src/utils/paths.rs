@@ -56,6 +56,12 @@ pub fn logs_dir() -> PathBuf {
     ensure_dir(&app_root(), "logs", "logs")
 }
 
+/// 内置 zip 的相对路径（相对于 resource_dir）
+/// 返回 "software/{key}/{version}.zip"
+pub fn builtin_zip_relative(key: &str, version: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("software/{}/{}.zip", key, version))
+}
+
 /// 通用辅助：在指定 root 下解析 name。
 /// name 空时返回 root 本身，否则返回 root.join(name)。
 pub fn resolve_under(root: &Path, name: &str) -> PathBuf {
@@ -112,5 +118,17 @@ mod tests {
         let root = app_root();
         assert_eq!(resolve_under(&root, ""), root);
         assert_eq!(resolve_under(&root, "foo"), root.join("foo"));
+    }
+
+    #[test]
+    fn builtin_zip_relative_returns_correct_path() {
+        let p = builtin_zip_relative("jre", "17.0.15");
+        assert_eq!(p.to_string_lossy(), "software/jre/17.0.15.zip");
+
+        let p2 = builtin_zip_relative("mysql", "8.4.0");
+        assert_eq!(p2.to_string_lossy(), "software/mysql/8.4.0.zip");
+
+        let p3 = builtin_zip_relative("nginx", "1.31.2");
+        assert_eq!(p3.to_string_lossy(), "software/nginx/1.31.2.zip");
     }
 }
