@@ -8,7 +8,7 @@
  *   node scripts/fetch-builtin.mjs --force  # 强制重新下载
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -32,6 +32,14 @@ const BUILTIN = {
   },
   nginx: {
     '1.31.2': 'https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip',
+  },
+  minio: {
+    // MinIO 本地 exe（非 zip），从本地路径复制
+    latest: { localPath: 'D:/软件/onlilne/minio/minio.exe' },
+  },
+  rustfs: {
+    '1.0.0-beta.8':
+      'https://github.com/rustfs/rustfs/releases/download/1.0.0-beta.8/rustfs-windows-x86_64-latest.zip',
   },
 }
 
@@ -77,17 +85,38 @@ async function main() {
 
   for (const [key, versions] of Object.entries(BUILTIN)) {
     manifest[key] = {}
-    for (const [version, url] of Object.entries(versions)) {
+    for (const [version, source] of Object.entries(versions)) {
       const keyDir = join(RESOURCES_DIR, key)
       mkdirSync(keyDir, { recursive: true })
-      const zipPath = join(keyDir, `${version}.zip`)
+      // 文件扩展名：minio 用 .exe，其他用 .zip
+      const ext = key === 'minio' ? '.exe' : '.zip'
+      const zipPath = join(keyDir, `${version}${ext}`)
+
+      // source 可能是 URL 字符串或 { localPath: "..." } 对象
+      const isLocal = typeof source === 'object' && source !== null && source.localPath
+      const localPath = isLocal ? source.localPath : null
+      const url = isLocal ? null : source
 
       if (existsSync(zipPath) && !force) {
-        console.log(`✓ 跳过已存在: ${key}/${version}.zip`)
+        console.log(`✓ 跳过已存在: ${key}/${version}${ext}`)
+      } else if (isLocal) {
+        if (!existsSync(localPath)) {
+          console.error(`✗ 本地源文件不存在: ${localPath}`)
+          console.error(`  跳过 ${key}/${version}，请手动提供文件`)
+          continue
+        }
+        console.log(`📄 复制本地文件: ${key}/${version}${ext}`)
+        console.log(`  源: ${localPath}`)
+        copyFileSync(localPath, zipPath)
       } else {
-        console.log(`↓ 下载: ${key}/${version}.zip`)
+        console.log(`↓ 下载: ${key}/${version}${ext}`)
         console.log(`  URL: ${url}`)
         await download(url, zipPath)
+      }
+
+      if (!existsSync(zipPath)) {
+        // 本地源缺失时跳过，不生成 manifest 条目
+        continue
       }
 
       const hash = sha256(zipPath)

@@ -7,6 +7,8 @@ pub mod mysql;
 pub mod jre;
 pub mod redis;
 pub mod nginx;
+pub mod minio;
+pub mod rustfs;
 
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
@@ -98,6 +100,8 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(jre::JreProvider::new()),
         Box::new(redis::RedisProvider::new()),
         Box::new(nginx::NginxProvider::new()),
+        Box::new(minio::MinioProvider::new()),
+        Box::new(rustfs::RustfsProvider::new()),
     ]
 }
 

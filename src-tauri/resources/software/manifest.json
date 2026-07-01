@@ -26,5 +26,17 @@
       "sha256": "e69cc6f99962ba0a75b55e5e72514a13e2e3d284a9728e4890ac1073f8f8ca6a",
       "size": 2780911
     }
+  },
+  "minio": {
+    "latest": {
+      "sha256": "8157de6c77c01deb4a9ad24d84f47c5e407eb5a5622b0e54c2bb3d7ede67a3ad",
+      "size": 52350696
+    }
+  },
+  "rustfs": {
+    "1.0.0-beta.8": {
+      "sha256": "8f377e2123f4d460be9d812f725cc7658d2e1a7b5de17347a98dc04984a17095",
+      "size": 87706760
+    }
   }
 }

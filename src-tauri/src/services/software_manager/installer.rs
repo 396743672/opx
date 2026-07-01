@@ -252,6 +252,15 @@ pub async fn install_software(
         match version_info.archive.format {
             ArchiveFormat::Zip => archive::extract_zip(&cache_path, &install_path)?,
             ArchiveFormat::TarGz => archive::extract_tar_gz(&cache_path, &install_path)?,
+            ArchiveFormat::Executable => {
+                // 单个可执行文件：直接复制到 install_path 下，文件名用 cache_path 的文件名
+                let dest_file = install_path.join(
+                    cache_path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
+                );
+                fs::copy(&cache_path, &dest_file)?;
+            }
         }
 
         emit_event(
@@ -637,6 +646,15 @@ async fn install_from_builtin(
         match version_info.archive.format {
             ArchiveFormat::Zip => archive::extract_zip(&resource_zip, &install_path)?,
             ArchiveFormat::TarGz => archive::extract_tar_gz(&resource_zip, &install_path)?,
+            ArchiveFormat::Executable => {
+                // 单个可执行文件：直接复制到 install_path 下，文件名用 resource_zip 的文件名
+                let dest_file = install_path.join(
+                    resource_zip
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
+                );
+                fs::copy(&resource_zip, &dest_file)?;
+            }
         }
 
         emit_event(

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum ArchiveFormat {
     Zip,
     TarGz,
+    Executable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
