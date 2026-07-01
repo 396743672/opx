@@ -32,7 +32,9 @@
       <div class="field">
         <div class="field-label">{{ $t('selectMirror') }}</div>
         <div class="select" @click="showMirrorDropdown = !showMirrorDropdown">
+          <Icon v-if="selectedMirror?.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
           <span>{{ selectedMirror?.name }}</span>
+          <span v-if="selectedMirror?.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           <Icon icon="mdi:chevron-down" class="caret" />
         </div>
         <div v-if="showMirrorDropdown" class="dropdown">
@@ -43,7 +45,9 @@
             :class="{ selected: selectedMirrorIdx === idx }"
             @click="selectMirror(idx)"
           >
-            {{ m.name }}
+            <Icon v-if="m.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
+            <span>{{ m.name }}</span>
+            <span v-if="m.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           </div>
         </div>
       </div>
@@ -193,8 +197,11 @@ async function install() {
   font-size: 13px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   cursor: pointer;
+}
+.select span:first-of-type {
+  flex: 1;
 }
 .select:hover {
   border-color: var(--color-primary);
@@ -268,6 +275,9 @@ async function install() {
   padding: 8px 12px;
   cursor: pointer;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .dropdown-item:hover {
   background: var(--color-muted);
@@ -311,5 +321,19 @@ async function install() {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.builtin-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+.builtin-tag {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
 }
 </style>
