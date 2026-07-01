@@ -123,6 +123,7 @@ pub fn run() {
             commands::software::list_installed_software,
             commands::software::install_software,
             commands::software::install_custom,
+            commands::software::uninstall_software,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");

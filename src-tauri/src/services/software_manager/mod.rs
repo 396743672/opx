@@ -88,6 +88,44 @@ impl SoftwareManager {
         Ok(())
     }
 
+    /// 卸载已安装软件：删除安装目录 + 从 installed.json 移除记录 + 若是默认 JRE 则清除
+    /// 返回被移除的 InstalledSoftware（供命令层用），找不到返回 Err
+    pub fn remove_installed(&self, installed_id: &str) -> Result<InstalledSoftware> {
+        let removed;
+        {
+            let mut installed = self.installed.write().unwrap();
+            let pos = installed
+                .software
+                .iter()
+                .position(|s| s.id == installed_id)
+                .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+            removed = installed.software.remove(pos);
+            Self::save_installed_list(&installed)?;
+        } // 写锁在此释放
+
+        // 删除安装目录（锁已释放）
+        let install_path = std::path::Path::new(&removed.install_path);
+        if install_path.exists() {
+            if let Err(e) = std::fs::remove_dir_all(install_path) {
+                eprintln!("[software] 清理安装目录失败 {}: {}", install_path.display(), e);
+                // 不阻断卸载流程——记录已从 installed.json 移除，目录残留可手动清理
+            }
+        }
+
+        // 若是默认 JRE，清除 jre_default_id
+        if removed.key == "jre" {
+            if let Some(default_id) = self.get_jre_default() {
+                if default_id == removed.id {
+                    if let Err(e) = self.update_jre_default(None) {
+                        eprintln!("[software] 清除默认 JRE 失败: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+
     fn load_installed_list() -> Result<InstalledSoftwareList> {
         let path = paths::config_dir().join("installed.json");
         if !path.exists() {

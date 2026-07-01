@@ -82,3 +82,15 @@ pub async fn install_custom(
     });
     Ok(install_id)
 }
+
+/// 卸载已安装软件
+#[tauri::command]
+pub async fn uninstall_software(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<bool, String> {
+    manager
+        .remove_installed(&installed_id)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
