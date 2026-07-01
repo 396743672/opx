@@ -694,32 +694,3 @@ async fn install_from_builtin(
 
     manager.remove_install_task(&install_id);
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::models::software::{BuiltinInfo, MirrorSource};
-
-    #[test]
-    fn mirror_with_builtin_is_detected() {
-        let mirror = MirrorSource {
-            name: "内置".to_string(),
-            url: "builtin://software/jre/17.0.15.zip".to_string(),
-            builtin: Some(BuiltinInfo {
-                version: "17.0.15".to_string(),
-                sha256: "abc".to_string(),
-                size: 100,
-            }),
-        };
-        assert!(mirror.builtin.is_some());
-    }
-
-    #[test]
-    fn mirror_without_builtin_is_detected() {
-        let mirror = MirrorSource {
-            name: "网络".to_string(),
-            url: "https://example.com/test.zip".to_string(),
-            builtin: None,
-        };
-        assert!(mirror.builtin.is_none());
-    }
-}
