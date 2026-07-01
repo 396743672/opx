@@ -93,6 +93,7 @@ impl SoftwareProvider for MySqlProvider {
                     MirrorSource {
                         name: "MySQL 官方 CDN".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.gz".to_string(),
+                        builtin: None,
                     },
                 ],
                 archive: ArchiveInfo {
