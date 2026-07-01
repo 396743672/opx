@@ -9,9 +9,16 @@ export interface ArchiveInfo {
   sha256: string | null
 }
 
+export interface BuiltinInfo {
+  version: string
+  sha256: string
+  size: number
+}
+
 export interface MirrorSource {
   name: string
   url: string
+  builtin?: BuiltinInfo
 }
 
 export interface CatalogVersion {
@@ -51,6 +58,7 @@ export enum SoftwareStatus {
 
 export type InstallSource =
   | { Mirror: { mirror_name: string; url: string } }
+  | { Builtin: { version: string } }
   | { Custom: { archive_name: string } }
 
 export interface InstalledSoftware {
