@@ -63,7 +63,21 @@ pub async fn install_software(
     params: InstallParams,
     install_id: String,
 ) {
-    let tmp_path = paths::tmp_dir().join(format!("{}-{}.tmp", params.key, params.version));
+    // 缓存路径：cache/{key}/{version}.zip（持久保留，复用避免重复下载）
+    let cache_key_dir = paths::cache_dir().join(&params.key);
+    if let Err(e) = fs::create_dir_all(&cache_key_dir) {
+        emit_event(
+            &app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "failed",
+                "error": format!("创建缓存目录失败: {}", e),
+                "stage": "download"
+            }),
+        );
+        return;
+    }
+    let cache_path = cache_key_dir.join(format!("{}.zip", params.version));
     let install_path = paths::apps_dir()
         .join(&params.key)
         .join(&params.version);
@@ -173,37 +187,55 @@ pub async fn install_software(
     );
 
     let result: Result<()> = async {
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id.clone(),
-                "phase": "downloading",
-                "downloaded": 0,
-                "total": serde_json::Value::Null,
-                "percent": serde_json::Value::Null
-            }),
-        );
-
-        let app_for_progress = app.clone();
-        let install_id_for_progress = install_id.clone();
-        download::download_with_progress(&mirror.url, &tmp_path, move |downloaded, total| {
-            let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+        // 检查缓存：若 cache_path 存在则跳过下载
+        let cache_hit = cache_path.exists();
+        if cache_hit {
             emit_event(
-                &app_for_progress,
+                &app,
                 serde_json::json!({
-                    "install_id": install_id_for_progress.clone(),
+                    "install_id": install_id.clone(),
                     "phase": "downloading",
-                    "downloaded": downloaded,
-                    "total": total,
-                    "percent": percent
+                    "downloaded": 0,
+                    "total": serde_json::Value::Null,
+                    "percent": 100,
+                    "cached": true
                 }),
             );
-        })
-        .await?;
+        } else {
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id.clone(),
+                    "phase": "downloading",
+                    "downloaded": 0,
+                    "total": serde_json::Value::Null,
+                    "percent": serde_json::Value::Null
+                }),
+            );
+
+            let app_for_progress = app.clone();
+            let install_id_for_progress = install_id.clone();
+            download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
+                let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+                emit_event(
+                    &app_for_progress,
+                    serde_json::json!({
+                        "install_id": install_id_for_progress.clone(),
+                        "phase": "downloading",
+                        "downloaded": downloaded,
+                        "total": total,
+                        "percent": percent
+                    }),
+                );
+            })
+            .await?;
+        }
 
         if let Some(expected_sha) = &version_info.archive.sha256 {
-            let computed = compute_sha256(&tmp_path)?;
+            let computed = compute_sha256(&cache_path)?;
             if computed != expected_sha.to_lowercase() {
+                // 校验失败：缓存可能损坏，删除缓存让下次重新下载
+                let _ = fs::remove_file(&cache_path);
                 return Err(anyhow::anyhow!("SHA256 校验失败"));
             }
         }
@@ -218,8 +250,8 @@ pub async fn install_software(
         );
 
         match version_info.archive.format {
-            ArchiveFormat::Zip => archive::extract_zip(&tmp_path, &install_path)?,
-            ArchiveFormat::TarGz => archive::extract_tar_gz(&tmp_path, &install_path)?,
+            ArchiveFormat::Zip => archive::extract_zip(&cache_path, &install_path)?,
+            ArchiveFormat::TarGz => archive::extract_tar_gz(&cache_path, &install_path)?,
         }
 
         emit_event(
@@ -305,10 +337,10 @@ pub async fn install_software(
                 "stage": "download"
             }),
         );
-        cleanup_file(&tmp_path);
+        cleanup_file(&cache_path); // 失败时删缓存（可能不完整）
         cleanup_path(&install_path);
     } else {
-        cleanup_file(&tmp_path);
+        // 成功：保留 cache_path 供下次复用，不删除
     }
 
     manager.remove_install_task(&install_id);

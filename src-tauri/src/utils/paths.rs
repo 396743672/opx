@@ -51,6 +51,12 @@ pub fn tmp_dir() -> PathBuf {
     ensure_dir(&app_root(), "tmp", "tmp")
 }
 
+/// 缓存目录：<app_root>/cache
+/// 持久保留下载的压缩包，避免相同版本重复下载
+pub fn cache_dir() -> PathBuf {
+    ensure_dir(&app_root(), "cache", "cache")
+}
+
 /// 日志目录：<app_root>/logs
 pub fn logs_dir() -> PathBuf {
     ensure_dir(&app_root(), "logs", "logs")
