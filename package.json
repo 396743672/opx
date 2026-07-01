@@ -14,6 +14,8 @@
     "tauri:build:msi": "tauri build --bundles msi",
     "tauri:build:debug": "tauri build --debug",
     "tauri:info": "tauri info",
+    "check:resources": "node scripts/check-resources.mjs",
+    "fetch:builtin": "node scripts/fetch-builtin.mjs",
     "icons:gen": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
