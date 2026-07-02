@@ -39,27 +39,51 @@ pub async fn refresh_catalog(
     let remote_catalog = catalog::fetch_remote_catalog(&mirror_url).await;
     let mut merged = catalog::merge_catalogs(builtin, remote_catalog);
 
-    // 调用各 provider 的 fetch_remote_versions，与内置版本合并
-    // 用 spawn_blocking 包装：provider 用 reqwest::blocking，不能在 async 上下文直接调
-    let mut entries = std::mem::take(&mut merged.entries);
-    entries = tauri::async_runtime::spawn_blocking(move || {
-        let providers = providers::all_providers();
-        for entry in &mut entries {
-            if let Some(provider) = providers.iter().find(|p| p.key() == entry.key) {
-                let remote_versions = provider.fetch_remote_versions();
-                entry.versions = catalog::merge_versions(entry.versions.clone(), remote_versions);
-            }
-        }
-        entries
-    })
-    .await
-    .map_err(|e| format!("拉取版本列表失败: {}", e))?;
-    merged.entries = entries;
-
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
     let _ = app.emit("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
+}
+
+/// 获取指定软件的远程版本列表（前端打开安装对话框时调用）
+/// 返回包装后的 CatalogEntry（含远程版本），失败返回错误信息供前端展示
+#[tauri::command]
+pub async fn fetch_remote_versions_for(
+    key: String,
+) -> Result<Vec<CatalogEntry>, String> {
+    // 用 spawn_blocking 调用 provider 的 sync fetch_remote_versions
+    // 避免 reqwest::blocking 在 async 上下文中 panic
+    let key_for_blocking = key.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let providers = providers::all_providers();
+        let provider = providers
+            .iter()
+            .find(|p| p.key() == key_for_blocking)
+            .ok_or_else(|| format!("未知软件: {}", key_for_blocking))?;
+        Ok::<_, String>(provider.fetch_remote_versions())
+    })
+    .await
+    .map_err(|e| format!("获取版本列表失败: {}", e))?;
+
+    match result {
+        Ok(Some(versions)) => {
+            // 包装成单条 CatalogEntry 返回（前端合并到 catalog）
+            let providers = providers::all_providers();
+            let provider = providers.iter().find(|p| p.key() == key);
+            if let Some(p) = provider {
+                let mut entry = p.catalog_entry();
+                entry.versions = versions;
+                Ok(vec![entry])
+            } else {
+                Err(format!("未知软件: {}", key))
+            }
+        }
+        Ok(None) => {
+            // 该软件不支持动态拉取（如 MySQL/MinIO/RustFS），返回空
+            Ok(vec![])
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// 获取已安装软件列表
