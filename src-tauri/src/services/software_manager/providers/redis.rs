@@ -125,6 +125,75 @@ impl SoftwareProvider for RedisProvider {
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
         Ok(())
     }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // redis-windows GitHub Releases API（社区维护的 Windows Redis 移植）
+        let url = "https://api.github.com/repos/redis-windows/redis-windows/releases?per_page=20";
+        let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?
+            .get(url)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+
+        if !response.status().is_success() {
+            eprintln!("[redis] GitHub API 返回 {}", response.status());
+            return None;
+        }
+
+        let releases: Vec<serde_json::Value> = response.json().ok()?;
+        let mut versions = vec![];
+
+        for release in releases {
+            let tag = match release.get("tag_name").and_then(|t| t.as_str()) {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            // tag 直接是版本号如 "8.8.0" / "7.4.9"
+            // 找 cygwin.zip asset（与现有硬编码一致）
+            if let Some(asset_url) = find_cygwin_asset(&release) {
+                versions.push(CatalogVersion {
+                    version: tag,
+                    mirrors: vec![MirrorSource {
+                        name: "redis-windows GitHub".to_string(),
+                        url: asset_url,
+                        builtin: None,
+                    }],
+                    archive: ArchiveInfo {
+                        format: ArchiveFormat::Zip,
+                        size: None,
+                        sha256: None,
+                    },
+                });
+            }
+        }
+
+        if versions.is_empty() {
+            None
+        } else {
+            Some(versions)
+        }
+    }
+}
+
+/// 在 release 的 assets 中找 cygwin.zip（不含 with-Service）
+fn find_cygwin_asset(release: &serde_json::Value) -> Option<String> {
+    let assets = release.get("assets")?.as_array()?;
+    for asset in assets {
+        let name = asset.get("name")?.as_str()?;
+        // 名称如 "Redis-8.8.0-Windows-x64-cygwin.zip"
+        if name.contains("cygwin")
+            && !name.contains("with-Service")
+            && name.ends_with(".zip")
+        {
+            let url = asset.get("browser_download_url")?.as_str()?;
+            return Some(url.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -153,5 +222,12 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn redis_fetch_remote_versions_method_exists() {
+        let provider = RedisProvider::new();
+        // 仅验证方法存在（编译通过），不断言返回值（网络可能失败）
+        let _ = provider.fetch_remote_versions();
     }
 }
