@@ -108,17 +108,30 @@ const fetchingVersions = ref(false)
 const fetchError = ref<string | null>(null)
 const remoteVersions = ref<CatalogVersion[]>([])
 
-// 合并版本列表：内置（entry.versions）+ 远程拉取的版本（去重）
+// 版本号比较：支持如 "17.0.16"、"1.8"、"8.4.10"、"RELEASE.2021-04-22" 等
+function compareVersion(a: string, b: string): number {
+  // 提取数字部分
+  const numA = (a.match(/\d+/g) || []).map(Number)
+  const numB = (b.match(/\d+/g) || []).map(Number)
+  const len = Math.max(numA.length, numB.length)
+  for (let i = 0; i < len; i++) {
+    const va = numA[i] ?? 0
+    const vb = numB[i] ?? 0
+    if (va !== vb) return vb - va  // 降序
+  }
+  return 0
+}
+
+// 合并版本列表：内置（entry.versions）+ 远程拉取的版本（去重 + 降序）
 const mergedVersions = computed(() => {
   const existing = new Set(props.entry.versions.map(v => v.version))
-  const merged = [...props.entry.versions]
-  for (const v of remoteVersions.value) {
-    if (!existing.has(v.version)) {
-      existing.add(v.version)
-      merged.push(v)
-    }
-  }
-  return merged
+  // 内置版本在前（保持原顺序）
+  const builtin = [...props.entry.versions]
+  // 网络版本去重 + 降序排序
+  const remote = remoteVersions.value
+    .filter(v => !existing.has(v.version))
+    .sort((a, b) => compareVersion(a.version, b.version))
+  return [...builtin, ...remote]
 })
 
 function isBuiltinVersion(v: CatalogVersion): boolean {
