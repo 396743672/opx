@@ -137,6 +137,94 @@ impl SoftwareProvider for MySqlProvider {
         file.write_all(content.as_bytes())?;
         Ok(())
     }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // 爬 dev.mysql.com/downloads/mysql/ HTML，提取版本号
+        // 注意：页面结构可能变更，失败返回 None
+        let url = "https://dev.mysql.com/downloads/mysql/";
+        let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?
+            .get(url)
+            .header("User-Agent", "OPX")
+            .send()
+            .ok()?;
+
+        if !response.status().is_success() {
+            eprintln!("[mysql] 下载页返回 {}", response.status());
+            return None;
+        }
+
+        let html = response.text().ok()?;
+        let mut versions = vec![];
+        let mut seen = std::collections::HashSet::new();
+
+        // 正则匹配 mysql-X.Y.Z-winx64.zip
+        let re = regex::Regex::new(r"mysql-(\d+\.\d+\.\d+)-winx64\.zip").ok()?;
+
+        for cap in re.captures_iter(&html) {
+            let version = cap.get(1)?.as_str().to_string();
+            if seen.contains(&version) {
+                continue;
+            }
+            seen.insert(version.clone());
+
+            // 只取 8.x（最低 8.0.36+，跳过 8.0.36 之前的版本）
+            let major: u32 = version
+                .split('.')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let minor: u32 = version
+                .split('.')
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let patch: u32 = version
+                .split('.')
+                .nth(2)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            if major != 8 {
+                continue;
+            }
+            if minor == 0 && patch < 36 {
+                continue;
+            }
+
+            // 8.4.x 走 mysql-8.4 路径，8.0.x 走 mysql-8.0 路径
+            let path_segment = if minor == 4 {
+                "mysql-8.4"
+            } else {
+                "mysql-8.0"
+            };
+
+            versions.push(CatalogVersion {
+                version: version.clone(),
+                mirrors: vec![MirrorSource {
+                    name: "MySQL 官方 CDN".to_string(),
+                    url: format!(
+                        "https://cdn.mysql.com/archives/{}/mysql-{}-winx64.zip",
+                        path_segment, version
+                    ),
+                    builtin: None,
+                }],
+                archive: ArchiveInfo {
+                    format: ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            });
+        }
+
+        if versions.is_empty() {
+            None
+        } else {
+            Some(versions)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -166,5 +254,11 @@ mod tests {
         for m in &v.mirrors {
             assert!(m.builtin.is_none());
         }
+    }
+
+    #[test]
+    fn mysql_fetch_remote_versions_method_exists() {
+        let provider = MySqlProvider::new();
+        let _ = provider.fetch_remote_versions();
     }
 }
