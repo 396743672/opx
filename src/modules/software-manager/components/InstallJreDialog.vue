@@ -14,19 +14,28 @@
 
       <div class="field">
         <div class="field-label">{{ $t('selectVersion') }}</div>
-        <div class="version-list">
+        <div class="select" @click="showVersionDropdown = !showVersionDropdown">
+          <span>{{ selectedVersion?.version }}</span>
+          <Icon icon="mdi:chevron-down" class="caret" />
+        </div>
+        <div v-if="showVersionDropdown" class="dropdown version-dropdown">
           <div
-            v-for="(v, idx) in entry.versions"
+            v-for="(v, idx) in mergedVersions"
             :key="v.version"
-            class="version-row"
+            class="dropdown-item"
             :class="{ selected: selectedVersionIdx === idx }"
-            @click="selectedVersionIdx = idx"
+            @click="selectVersion(idx)"
           >
-            <span class="v-name">{{ v.version }}</span>
-            <span v-if="v.version === entry.default_version && entry.key !== 'jre' && !v.mirrors.some((m: any) => m.builtin)" class="v-badge">{{ $t('latestVersion') }}</span>
-            <Icon v-if="selectedVersionIdx === idx" icon="mdi:check" class="v-check" />
+            <span>{{ v.version }}</span>
+            <span v-if="isBuiltinVersion(v)" class="builtin-tag">{{ $t('offline') }}</span>
+            <span v-else-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
           </div>
         </div>
+        <div v-if="fetchingVersions" class="fetching-hint">
+          <Icon icon="mdi:loading" class="spinning" />
+          <span>{{ $t('fetchingVersions') }}</span>
+        </div>
+        <div v-if="fetchError" class="fetch-error">{{ fetchError }}</div>
       </div>
 
       <div class="field">
@@ -74,11 +83,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useInstallStore } from '../stores/install'
-import type { CatalogEntry } from '@/models/software'
+import type { CatalogEntry, CatalogVersion } from '@/models/software'
 
 const props = defineProps<{
   entry: CatalogEntry
@@ -94,8 +103,35 @@ const selectedMirrorIdx = ref(0)
 const showMirrorDropdown = ref(false)
 const installing = ref(false)
 const setAsDefault = ref(true)
+const showVersionDropdown = ref(false)
+const fetchingVersions = ref(false)
+const fetchError = ref<string | null>(null)
+const remoteVersions = ref<CatalogVersion[]>([])
 
-const selectedVersion = computed(() => props.entry.versions[selectedVersionIdx.value])
+// 合并版本列表：内置（entry.versions）+ 远程拉取的版本（去重）
+const mergedVersions = computed(() => {
+  const existing = new Set(props.entry.versions.map(v => v.version))
+  const merged = [...props.entry.versions]
+  for (const v of remoteVersions.value) {
+    if (!existing.has(v.version)) {
+      existing.add(v.version)
+      merged.push(v)
+    }
+  }
+  return merged
+})
+
+function isBuiltinVersion(v: CatalogVersion): boolean {
+  return v.mirrors.some(m => m.builtin)
+}
+
+function selectVersion(idx: number) {
+  selectedVersionIdx.value = idx
+  selectedMirrorIdx.value = 0
+  showVersionDropdown.value = false
+}
+
+const selectedVersion = computed(() => mergedVersions.value[selectedVersionIdx.value])
 const selectedMirror = computed(() => selectedVersion.value?.mirrors[selectedMirrorIdx.value])
 const installPath = computed(
   () => `apps/jre/${selectedVersion.value?.version}`,
@@ -105,6 +141,26 @@ function selectMirror(idx: number) {
   selectedMirrorIdx.value = idx
   showMirrorDropdown.value = false
 }
+
+async function fetchRemoteVersions() {
+  fetchingVersions.value = true
+  fetchError.value = null
+  try {
+    const result = await invoke('fetch_remote_versions_for', { key: props.entry.key }) as CatalogEntry[]
+    if (result.length > 0) {
+      remoteVersions.value = result[0].versions
+    }
+  } catch (e) {
+    fetchError.value = String(e)
+    console.error('Failed to fetch remote versions:', e)
+  } finally {
+    fetchingVersions.value = false
+  }
+}
+
+onMounted(() => {
+  fetchRemoteVersions()
+})
 
 async function install() {
   installing.value = true
@@ -291,6 +347,30 @@ async function install() {
 .dropdown-item.selected {
   background: color-mix(in oklch, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
+}
+.version-dropdown {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.fetching-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  margin-top: 6px;
+}
+.fetch-error {
+  font-size: 12px;
+  color: var(--color-destructive);
+  margin-top: 6px;
+}
+.spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .checkbox {
   display: flex;
