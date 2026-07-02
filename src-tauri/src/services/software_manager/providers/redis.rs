@@ -1,12 +1,20 @@
 use anyhow::Result;
+use std::path::PathBuf;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, MirrorSource,
-    SoftwareCategory,
+    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, ConfigField,
+    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
 use crate::services::software_manager::providers::builtin_manifest;
 
-use super::{InstallContext, SoftwareProvider};
+use super::{
+    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(not(windows))]
+const CREATE_NO_WINDOW: u32 = 0;
 
 pub struct RedisProvider;
 
@@ -179,8 +187,90 @@ impl SoftwareProvider for RedisProvider {
         }
     }
 
-    fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
-        Err(anyhow::anyhow!("start_command 尚未实现（待任务 3 实现）"))
+    fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(6379);
+        Ok(StartCommand {
+            program: "redis-server.exe".to_string(),
+            args: vec![
+                "redis.conf".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+            ],
+            env_vars: std::collections::BTreeMap::new(),
+            working_dir: PathBuf::from(&ctx.install_path),
+            creation_flags: CREATE_NO_WINDOW,
+            first_run_init: None,
+        })
+    }
+
+    fn health_check(&self, ctx: &HealthContext) -> HealthCheckSpec {
+        let port = if ctx.port > 0 { ctx.port } else { 6379 };
+        HealthCheckSpec::Tcp {
+            port,
+            timeout_ms: 1000,
+        }
+    }
+
+    fn config_schema(&self) -> Option<ConfigSchema> {
+        Some(ConfigSchema {
+            fields: vec![
+                ConfigField {
+                    key: "port".to_string(),
+                    label_i18n: "configField.port".to_string(),
+                    field_type: ConfigFieldType::Port,
+                    default_value: serde_json::json!(6379),
+                    section: None,
+                    description_i18n: None,
+                },
+                ConfigField {
+                    key: "bind".to_string(),
+                    label_i18n: "configField.bind".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("127.0.0.1"),
+                    section: None,
+                    description_i18n: None,
+                },
+                ConfigField {
+                    key: "maxmemory".to_string(),
+                    label_i18n: "configField.maxmemory".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("256mb"),
+                    section: None,
+                    description_i18n: None,
+                },
+                ConfigField {
+                    key: "maxmemory-policy".to_string(),
+                    label_i18n: "configField.maxmemoryPolicy".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec![
+                            "noeviction".to_string(),
+                            "allkeys-lru".to_string(),
+                            "volatile-lru".to_string(),
+                        ],
+                    },
+                    default_value: serde_json::json!("noeviction"),
+                    section: None,
+                    description_i18n: None,
+                },
+                ConfigField {
+                    key: "requirepass".to_string(),
+                    label_i18n: "configField.requirepass".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: None,
+                },
+            ],
+        })
+    }
+
+    fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {
+        Some(PathBuf::from(&ctx.install_path).join("redis.conf"))
     }
 }
 
@@ -234,5 +324,98 @@ mod tests {
         let provider = RedisProvider::new();
         // 仅验证方法存在（编译通过），不断言返回值（网络可能失败）
         let _ = provider.fetch_remote_versions();
+    }
+
+    #[test]
+    fn redis_start_command_uses_redis_conf_and_port() {
+        let p = RedisProvider::new();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/redis/7.4.9".to_string(),
+            version: "7.4.9".to_string(),
+            config: serde_json::json!({"port": 6380}),
+            custom_start_command: None,
+        };
+        let cmd = p.start_command(&ctx).unwrap();
+        assert!(cmd.program.contains("redis-server"));
+        assert!(cmd.args.contains(&"redis.conf".to_string()));
+        assert!(cmd.args.contains(&"--port".to_string()));
+        assert!(cmd.args.contains(&"6380".to_string()));
+        assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/redis/7.4.9"));
+        assert!(cmd.first_run_init.is_none());
+    }
+
+    #[test]
+    fn redis_start_command_defaults_to_6379_when_config_missing() {
+        let p = RedisProvider::new();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/redis/7.4.9".to_string(),
+            version: "7.4.9".to_string(),
+            config: serde_json::json!({}),
+            custom_start_command: None,
+        };
+        let cmd = p.start_command(&ctx).unwrap();
+        assert!(cmd.args.contains(&"--port".to_string()));
+        assert!(cmd.args.contains(&"6379".to_string()));
+    }
+
+    #[test]
+    fn redis_health_check_uses_tcp_port() {
+        let p = RedisProvider::new();
+        let ctx = super::HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/redis/7.4.9".to_string(),
+            port: 6379,
+            config: serde_json::json!({}),
+        };
+        match p.health_check(&ctx) {
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 6379);
+            }
+            _ => panic!("应为 Tcp"),
+        }
+    }
+
+    #[test]
+    fn redis_health_check_falls_back_to_6379_when_port_zero() {
+        let p = RedisProvider::new();
+        let ctx = super::HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/redis/7.4.9".to_string(),
+            port: 0,
+            config: serde_json::json!({}),
+        };
+        match p.health_check(&ctx) {
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 6379);
+            }
+            _ => panic!("应为 Tcp"),
+        }
+    }
+
+    #[test]
+    fn redis_config_schema_has_five_fields() {
+        let p = RedisProvider::new();
+        let schema = p.config_schema().expect("Redis 应有 schema");
+        assert_eq!(schema.fields.len(), 5);
+        let keys: Vec<_> = schema.fields.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"port"));
+        assert!(keys.contains(&"bind"));
+        assert!(keys.contains(&"maxmemory"));
+        assert!(keys.contains(&"maxmemory-policy"));
+        assert!(keys.contains(&"requirepass"));
+    }
+
+    #[test]
+    fn redis_config_file_path_returns_redis_conf() {
+        let p = RedisProvider::new();
+        let ctx = super::ConfigContext {
+            install_path: "apps/redis/7.4.9".to_string(),
+            version: "7.4.9".to_string(),
+            config: serde_json::json!({}),
+        };
+        let path = p.config_file_path(&ctx).expect("应有路径");
+        assert!(path.to_string_lossy().ends_with("redis.conf"));
     }
 }
