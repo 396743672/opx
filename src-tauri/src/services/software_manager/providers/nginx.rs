@@ -45,7 +45,7 @@ impl SoftwareProvider for NginxProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/nginx/1.31.2.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "1.31.2".to_string(),
@@ -54,12 +54,12 @@ impl SoftwareProvider for NginxProvider {
                         }),
                     });
                     m.push(MirrorSource {
-                        name: "华为镜像".to_string(),
+                        name: "i18n:huaweiMirror".to_string(),
                         url: "https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip".to_string(),
                         builtin: None,
                     });
                     m.push(MirrorSource {
-                        name: "官方".to_string(),
+                        name: "i18n:official".to_string(),
                         url: "https://nginx.org/download/nginx-1.31.2.zip".to_string(),
                         builtin: None,
                     });
@@ -148,7 +148,7 @@ impl SoftwareProvider for NginxProvider {
                     version: version.clone(),
                     mirrors: vec![
                         MirrorSource {
-                            name: "华为镜像".to_string(),
+                            name: "i18n:huaweiMirror".to_string(),
                             url: format!(
                                 "https://mirrors.huaweicloud.com/nginx/nginx-{}.zip",
                                 version
@@ -156,7 +156,7 @@ impl SoftwareProvider for NginxProvider {
                             builtin: None,
                         },
                         MirrorSource {
-                            name: "官方".to_string(),
+                            name: "i18n:official".to_string(),
                             url: format!("https://nginx.org/download/nginx-{}.zip", version),
                             builtin: None,
                         },

@@ -46,7 +46,7 @@ impl SoftwareProvider for JreProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/jre/1.8.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "1.8".to_string(),
@@ -55,7 +55,7 @@ impl SoftwareProvider for JreProvider {
                         }),
                     });
                     m.push(MirrorSource {
-                        name: "Adoptium(清华)".to_string(),
+                        name: "i18n:adoptiumTsinghua".to_string(),
                         url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jre/x64/windows/OpenJDK8U-jre_x64_windows_hotspot_8u492b09.zip".to_string(),
                         builtin: None,
                     });
@@ -180,7 +180,7 @@ impl SoftwareProvider for JreProvider {
                 versions.push(CatalogVersion {
                     version: version,
                     mirrors: vec![MirrorSource {
-                        name: "Adoptium(清华)".to_string(),
+                        name: "i18n:adoptiumTsinghua".to_string(),
                         url: asset_url,
                         builtin: None,
                     }],

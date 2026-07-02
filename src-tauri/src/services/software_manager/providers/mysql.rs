@@ -47,7 +47,7 @@ impl SoftwareProvider for MySqlProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/mysql/8.4.10.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "8.4.10".to_string(),
@@ -56,7 +56,7 @@ impl SoftwareProvider for MySqlProvider {
                         }),
                     });
                     m.push(MirrorSource {
-                        name: "MySQL 官方 CDN".to_string(),
+                        name: "i18n:mysqlOfficialCdn".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-winx64.zip".to_string(),
                         builtin: None,
                     });
@@ -76,7 +76,7 @@ impl SoftwareProvider for MySqlProvider {
                 version: "8.4.10".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "MySQL 官方 CDN".to_string(),
+                        name: "i18n:mysqlOfficialCdn".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-linux-glibc2.28-x86_64.tar.gz".to_string(),
                         builtin: None,
                     },

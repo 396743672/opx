@@ -42,7 +42,7 @@
         <div class="field-label">{{ $t('selectMirror') }}</div>
         <div class="select" @click="showMirrorDropdown = !showMirrorDropdown">
           <Icon v-if="selectedMirror?.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
-          <span>{{ selectedMirror?.name }}</span>
+          <span>{{ mirrorName(selectedMirror?.name || '') }}</span>
           <span v-if="selectedMirror?.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           <Icon icon="mdi:chevron-down" class="caret" />
         </div>
@@ -55,7 +55,7 @@
             @click="selectMirror(idx)"
           >
             <Icon v-if="m.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
-            <span>{{ m.name }}</span>
+            <span>{{ mirrorName(m.name) }}</span>
             <span v-if="m.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           </div>
         </div>
@@ -81,6 +81,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import { useInstallStore } from '../stores/install'
 import type { CatalogEntry, CatalogVersion } from '@/models/software'
 
@@ -92,6 +93,16 @@ const emit = defineEmits<{
   cancel: []
   installed: [id: string]
 }>()
+
+const { t } = useI18n()
+
+// 镜像名 i18n 转译：后端返回 "i18n:key" 格式时调 t() 转译
+function mirrorName(name: string): string {
+  if (name.startsWith('i18n:')) {
+    return t(name.slice(5))
+  }
+  return name
+}
 
 const selectedVersionIdx = ref(0)
 const selectedMirrorIdx = ref(0)

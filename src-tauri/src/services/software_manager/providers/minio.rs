@@ -46,7 +46,7 @@ impl SoftwareProvider for MinioProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/minio/RELEASE.2021-04-22.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "RELEASE.2021-04-22".to_string(),
@@ -66,7 +66,7 @@ impl SoftwareProvider for MinioProvider {
             versions.push(CatalogVersion {
                 version: "latest".to_string(),
                 mirrors: vec![MirrorSource {
-                    name: "MinIO 官方".to_string(),
+                    name: "i18n:minioOfficial".to_string(),
                     url: "https://dl.min.io/aistor/minio/release/windows-amd64/minio.exe".to_string(),
                     builtin: None,
                 }],

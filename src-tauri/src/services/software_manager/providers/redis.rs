@@ -36,7 +36,7 @@ impl SoftwareProvider for RedisProvider {
                 version: "8.8.0".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "redis-windows GitHub".to_string(),
+                        name: "i18n:redisWindowsGithub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/8.8.0/Redis-8.8.0-Windows-x64-cygwin.zip".to_string(),
                         builtin: None,
                     },
@@ -51,7 +51,7 @@ impl SoftwareProvider for RedisProvider {
                 version: "8.2.7".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "redis-windows GitHub".to_string(),
+                        name: "i18n:redisWindowsGithub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/8.2.7/Redis-8.2.7-Windows-x64-cygwin.zip".to_string(),
                         builtin: None,
                     },
@@ -75,7 +75,7 @@ impl SoftwareProvider for RedisProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/redis/7.4.9.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "7.4.9".to_string(),
@@ -84,7 +84,7 @@ impl SoftwareProvider for RedisProvider {
                         }),
                     });
                     m.push(MirrorSource {
-                        name: "redis-windows GitHub".to_string(),
+                        name: "i18n:redisWindowsGithub".to_string(),
                         url: "https://github.com/redis-windows/redis-windows/releases/download/7.4.9/Redis-7.4.9-Windows-x64-cygwin.zip".to_string(),
                         builtin: None,
                     });
@@ -159,7 +159,7 @@ impl SoftwareProvider for RedisProvider {
                 versions.push(CatalogVersion {
                     version: tag,
                     mirrors: vec![MirrorSource {
-                        name: "redis-windows GitHub".to_string(),
+                        name: "i18n:redisWindowsGithub".to_string(),
                         url: asset_url,
                         builtin: None,
                     }],

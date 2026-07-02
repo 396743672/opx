@@ -46,7 +46,7 @@ impl SoftwareProvider for RustfsProvider {
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
                         url: "builtin://software/rustfs/1.0.0-beta.8.zip".to_string(),
                         builtin: Some(BuiltinInfo {
                             version: "1.0.0-beta.8".to_string(),
@@ -66,7 +66,7 @@ impl SoftwareProvider for RustfsProvider {
             versions.push(CatalogVersion {
                 version: "latest".to_string(),
                 mirrors: vec![MirrorSource {
-                    name: "RustFS 官方".to_string(),
+                    name: "i18n:rustfsOfficial".to_string(),
                     url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-latest.zip".to_string(),
                     builtin: None,
                 }],
