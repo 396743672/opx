@@ -6,6 +6,7 @@ import { SoftwareCategory, type CatalogEntry } from '@/models/software'
 export const useCatalogStore = defineStore('catalog', () => {
   const entries = ref<CatalogEntry[]>([])
   const loading = ref(false)
+  const error = ref<string | null>(null)
 
   const groupedEntries = computed(() => {
     const groups: Record<SoftwareCategory, CatalogEntry[]> = {
@@ -24,10 +25,12 @@ export const useCatalogStore = defineStore('catalog', () => {
 
   async function loadCatalog() {
     loading.value = true
+    error.value = null
     try {
       entries.value = await invoke('list_available_software') as CatalogEntry[]
     } catch (e) {
       console.error('Failed to load catalog:', e)
+      error.value = String(e)
     } finally {
       loading.value = false
     }
@@ -35,10 +38,13 @@ export const useCatalogStore = defineStore('catalog', () => {
 
   async function refreshCatalog() {
     loading.value = true
+    error.value = null
     try {
       entries.value = await invoke('refresh_catalog') as CatalogEntry[]
     } catch (e) {
       console.error('Failed to refresh catalog:', e)
+      error.value = String(e)
+      throw e
     } finally {
       loading.value = false
     }
@@ -47,6 +53,7 @@ export const useCatalogStore = defineStore('catalog', () => {
   return {
     entries,
     loading,
+    error,
     groupedEntries,
     loadCatalog,
     refreshCatalog,
