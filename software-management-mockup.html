@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8" />
+<title>OPX 软件管理 — 设计图</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@iconify/iconify@3.1.1/dist/iconify.min.css" />
+<style>
+  /* ============ 设计令牌（与 software-repo-mockup.html / design-mockup.html 一致） ============ */
+  :root {
+    --font-sans: system-ui, 'Segoe UI', 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+  }
+  .dark {
+    --background: oklch(0.16 0.02 265);
+    --foreground: oklch(0.95 0.005 247);
+    --card: oklch(0.205 0.025 264);
+    --card-elevated: oklch(0.245 0.028 264);
+    --border: oklch(0.3 0.02 262);
+    --muted: oklch(0.25 0.02 263);
+    --muted-foreground: oklch(0.7 0.018 262);
+    --primary: oklch(0.72 0.15 220);
+    --primary-foreground: oklch(0.14 0.03 260);
+    --destructive: oklch(0.65 0.2 25);
+    --success: oklch(0.7 0.16 150);
+    --warning: oklch(0.78 0.15 70);
+    --info: oklch(0.72 0.13 220);
+    --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 1px 1px oklch(0 0 0 / 0.2);
+    --shadow-popover: 0 8px 24px oklch(0 0 0 / 0.45), 0 2px 6px oklch(0 0 0 / 0.3);
+    --radius-lg: 0.75rem;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .tnum { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+
+  /* ============ 整体布局 ============ */
+  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+
+  /* —— Topbar —— */
+  .topbar {
+    height: 56px; border-bottom: 1px solid var(--border);
+    background: var(--card); display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; flex-shrink: 0;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .icon-btn {
+    width: 36px; height: 36px; border: none; background: transparent;
+    color: var(--foreground); border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: var(--muted); }
+  .logo-mark {
+    width: 28px; height: 28px; border-radius: 6px;
+    background: var(--primary); color: var(--primary-foreground);
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+  .brand { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .divider-v { width: 1px; height: 20px; background: var(--border); }
+  .page-title { font-size: 14px; color: var(--muted-foreground); }
+  .topbar-right { display: flex; align-items: center; gap: 8px; }
+  .mini-metric { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
+
+  /* —— 主体 —— */
+  .body { display: flex; flex: 1; overflow: hidden; }
+
+  /* —— Sidebar —— */
+  .sidebar {
+    width: 220px; border-right: 1px solid var(--border);
+    background: var(--card); flex-shrink: 0; padding: 12px 0; overflow-y: auto;
+  }
+  .nav-group { margin-bottom: 16px; }
+  .nav-group-title {
+    padding: 0 16px 6px; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground);
+  }
+  .nav-item {
+    position: relative; display: flex; align-items: center; gap: 12px;
+    margin: 0 8px 2px; padding: 8px 12px; border-radius: 6px; cursor: pointer;
+    color: var(--muted-foreground); font-size: 14px;
+  }
+  .nav-item:hover { background: var(--muted); color: var(--foreground); }
+  .nav-item.active {
+    background: color-mix(in oklch, var(--primary) 12%, transparent);
+    color: var(--primary); font-weight: 500;
+  }
+  .nav-item.active::before {
+    content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 3px; height: 20px; border-radius: 0 3px 3px 0; background: var(--primary);
+  }
+  .nav-icon { width: 20px; height: 20px; flex-shrink: 0; }
+  .nav-badge {
+    margin-left: auto; font-size: 10px; padding: 0 6px; height: 16px;
+    border-radius: 999px; background: var(--success); color: var(--card);
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 600;
+  }
+
+  /* —— Main —— */
+  .main { flex: 1; overflow: auto; background: var(--background); }
+  .main-inner { padding: 24px; max-width: 1600px; margin: 0 auto; }
+
+  /* —— Page Header —— */
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .page-header-left { display: flex; align-items: center; gap: 12px; }
+  .page-header-icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: color-mix(in oklch, var(--primary) 14%, transparent);
+    color: var(--primary); display: flex; align-items: center; justify-content: center;
+  }
+  .page-header h1 { font-size: 20px; font-weight: 600; }
+  .page-header p { font-size: 13px; color: var(--muted-foreground); margin-top: 2px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+    font-size: 13px; border: 1px solid var(--border); background: var(--card); color: var(--foreground);
+    transition: background 0.15s; white-space: nowrap;
+  }
+  .btn:hover { background: var(--muted); }
+  .btn.primary {
+    background: var(--primary); color: var(--primary-foreground); border-color: var(--primary);
+  }
+  .btn.primary:hover { background: color-mix(in oklch, var(--primary) 88%, var(--background)); }
+  .btn.danger { background: var(--destructive); color: white; border-color: var(--destructive); }
+  .btn.danger:hover { background: color-mix(in oklch, var(--destructive) 88%, var(--background)); }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.ghost:hover { background: var(--muted); }
+  .btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+  .btn:disabled, .btn.disabled {
+    opacity: 0.4; cursor: not-allowed; pointer-events: none;
+  }
+  .btn .ic { width: 16px; height: 16px; }
+
+  /* —— 分类分组 —— */
+  .category-section { margin-bottom: 28px; }
+  .category-title {
+    font-size: 12px; font-weight: 600; color: var(--muted-foreground);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .category-title .ic { width: 14px; height: 14px; color: var(--primary); }
+  .category-title .count {
+    margin-left: auto; font-size: 11px; font-weight: 500;
+    color: var(--muted-foreground); text-transform: none; letter-spacing: 0;
+  }
+
+  /* —— 实例行 —— */
+  .instance-list { display: flex; flex-direction: column; gap: 8px; }
+  .instance-row {
+    border: 1px solid var(--border); background: var(--card);
+    border-radius: var(--radius-lg); padding: 14px 16px;
+    box-shadow: var(--shadow-card);
+    display: flex; align-items: center; gap: 14px;
+    transition: border-color 0.15s;
+  }
+  .instance-row:hover { border-color: color-mix(in oklch, var(--primary) 30%, var(--border)); }
+  .instance-row.has-error { border-color: color-mix(in oklch, var(--destructive) 40%, var(--border)); }
+  .row-icon {
+    width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in oklch, var(--primary) 12%, transparent);
+    color: var(--primary); font-size: 20px;
+  }
+  .row-icon.database { background: color-mix(in oklch, var(--info) 14%, transparent); color: var(--info); }
+  .row-icon.cache { background: color-mix(in oklch, var(--destructive) 14%, transparent); color: var(--destructive); }
+  .row-icon.webserver { background: color-mix(in oklch, var(--success) 14%, transparent); color: var(--success); }
+  .row-icon.storage { background: color-mix(in oklch, var(--warning) 14%, transparent); color: var(--warning); }
+  .row-icon.custom { background: color-mix(in oklch, var(--warning) 14%, transparent); color: var(--warning); }
+  .row-main { flex: 1; min-width: 0; }
+  .row-name {
+    font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .row-name .ver { font-weight: 400; color: var(--muted-foreground); font-size: 13px; }
+  .tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;
+  }
+  .tag.custom { background: color-mix(in oklch, var(--warning) 14%, transparent); color: var(--warning); }
+  .tag.builtin { background: color-mix(in oklch, var(--primary) 12%, transparent); color: var(--primary); }
+  .row-path {
+    font-size: 12px; color: var(--muted-foreground); margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .row-meta {
+    display: flex; align-items: center; gap: 12px; margin-top: 4px;
+    font-size: 11px; color: var(--muted-foreground);
+  }
+  .row-meta .kv { display: inline-flex; align-items: center; gap: 4px; }
+  .row-meta .kv .ic { width: 12px; height: 12px; }
+  .row-meta .kv b { color: var(--foreground); font-weight: 500; }
+  .row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+  /* —— 状态徽章 —— */
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .status-badge .dot { width: 6px; height: 6px; border-radius: 999px; }
+  .status-badge.running {
+    background: color-mix(in oklch, var(--success) 14%, transparent);
+    color: var(--success);
+    border: 1px solid color-mix(in oklch, var(--success) 25%, transparent);
+  }
+  .status-badge.running .dot { background: var(--success); }
+  .status-badge.stopped {
+    background: var(--muted); color: var(--muted-foreground);
+    border: 1px solid var(--border);
+  }
+  .status-badge.stopped .dot { background: var(--muted-foreground); }
+  .status-badge.starting, .status-badge.stopping {
+    background: color-mix(in oklch, var(--warning) 14%, transparent);
+    color: var(--warning);
+    border: 1px solid color-mix(in oklch, var(--warning) 25%, transparent);
+  }
+  .status-badge.starting .dot, .status-badge.stopping .dot {
+    background: var(--warning);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .status-badge.error {
+    background: color-mix(in oklch, var(--destructive) 14%, transparent);
+    color: var(--destructive);
+    border: 1px solid color-mix(in oklch, var(--destructive) 30%, transparent);
+  }
+  .status-badge.error .dot { background: var(--destructive); }
+  .status-badge.unknown {
+    background: var(--muted); color: var(--muted-foreground);
+    border: 1px solid var(--border);
+  }
+  .status-badge.unknown .dot { background: var(--muted-foreground); }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ============ 对话框 ============ */
+  .overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: oklch(0 0 0 / 0.5); backdrop-filter: blur(4px);
+    animation: fade 0.15s ease-out;
+  }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .dialog {
+    width: 540px; max-height: 90vh; overflow-y: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border); background: var(--card);
+    box-shadow: var(--shadow-popover); padding: 20px;
+  }
+  .dialog.wide { width: 680px; }
+  .dialog.narrow { width: 420px; }
+  .dialog-head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;
+  }
+  .dialog-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .dialog-title .ic { width: 18px; height: 18px; color: var(--primary); }
+  .dialog-close {
+    width: 28px; height: 28px; border: none; background: transparent;
+    color: var(--muted-foreground); border-radius: 4px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .dialog-close:hover { background: var(--muted); color: var(--foreground); }
+  .field { margin-bottom: 14px; }
+  .field-label {
+    font-size: 12px; color: var(--muted-foreground); margin-bottom: 6px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .field-label .hint { font-size: 11px; }
+  .select, .input {
+    width: 100%; height: 34px; padding: 0 10px;
+    background: var(--muted); border: 1px solid transparent; border-radius: 6px;
+    color: var(--foreground); font-size: 13px; outline: none;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .select:focus, .input:focus { border-color: var(--primary); background: var(--card); }
+  .select .caret { color: var(--muted-foreground); }
+  .input.readonly { color: var(--muted-foreground); }
+  .input-mono { font-family: var(--font-mono); font-size: 12px; }
+  .input-wrap { position: relative; }
+  .input-wrap .browse-btn {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    height: 26px; padding: 0 8px; font-size: 11px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; color: var(--muted-foreground);
+  }
+  .input-wrap .browse-btn:hover { color: var(--foreground); }
+  .checkbox {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; padding: 8px 0;
+  }
+  .checkbox input { width: 14px; height: 14px; accent-color: var(--primary); }
+  .radio-group { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+  .radio {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; padding: 6px 10px; border-radius: 6px;
+  }
+  .radio:hover { background: var(--muted); }
+  .radio input { accent-color: var(--primary); }
+  .radio .desc { color: var(--muted-foreground); font-size: 11px; margin-left: auto; }
+  .dialog-footer {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;
+    padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .hint-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border-radius: 6px;
+    background: color-mix(in oklch, var(--info) 8%, transparent);
+    color: var(--info); font-size: 12px;
+    margin-top: 8px;
+  }
+  .hint-bar .ic { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* —— 配置对话框：双 tab —— */
+  .tab-bar {
+    display: flex; gap: 4px; padding: 4px;
+    background: var(--muted); border-radius: 6px; margin-bottom: 16px;
+  }
+  .tab {
+    flex: 1; padding: 8px 12px; border-radius: 4px;
+    font-size: 13px; cursor: pointer; text-align: center;
+    color: var(--muted-foreground);
+    border: none; background: transparent;
+    transition: all 0.15s;
+  }
+  .tab:hover { color: var(--foreground); }
+  .tab.active {
+    background: var(--card); color: var(--primary); font-weight: 500;
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.2);
+  }
+
+  /* —— 表单字段网格 —— */
+  .form-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  }
+  .form-grid .full { grid-column: 1 / -1; }
+  .form-field-label {
+    font-size: 12px; color: var(--muted-foreground); margin-bottom: 6px;
+    display: block;
+  }
+  .form-field-desc {
+    font-size: 11px; color: var(--muted-foreground);
+    margin-top: 4px; line-height: 1.4;
+  }
+
+  /* —— Monaco 模拟 —— */
+  .monaco-mock {
+    height: 320px; border-radius: 6px; overflow: hidden;
+    border: 1px solid var(--border);
+    background: #1e1e1e;
+    display: flex; flex-direction: column;
+  }
+  .monaco-mock .editor-bar {
+    height: 28px; background: #252526; border-bottom: 1px solid #1e1e1e;
+    display: flex; align-items: center; padding: 0 8px;
+    font-size: 11px; color: #858585; gap: 6px;
+  }
+  .monaco-mock .editor-bar .lang { color: #4ec9b0; font-weight: 500; }
+  .monaco-mock .editor-bar .dirty { color: #ccc; font-size: 10px; }
+  .monaco-mock .editor-body {
+    flex: 1; display: flex; overflow: hidden;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .monaco-mock .gutter {
+    width: 36px; padding: 8px 0; background: #1e1e1e; color: #858585;
+    text-align: right; padding-right: 10px;
+    user-select: none;
+  }
+  .monaco-mock .code {
+    flex: 1; padding: 8px 10px; overflow: auto;
+    color: #d4d4d4; line-height: 1.55; white-space: pre;
+  }
+  .monaco-mock .code .key { color: #9cdcfe; }
+  .monaco-mock .code .value { color: #ce9178; }
+  .monaco-mock .code .section { color: #569cd6; }
+  .monaco-mock .code .comment { color: #6a9955; }
+  .monaco-mock .code .edited {
+    background: rgba(255, 215, 0, 0.15); display: inline-block;
+    border-left: 2px solid #ffa500; padding-left: 2px; margin-left: -4px;
+  }
+
+  /* —— 卸载阻止框 —— */
+  .blocker-list {
+    margin: 12px 0; padding: 12px;
+    border-radius: 6px; background: color-mix(in oklch, var(--destructive) 8%, transparent);
+    border: 1px solid color-mix(in oklch, var(--destructive) 25%, transparent);
+  }
+  .blocker-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 13px; padding: 4px 0;
+  }
+  .blocker-item .ic { color: var(--destructive); width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+  .dependent-list {
+    margin-top: 8px; padding-left: 24px;
+    font-size: 12px; color: var(--muted-foreground);
+  }
+  .dependent-list li {
+    list-style: disc; padding: 2px 0;
+  }
+  .dependent-list li.running { color: var(--success); }
+
+  /* —— 自定义启动命令 —— */
+  .env-list {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--muted); margin-top: 6px;
+  }
+  .env-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .env-row:last-child { border-bottom: none; }
+  .env-row .env-key, .env-row .env-val {
+    flex: 1; height: 26px; padding: 0 8px;
+    background: var(--card); border: 1px solid transparent; border-radius: 4px;
+    color: var(--foreground); font-size: 12px;
+    font-family: var(--font-mono);
+  }
+  .env-row .env-remove {
+    width: 24px; height: 24px; background: transparent; border: none;
+    color: var(--muted-foreground); cursor: pointer; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .env-row .env-remove:hover { background: var(--card); color: var(--destructive); }
+  .env-add {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-top: 6px; padding: 4px 10px;
+    height: 26px; font-size: 12px;
+    background: transparent; border: 1px dashed var(--border);
+    border-radius: 4px; cursor: pointer; color: var(--muted-foreground);
+  }
+  .env-add:hover { color: var(--primary); border-color: var(--primary); }
+
+  /* —— 启动设置 —— */
+  .startup-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px; border-radius: 6px; background: var(--muted);
+    margin-bottom: 12px;
+  }
+  .startup-row .toggle {
+    width: 36px; height: 20px; border-radius: 999px;
+    background: var(--primary); position: relative; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .startup-row .toggle::after {
+    content: ''; position: absolute; top: 2px; left: 18px;
+    width: 16px; height: 16px; border-radius: 999px; background: white;
+    transition: left 0.2s;
+  }
+  .startup-row .toggle.off { background: var(--border); }
+  .startup-row .toggle.off::after { left: 2px; }
+  .startup-row .label { flex: 1; font-size: 13px; }
+  .startup-row .label .desc { font-size: 11px; color: var(--muted-foreground); margin-top: 2px; }
+  .startup-order-input {
+    width: 80px; height: 30px; padding: 0 8px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--foreground); font-size: 13px; text-align: center;
+  }
+
+  /* —— 场景切换器 —— */
+  .scene-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 100; display: flex; gap: 6px; padding: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 999px; box-shadow: var(--shadow-popover);
+    backdrop-filter: blur(8px);
+  }
+  .scene-btn {
+    padding: 6px 14px; border-radius: 999px; font-size: 12px;
+    border: none; background: transparent; color: var(--muted-foreground);
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  }
+  .scene-btn:hover { color: var(--foreground); background: var(--muted); }
+  .scene-btn.active {
+    background: var(--primary); color: var(--primary-foreground);
+  }
+
+  /* —— 空状态 —— */
+  .empty-state {
+    text-align: center; padding: 64px 20px;
+    color: var(--muted-foreground);
+  }
+  .empty-state .ic { width: 48px; height: 48px; opacity: 0.5; margin-bottom: 12px; }
+  .empty-state h3 { font-size: 15px; color: var(--foreground); margin-bottom: 4px; }
+  .empty-state p { font-size: 13px; }
+
+  /* —— 进度条（启动中浮层提示）—— */
+  .toast {
+    position: fixed; top: 72px; right: 16px; z-index: 200;
+    padding: 12px 16px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    box-shadow: var(--shadow-popover);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; max-width: 360px;
+    animation: slideIn 0.2s ease-out;
+  }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  .toast .ic { width: 18px; height: 18px; flex-shrink: 0; }
+  .toast.info .ic { color: var(--info); }
+  .toast.success .ic { color: var(--success); }
+  .toast.warn .ic { color: var(--warning); }
+  .toast.error .ic { color: var(--destructive); }
+  .toast .body { flex: 1; }
+  .toast .body .title { font-weight: 500; }
+  .toast .body .desc { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; }
+
+  /* hidden helper */
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ Topbar ============ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="icon-btn"><span class="iconify" data-icon="mdi:menu"></span></button>
+      <div class="logo-mark">O</div>
+      <div class="brand">OPX</div>
+      <div class="divider-v"></div>
+      <div class="page-title">软件管理</div>
+    </div>
+    <div class="topbar-right">
+      <div class="mini-metric">
+        <span class="iconify" data-icon="mdi:server-network" style="color: var(--success)"></span>
+        <span>3 运行中</span>
+        <span class="divider-v"></span>
+        <span class="iconify" data-icon="mdi:server-off" style="color: var(--muted-foreground)"></span>
+        <span>2 已停止</span>
+      </div>
+      <button class="icon-btn"><span class="iconify" data-icon="mdi:bell-outline"></span></button>
+      <button class="icon-btn"><span class="iconify" data-icon="mdi:cog-outline"></span></button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- ============ Sidebar ============ -->
+    <aside class="sidebar">
+      <div class="nav-group">
+        <div class="nav-group-title">主控台</div>
+        <div class="nav-item"><span class="iconify nav-icon" data-icon="mdi:view-dashboard-outline"></span>仪表板</div>
+        <div class="nav-item"><span class="iconify nav-icon" data-icon="mdi:spring"></span>Spring Boot 应用</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">软件</div>
+        <div class="nav-item"><span class="iconify nav-icon" data-icon="mdi:store-outline"></span>软件仓库</div>
+        <div class="nav-item active">
+          <span class="iconify nav-icon" data-icon="mdi:package-variant-closed"></span>
+          软件管理
+          <span class="nav-badge">5</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">系统</div>
+        <div class="nav-item"><span class="iconify nav-icon" data-icon="mdi:chart-line"></span>系统监控</div>
+        <div class="nav-item"><span class="iconify nav-icon" data-icon="mdi:cog"></span>设置</div>
+      </div>
+    </aside>
+
+    <!-- ============ Main ============ -->
+    <main class="main">
+      <div class="main-inner">
+        <!-- Page Header -->
+        <div class="page-header">
+          <div class="page-header-left">
+            <div class="page-header-icon"><span class="iconify" data-icon="mdi:package-variant-closed" style="font-size: 22px;"></span></div>
+            <div>
+              <h1>软件管理</h1>
+              <p>启动、停止、配置和卸载已安装的软件实例</p>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn"><span class="iconify ic" data-icon="mdi:refresh"></span>刷新</button>
+            <button class="btn primary"><span class="iconify ic" data-icon="mdi:store-plus-outline"></span>从仓库安装</button>
+          </div>
+        </div>
+
+        <!-- ============ 场景 1：实例列表 ============ -->
+        <div id="scene-list">
+          <!-- 数据库 -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:database"></span>
+              数据库
+              <span class="count">2 个实例</span>
+            </div>
+            <div class="instance-list">
+              <!-- MySQL 8.4.10 运行中 -->
+              <div class="instance-row">
+                <div class="row-icon database"><span class="iconify" data-icon="mdi:database"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    MySQL <span class="ver">8.4.10</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/mysql/8.4.10/mysql-8.4.10-winx64</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:identifier"></span>PID <b class="tnum">12345</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:ethernet-port"></span>端口 <b class="tnum">3306</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:clock-outline"></span>启动于 <b>14:23:01</b></span>
+                  </div>
+                </div>
+                <div class="status-badge running"><span class="dot"></span>运行中</div>
+                <div class="row-actions">
+                  <button class="btn small disabled" title="运行中无法再次启动"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small primary"><span class="iconify ic" data-icon="mdi:stop"></span>停止</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost" title="启动设置"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger" title="请先停止"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+              <!-- MySQL 8.0.36 已停止 -->
+              <div class="instance-row">
+                <div class="row-icon database"><span class="iconify" data-icon="mdi:database"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    MySQL <span class="ver">8.0.36</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/mysql/8.0.36/mysql-8.0.36-winx64</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:clock-outline"></span>停止于 <b>昨天 18:42</b></span>
+                  </div>
+                </div>
+                <div class="status-badge stopped"><span class="dot"></span>已停止</div>
+                <div class="row-actions">
+                  <button class="btn small primary"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:stop"></span>停止</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 缓存 -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:lightning-bolt"></span>
+              缓存
+              <span class="count">1 个实例</span>
+            </div>
+            <div class="instance-list">
+              <div class="instance-row">
+                <div class="row-icon cache"><span class="iconify" data-icon="mdi:lightning-bolt"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    Redis <span class="ver">7.4.0</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/redis/7.4.0</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:identifier"></span>PID <b class="tnum">12350</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:ethernet-port"></span>端口 <b class="tnum">6379</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:clock-outline"></span>启动于 <b>14:23:02</b></span>
+                  </div>
+                </div>
+                <div class="status-badge running"><span class="dot"></span>运行中</div>
+                <div class="row-actions">
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small primary"><span class="iconify ic" data-icon="mdi:stop"></span>停止</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Web 服务器 -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:web"></span>
+              Web 服务器
+              <span class="count">1 个实例</span>
+            </div>
+            <div class="instance-list">
+              <!-- Nginx 启动中 -->
+              <div class="instance-row">
+                <div class="row-icon webserver"><span class="iconify" data-icon="mdi:web"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    Nginx <span class="ver">1.27.0</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/nginx/1.27.0</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:identifier"></span>PID <b class="tnum">12351</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:ethernet-port"></span>端口 <b class="tnum">80</b></span>
+                    <span class="kv"><span class="iconify ic spin" data-icon="mdi:loading"></span>健康检查中…（5/30）</span>
+                  </div>
+                </div>
+                <div class="status-badge starting"><span class="dot"></span>启动中</div>
+                <div class="row-actions">
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:stop"></span>取消</button>
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost disabled"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger disabled"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 对象存储 -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:storage"></span>
+              对象存储
+              <span class="count">1 个实例</span>
+            </div>
+            <div class="instance-list">
+              <div class="instance-row">
+                <div class="row-icon storage"><span class="iconify" data-icon="mdi:storage"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    MinIO <span class="ver">RELEASE.2024-09-13</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/minio/RELEASE.2024-09-13</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:ethernet-port"></span>API <b class="tnum">9000</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:monitor"></span>控制台 <b class="tnum">9001</b></span>
+                    <span class="kv"><span class="iconify ic" data-icon="mdi:clock-outline"></span>启动于 <b>14:23:03</b></span>
+                  </div>
+                </div>
+                <div class="status-badge running"><span class="dot"></span>运行中</div>
+                <div class="row-actions">
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small primary"><span class="iconify ic" data-icon="mdi:stop"></span>停止</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 自定义 -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:upload"></span>
+              自定义
+              <span class="count">1 个实例</span>
+            </div>
+            <div class="instance-list">
+              <!-- 自定义软件错误状态 -->
+              <div class="instance-row has-error">
+                <div class="row-icon custom"><span class="iconify" data-icon="mdi:upload"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    my-api-service <span class="ver">v1.2.0</span>
+                    <span class="tag custom">自定义</span>
+                  </div>
+                  <div class="row-path">apps/custom/my-api-service</div>
+                  <div class="row-meta">
+                    <span class="kv" style="color: var(--destructive)"><span class="iconify ic" data-icon="mdi:alert-circle"></span>进程意外退出，code=1</span>
+                  </div>
+                </div>
+                <div class="status-badge error"><span class="dot"></span>错误</div>
+                <div class="row-actions">
+                  <button class="btn small primary"><span class="iconify ic" data-icon="mdi:refresh"></span>重试</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:stop"></span>清理</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ============ 场景 2：配置编辑对话框（表单 tab） ============ -->
+<div id="scene-config-form" class="overlay hidden">
+  <div class="dialog wide">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:database"></span>
+        MySQL 8.4.10 配置
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab active">表单</button>
+      <button class="tab">源码</button>
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label class="form-field-label">端口</label>
+        <div class="input tnum">3306</div>
+        <div class="form-field-desc">mysqld 监听端口（1-65535）</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">绑定地址</label>
+        <div class="input">0.0.0.0</div>
+        <div class="form-field-desc">仅本机访问可改为 127.0.0.1</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">最大连接数</label>
+        <div class="input tnum">151</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">字符集</label>
+        <div class="select">
+          <span>utf8mb4</span>
+          <span class="iconify caret" data-icon="mdi:chevron-down"></span>
+        </div>
+      </div>
+      <div class="field full">
+        <label class="form-field-label">InnoDB 缓冲池大小</label>
+        <div class="input">128M</div>
+        <div class="form-field-desc">建议物理内存的 50-70%，可带单位 M / G</div>
+      </div>
+    </div>
+
+    <div class="hint-bar">
+      <span class="iconify ic" data-icon="mdi:information-outline"></span>
+      修改后需重启软件生效
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn"><span class="iconify ic" data-icon="mdi:content-save"></span>保存</button>
+      <button class="btn primary"><span class="iconify ic" data-icon="mdi:restart"></span>保存并重启</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 场景 3：配置编辑对话框（源码 tab） ============ -->
+<div id="scene-config-source" class="overlay hidden">
+  <div class="dialog wide">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:database"></span>
+        MySQL 8.4.10 配置
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab">表单</button>
+      <button class="tab active">源码</button>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">配置文件：mysql-8.4.10-winx64/my.ini</label>
+      <div class="monaco-mock">
+        <div class="editor-bar">
+          <span class="lang">INI</span>
+          <span>UTF-8</span>
+          <span style="flex: 1"></span>
+          <span class="dirty">● 已修改</span>
+          <span>Ln 7, Col 12</span>
+        </div>
+        <div class="editor-body">
+          <div class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12</div>
+<div class="code"><span class="comment">[mysql]</span>
+<span class="key">default-character-set</span>=<span class="value">utf8mb4</span>
+
+<span class="comment">[mysqld]</span>
+<span class="key">port</span>=<span class="value">3306</span>
+<span class="key">basedir</span>=<span class="value">.</span>
+<span class="key">datadir</span>=<span class="edited">./data</span>
+<span class="key">character-set-server</span>=<span class="value">utf8mb4</span>
+<span class="key">default-storage-engine</span>=<span class="value">INNODB</span>
+<span class="key">max_connections</span>=<span class="value">151</span>
+
+<span class="comment"># 自定义配置</span>
+<span class="key">innodb_buffer_pool_size</span>=<span class="value">128M</span></div>
+        </div>
+      </div>
+      <div class="form-field-desc" style="margin-top: 6px;">ⓘ basedir/datadir 使用相对路径，OPX 目录移动后仍生效（Portable 模式）</div>
+    </div>
+
+    <div class="hint-bar">
+      <span class="iconify ic" data-icon="mdi:alert-outline"></span>
+      源码修改将覆盖表单视图，保存后建议切回表单查看是否仍正确
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn"><span class="iconify ic" data-icon="mdi:content-save"></span>保存</button>
+      <button class="btn primary"><span class="iconify ic" data-icon="mdi:restart"></span>保存并重启</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 场景 4：启动设置对话框 ============ -->
+<div id="scene-startup" class="overlay hidden">
+  <div class="dialog narrow">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:tune-vertical"></span>
+        启动设置
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div style="font-size: 13px; margin-bottom: 16px;">
+      <b>MySQL 8.4.10</b>
+      <div style="color: var(--muted-foreground); font-size: 12px; margin-top: 2px; font-family: var(--font-mono);">apps/mysql/8.4.10</div>
+    </div>
+
+    <div class="startup-row">
+      <div class="toggle"></div>
+      <div class="label">
+        <div>随 OPX 启动时自动拉起</div>
+        <div class="desc">应用启动时按启动顺序自动运行</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">启动顺序</label>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <input type="number" class="startup-order-input tnum" value="10" />
+        <div style="font-size: 12px; color: var(--muted-foreground);">数字越小越早启动，相同数字并发启动</div>
+      </div>
+    </div>
+
+    <div class="hint-bar">
+      <span class="iconify ic" data-icon="mdi:information-outline"></span>
+      依赖此软件的应用（如 Spring Boot）建议设为更大的启动顺序
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn primary" onclick="hideAll()"><span class="iconify ic" data-icon="mdi:content-save"></span>保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 场景 5：卸载阻止（运行中） ============ -->
+<div id="scene-uninstall-running" class="overlay hidden">
+  <div class="dialog narrow">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:alert" style="color: var(--destructive)"></span>
+        卸载确认
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div style="font-size: 13px; line-height: 1.6;">
+      确定要卸载 <b>MySQL 8.4.10</b> 吗？
+      <div style="color: var(--muted-foreground); font-size: 12px; margin-top: 4px; font-family: var(--font-mono);">apps/mysql/8.4.10</div>
+      <div style="margin-top: 8px; font-size: 12px; color: var(--muted-foreground);">
+        此操作将删除目录与所有数据，且不可恢复。
+      </div>
+    </div>
+
+    <div class="blocker-list">
+      <div class="blocker-item">
+        <span class="iconify ic" data-icon="mdi:close-circle"></span>
+        <div>
+          <div>软件正在运行</div>
+          <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 2px;">请先停止后再卸载</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn danger disabled" disabled>卸载</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 场景 6：卸载阻止（JRE 依赖） ============ -->
+<div id="scene-uninstall-jre" class="overlay hidden">
+  <div class="dialog">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:alert" style="color: var(--destructive)"></span>
+        卸载确认
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div style="font-size: 13px; line-height: 1.6;">
+      确定要卸载 <b>JRE 17.0.15</b> 吗？
+      <div style="color: var(--muted-foreground); font-size: 12px; margin-top: 4px; font-family: var(--font-mono);">apps/jre/17.0.15</div>
+    </div>
+
+    <div class="blocker-list">
+      <div class="blocker-item">
+        <span class="iconify ic" data-icon="mdi:close-circle"></span>
+        <div>
+          <div>这是默认 JRE</div>
+          <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 2px;">
+            请先在设置中更换默认 JRE 或取消默认
+          </div>
+        </div>
+      </div>
+      <div class="blocker-item">
+        <span class="iconify ic" data-icon="mdi:close-circle"></span>
+        <div>
+          <div>2 个 Spring Boot 应用依赖此 JRE</div>
+          <ul class="dependent-list">
+            <li class="running">my-api-service（运行中）</li>
+            <li>user-service（已停止）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn danger disabled" disabled>卸载</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 场景 7：自定义软件启动命令配置 ============ -->
+<div id="scene-custom-cmd" class="overlay hidden">
+  <div class="dialog wide">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:console"></span>
+        自定义软件启动配置
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div style="font-size: 13px; margin-bottom: 14px;">
+      <b>my-api-service v1.2.0</b>
+      <span style="color: var(--muted-foreground); font-size: 12px; margin-left: 8px;">首次启动请配置启动命令</span>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">预设模板</label>
+      <div class="select">
+        <span><span class="iconify" data-icon="mdi:package-variant" style="vertical-align: -2px; margin-right: 4px;"></span>通用可执行文件</span>
+        <span class="iconify caret" data-icon="mdi:chevron-down"></span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">可执行文件 <span style="color: var(--destructive)">*</span></label>
+      <div class="input-wrap">
+        <div class="input input-mono">bin/app.exe</div>
+        <button class="browse-btn"><span class="iconify ic" data-icon="mdi:folder-open"></span>浏览</button>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label class="form-field-label">启动参数</label>
+        <div class="input input-mono">--port=8080</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">端口</label>
+        <div class="input tnum">8080</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">工作目录</label>
+      <div class="input-wrap">
+        <div class="input input-mono readonly">（默认 install_path）</div>
+        <button class="browse-btn"><span class="iconify ic" data-icon="mdi:folder-open"></span>浏览</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">环境变量</label>
+      <div class="env-list">
+        <div class="env-row">
+          <input class="env-key" value="NODE_ENV" />
+          <input class="env-val" value="production" />
+          <button class="env-remove"><span class="iconify" data-icon="mdi:close"></span></button>
+        </div>
+        <div class="env-row">
+          <input class="env-key" value="LOG_LEVEL" />
+          <input class="env-val" value="info" />
+          <button class="env-remove"><span class="iconify" data-icon="mdi:close"></span></button>
+        </div>
+      </div>
+      <button class="env-add"><span class="iconify" data-icon="mdi:plus"></span>添加</button>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">健康检查</label>
+      <div class="radio-group">
+        <label class="radio">
+          <input type="radio" name="health" />
+          <span>不检查（仅进程存活）</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="health" />
+          <span>TCP 端口</span>
+          <input class="startup-order-input tnum" value="8080" style="margin-left: 12px;" />
+        </label>
+        <label class="radio">
+          <input type="radio" name="health" checked />
+          <span>HTTP URL</span>
+          <span class="desc">期望状态码 200</span>
+        </label>
+      </div>
+      <div class="input input-mono" style="margin-top: 6px;">http://127.0.0.1:8080/health</div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">配置文件路径（可选，填写后启用源码编辑）</label>
+      <div class="input-wrap">
+        <div class="input input-mono">conf/app.conf</div>
+        <button class="browse-btn"><span class="iconify ic" data-icon="mdi:folder-open"></span>浏览</button>
+      </div>
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn primary" onclick="hideAll()"><span class="iconify ic" data-icon="mdi:play"></span>保存并启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Toast 提示（场景演示用） ============ -->
+<div id="toast" class="toast info hidden">
+  <span class="iconify ic" data-icon="mdi:information"></span>
+  <div class="body">
+    <div class="title" id="toast-title">操作进行中</div>
+    <div class="desc" id="toast-desc">软件状态已更新</div>
+  </div>
+</div>
+
+<!-- ============ 场景切换器 ============ -->
+<div class="scene-bar">
+  <button class="scene-btn active" data-scene="list">管理页主视图</button>
+  <button class="scene-btn" data-scene="config-form">配置·表单</button>
+  <button class="scene-btn" data-scene="config-source">配置·源码</button>
+  <button class="scene-btn" data-scene="startup">启动设置</button>
+  <button class="scene-btn" data-scene="uninstall-running">卸载阻止·运行中</button>
+  <button class="scene-btn" data-scene="uninstall-jre">卸载阻止·JRE 依赖</button>
+  <button class="scene-btn" data-scene="custom-cmd">自定义启动命令</button>
+</div>
+
+<script>
+  function hideAll() {
+    document.querySelectorAll('.overlay').forEach(el => el.classList.add('hidden'));
+    document.getElementById('toast').classList.add('hidden');
+  }
+  function showScene(name) {
+    hideAll();
+    if (name === 'list') {
+      // 主视图，无 overlay
+      return;
+    }
+    const el = document.getElementById('scene-' + name);
+    if (el) el.classList.remove('hidden');
+  }
+
+  document.querySelectorAll('.scene-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.scene-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      showScene(btn.dataset.scene);
+    });
+  });
+
+  // 切换 tab
+  document.querySelectorAll('.tab-bar').forEach(bar => {
+    bar.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        bar.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+      });
+    });
+  });
+
+  // 切换 toggle
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => t.classList.toggle('off'));
+  });
+</script>
+</body>
+</html>
