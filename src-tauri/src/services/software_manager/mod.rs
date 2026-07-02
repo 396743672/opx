@@ -201,6 +201,11 @@ mod tests {
                 mirror_name: "test".to_string(),
                 url: "https://example.com/test.zip".to_string(),
             },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
         }
     }
 

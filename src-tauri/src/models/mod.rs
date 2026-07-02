@@ -122,6 +122,11 @@ mod tests {
                 mirror_name: "清华镜像".to_string(),
                 url: "https://example.com/mysql.zip".to_string(),
             },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
         };
         let params = InstallParams {
             key: "mysql".to_string(),

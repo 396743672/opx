@@ -312,6 +312,11 @@ pub async fn install_software(
                 mirror_name: mirror.name.clone(),
                 url: mirror.url.clone(),
             },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
         };
         manager.add_installed(installed)?;
 
@@ -492,6 +497,11 @@ pub async fn install_custom(
             auto_start_on_app_start: false,
             startup_order: 0,
             source: InstallSource::Custom { archive_name },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
         };
         manager.add_installed(installed)?;
 
@@ -705,6 +715,11 @@ async fn install_from_builtin(
             source: InstallSource::Builtin {
                 version: builtin.version.clone(),
             },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
         };
         manager.add_installed(installed)?;
 

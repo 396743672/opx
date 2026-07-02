@@ -68,6 +68,9 @@ pub enum SoftwareStatus {
     Stopped,
     Error,
     Unknown,
+    Starting,
+    Stopping,
+    Initializing,
 }
 
 impl Default for SoftwareStatus {
@@ -105,6 +108,21 @@ pub struct InstalledSoftware {
     pub auto_start_on_app_start: bool,
     pub startup_order: u32,
     pub source: InstallSource,
+
+    #[serde(default)]
+    pub pid: Option<u32>,
+
+    #[serde(default)]
+    pub last_started_at: Option<NaiveDateTime>,
+
+    #[serde(default)]
+    pub last_stopped_at: Option<NaiveDateTime>,
+
+    #[serde(default)]
+    pub last_error: Option<String>,
+
+    #[serde(default)]
+    pub custom_start_command: Option<CustomStartCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +136,95 @@ impl Default for InstalledSoftwareList {
             software: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CustomStartCommand {
+    pub executable: String,
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
+    pub health_check: CustomHealthSpec,
+    #[serde(default)]
+    pub config_file_relative: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", content = "spec")]
+pub enum CustomHealthSpec {
+    None,
+    Tcp { port: u16 },
+    Http { url: String, expected_status: u16 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSchema {
+    pub fields: Vec<ConfigField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigField {
+    pub key: String,
+    pub label_i18n: String,
+    pub field_type: ConfigFieldType,
+    pub default_value: serde_json::Value,
+    #[serde(default)]
+    pub section: Option<String>,
+    #[serde(default)]
+    pub description_i18n: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "options")]
+pub enum ConfigFieldType {
+    Text,
+    Number,
+    Port,
+    Password,
+    Select { options: Vec<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "spec")]
+pub enum HealthCheckSpec {
+    ProcessOnly,
+    Tcp { port: u16, timeout_ms: u64 },
+    Http {
+        url: String,
+        expected_status: u16,
+        timeout_ms: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UninstallSafetyReport {
+    pub safe: bool,
+    pub blockers: Vec<UninstallBlocker>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UninstallBlocker {
+    pub kind: String,
+    pub message_i18n: String,
+    #[serde(default)]
+    pub dependents: Vec<JreDependent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JreUsageReport {
+    pub in_use: bool,
+    pub is_default: bool,
+    pub dependents: Vec<JreDependent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JreDependent {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,7 +253,11 @@ pub struct SoftwareMeta {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuiltinInfo, InstallSource, MirrorSource};
+    use super::{
+        BuiltinInfo, ConfigField, ConfigFieldType, ConfigSchema, CustomHealthSpec,
+        CustomStartCommand, HealthCheckSpec, InstallSource, InstalledSoftware, JreDependent,
+        JreUsageReport, MirrorSource, SoftwareStatus, UninstallBlocker, UninstallSafetyReport,
+    };
 
     #[test]
     fn mirror_source_with_builtin_serializes_correctly() {
@@ -194,5 +305,171 @@ mod tests {
             InstallSource::Builtin { version } => assert_eq!(version, "17.0.15"),
             _ => panic!("应反序列化为 Builtin 变体"),
         }
+    }
+
+    #[test]
+    fn software_status_has_starting_variant() {
+        let s = SoftwareStatus::Starting;
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"Starting\"");
+    }
+
+    #[test]
+    fn software_status_has_stopping_variant() {
+        let s = SoftwareStatus::Stopping;
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"Stopping\"");
+    }
+
+    #[test]
+    fn software_status_has_initializing_variant() {
+        let s = SoftwareStatus::Initializing;
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"Initializing\"");
+    }
+
+    fn make_installed() -> InstalledSoftware {
+        InstalledSoftware {
+            id: "uuid".to_string(),
+            key: "mysql".to_string(),
+            version: "8.4.10".to_string(),
+            name: "MySQL".to_string(),
+            install_path: "apps/mysql/8.4.10".to_string(),
+            install_time: chrono::NaiveDateTime::from_timestamp_opt(1700000000, 0).unwrap(),
+            status: SoftwareStatus::Stopped,
+            port: 3306,
+            config: serde_json::json!({}),
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Mirror {
+                mirror_name: "test".to_string(),
+                url: "http://test".to_string(),
+            },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
+        }
+    }
+
+    #[test]
+    fn installed_software_has_runtime_fields() {
+        let s = make_installed();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"pid\":null"));
+        assert!(json.contains("\"last_started_at\":null"));
+        assert!(json.contains("\"custom_start_command\":null"));
+    }
+
+    #[test]
+    fn custom_start_command_serializes() {
+        let cmd = CustomStartCommand {
+            executable: "bin/app.exe".to_string(),
+            args: vec!["--port=8080".to_string()],
+            working_dir: None,
+            env_vars: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("NODE_ENV".to_string(), "production".to_string());
+                m
+            },
+            health_check: CustomHealthSpec::Tcp { port: 8080 },
+            config_file_relative: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"executable\":\"bin/app.exe\""));
+        assert!(json.contains("\"Tcp\""));
+        let de: CustomStartCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.executable, "bin/app.exe");
+    }
+
+    #[test]
+    fn custom_health_spec_http_serializes() {
+        let spec = CustomHealthSpec::Http {
+            url: "http://127.0.0.1:8080/health".to_string(),
+            expected_status: 200,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"Http\""));
+        assert!(json.contains("\"expected_status\":200"));
+    }
+
+    #[test]
+    fn health_check_spec_tcp_serializes() {
+        let spec = HealthCheckSpec::Tcp {
+            port: 3306,
+            timeout_ms: 1000,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"Tcp\""));
+        assert!(json.contains("\"port\":3306"));
+    }
+
+    #[test]
+    fn config_schema_round_trip() {
+        let schema = ConfigSchema {
+            fields: vec![ConfigField {
+                key: "port".to_string(),
+                label_i18n: "configField.port".to_string(),
+                field_type: ConfigFieldType::Port,
+                default_value: serde_json::json!(3306),
+                section: Some("[mysqld]".to_string()),
+                description_i18n: None,
+            }],
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        let de: ConfigSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.fields.len(), 1);
+        assert_eq!(de.fields[0].key, "port");
+    }
+
+    #[test]
+    fn uninstall_safety_report_serializes() {
+        let report = UninstallSafetyReport {
+            safe: false,
+            blockers: vec![UninstallBlocker {
+                kind: "running".to_string(),
+                message_i18n: "uninstallBlockedRunning".to_string(),
+                dependents: vec![],
+            }],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"safe\":false"));
+        assert!(json.contains("\"running\""));
+    }
+
+    #[test]
+    fn jre_usage_report_serializes() {
+        let report = JreUsageReport {
+            in_use: true,
+            is_default: true,
+            dependents: vec![JreDependent {
+                kind: "springboot-app".to_string(),
+                id: "app-1".to_string(),
+                name: "my-api".to_string(),
+                status: "running".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"in_use\":true"));
+        assert!(json.contains("\"is_default\":true"));
+        assert!(json.contains("\"springboot-app\""));
+    }
+
+    #[test]
+    fn installed_software_deserializes_old_format_without_runtime_fields() {
+        // 旧 installed.json 没有新字段，应能反序列化（向后兼容）
+        let old = r#"{
+            "id":"uuid","key":"mysql","version":"8.4.10","name":"MySQL",
+            "install_path":"apps/mysql/8.4.10","install_time":"2024-01-01T00:00:00",
+            "status":"Stopped","port":3306,"config":{},"is_custom":false,
+            "auto_start_on_app_start":false,"startup_order":0,
+            "source":{"Mirror":{"mirror_name":"t","url":"http://t"}}
+        }"#;
+        let de: InstalledSoftware = serde_json::from_str(old).unwrap();
+        assert_eq!(de.pid, None);
+        assert_eq!(de.custom_start_command, None);
+        assert_eq!(de.last_error, None);
     }
 }
