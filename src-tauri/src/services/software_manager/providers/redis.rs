@@ -180,7 +180,7 @@ impl SoftwareProvider for RedisProvider {
     }
 
     fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
-        Err(anyhow::anyhow!("start_command 尚未实现（任务 3 完成）"))
+        Err(anyhow::anyhow!("start_command 尚未实现（待任务 3 实现）"))
     }
 }
 

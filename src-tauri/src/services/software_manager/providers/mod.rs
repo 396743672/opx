@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn start_command_has_creation_flags_for_windows() {
+    fn start_command_has_creation_flags_field() {
         let cmd = StartCommand {
             program: "mysqld.exe".to_string(),
             args: vec!["--console".to_string()],

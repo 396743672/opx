@@ -102,13 +102,19 @@ pub trait SoftwareProvider: Send + Sync {
 
     // 新增：本阶段核心钩子
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand>;
-    fn stop_command(&self, ctx: &StopContext) -> Result<Option<StopCommand>> { Ok(None) }
-    fn health_check(&self, ctx: &HealthContext) -> HealthCheckSpec;
+    fn stop_command(&self, _ctx: &StopContext) -> Result<Option<StopCommand>> { Ok(None) }
+    fn health_check(&self, _ctx: &HealthContext) -> HealthCheckSpec {
+        HealthCheckSpec::ProcessOnly
+    }
     fn config_schema(&self) -> Option<ConfigSchema> { None }
-    fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf>;
-    fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf;
+    fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> { None }
+    fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
+        PathBuf::from(&ctx.install_path)
+    }
 }
 ```
+
+> **默认实现策略**：除 `start_command` 必须实现外，其余五个钩子（`stop_command` / `health_check` / `config_schema` / `config_file_path` / `working_dir`）都带默认实现，避免破坏既有 provider，并为新增 provider 提供渐进式实现路径。每个 provider 按需重写所需钩子——例如 MySQL 重写 `config_file_path` 返回 `my.ini` 路径，MinIO/RustFS 不重写则用默认 `None`（无配置文件）。
 
 ## 数据模型
 
@@ -757,7 +763,7 @@ pub fn get_installed(&self) -> Vec<InstalledSoftware> {
 
 ### 配置文件路径
 
-每个 provider 实现 `config_file_path(ctx)`：
+每个 provider 按需重写 `config_file_path(ctx)`（默认返回 `None` 表示无配置文件）：
 
 | Provider | 路径（相对 install_path） | 说明 |
 |---|---|---|
