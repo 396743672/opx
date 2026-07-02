@@ -482,11 +482,12 @@ pub enum TempSecretSpec {
 init_command = StartCommand {
     program: "mysql-8.4.10-winx64/bin/mysqld.exe",
     args: ["--initialize-insecure", "--basedir=.", "--datadir=./data"],
-    working_dir: "install_path/mysql-8.4.10-winx64",
+    working_dir: "install_path/mysql-8.4.10-winx64",  // ← ./data 相对此目录解析
     creation_flags: CREATE_NO_WINDOW,
     ...
 }
 // --initialize-insecure 生成无密码 root@localhost
+// --basedir=. --datadir=./data 全部相对 working_dir，OPX 目录移动后仍生效
 // 也可用 --initialize 生成随机密码，从 stderr 抓取 "A temporary password is generated for root@localhost: xxx"
 ```
 
@@ -552,12 +553,14 @@ start_command = StartCommand {
 ```
 
 参数说明（官网 `/minio/docs`）：
-- 第一个位置参数 `./data` 是数据目录（相对路径，Portable 友好）
+- 第一个位置参数 `./data` 是数据目录，**相对 `install_path`**（如 `apps/minio/RELEASE.2024-09-13/data/`），与 `Command::current_dir(install_path)` 配合实现 Portable
 - `--address :9000` API 端口
 - `--console-address :9001` 控制台端口
 - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` 根账号（环境变量，命令行无对应 flag）
 
 健康检查：`Http { url: "http://127.0.0.1:{api_port}/minio/health/live", expected_status: 200 }`（官方健康端点）。
+
+**数据目录路径解析**：`working_dir = install_path`（MinIO provider 不重写 working_dir），`args` 中的 `./data` 相对 working_dir 解析为 `{install_path}/data/`。OPX 目录移动后，相对路径仍生效。
 
 **首次启动需配置项**（首次启动对话框，类似自定义软件的启动命令配置）：
 - API 端口（默认 9000）
@@ -586,13 +589,15 @@ start_command = StartCommand {
 ```
 
 参数说明（官网 `/rustfs/rustfs`）：
-- 第一个位置参数 `./data` 是数据目录（与 MinIO 一致的 S3 风格）
+- 第一个位置参数 `./data` 是数据目录，**相对 `install_path`**（如 `apps/rustfs/x.y.z/data/`），与 `Command::current_dir(install_path)` 配合实现 Portable（与 MinIO 一致的 S3 风格）
 - `--address` API 端口（默认 `0.0.0.0:9000`，本设计改为 `127.0.0.1:9000` 仅本机访问，更安全）
 - `--access-key` / `--secret-key` 根账号（命令行直接传，也可用 `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` 环境变量）
 - `RUSTFS_CONSOLE_ENABLE=true` 启用控制台
 - `RUSTFS_CONSOLE_ADDRESS` 控制台端口
 
 健康检查：`Http { url: "http://127.0.0.1:{api_port}/health", expected_status: 200 }`。
+
+**数据目录路径解析**：与 MinIO 一致，`working_dir = install_path`，`./data` 解析为 `{install_path}/data/`。
 
 **首次启动需配置项**（与 MinIO 一致的对话框）：
 - API 端口（默认 9000）
@@ -790,16 +795,16 @@ pub fn get_installed(&self) -> Vec<InstalledSoftware> {
 #### MinIO（无配置文件，表单字段 = 启动参数）
 - `api_port` (Port, 默认 9000) — `--address :{api_port}`
 - `console_port` (Port, 默认 9001) — `--console-address :{console_port}`
-- `data_dir` (Text, 默认 "./data") — 位置参数
+- `data_dir` (Text, 默认 "./data") — 位置参数，**相对 install_path**（如 `apps/minio/.../data/`）；不接受绝对路径与 `..`
 - `access_key` (Text, 默认 "minioadmin") — `MINIO_ROOT_USER` env
 - `secret_key` (Password, 默认 "minioadmin") — `MINIO_ROOT_PASSWORD` env
 
-MinIO 表单提交时，字段写入 `InstalledSoftware.config`（不走配置文件），启动时 provider.start_command 读 config 构造 env_vars + args。
+MinIO 表单提交时，字段写入 `InstalledSoftware.config`（不走配置文件），启动时 provider.start_command 读 config 构造 env_vars + args。`data_dir` 校验：必须匹配 `^[a-zA-Z0-9_./-]+$` 且不含 `..`（与自定义软件 executable 校验同一套白名单）。
 
 #### RustFS（同 MinIO 风格）
 - `api_port` (Port, 默认 9000) — `--address 127.0.0.1:{api_port}`
 - `console_port` (Port, 默认 9001) — `RUSTFS_CONSOLE_ADDRESS` env
-- `data_dir` (Text, 默认 "./data") — 位置参数
+- `data_dir` (Text, 默认 "./data") — 位置参数，**相对 install_path**；同样校验白名单
 - `access_key` (Text, 默认 "rustfsadmin") — `--access-key` arg
 - `secret_key` (Password, 默认 "rustfsadmin") — `--secret-key` arg
 
