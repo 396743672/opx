@@ -67,33 +67,8 @@ impl SoftwareProvider for JreProvider {
                     sha256: None,
                 },
             });
-            // 21+ 网络版本（fetch_remote_versions 从清华拉取实际版本号）
-            versions.push(CatalogVersion {
-                version: "latest".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "Adoptium(清华)".to_string(),
-                    url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/".to_string(),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            versions.push(CatalogVersion {
-                version: "latest".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "Adoptium(清华)".to_string(),
-                    url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/25/jre/x64/windows/".to_string(),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
+            // 21/25 实际版本由 fetch_remote_versions 从清华镜像运行时拉取追加，
+            // catalog 不放 latest 占位项，避免与拉取的实际版本重复显示。
         }
 
         #[cfg(unix)]
@@ -249,14 +224,11 @@ mod tests {
     }
 
     #[test]
-    fn jre_has_18_and_two_latest_network_versions() {
+    fn jre_has_only_18_in_catalog() {
         let entry = JreProvider::new().catalog_entry();
-        assert_eq!(entry.versions.len(), 3);
-        let versions: Vec<_> = entry.versions.iter().map(|v| v.version.as_str()).collect();
-        assert!(versions.contains(&"1.8"));
-        // 两个 "latest" 网络占位项
-        let latest_count = versions.iter().filter(|v| **v == "latest").count();
-        assert_eq!(latest_count, 2);
+        // catalog 只含 1.8（fetch_remote_versions 拉取的版本运行时追加，不在 catalog_entry 中）
+        assert_eq!(entry.versions.len(), 1);
+        assert_eq!(entry.versions[0].version, "1.8");
     }
 
     #[test]
