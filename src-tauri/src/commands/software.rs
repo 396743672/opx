@@ -40,13 +40,21 @@ pub async fn refresh_catalog(
     let mut merged = catalog::merge_catalogs(builtin, remote_catalog);
 
     // 调用各 provider 的 fetch_remote_versions，与内置版本合并
-    let providers = providers::all_providers();
-    for entry in &mut merged.entries {
-        if let Some(provider) = providers.iter().find(|p| p.key() == entry.key) {
-            let remote_versions = provider.fetch_remote_versions();
-            entry.versions = catalog::merge_versions(entry.versions.clone(), remote_versions);
+    // 用 spawn_blocking 包装：provider 用 reqwest::blocking，不能在 async 上下文直接调
+    let mut entries = std::mem::take(&mut merged.entries);
+    entries = tauri::async_runtime::spawn_blocking(move || {
+        let providers = providers::all_providers();
+        for entry in &mut entries {
+            if let Some(provider) = providers.iter().find(|p| p.key() == entry.key) {
+                let remote_versions = provider.fetch_remote_versions();
+                entry.versions = catalog::merge_versions(entry.versions.clone(), remote_versions);
+            }
         }
-    }
+        entries
+    })
+    .await
+    .map_err(|e| format!("拉取版本列表失败: {}", e))?;
+    merged.entries = entries;
 
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
