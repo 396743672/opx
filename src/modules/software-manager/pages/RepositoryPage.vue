@@ -7,10 +7,16 @@
     >
       <template #actions>
         <button class="btn" @click="refreshCatalog" :disabled="catalogStore.loading">
-          <Icon icon="mdi:refresh" /> {{ $t('refreshCatalog') }}
+          <Icon :icon="catalogStore.loading ? 'mdi:loading' : 'mdi:refresh'" :class="{ spinning: catalogStore.loading }" />
+          {{ catalogStore.loading ? $t('fetchingVersions') : $t('refreshCatalog') }}
         </button>
       </template>
     </PageHeader>
+
+    <div v-if="catalogStore.error" class="refresh-error">
+      <Icon icon="mdi:alert-circle" />
+      {{ $t('refreshCatalogFailed') }}
+    </div>
 
     <div v-if="catalogStore.loading && catalogStore.entries.length === 0">
       <EmptyState
@@ -304,5 +310,29 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--color-muted-foreground);
   margin-top: 2px;
+}
+.refresh-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--color-destructive) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-destructive) 30%, transparent);
+  color: var(--color-destructive);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.refresh-error svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>
