@@ -18,8 +18,6 @@ const RESOURCES_DIR = join(__dirname, '..', 'src-tauri', 'resources', 'software'
 
 const BUILTIN = {
   jre: {
-    '17.0.15':
-      'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jre_x64_windows_hotspot_17.0.10_7.zip',
     '1.8':
       'https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u422-b05/OpenJDK8U-jre_x64_windows_hotspot_8u422b05.zip',
   },
