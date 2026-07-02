@@ -39,6 +39,8 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 当任务匹配某个 skill 时，使用 `Skill` 工具加载对应 skill 并严格遵循其流程。绝不要用 Read 工具读取 SKILL.md 文件。
 如果你认为哪怕只有 1% 的可能性某个 skill 适用于你正在做的事情，你必须调用该 skill 检查。
 <!-- superpowers-zh:end -->
+## 大任务 大文件读写规则
+- **大文本读写规则**： 对于大文件内容 读、写 拆分成多个任务分开读、写 避免出现 Stream idle timeout - no chunks received
 
 ## 模型使用规则
 
