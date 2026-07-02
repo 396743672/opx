@@ -310,14 +310,14 @@ pub struct InstalledSoftware {
 在 `InstalledSoftware` 之后追加：
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CustomStartCommand {
     pub executable: String,
     pub args: Vec<String>,
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
-    pub env_vars: std::collections::HashMap<String, String>,
+    pub env_vars: std::collections::BTreeMap<String, String>,
     pub health_check: CustomHealthSpec,
     #[serde(default)]
     pub config_file_relative: Option<String>,
@@ -355,7 +355,7 @@ pub struct ConfigField {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", content = "options")]
+#[serde(tag = "type")]
 pub enum ConfigFieldType {
     Text,
     Number,
@@ -364,6 +364,8 @@ pub enum ConfigFieldType {
     Select { options: Vec<String> },
 }
 ```
+
+> **Review 修正**：原计划用 `tag="type", content="options"` 会导致 `Select` 序列化为 `{"type":"Select","options":{"options":[...]}}` 嵌套结构。改为 `tag="type"`（无 content），struct variant 字段直接平铺到 tag 同级，序列化为 `{"type":"Select","options":[...]}`，前端取值更直观。
 
 - [ ] **步骤 7：新增 HealthCheckSpec**
 

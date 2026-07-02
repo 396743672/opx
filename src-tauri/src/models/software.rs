@@ -145,7 +145,7 @@ pub struct CustomStartCommand {
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
-    pub env_vars: std::collections::HashMap<String, String>,
+    pub env_vars: std::collections::BTreeMap<String, String>,
     pub health_check: CustomHealthSpec,
     #[serde(default)]
     pub config_file_relative: Option<String>,
@@ -177,7 +177,7 @@ pub struct ConfigField {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", content = "options")]
+#[serde(tag = "type")]
 pub enum ConfigFieldType {
     Text,
     Number,
@@ -196,6 +196,22 @@ pub enum HealthCheckSpec {
         expected_status: u16,
         timeout_ms: u64,
     },
+}
+
+/// Provider 内部使用的自定义健康检查函数指针（不参与序列化）
+pub type CustomHealthChecker = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// 调度器实际执行的 spec（包装 Custom 函数指针，避免序列化边界问题）
+#[derive(Clone)]
+pub enum ResolvedHealthSpec {
+    ProcessOnly,
+    Tcp { port: u16, timeout_ms: u64 },
+    Http {
+        url: String,
+        expected_status: u16,
+        timeout_ms: u64,
+    },
+    Custom { checker: CustomHealthChecker },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,7 +351,9 @@ mod tests {
             version: "8.4.10".to_string(),
             name: "MySQL".to_string(),
             install_path: "apps/mysql/8.4.10".to_string(),
-            install_time: chrono::NaiveDateTime::from_timestamp_opt(1700000000, 0).unwrap(),
+            install_time: chrono::DateTime::from_timestamp(1700000000, 0)
+                .unwrap()
+                .naive_utc(),
             status: SoftwareStatus::Stopped,
             port: 3306,
             config: serde_json::json!({}),
@@ -370,7 +388,7 @@ mod tests {
             args: vec!["--port=8080".to_string()],
             working_dir: None,
             env_vars: {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert("NODE_ENV".to_string(), "production".to_string());
                 m
             },
@@ -391,8 +409,10 @@ mod tests {
             expected_status: 200,
         };
         let json = serde_json::to_string(&spec).unwrap();
-        assert!(json.contains("\"Http\""));
-        assert!(json.contains("\"expected_status\":200"));
+        assert_eq!(
+            json,
+            r#"{"kind":"Http","spec":{"url":"http://127.0.0.1:8080/health","expected_status":200}}"#
+        );
     }
 
     #[test]
@@ -402,8 +422,7 @@ mod tests {
             timeout_ms: 1000,
         };
         let json = serde_json::to_string(&spec).unwrap();
-        assert!(json.contains("\"Tcp\""));
-        assert!(json.contains("\"port\":3306"));
+        assert_eq!(json, r#"{"kind":"Tcp","spec":{"port":3306,"timeout_ms":1000}}"#);
     }
 
     #[test]
@@ -422,6 +441,19 @@ mod tests {
         let de: ConfigSchema = serde_json::from_str(&json).unwrap();
         assert_eq!(de.fields.len(), 1);
         assert_eq!(de.fields[0].key, "port");
+    }
+
+    #[test]
+    fn config_field_type_select_serializes_flat() {
+        let ft = ConfigFieldType::Select {
+            options: vec!["utf8mb4".to_string(), "utf8".to_string()],
+        };
+        let json = serde_json::to_string(&ft).unwrap();
+        // 改用 tag="type"（无 content）后，options 字段直接平铺，避免嵌套 options.options
+        assert_eq!(
+            json,
+            r#"{"type":"Select","options":["utf8mb4","utf8"]}"#
+        );
     }
 
     #[test]
@@ -471,5 +503,7 @@ mod tests {
         assert_eq!(de.pid, None);
         assert_eq!(de.custom_start_command, None);
         assert_eq!(de.last_error, None);
+        assert_eq!(de.last_started_at, None);
+        assert_eq!(de.last_stopped_at, None);
     }
 }
