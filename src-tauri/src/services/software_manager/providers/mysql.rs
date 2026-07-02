@@ -79,24 +79,10 @@ impl SoftwareProvider for MySqlProvider {
             });
         }
 
-        #[cfg(unix)]
-        {
-            versions.push(CatalogVersion {
-                version: "8.4.10".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:mysqlOfficialCdn".to_string(),
-                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-linux-glibc2.28-x86_64.tar.gz".to_string(),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::TarGz,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
+        // 注：MySQL 本设计 Windows-only（spec 第 770 行明确子目录 mysql-{ver}-winx64）。
+        // Unix 版本目录名不同（mysql-{ver}-linux-glibc2.28-x86_64）、二进制名不同（mysqld 无 .exe）、
+        // 配置文件名不同（my.cnf vs my.ini），如需 Unix 支持须单独适配 subdir/program/config_file 路径。
+        // 因此本 provider 不在 Unix catalog 注册版本。
 
         CatalogEntry {
             key: "mysql".to_string(),
@@ -282,7 +268,7 @@ mod tests {
             cmd.working_dir,
             std::path::PathBuf::from("apps/mysql/8.4.10/mysql-8.4.10-winx64")
         );
-        assert_eq!(cmd.creation_flags, 0x08000000);
+        assert_eq!(cmd.creation_flags, CREATE_NO_WINDOW);
     }
 
     #[test]
@@ -300,6 +286,13 @@ mod tests {
         assert!(fri.init_command.args.contains(&"--initialize-insecure".to_string()));
         assert!(fri.init_command.args.contains(&"--basedir=.".to_string()));
         assert!(fri.init_command.args.contains(&"--datadir=./data".to_string()));
+        // 防递归：init 命令不应再嵌套 first_run_init
+        assert!(fri.init_command.first_run_init.is_none());
+        // init 与正式启动共享 working_dir
+        assert_eq!(fri.init_command.working_dir, cmd.working_dir);
+        // --initialize-insecure 不产生临时密码
+        assert!(fri.temp_secret_output.is_none());
+        assert!(fri.init_command.env_vars.is_empty());
     }
 
     #[test]
@@ -314,6 +307,23 @@ mod tests {
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
                 assert_eq!(port, 3307);
+            }
+            _ => panic!("应为 Tcp"),
+        }
+    }
+
+    #[test]
+    fn mysql_health_check_uses_ctx_port_when_config_missing() {
+        let p = MySqlProvider::new();
+        let ctx = super::HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/mysql/8.4.10".to_string(),
+            port: 3308,
+            config: serde_json::json!({}),
+        };
+        match p.health_check(&ctx) {
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 3308);
             }
             _ => panic!("应为 Tcp"),
         }
