@@ -122,6 +122,10 @@ impl SoftwareProvider for MySqlProvider {
         file.write_all(content.as_bytes())?;
         Ok(())
     }
+
+    fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
+        Err(anyhow::anyhow!("start_command 尚未实现（任务 3 完成）"))
+    }
 }
 
 #[cfg(test)]

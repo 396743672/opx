@@ -178,6 +178,10 @@ impl SoftwareProvider for RedisProvider {
             Some(versions)
         }
     }
+
+    fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
+        Err(anyhow::anyhow!("start_command 尚未实现（任务 3 完成）"))
+    }
 }
 
 /// 在 release 的 assets 中找 cygwin.zip（不含 with-Service）

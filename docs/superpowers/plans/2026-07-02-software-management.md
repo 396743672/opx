@@ -616,10 +616,10 @@ pub struct WorkingDirContext {
 pub struct StartCommand {
     pub program: String,
     pub args: Vec<String>,
-    pub env_vars: std::collections::HashMap<String, String>,
+    pub env_vars: std::collections::BTreeMap<String, String>,
     pub working_dir: PathBuf,
     pub creation_flags: u32,
-    pub first_run_init: Option<FirstRunInit>,
+    pub first_run_init: Option<Box<FirstRunInit>>,
 }
 
 pub struct FirstRunInit {
@@ -636,7 +636,7 @@ pub struct StopCommand {
     pub program: String,
     pub args: Vec<String>,
     pub working_dir: PathBuf,
-    pub env_vars: std::collections::HashMap<String, String>,
+    pub env_vars: std::collections::BTreeMap<String, String>,
     pub creation_flags: u32,
     pub wait_timeout_secs: u64,
 }

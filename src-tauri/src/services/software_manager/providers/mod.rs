@@ -1,7 +1,7 @@
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::models::software::{CatalogEntry, CatalogVersion};
+use crate::models::software::{CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec};
 
 pub mod mysql;
 pub mod jre;
@@ -20,6 +20,34 @@ pub trait SoftwareProvider: Send + Sync {
     /// 拉取失败应返回 None（不阻塞其他软件）
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         None
+    }
+
+    /// 启动命令（含可执行文件路径、参数、env、工作目录、首次初始化钩子）
+    fn start_command(&self, ctx: &StartContext) -> Result<StartCommand>;
+
+    /// 停止命令（None 表示用通用 kill 流程）
+    fn stop_command(&self, _ctx: &StopContext) -> Result<Option<StopCommand>> {
+        Ok(None)
+    }
+
+    /// 健康检查 spec（默认 ProcessOnly）
+    fn health_check(&self, _ctx: &HealthContext) -> HealthCheckSpec {
+        HealthCheckSpec::ProcessOnly
+    }
+
+    /// 表单 schema（None 表示无表单，如自定义软件）
+    fn config_schema(&self) -> Option<ConfigSchema> {
+        None
+    }
+
+    /// 配置文件路径（相对 install_path；None 表示无配置文件，如 MinIO/RustFS）
+    fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
+        None
+    }
+
+    /// 启动时的工作目录（默认 install_path；MySQL 重写为子目录）
+    fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
+        PathBuf::from(&ctx.install_path)
     }
 }
 
@@ -41,6 +69,75 @@ impl InstallContext {
     pub fn install_dir(&self) -> &Path {
         Path::new(&self.install_path)
     }
+}
+
+/// 启动上下文（传给 provider.start_command）
+pub struct StartContext {
+    pub installed_id: String,
+    pub install_path: String,
+    pub version: String,
+    pub config: serde_json::Value,
+    pub custom_start_command: Option<CustomStartCommand>,
+}
+
+/// 停止上下文
+pub struct StopContext {
+    pub installed_id: String,
+    pub install_path: String,
+    pub pid: u32,
+}
+
+/// 健康检查上下文
+pub struct HealthContext {
+    pub installed_id: String,
+    pub install_path: String,
+    pub port: u16,
+    pub config: serde_json::Value,
+}
+
+/// 配置文件路径上下文
+pub struct ConfigContext {
+    pub install_path: String,
+    pub version: String,
+    pub config: serde_json::Value,
+}
+
+/// 工作目录上下文
+pub struct WorkingDirContext {
+    pub install_path: String,
+    pub version: String,
+}
+
+/// 启动命令（provider 返回，由 lifecycle 执行 spawn）
+pub struct StartCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env_vars: std::collections::BTreeMap<String, String>,
+    pub working_dir: PathBuf,
+    pub creation_flags: u32,
+    pub first_run_init: Option<Box<FirstRunInit>>,
+}
+
+/// 首次启动前执行的初始化命令（如 mysqld --initialize-insecure）
+pub struct FirstRunInit {
+    pub init_command: StartCommand,
+    pub temp_secret_output: Option<TempSecretSpec>,
+}
+
+/// 临时密码提取方式
+pub enum TempSecretSpec {
+    FromStdoutRegex(String),
+    FromLogFile { path: PathBuf, regex: String },
+}
+
+/// 停止命令（provider 可选返回；None 表示走通用 kill 流程）
+pub struct StopCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub working_dir: PathBuf,
+    pub env_vars: std::collections::BTreeMap<String, String>,
+    pub creation_flags: u32,
+    pub wait_timeout_secs: u64,
 }
 
 use std::collections::HashMap;
@@ -179,8 +276,106 @@ mod tests {
             fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
                 Ok(())
             }
+            fn start_command(&self, _ctx: &StartContext) -> Result<StartCommand> {
+                Err(anyhow::anyhow!("not implemented"))
+            }
         }
         let p = DummyProvider;
         assert!(p.fetch_remote_versions().is_none());
+    }
+
+    #[test]
+    fn start_context_carries_install_path_and_config() {
+        let ctx = StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/mysql/8.4.10".to_string(),
+            version: "8.4.10".to_string(),
+            config: serde_json::json!({"port": 3306}),
+            custom_start_command: None,
+        };
+        assert_eq!(ctx.install_path, "apps/mysql/8.4.10");
+        assert_eq!(ctx.config["port"], 3306);
+    }
+
+    #[test]
+    fn start_command_has_creation_flags_for_windows() {
+        let cmd = StartCommand {
+            program: "mysqld.exe".to_string(),
+            args: vec!["--console".to_string()],
+            env_vars: std::collections::BTreeMap::new(),
+            working_dir: std::path::PathBuf::from("apps/mysql/8.4.10"),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        assert_eq!(cmd.creation_flags, 0x08000000);
+    }
+
+    #[test]
+    fn first_run_init_carries_init_command() {
+        let init_cmd = StartCommand {
+            program: "mysqld.exe".to_string(),
+            args: vec!["--initialize-insecure".to_string()],
+            env_vars: std::collections::BTreeMap::new(),
+            working_dir: std::path::PathBuf::from("apps/mysql/8.4.10"),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        let fri = Box::new(FirstRunInit {
+            init_command: init_cmd,
+            temp_secret_output: None,
+        });
+        assert_eq!(fri.init_command.args[0], "--initialize-insecure");
+    }
+
+    #[test]
+    fn dummy_provider_default_methods_return_none_or_default() {
+        struct DummyProvider;
+        impl SoftwareProvider for DummyProvider {
+            fn key(&self) -> &str { "dummy" }
+            fn catalog_entry(&self) -> CatalogEntry {
+                CatalogEntry {
+                    key: "dummy".to_string(),
+                    name: "Dummy".to_string(),
+                    description: "test".to_string(),
+                    category: crate::models::software::SoftwareCategory::Database,
+                    icon: "mdi:test".to_string(),
+                    versions: vec![],
+                    default_version: "".to_string(),
+                }
+            }
+            fn post_install(&self, _ctx: &InstallContext) -> Result<()> { Ok(()) }
+            fn start_command(&self, _ctx: &StartContext) -> Result<StartCommand> {
+                Err(anyhow::anyhow!("not implemented"))
+            }
+        }
+        let p = DummyProvider;
+        let ctx = StopContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/dummy".to_string(),
+            pid: 12345,
+        };
+        assert!(p.stop_command(&ctx).unwrap().is_none());
+        let hctx = HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/dummy".to_string(),
+            port: 0,
+            config: serde_json::json!({}),
+        };
+        match p.health_check(&hctx) {
+            crate::models::software::HealthCheckSpec::ProcessOnly => {}
+            _ => panic!("默认 health_check 应为 ProcessOnly"),
+        }
+        assert!(p.config_schema().is_none());
+        let cctx = ConfigContext {
+            install_path: "apps/dummy".to_string(),
+            version: "1.0".to_string(),
+            config: serde_json::json!({}),
+        };
+        assert!(p.config_file_path(&cctx).is_none());
+        let wctx = WorkingDirContext {
+            install_path: "apps/dummy".to_string(),
+            version: "1.0".to_string(),
+        };
+        assert_eq!(p.working_dir(&wctx), std::path::PathBuf::from("apps/dummy"));
     }
 }
