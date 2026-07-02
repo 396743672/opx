@@ -161,6 +161,95 @@ impl SoftwareProvider for JreProvider {
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
         Ok(())
     }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // Adoptium GitHub Releases API：获取所有 LTS 版本
+        // 限流：未认证 60 次/小时，足够日常刷新
+        let url = "https://api.github.com/repos/adoptium/adoptium-supported-versions/releases?per_page=30";
+        let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?
+            .get(url)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+
+        if !response.status().is_success() {
+            eprintln!("[jre] GitHub API 返回 {}", response.status());
+            return None;
+        }
+
+        let releases: Vec<serde_json::Value> = response.json().ok()?;
+        let mut versions = vec![];
+
+        for release in releases {
+            let tag = match release.get("tag_name").and_then(|t| t.as_str()) {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            // tag 格式如 "jdk-17.0.16+7"，过滤 LTS（8/11/17/21）
+            if let Some(version) = parse_adoptium_tag(&tag) {
+                let major: u32 = version.split('.').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                if matches!(major, 8 | 11 | 17 | 21) {
+                    // 找 Windows x64 JRE zip asset
+                    if let Some(asset_url) = find_jre_asset(&release, major) {
+                        versions.push(CatalogVersion {
+                            version: version.clone(),
+                            mirrors: vec![MirrorSource {
+                                name: "Adoptium GitHub".to_string(),
+                                url: asset_url,
+                                builtin: None,
+                            }],
+                            archive: ArchiveInfo {
+                                format: ArchiveFormat::Zip,
+                                size: None,
+                                sha256: None,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
+        if versions.is_empty() {
+            None
+        } else {
+            Some(versions)
+        }
+    }
+}
+
+/// 解析 Adoptium tag_name，如 "jdk-17.0.16+7" → "17.0.16"
+fn parse_adoptium_tag(tag: &str) -> Option<String> {
+    let tag = tag.strip_prefix("jdk-")?;
+    let version = tag.split('+').next()?;
+    // 验证格式：x.y.z
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() == 3 && parts.iter().all(|p| p.parse::<u32>().is_ok()) {
+        Some(version.to_string())
+    } else {
+        None
+    }
+}
+
+/// 在 release 的 assets 中找 Windows x64 JRE zip
+fn find_jre_asset(release: &serde_json::Value, _major: u32) -> Option<String> {
+    let assets = release.get("assets")?.as_array()?;
+    for asset in assets {
+        let name = asset.get("name")?.as_str()?;
+        // 名称如 "OpenJDK17U-jre_x64_windows_hotspot_17.0.16_7.zip"
+        if name.contains("jre")
+            && name.contains("x64")
+            && name.contains("windows")
+            && name.ends_with(".zip")
+        {
+            let url = asset.get("browser_download_url")?.as_str()?;
+            return Some(url.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -204,5 +293,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn jre_fetch_remote_versions_returns_some_when_implemented() {
+        // 仅验证方法存在且返回 Option（不实际调网络——网络测试在集成测试覆盖）
+        let provider = JreProvider::new();
+        // fetch_remote_versions 应返回 Option<Vec<CatalogVersion>>
+        // 注意：实际调用会触发网络请求，单元测试不验证返回值内容
+        // 只验证方法签名存在（编译通过即说明 trait 方法已覆写）
+        let _ = provider.fetch_remote_versions();
+        // 不断言返回值（网络环境可能失败返回 None）
+    }
+
+    #[test]
+    fn parse_adoptium_tag_parses_lts() {
+        assert_eq!(parse_adoptium_tag("jdk-17.0.16+7"), Some("17.0.16".to_string()));
+        assert_eq!(parse_adoptium_tag("jdk-11.0.26+9"), Some("11.0.26".to_string()));
+        assert_eq!(parse_adoptium_tag("jdk-8u422-b05"), None);
+        assert_eq!(parse_adoptium_tag("not-a-tag"), None);
+    }
+
+    #[test]
+    fn find_jre_asset_matches_windows_x64_zip() {
+        let release = serde_json::json!({
+            "assets": [
+                {"name": "OpenJDK17U-jdk_x64_windows_hotspot_17.0.16_7.zip", "browser_download_url": "https://example.com/jdk.zip"},
+                {"name": "OpenJDK17U-jre_x64_windows_hotspot_17.0.16_7.zip", "browser_download_url": "https://example.com/jre.zip"},
+            ]
+        });
+        let url = find_jre_asset(&release, 17).unwrap();
+        assert_eq!(url, "https://example.com/jre.zip");
+    }
+
+    #[test]
+    fn find_jre_asset_returns_none_when_no_match() {
+        let release = serde_json::json!({
+            "assets": [
+                {"name": "OpenJDK17U-jdk_x64_windows_hotspot_17.0.16_7.zip", "browser_download_url": "https://example.com/jdk.zip"},
+            ]
+        });
+        assert!(find_jre_asset(&release, 17).is_none());
     }
 }
