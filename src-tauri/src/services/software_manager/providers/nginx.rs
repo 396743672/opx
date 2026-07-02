@@ -100,6 +100,82 @@ impl SoftwareProvider for NginxProvider {
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
         Ok(())
     }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // 爬 nginx.org/en/download.html，正则提取版本号
+        let url = "https://nginx.org/en/download.html";
+        let response = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?
+            .get(url)
+            .header("User-Agent", "OPX")
+            .send()
+            .ok()?;
+
+        if !response.status().is_success() {
+            eprintln!("[nginx] 下载页返回 {}", response.status());
+            return None;
+        }
+
+        let html = response.text().ok()?;
+        let mut versions = vec![];
+
+        // 正则匹配 nginx-X.Y.Z.zip（mainline 版本 1.31.x）
+        let re = regex::Regex::new(r"nginx-(\d+\.\d+\.\d+)\.zip").ok()?;
+        let mut seen = std::collections::HashSet::new();
+
+        for cap in re.captures_iter(&html) {
+            let version = cap.get(1)?.as_str().to_string();
+            if seen.contains(&version) {
+                continue;
+            }
+            seen.insert(version.clone());
+
+            // 只取主线版本（1.31.x）
+            let minor: u32 = version
+                .split('.')
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let major: u32 = version
+                .split('.')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            if major == 1 && minor == 31 {
+                versions.push(CatalogVersion {
+                    version: version.clone(),
+                    mirrors: vec![
+                        MirrorSource {
+                            name: "华为镜像".to_string(),
+                            url: format!(
+                                "https://mirrors.huaweicloud.com/nginx/nginx-{}.zip",
+                                version
+                            ),
+                            builtin: None,
+                        },
+                        MirrorSource {
+                            name: "官方".to_string(),
+                            url: format!("https://nginx.org/download/nginx-{}.zip", version),
+                            builtin: None,
+                        },
+                    ],
+                    archive: ArchiveInfo {
+                        format: ArchiveFormat::Zip,
+                        size: None,
+                        sha256: None,
+                    },
+                });
+            }
+        }
+
+        if versions.is_empty() {
+            None
+        } else {
+            Some(versions)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +192,11 @@ mod tests {
             .expect("应有 1.31.2 版本");
         assert!(v.mirrors[0].builtin.is_some());
         assert_eq!(v.mirrors[0].builtin.as_ref().unwrap().version, "1.31.2");
+    }
+
+    #[test]
+    fn nginx_fetch_remote_versions_method_exists() {
+        let provider = NginxProvider::new();
+        let _ = provider.fetch_remote_versions();
     }
 }
