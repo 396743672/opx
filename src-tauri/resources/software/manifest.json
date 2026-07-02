@@ -1,18 +1,14 @@
 {
   "jre": {
-    "17.0.15": {
-      "sha256": "c67cecead5f837a4511619500eca4ad1a2ad452ca377dff910ab3536bd8b1ce9",
-      "size": 43478873
-    },
     "1.8": {
       "sha256": "7ac37757292c85ed00a2cc7a38cc0b82d48b337eddea9c7f71414bc7bf439af0",
       "size": 40132081
     }
   },
   "mysql": {
-    "8.4.0": {
-      "sha256": "fb1f0c6cce229be4b3208bec8a605576bb47eabb00512bccbcc4396af332c25c",
-      "size": 258946761
+    "8.4.10": {
+      "sha256": "3b950db31c33fb59252568c012bd9ee5fac50811e778ca7c8f1a0dc91686cd6f",
+      "size": 280672277
     }
   },
   "redis": {
@@ -25,6 +21,18 @@
     "1.31.2": {
       "sha256": "e69cc6f99962ba0a75b55e5e72514a13e2e3d284a9728e4890ac1073f8f8ca6a",
       "size": 2780911
+    }
+  },
+  "minio": {
+    "RELEASE.2021-04-22": {
+      "sha256": "5359e0ebf24e5c0c86cd90f4dfddeced1b8163ea2d875fdab706232ac5ea83ea",
+      "size": 16328790
+    }
+  },
+  "rustfs": {
+    "1.0.0-beta.8": {
+      "sha256": "8f377e2123f4d460be9d812f725cc7658d2e1a7b5de17347a98dc04984a17095",
+      "size": 87706760
     }
   }
 }

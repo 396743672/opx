@@ -8,7 +8,7 @@
  *   node scripts/fetch-builtin.mjs --force  # 强制重新下载
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -18,13 +18,12 @@ const RESOURCES_DIR = join(__dirname, '..', 'src-tauri', 'resources', 'software'
 
 const BUILTIN = {
   jre: {
-    '17.0.15':
-      'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jre_x64_windows_hotspot_17.0.10_7.zip',
     '1.8':
       'https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u422-b05/OpenJDK8U-jre_x64_windows_hotspot_8u422b05.zip',
   },
   mysql: {
-    '8.4.0': 'https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-winx64.zip',
+    // MySQL 本地 zip（8.4.10 离线内置版本）
+    '8.4.10': { localPath: 'C:/Users/39674/Desktop/mysql-8.4.10-winx64.zip' },
   },
   redis: {
     '7.4.9':
@@ -32,6 +31,14 @@ const BUILTIN = {
   },
   nginx: {
     '1.31.2': 'https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip',
+  },
+  minio: {
+    // MinIO 本地 zip（离线内置版本），从本地路径复制
+    'RELEASE.2021-04-22': { localPath: 'D:/软件/onlilne/minio/RELEASE.2021-04-22T15-44-28Z.zip' },
+  },
+  rustfs: {
+    '1.0.0-beta.8':
+      'https://github.com/rustfs/rustfs/releases/download/1.0.0-beta.8/rustfs-windows-x86_64-latest.zip',
   },
 }
 
@@ -77,17 +84,38 @@ async function main() {
 
   for (const [key, versions] of Object.entries(BUILTIN)) {
     manifest[key] = {}
-    for (const [version, url] of Object.entries(versions)) {
+    for (const [version, source] of Object.entries(versions)) {
       const keyDir = join(RESOURCES_DIR, key)
       mkdirSync(keyDir, { recursive: true })
-      const zipPath = join(keyDir, `${version}.zip`)
+      // 文件扩展名：统一用 .zip（minio 内置是 zip，rustfs/jre/mysql/redis/nginx 也是 zip）
+      const ext = '.zip'
+      const zipPath = join(keyDir, `${version}${ext}`)
+
+      // source 可能是 URL 字符串或 { localPath: "..." } 对象
+      const isLocal = typeof source === 'object' && source !== null && source.localPath
+      const localPath = isLocal ? source.localPath : null
+      const url = isLocal ? null : source
 
       if (existsSync(zipPath) && !force) {
-        console.log(`✓ 跳过已存在: ${key}/${version}.zip`)
+        console.log(`✓ 跳过已存在: ${key}/${version}${ext}`)
+      } else if (isLocal) {
+        if (!existsSync(localPath)) {
+          console.error(`✗ 本地源文件不存在: ${localPath}`)
+          console.error(`  跳过 ${key}/${version}，请手动提供文件`)
+          continue
+        }
+        console.log(`📄 复制本地文件: ${key}/${version}${ext}`)
+        console.log(`  源: ${localPath}`)
+        copyFileSync(localPath, zipPath)
       } else {
-        console.log(`↓ 下载: ${key}/${version}.zip`)
+        console.log(`↓ 下载: ${key}/${version}${ext}`)
         console.log(`  URL: ${url}`)
         await download(url, zipPath)
+      }
+
+      if (!existsSync(zipPath)) {
+        // 本地源缺失时跳过，不生成 manifest 条目
+        continue
       }
 
       const hash = sha256(zipPath)

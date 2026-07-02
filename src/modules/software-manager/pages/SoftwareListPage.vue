@@ -66,10 +66,13 @@
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import UninstallConfirmDialog from '../components/UninstallConfirmDialog.vue'
 import type { InstalledSoftware } from '@/models/software'
+
+const { t } = useI18n()
 
 const installed = ref<InstalledSoftware[]>([])
 const loading = ref(false)
@@ -88,9 +91,9 @@ function sourceIcon(item: InstalledSoftware): string {
 }
 
 function sourceLabel(item: InstalledSoftware): string {
-  if (item.is_custom) return 'Custom'
-  if (isBuiltin(item)) return 'Builtin'
-  return 'Mirror'
+  if (item.is_custom) return t('custom')
+  if (isBuiltin(item)) return t('builtinSource')
+  return t('mirrorSource')
 }
 
 async function loadInstalled() {

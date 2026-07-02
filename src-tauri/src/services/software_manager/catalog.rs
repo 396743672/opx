@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::software::Catalog;
+use crate::models::software::{Catalog, CatalogVersion};
 
 use super::providers::all_providers;
 
@@ -59,6 +59,35 @@ pub fn merge_catalogs(builtin: Catalog, remote: Option<Catalog>) -> Catalog {
         entries: builtin_map.into_values().collect(),
         updated_at: remote.updated_at,
     }
+}
+
+/// 合并内置版本与动态版本：
+/// - 同 version 号去重，内置优先（保留内置的 mirrors，含 builtin 项）
+/// - 动态版本追加在内置版本之后
+/// - 内置为空时直接用动态版本
+/// - 动态为 None 时返回内置
+pub fn merge_versions(
+    builtin_versions: Vec<CatalogVersion>,
+    remote_versions: Option<Vec<CatalogVersion>>,
+) -> Vec<CatalogVersion> {
+    let remote = match remote_versions {
+        Some(r) => r,
+        None => return builtin_versions,
+    };
+
+    let mut existing: std::collections::HashSet<String> = builtin_versions
+        .iter()
+        .map(|v| v.version.clone())
+        .collect();
+
+    let mut merged = builtin_versions;
+    for v in remote {
+        if !existing.contains(&v.version) {
+            existing.insert(v.version.clone());
+            merged.push(v);
+        }
+    }
+    merged
 }
 
 #[cfg(test)]
@@ -161,5 +190,55 @@ mod tests {
         let keys: Vec<_> = merged.entries.iter().map(|e| e.key.as_str()).collect();
         assert!(keys.contains(&"mysql"));
         assert!(keys.contains(&"custom-tool"));
+    }
+
+    #[test]
+    fn merge_versions_dedup_by_version_builtin_priority() {
+        let builtin = vec![make_version("1.0"), make_version("2.0")];
+        let remote = Some(vec![make_version("2.0"), make_version("3.0")]);
+        let merged = merge_versions(builtin, remote);
+        assert_eq!(merged.len(), 3);
+        let versions: Vec<_> = merged.iter().map(|v| v.version.as_str()).collect();
+        assert!(versions.contains(&"1.0"));
+        assert!(versions.contains(&"2.0"));
+        assert!(versions.contains(&"3.0"));
+    }
+
+    #[test]
+    fn merge_versions_remote_none_returns_builtin() {
+        let builtin = vec![make_version("1.0")];
+        let merged = merge_versions(builtin.clone(), None);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].version, "1.0");
+    }
+
+    #[test]
+    fn merge_versions_empty_remote_returns_builtin() {
+        let builtin = vec![make_version("1.0")];
+        let merged = merge_versions(builtin.clone(), Some(vec![]));
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn merge_versions_empty_builtin_uses_remote() {
+        let remote = Some(vec![make_version("1.0"), make_version("2.0")]);
+        let merged = merge_versions(vec![], remote);
+        assert_eq!(merged.len(), 2);
+    }
+
+    fn make_version(v: &str) -> CatalogVersion {
+        CatalogVersion {
+            version: v.to_string(),
+            mirrors: vec![MirrorSource {
+                name: "test".to_string(),
+                url: "https://example.com/test.zip".to_string(),
+                builtin: None,
+            }],
+            archive: ArchiveInfo {
+                format: ArchiveFormat::Zip,
+                size: None,
+                sha256: None,
+            },
+        }
     }
 }

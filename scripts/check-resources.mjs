@@ -31,15 +31,17 @@ const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
 
 for (const [key, versions] of Object.entries(manifest)) {
   for (const [version, info] of Object.entries(versions)) {
-    const zipPath = join(RESOURCES_DIR, key, `${version}.zip`)
+    // 文件扩展名：统一用 .zip（minio 内置是 zip，rustfs/jre/mysql/redis/nginx 也是 zip）
+    const ext = '.zip'
+    const zipPath = join(RESOURCES_DIR, key, `${version}${ext}`)
     if (!existsSync(zipPath)) {
-      console.error(`✗ 缺失: ${key}/${version}.zip`)
+      console.error(`✗ 缺失: ${key}/${version}${ext}`)
       errors++
       continue
     }
     const actualHash = sha256(zipPath)
     if (actualHash !== info.sha256) {
-      console.error(`✗ sha256 不匹配: ${key}/${version}.zip`)
+      console.error(`✗ sha256 不匹配: ${key}/${version}${ext}`)
       console.error(`  期望: ${info.sha256}`)
       console.error(`  实际: ${actualHash}`)
       errors++
@@ -47,13 +49,13 @@ for (const [key, versions] of Object.entries(manifest)) {
     }
     const actualSize = statSync(zipPath).size
     if (actualSize !== info.size) {
-      console.error(`✗ size 不匹配: ${key}/${version}.zip`)
+      console.error(`✗ size 不匹配: ${key}/${version}${ext}`)
       console.error(`  期望: ${info.size}`)
       console.error(`  实际: ${actualSize}`)
       errors++
       continue
     }
-    console.log(`✓ ${key}/${version}.zip`)
+    console.log(`✓ ${key}/${version}${ext}`)
   }
 }
 

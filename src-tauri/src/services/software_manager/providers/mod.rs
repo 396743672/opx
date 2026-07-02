@@ -1,17 +1,26 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::models::software::CatalogEntry;
+use crate::models::software::{CatalogEntry, CatalogVersion};
 
 pub mod mysql;
 pub mod jre;
 pub mod redis;
 pub mod nginx;
+pub mod minio;
+pub mod rustfs;
 
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
     fn catalog_entry(&self) -> CatalogEntry;
     fn post_install(&self, ctx: &InstallContext) -> Result<()>;
+
+    /// 拉取远程版本列表（可选，默认返回 None 表示不动态拉取）
+    /// 返回 Some(Vec) 时，版本会与内置 catalog_entry() 的版本合并
+    /// 拉取失败应返回 None（不阻塞其他软件）
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        None
+    }
 }
 
 pub struct InstallContext {
@@ -98,6 +107,8 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(jre::JreProvider::new()),
         Box::new(redis::RedisProvider::new()),
         Box::new(nginx::NginxProvider::new()),
+        Box::new(minio::MinioProvider::new()),
+        Box::new(rustfs::RustfsProvider::new()),
     ]
 }
 
@@ -147,5 +158,29 @@ mod tests {
 
         assert!(manifest.get_builtin("jre", "17.0.15").is_none());
         assert!(manifest.get_builtin("mysql", "8.4.0").is_none());
+    }
+
+    #[test]
+    fn default_fetch_remote_versions_returns_none() {
+        struct DummyProvider;
+        impl SoftwareProvider for DummyProvider {
+            fn key(&self) -> &str { "dummy" }
+            fn catalog_entry(&self) -> CatalogEntry {
+                CatalogEntry {
+                    key: "dummy".to_string(),
+                    name: "Dummy".to_string(),
+                    description: "test".to_string(),
+                    category: crate::models::software::SoftwareCategory::Database,
+                    icon: "mdi:test".to_string(),
+                    versions: vec![],
+                    default_version: "".to_string(),
+                }
+            }
+            fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
+                Ok(())
+            }
+        }
+        let p = DummyProvider;
+        assert!(p.fetch_remote_versions().is_none());
     }
 }

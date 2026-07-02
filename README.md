@@ -1,4 +1,4 @@
-## Tauri + Vue 3 + TypeScript 项目最佳实践
+## Tauri + Vue 3 + TypeScript + I18n 项目最佳实践
 
 - **项目初始化检查清单**：
   - 必须创建 `src-tauri/icons` 目录并添加应用图标

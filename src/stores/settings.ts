@@ -39,6 +39,12 @@ export const useSettingsStore = defineStore('settings', () => {
     if (i18n.global.locale.value !== lang) {
       i18n.global.locale.value = lang
     }
+    // 同步到 localStorage，下次启动时 i18n.ts 直接读取，避免启动遮罩显示错误语言
+    try {
+      localStorage.setItem('opx_language', lang)
+    } catch {
+      // localStorage 不可用时静默
+    }
   }
 
   watch(isDark, applyTheme, { immediate: true })

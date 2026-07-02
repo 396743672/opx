@@ -35,48 +35,33 @@ impl SoftwareProvider for MySqlProvider {
         #[cfg(windows)]
         {
             versions.push(CatalogVersion {
-                version: "8.4.0".to_string(),
+                version: "8.4.10".to_string(),
                 mirrors: {
                     let mut m = vec![];
                     let sha = builtin_manifest()
-                        .get_builtin("mysql", "8.4.0")
+                        .get_builtin("mysql", "8.4.10")
                         .map(|e| e.sha256.clone())
                         .unwrap_or_default();
                     let size = builtin_manifest()
-                        .get_builtin("mysql", "8.4.0")
+                        .get_builtin("mysql", "8.4.10")
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
-                        name: "内置默认版本（离线）".to_string(),
-                        url: "builtin://software/mysql/8.4.0.zip".to_string(),
+                        name: "i18n:builtinVersion".to_string(),
+                        url: "builtin://software/mysql/8.4.10.zip".to_string(),
                         builtin: Some(BuiltinInfo {
-                            version: "8.4.0".to_string(),
+                            version: "8.4.10".to_string(),
                             sha256: sha,
                             size: size,
                         }),
                     });
                     m.push(MirrorSource {
-                        name: "MySQL 官方 CDN".to_string(),
-                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-winx64.zip".to_string(),
+                        name: "i18n:mysqlOfficialCdn".to_string(),
+                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-winx64.zip".to_string(),
                         builtin: None,
                     });
                     m
                 },
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            versions.push(CatalogVersion {
-                version: "8.0.36".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "MySQL 官方 CDN".to_string(),
-                        url: "https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.36-winx64.zip".to_string(),
-                        builtin: None,
-                    },
-                ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     size: None,
@@ -88,11 +73,11 @@ impl SoftwareProvider for MySqlProvider {
         #[cfg(unix)]
         {
             versions.push(CatalogVersion {
-                version: "8.4.0".to_string(),
+                version: "8.4.10".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "MySQL 官方 CDN".to_string(),
-                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-linux-glibc2.28-x86_64.tar.gz".to_string(),
+                        name: "i18n:mysqlOfficialCdn".to_string(),
+                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-linux-glibc2.28-x86_64.tar.gz".to_string(),
                         builtin: None,
                     },
                 ],
@@ -111,7 +96,7 @@ impl SoftwareProvider for MySqlProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:database".to_string(),
             versions,
-            default_version: "8.4.0".to_string(),
+            default_version: "8.4.10".to_string(),
         }
     }
 
@@ -144,27 +129,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mysql_840_has_builtin_as_first_mirror() {
+    fn mysql_8410_has_builtin() {
         let entry = MySqlProvider::new().catalog_entry();
         let v = entry
             .versions
             .iter()
-            .find(|v| v.version == "8.4.0")
-            .expect("应有 8.4.0 版本");
+            .find(|v| v.version == "8.4.10")
+            .expect("应有 8.4.10 版本");
         assert!(v.mirrors[0].builtin.is_some());
-        assert_eq!(v.mirrors[0].builtin.as_ref().unwrap().version, "8.4.0");
+        assert_eq!(v.mirrors[0].builtin.as_ref().unwrap().version, "8.4.10");
     }
 
     #[test]
-    fn mysql_8036_has_no_builtin() {
-        let entry = MySqlProvider::new().catalog_entry();
-        let v = entry
-            .versions
-            .iter()
-            .find(|v| v.version == "8.0.36")
-            .expect("应有 8.0.36 版本");
-        for m in &v.mirrors {
-            assert!(m.builtin.is_none());
-        }
+    fn mysql_fetch_remote_versions_method_exists() {
+        let provider = MySqlProvider::new();
+        let _ = provider.fetch_remote_versions();
     }
 }

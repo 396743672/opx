@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::models::software::{
     CatalogEntry, CustomInstallParams, InstallParams, InstalledSoftware,
 };
-use crate::services::software_manager::{catalog, installer, SoftwareManager};
+use crate::services::software_manager::{catalog, installer, providers, SoftwareManager};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -22,7 +22,8 @@ pub async fn refresh_catalog(
     app: AppHandle,
 ) -> Result<Vec<CatalogEntry>, String> {
     let builtin = catalog::build_builtin_catalog();
-    // 从 settings 读取 mirror_url
+
+    // 从 settings 读取 mirror_url（远程 catalog.json，可选）
     let mirror_url = {
         let sp = crate::utils::paths::settings_path();
         if sp.exists() {
@@ -35,12 +36,54 @@ pub async fn refresh_catalog(
             "https://mirrors.aliyun.com".to_string()
         }
     };
-    let remote = catalog::fetch_remote_catalog(&mirror_url).await;
-    let merged = catalog::merge_catalogs(builtin, remote);
+    let remote_catalog = catalog::fetch_remote_catalog(&mirror_url).await;
+    let mut merged = catalog::merge_catalogs(builtin, remote_catalog);
+
+    merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
-    // 通知前端 catalog 已更新
     let _ = app.emit("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
+}
+
+/// 获取指定软件的远程版本列表（前端打开安装对话框时调用）
+/// 返回包装后的 CatalogEntry（含远程版本），失败返回错误信息供前端展示
+#[tauri::command]
+pub async fn fetch_remote_versions_for(
+    key: String,
+) -> Result<Vec<CatalogEntry>, String> {
+    // 用 spawn_blocking 调用 provider 的 sync fetch_remote_versions
+    // 避免 reqwest::blocking 在 async 上下文中 panic
+    let key_for_blocking = key.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let providers = providers::all_providers();
+        let provider = providers
+            .iter()
+            .find(|p| p.key() == key_for_blocking)
+            .ok_or_else(|| format!("未知软件: {}", key_for_blocking))?;
+        Ok::<_, String>(provider.fetch_remote_versions())
+    })
+    .await
+    .map_err(|e| format!("获取版本列表失败: {}", e))?;
+
+    match result {
+        Ok(Some(versions)) => {
+            // 包装成单条 CatalogEntry 返回（前端合并到 catalog）
+            let providers = providers::all_providers();
+            let provider = providers.iter().find(|p| p.key() == key);
+            if let Some(p) = provider {
+                let mut entry = p.catalog_entry();
+                entry.versions = versions;
+                Ok(vec![entry])
+            } else {
+                Err(format!("未知软件: {}", key))
+            }
+        }
+        Ok(None) => {
+            // 该软件不支持动态拉取（如 MySQL/MinIO/RustFS），返回空
+            Ok(vec![])
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// 获取已安装软件列表

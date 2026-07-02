@@ -14,26 +14,35 @@
 
       <div class="field">
         <div class="field-label">{{ $t('selectVersion') }}</div>
-        <div class="version-list">
+        <div class="select" @click="showVersionDropdown = !showVersionDropdown">
+          <span>{{ selectedVersion?.version }}</span>
+          <Icon icon="mdi:chevron-down" class="caret" />
+        </div>
+        <div v-if="showVersionDropdown" class="dropdown version-dropdown">
           <div
-            v-for="(v, idx) in entry.versions"
+            v-for="(v, idx) in mergedVersions"
             :key="v.version"
-            class="version-row"
+            class="dropdown-item"
             :class="{ selected: selectedVersionIdx === idx }"
-            @click="selectedVersionIdx = idx"
+            @click="selectVersion(idx)"
           >
-            <span class="v-name">{{ v.version }}</span>
-            <span v-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
-            <Icon v-if="selectedVersionIdx === idx" icon="mdi:check" class="v-check" />
+            <span>{{ v.version }}</span>
+            <span v-if="isBuiltinVersion(v)" class="builtin-tag">{{ $t('offline') }}</span>
+            <span v-else-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
           </div>
         </div>
+        <div v-if="fetchingVersions" class="fetching-hint">
+          <Icon icon="mdi:loading" class="spinning" />
+          <span>{{ $t('fetchingVersions') }}</span>
+        </div>
+        <div v-if="fetchError" class="fetch-error">{{ fetchError }}</div>
       </div>
 
       <div class="field">
         <div class="field-label">{{ $t('selectMirror') }}</div>
         <div class="select" @click="showMirrorDropdown = !showMirrorDropdown">
           <Icon v-if="selectedMirror?.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
-          <span>{{ selectedMirror?.name }}</span>
+          <span>{{ mirrorName(selectedMirror?.name || '') }}</span>
           <span v-if="selectedMirror?.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           <Icon icon="mdi:chevron-down" class="caret" />
         </div>
@@ -46,7 +55,7 @@
             @click="selectMirror(idx)"
           >
             <Icon v-if="m.builtin" icon="mdi:package-variant-closed" class="builtin-icon" />
-            <span>{{ m.name }}</span>
+            <span>{{ mirrorName(m.name) }}</span>
             <span v-if="m.builtin" class="builtin-tag">{{ $t('offline') }}</span>
           </div>
         </div>
@@ -69,11 +78,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import { useInstallStore } from '../stores/install'
-import type { CatalogEntry } from '@/models/software'
+import type { CatalogEntry, CatalogVersion } from '@/models/software'
 
 const props = defineProps<{
   entry: CatalogEntry
@@ -84,12 +94,62 @@ const emit = defineEmits<{
   installed: [id: string]
 }>()
 
+const { t } = useI18n()
+
+// 镜像名 i18n 转译：后端返回 "i18n:key" 格式时调 t() 转译
+function mirrorName(name: string): string {
+  if (name.startsWith('i18n:')) {
+    return t(name.slice(5))
+  }
+  return name
+}
+
 const selectedVersionIdx = ref(0)
 const selectedMirrorIdx = ref(0)
 const showMirrorDropdown = ref(false)
 const installing = ref(false)
+const showVersionDropdown = ref(false)
+const fetchingVersions = ref(false)
+const fetchError = ref<string | null>(null)
+const remoteVersions = ref<CatalogVersion[]>([])
 
-const selectedVersion = computed(() => props.entry.versions[selectedVersionIdx.value])
+// 版本号比较：支持如 "17.0.16"、"1.8"、"8.4.10"、"RELEASE.2021-04-22" 等
+function compareVersion(a: string, b: string): number {
+  // 提取数字部分
+  const numA = (a.match(/\d+/g) || []).map(Number)
+  const numB = (b.match(/\d+/g) || []).map(Number)
+  const len = Math.max(numA.length, numB.length)
+  for (let i = 0; i < len; i++) {
+    const va = numA[i] ?? 0
+    const vb = numB[i] ?? 0
+    if (va !== vb) return vb - va  // 降序
+  }
+  return 0
+}
+
+// 合并版本列表：内置（entry.versions）+ 远程拉取的版本（去重 + 降序）
+const mergedVersions = computed(() => {
+  const existing = new Set(props.entry.versions.map(v => v.version))
+  // 内置版本在前（保持原顺序）
+  const builtin = [...props.entry.versions]
+  // 网络版本去重 + 降序排序
+  const remote = remoteVersions.value
+    .filter(v => !existing.has(v.version))
+    .sort((a, b) => compareVersion(a.version, b.version))
+  return [...builtin, ...remote]
+})
+
+function isBuiltinVersion(v: CatalogVersion): boolean {
+  return v.mirrors.some(m => m.builtin)
+}
+
+function selectVersion(idx: number) {
+  selectedVersionIdx.value = idx
+  selectedMirrorIdx.value = 0
+  showVersionDropdown.value = false
+}
+
+const selectedVersion = computed(() => mergedVersions.value[selectedVersionIdx.value])
 const selectedMirror = computed(() => selectedVersion.value?.mirrors[selectedMirrorIdx.value])
 const installPath = computed(
   () => `apps/${props.entry.key}/${selectedVersion.value?.version}`,
@@ -99,6 +159,26 @@ function selectMirror(idx: number) {
   selectedMirrorIdx.value = idx
   showMirrorDropdown.value = false
 }
+
+async function fetchRemoteVersions() {
+  fetchingVersions.value = true
+  fetchError.value = null
+  try {
+    const result = await invoke('fetch_remote_versions_for', { key: props.entry.key }) as CatalogEntry[]
+    if (result.length > 0) {
+      remoteVersions.value = result[0].versions
+    }
+  } catch (e) {
+    fetchError.value = String(e)
+    console.error('Failed to fetch remote versions:', e)
+  } finally {
+    fetchingVersions.value = false
+  }
+}
+
+onMounted(() => {
+  fetchRemoteVersions()
+})
 
 async function install() {
   installing.value = true
@@ -285,6 +365,30 @@ async function install() {
 .dropdown-item.selected {
   background: color-mix(in oklch, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
+}
+.version-dropdown {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.fetching-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  margin-top: 6px;
+}
+.fetch-error {
+  font-size: 12px;
+  color: var(--color-destructive);
+  margin-top: 6px;
+}
+.spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .dialog-footer {
   display: flex;
