@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::models::software::{
     CatalogEntry, CustomInstallParams, InstallParams, InstalledSoftware,
 };
-use crate::services::software_manager::{catalog, installer, SoftwareManager};
+use crate::services::software_manager::{catalog, installer, providers, SoftwareManager};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -22,7 +22,8 @@ pub async fn refresh_catalog(
     app: AppHandle,
 ) -> Result<Vec<CatalogEntry>, String> {
     let builtin = catalog::build_builtin_catalog();
-    // 从 settings 读取 mirror_url
+
+    // 从 settings 读取 mirror_url（远程 catalog.json，可选）
     let mirror_url = {
         let sp = crate::utils::paths::settings_path();
         if sp.exists() {
@@ -35,10 +36,20 @@ pub async fn refresh_catalog(
             "https://mirrors.aliyun.com".to_string()
         }
     };
-    let remote = catalog::fetch_remote_catalog(&mirror_url).await;
-    let merged = catalog::merge_catalogs(builtin, remote);
+    let remote_catalog = catalog::fetch_remote_catalog(&mirror_url).await;
+    let mut merged = catalog::merge_catalogs(builtin, remote_catalog);
+
+    // 调用各 provider 的 fetch_remote_versions，与内置版本合并
+    let providers = providers::all_providers();
+    for entry in &mut merged.entries {
+        if let Some(provider) = providers.iter().find(|p| p.key() == entry.key) {
+            let remote_versions = provider.fetch_remote_versions();
+            entry.versions = catalog::merge_versions(entry.versions.clone(), remote_versions);
+        }
+    }
+
+    merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
-    // 通知前端 catalog 已更新
     let _ = app.emit("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
 }
