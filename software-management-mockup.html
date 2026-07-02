@@ -229,11 +229,16 @@
     border: 1px solid color-mix(in oklch, var(--destructive) 30%, transparent);
   }
   .status-badge.error .dot { background: var(--destructive); }
-  .status-badge.unknown {
-    background: var(--muted); color: var(--muted-foreground);
-    border: 1px solid var(--border);
+  .status-badge.initializing {
+    background: color-mix(in oklch, var(--info) 14%, transparent);
+    color: var(--info);
+    border: 1px solid color-mix(in oklch, var(--info) 30%, transparent);
   }
-  .status-badge.unknown .dot { background: var(--muted-foreground); }
+  .status-badge.initializing .dot {
+    background: var(--info);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .status-badge.unknown {
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -704,6 +709,39 @@
             </div>
           </div>
 
+          <!-- 数据库（含 MySQL 初始化中状态） -->
+          <div class="category-section">
+            <div class="category-title">
+              <span class="iconify ic" data-icon="mdi:database"></span>
+              数据库（初始化场景）
+              <span class="count">1 个实例</span>
+            </div>
+            <div class="instance-list">
+              <!-- MySQL 初始化中 -->
+              <div class="instance-row">
+                <div class="row-icon database"><span class="iconify" data-icon="mdi:database"></span></div>
+                <div class="row-main">
+                  <div class="row-name">
+                    MySQL <span class="ver">8.4.10</span>
+                    <span class="tag builtin">内置</span>
+                  </div>
+                  <div class="row-path">apps/mysql/8.4.10/mysql-8.4.10-winx64</div>
+                  <div class="row-meta">
+                    <span class="kv"><span class="iconify ic spin" data-icon="mdi:loading"></span>初始化数据目录…（mysqld --initialize-insecure）</span>
+                  </div>
+                </div>
+                <div class="status-badge initializing"><span class="dot"></span>初始化中</div>
+                <div class="row-actions">
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:play"></span>启动</button>
+                  <button class="btn small"><span class="iconify ic" data-icon="mdi:stop"></span>取消</button>
+                  <button class="btn small disabled"><span class="iconify ic" data-icon="mdi:cog-outline"></span>配置</button>
+                  <button class="btn small ghost disabled"><span class="iconify ic" data-icon="mdi:tune-vertical"></span></button>
+                  <button class="btn small danger disabled"><span class="iconify ic" data-icon="mdi:delete"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 对象存储 -->
           <div class="category-section">
             <div class="category-title">
@@ -1133,6 +1171,66 @@
   </div>
 </div>
 
+<!-- ============ 场景 8：MinIO 首次启动配置 ============ -->
+<div id="scene-minio-first-run" class="overlay hidden">
+  <div class="dialog">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <span class="iconify ic" data-icon="mdi:storage"></span>
+        MinIO 首次启动配置
+      </div>
+      <button class="dialog-close" onclick="hideAll()"><span class="iconify" data-icon="mdi:close"></span></button>
+    </div>
+
+    <div style="font-size: 13px; margin-bottom: 14px; color: var(--muted-foreground);">
+      首次启动需配置 API 端口、控制台端口、数据目录与根账号。保存后写入配置，启动时按参数拉起服务。
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label class="form-field-label">API 端口</label>
+        <div class="input tnum">9000</div>
+        <div class="form-field-desc">S3 API 监听端口（--address）</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">控制台端口</label>
+        <div class="input tnum">9001</div>
+        <div class="form-field-desc">Web 管理界面端口（--console-address）</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="form-field-label">数据目录</label>
+      <div class="input-wrap">
+        <div class="input input-mono">./data</div>
+        <button class="browse-btn"><span class="iconify ic" data-icon="mdi:folder-open"></span>浏览</button>
+      </div>
+      <div class="form-field-desc">相对路径，OPX 移动后仍生效（Portable 模式）</div>
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label class="form-field-label">Access Key</label>
+        <div class="input">minioadmin</div>
+      </div>
+      <div class="field">
+        <label class="form-field-label">Secret Key</label>
+        <div class="input">minioadmin</div>
+      </div>
+    </div>
+
+    <div class="hint-bar">
+      <span class="iconify ic" data-icon="mdi:shield-alert-outline"></span>
+      建议修改默认密钥；MinIO 启动后通过环境变量 MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 注入
+    </div>
+
+    <div class="dialog-footer">
+      <button class="btn" onclick="hideAll()">取消</button>
+      <button class="btn primary" onclick="hideAll()"><span class="iconify ic" data-icon="mdi:play"></span>保存并启动</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ Toast 提示（场景演示用） ============ -->
 <div id="toast" class="toast info hidden">
   <span class="iconify ic" data-icon="mdi:information"></span>
@@ -1151,6 +1249,7 @@
   <button class="scene-btn" data-scene="uninstall-running">卸载阻止·运行中</button>
   <button class="scene-btn" data-scene="uninstall-jre">卸载阻止·JRE 依赖</button>
   <button class="scene-btn" data-scene="custom-cmd">自定义启动命令</button>
+  <button class="scene-btn" data-scene="minio-first-run">MinIO 首次启动配置</button>
 </div>
 
 <script>

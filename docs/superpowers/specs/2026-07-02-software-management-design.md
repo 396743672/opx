@@ -12,7 +12,9 @@
 ### 范围边界
 
 **包含**：
-- 已安装软件的启动 / 停止 / 重启
+- 已安装软件的启动 / 停止 / 重启（服务模式，隐藏控制台窗口）
+- MySQL 首次启动 `--initialize-insecure` 数据目录初始化 + 临时/无密码策略
+- MinIO / RustFS 首次启动配置（API 端口、控制台端口、数据目录、access/secret key）
 - 启动状态实时刷新（`Running` / `Stopped` / `Error` / `Unknown` / `Starting` / `Stopping`）
 - 配置编辑：表单 + 源码双 tab（Monaco 编辑器）
 - 卸载前置校验（运行中拒绝；JRE 依赖检查）
@@ -117,9 +119,10 @@ pub enum SoftwareStatus {
     Running,
     Stopped,
     Error,
-    Unknown,    // 既有：未启动过/初始状态
-    Starting,   // 新增：spawn 已下发，健康检查未通过
-    Stopping,   // 新增：停止命令已下发，进程未完全退出
+    Unknown,
+    Starting,      // spawn 已下发，健康检查未通过
+    Stopping,      // 停止命令已下发，进程未完全退出
+    Initializing,  // 首次启动初始化中（MySQL --initialize 等）
 }
 ```
 
@@ -290,38 +293,87 @@ pub struct RegisteredProcess {
      → 拒绝：return Err("进程 {pid} 仍在运行，请先停止")
   4. 派生 StartContext { install_path, version, config, custom_start_command }
   5. 若 is_custom=true：用 custom_start_command 构造 Command
-     否则：调用 provider.start_command(ctx) 构造 Command
-  6. 设置 Command::current_dir(working_dir)  ← portable 关键
-  7. 设置环境变量（env_vars + Windows 隐藏窗口标志）
-  8. Command::spawn() → 拿到 Child
-     失败 → 立即返回 Err("启动失败：{原因}")
-  9. 拿到 PID，更新内存注册表 + installed.json:
-     - status = Starting
-     - pid = Some(child_pid)
-     - last_started_at = now
-  10. emit "software-status-changed" { installed_id, status: "Starting", pid }
-  11. 异步 tokio::spawn 健康检查任务
-  12. 立即返回 Ok(())（不阻塞 IPC）
+     否则：调用 provider.start_command(ctx) 构造 StartCommand
+  6. 首次启动校验：
+     - 检查 first_run_init 字段（MySQL 需初始化 data 目录）
+     - 检查 config.initialized 标记
+     - 若需要初始化且未初始化：
+       a. 状态 → Initializing（新中间态）
+       b. emit "software-status-changed" { status: "Initializing" }
+       c. 执行 first_run_init.init_command
+          - 同步等待完成（最多 60s）
+          - 捕获 stdout/stderr（用于抓取 MySQL 临时密码）
+          - 失败 → 状态 Error，返回 Err("初始化失败：{原因}")
+       d. 若有 temp_secret_output：
+          - 用正则匹配 stdout/stderr 或日志文件
+          - 提取临时密码，存入 config.temp_secret
+       e. 更新 config.initialized = true，写回 installed.json
+  7. 设置 Command::current_dir(working_dir)  ← portable 关键
+  8. 设置环境变量（env_vars）
+  9. Windows 设置 creation_flags = CREATE_NO_WINDOW  ← 隐藏控制台窗口
+  10. Command::spawn() → 拿到 Child
+      失败 → 立即返回 Err("启动失败：{原因}")
+  11. 拿到 PID，更新内存注册表 + installed.json:
+      - status = Starting
+      - pid = Some(child_pid)
+      - last_started_at = now
+  12. emit "software-status-changed" { installed_id, status: "Starting", pid }
+  13. 异步 tokio::spawn 健康检查任务
+  14. 立即返回 Ok(())（不阻塞 IPC）
   │
   ▼ 健康检查任务
-  13. 按 provider.health_check(ctx) 调度轮询：
+  15. 按 provider.health_check(ctx) 调度轮询：
       - Tcp: 每 1s 尝试 TcpStream::connect，最多 30 次
       - Http: 每 1s reqwest GET，期望 status code
       - None: 跳过，直接标记 Running
-  14. 成功 → 更新 status = Running，emit "software-status-changed"
-  15. 30 次失败 → 更新 status = Error，last_error = "健康检查超时"
+  16. 成功 → 更新 status = Running，emit "software-status-changed"
+  17. 30 次失败 → 更新 status = Error，last_error = "健康检查超时"
       emit "software-status-changed" { status: "Error", error }
       保留 PID（供用户手动排查/强杀）
   │
   ▼ 进程退出监听（并行 spawn）
-  16. tokio::spawn 监听 child.wait()
-  17. 若进程在 status=Running 时退出（非用户主动停止）
+  18. tokio::spawn 监听 child.wait()
+  19. 若进程在 status=Running 时退出（非用户主动停止）
       → status = Error, last_error = "进程意外退出，code={x}"
       → emit "software-status-changed"
       → 从注册表移除 PID
 ```
 
 启动是异步的——`start_software` IPC 命令立即返回，状态变化通过事件推送。`Starting` 状态下 UI 显示加载动画。健康检查超时不会自动杀进程（保留 PID 供排查），用户可手动点"停止"。
+
+### 首次启动初始化（MySQL 专属）
+
+MySQL 首次启动前必须用 `mysqld --initialize` 初始化数据目录，否则 mysqld 启动会因 datadir 为空报错。
+
+| 初始化方式 | 临时密码策略 | 本设计选择 |
+|---|---|---|
+| `--initialize-insecure` | root@localhost 无密码 | ✅ 默认，UI 引导用户后续设密码 |
+| `--initialize` | 生成随机密码写入 stderr | 备选，存入 config.temp_secret |
+
+**初始化时机**：仅在 `config.initialized != true` 时执行。执行成功后置 `initialized = true` 持久化到 installed.json，下次启动跳过。
+
+**初始化阶段状态**：新增 `Initializing` 中间态（仅启动流程中短暂出现，UI 显示"初始化数据目录…"），完成后转 `Starting`。
+
+**初始化失败的回滚**：
+- 删除半成品 `data/` 目录
+- 不更新 `config.initialized`
+- 状态回退到 Stopped + last_error
+
+### 首次启动配置（MinIO / RustFS）
+
+MinIO 与 RustFS 不需要数据目录初始化（首次启动自动创建），但需要用户配置启动参数：
+
+| 配置项 | MinIO 默认 | RustFS 默认 |
+|---|---|---|
+| API 端口 | 9000 | 9000 |
+| 控制台端口 | 9001 | 9001 |
+| 数据目录 | `./data` | `./data` |
+| Access Key | `minioadmin` | `rustfsadmin` |
+| Secret Key | `minioadmin` | `rustfsadmin` |
+
+**配置时机**：首次点"启动"时，若 `config.configured != true`，自动弹出"首次启动配置"对话框（类似自定义软件的 `CustomStartCommandDialog`），用户填入端口、目录、密钥后保存到 `config`，再走启动流程。
+
+**后续编辑**：通过"配置"对话框的表单 tab 修改（MinIO/RustFS 的表单 schema 字段 = 启动参数）。无源码 tab（无配置文件）。
 
 ### 停止流程
 
@@ -396,17 +448,191 @@ Tauri on_window_event / before_exit：
 
 ## 健康检查与状态同步
 
-### 各 provider 的健康检查声明
+### 各 provider 的启动命令（含首次初始化）
 
-| Provider | Spec | 备注 |
-|---|---|---|
-| MySQL | `Tcp { port: config.port or 3306, timeout_ms: 1000 }` | mysqld 启动慢，30 次轮询合理 |
-| Redis | `Custom` 发 `redis-cli ping` 期望 `PONG` | 比 TCP 更准，能识别"端口在但服务未就绪" |
-| Nginx | `Http { url: "http://127.0.0.1:{port}/", expected_status: 200 }` | 端口从 config.listen 解析 |
-| MinIO | `Http { url: "http://127.0.0.1:{api_port}/minio/health/live", expected_status: 200 }` | 官方健康端点 |
-| RustFS | `Http { url: "http://127.0.0.1:{api_port}/health", expected_status: 200 }` | 同 MinIO 风格 |
-| JRE | 不参与启停，无健康检查 | 排除在管理页之外 |
-| Custom | 由 `custom_start_command.health_check` 决定 | 用户配置 |
+每个 provider 实现 `start_command(ctx)` 返回 `StartCommand`，内含可执行文件路径、参数、环境变量、工作目录、是否需首次初始化：
+
+```rust
+pub struct StartCommand {
+    pub program: String,                       // 相对 install_path
+    pub args: Vec<String>,
+    pub env_vars: HashMap<String, String>,
+    pub working_dir: PathBuf,
+    pub creation_flags: u32,                    // Windows: CREATE_NO_WINDOW = 0x08000000
+    pub first_run_init: Option<FirstRunInit>,   // 首次启动前执行初始化
+}
+
+pub struct FirstRunInit {
+    pub init_command: StartCommand,              // 初始化命令
+    pub temp_secret_output: Option<TempSecretSpec>, // 临时密码从哪里捞
+}
+
+pub enum TempSecretSpec {
+    FromStdoutRegex(String),       // 正则匹配 stdout
+    FromLogFile { path: PathBuf, regex: String }, // 从日志文件捞
+}
+```
+
+#### MySQL 启动
+
+首次启动前需初始化数据目录：
+
+```rust
+// first_run_init
+init_command = StartCommand {
+    program: "mysql-8.4.10-winx64/bin/mysqld.exe",
+    args: ["--initialize-insecure", "--basedir=.", "--datadir=./data"],
+    working_dir: "install_path/mysql-8.4.10-winx64",
+    creation_flags: CREATE_NO_WINDOW,
+    ...
+}
+// --initialize-insecure 生成无密码 root@localhost
+// 也可用 --initialize 生成随机密码，从 stderr 抓取 "A temporary password is generated for root@localhost: xxx"
+```
+
+正常启动：
+```rust
+start_command = StartCommand {
+    program: "mysql-8.4.10-winx64/bin/mysqld.exe",
+    args: ["--defaults-file=my.ini", "--console"],
+    working_dir: "install_path/mysql-8.4.10-winx64",
+    creation_flags: CREATE_NO_WINDOW,  // 隐藏控制台窗口
+    ...
+}
+```
+
+健康检查：`Tcp { port: config.port or 3306 }`
+
+**密码策略选择**：本设计用 `--initialize-insecure`，初始化后 root 无密码。启动后通过 `mysqladmin -u root password "新密码"` 设置密码（用户首次配置时由 UI 引导，或保留无密码供本地开发用）。`--initialize` 生成的随机临时密码从 stderr 抓取后存入 `installed.json.config.temp_root_password`，UI 首次进入时提示用户。
+
+#### Redis 启动
+
+```rust
+start_command = StartCommand {
+    program: "redis-server.exe",
+    args: ["redis.conf", "--port", "6379"],
+    working_dir: "install_path",
+    creation_flags: CREATE_NO_WINDOW,
+    ...
+}
+```
+
+无首次初始化。健康检查：`Custom` 发 `redis-cli ping` 期望 `PONG`。
+
+#### Nginx 启动
+
+```rust
+start_command = StartCommand {
+    program: "nginx.exe",
+    args: ["-g", "daemon off;"],   // 前台运行（便于进程管理）
+    working_dir: "install_path",
+    creation_flags: CREATE_NO_WINDOW,
+    ...
+}
+```
+
+无首次初始化。健康检查：`Http { url: "http://127.0.0.1:{port}/", expected_status: 200 }`。
+
+`daemon off` 让 Nginx 前台运行，`Command::spawn` 拿到的 PID 即 master 进程，便于停止。
+
+#### MinIO 启动（参数来自官方文档）
+
+```rust
+start_command = StartCommand {
+    program: "minio.exe",
+    args: ["server", "./data", "--address", ":9000", "--console-address", ":9001"],
+    env_vars: {
+        "MINIO_ROOT_USER": config.access_key or "minioadmin",
+        "MINIO_ROOT_PASSWORD": config.secret_key or "minioadmin",
+    },
+    working_dir: "install_path",
+    creation_flags: CREATE_NO_WINDOW,
+    ...
+}
+```
+
+参数说明（官网 `/minio/docs`）：
+- 第一个位置参数 `./data` 是数据目录（相对路径，Portable 友好）
+- `--address :9000` API 端口
+- `--console-address :9001` 控制台端口
+- `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` 根账号（环境变量，命令行无对应 flag）
+
+健康检查：`Http { url: "http://127.0.0.1:{api_port}/minio/health/live", expected_status: 200 }`（官方健康端点）。
+
+**首次启动需配置项**（首次启动对话框，类似自定义软件的启动命令配置）：
+- API 端口（默认 9000）
+- 控制台端口（默认 9001）
+- 数据目录（默认 `./data`，相对 install_path）
+- Access Key（默认 `minioadmin`）
+- Secret Key（默认 `minioadmin`，UI 提示"建议修改"）
+
+#### RustFS 启动（参数来自官方文档）
+
+```rust
+start_command = StartCommand {
+    program: "rustfs.exe",
+    args: ["./data",
+           "--address", "127.0.0.1:9000",
+           "--access-key", config.access_key or "rustfsadmin",
+           "--secret-key", config.secret_key or "rustfsadmin"],
+    env_vars: {
+        "RUSTFS_CONSOLE_ENABLE": "true",
+        "RUSTFS_CONSOLE_ADDRESS": "127.0.0.1:9001",
+    },
+    working_dir: "install_path",
+    creation_flags: CREATE_NO_WINDOW,
+    ...
+}
+```
+
+参数说明（官网 `/rustfs/rustfs`）：
+- 第一个位置参数 `./data` 是数据目录（与 MinIO 一致的 S3 风格）
+- `--address` API 端口（默认 `0.0.0.0:9000`，本设计改为 `127.0.0.1:9000` 仅本机访问，更安全）
+- `--access-key` / `--secret-key` 根账号（命令行直接传，也可用 `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` 环境变量）
+- `RUSTFS_CONSOLE_ENABLE=true` 启用控制台
+- `RUSTFS_CONSOLE_ADDRESS` 控制台端口
+
+健康检查：`Http { url: "http://127.0.0.1:{api_port}/health", expected_status: 200 }`。
+
+**首次启动需配置项**（与 MinIO 一致的对话框）：
+- API 端口（默认 9000）
+- 控制台端口（默认 9001）
+- 数据目录（默认 `./data`）
+- Access Key（默认 `rustfsadmin`）
+- Secret Key（默认 `rustfsadmin`）
+
+#### JRE
+
+不参与启停（作为依赖项被 Spring Boot 应用拉起），无 start_command。
+
+#### Custom
+
+由 `custom_start_command` 决定。
+
+### Windows 隐藏控制台窗口
+
+所有 `Command::spawn` 调用必须设置 `creation_flags = CREATE_NO_WINDOW`（0x08000000），避免弹出黑色 cmd 窗口：
+
+```rust
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+let mut cmd = std::process::Command::new(&program);
+cmd.args(&args)
+   .current_dir(&working_dir)
+   .env_clear();
+
+for (k, v) in &env_vars {
+    cmd.env(k, v);
+}
+
+#[cfg(windows)]
+cmd.creation_flags(0x08000000);  // CREATE_NO_WINDOW
+
+let child = cmd.spawn()?;
+```
+
+`CREATE_NO_WINDOW` 标志让进程无窗口运行（既不是控制台窗口也不是 GUI 窗口），适合服务式后台运行。Unix 平台无此参数，进程默认不依附终端。
 
 ### health_check.rs 调度器
 
@@ -460,7 +686,7 @@ pub enum HealthCheckResult {
 ```typescript
 type SoftwareStatusEvent = {
   installed_id: string
-  status: 'Running' | 'Stopped' | 'Error' | 'Unknown' | 'Starting' | 'Stopping'
+  status: 'Running' | 'Stopped' | 'Error' | 'Unknown' | 'Starting' | 'Stopping' | 'Initializing'
   pid?: number
   error?: string
   timestamp: string
@@ -499,14 +725,20 @@ pub fn get_installed(&self) -> Vec<InstalledSoftware> {
 
 | From → To | 触发条件 |
 |---|---|
-| Unknown → Starting | 用户启动 |
+| Unknown → Initializing | 用户启动且需首次初始化 |
+| Unknown → Starting | 用户启动且无需初始化 |
 | Unknown → Stopped | 首次 get_installed 修正 |
-| Stopped → Starting | 用户启动 |
+| Stopped → Initializing | 用户启动且需首次初始化 |
+| Stopped → Starting | 用户启动且无需初始化 |
+| Initializing → Starting | 初始化完成 |
+| Initializing → Error | 初始化失败 |
+| Initializing → Stopping | 用户取消初始化 |
 | Starting → Running | 健康检查通过 |
 | Starting → Error | 健康检查超时 / 进程提前退出 |
 | Starting → Stopping | 用户停止（启动中取消） |
 | Running → Stopping | 用户停止 |
 | Running → Error | 进程意外退出 |
+| Error → Initializing | 用户重试且需重新初始化 |
 | Error → Starting | 用户重试启动 |
 | Error → Stopping | 用户停止（强杀残留进程） |
 | Stopping → Stopped | 进程退出确认 |
@@ -527,12 +759,55 @@ pub fn get_installed(&self) -> Vec<InstalledSoftware> {
 | MySQL | `mysql-8.4.10-winx64/my.ini` | Windows 子目录 |
 | Redis | `redis.conf` | install_path 根 |
 | Nginx | `conf/nginx.conf` | |
-| MinIO | 无配置文件 | 启动参数全部走 env_vars + args |
+| MinIO | 无配置文件 | 启动参数全部走 env_vars + args，表单 schema 即启动参数 |
 | RustFS | 无配置文件 | 同 MinIO |
 | JRE | 无配置文件 | 不参与配置编辑 |
 | Custom | 用户填的 `config_file_relative` | 可选 |
 
 `config_file_path()` 返回 `Option<PathBuf>`，`None` 时 UI 不显示"配置"按钮。
+
+### 各 provider 的配置 schema（表单字段）
+
+#### MySQL
+- `port` (Port, [mysqld] section, default 3306)
+- `bind-address` (Text, [mysqld], "0.0.0.0")
+- `max_connections` (Number, [mysqld], 151)
+- `character-set-server` (Select: utf8mb4/utf8/latin1, [mysqld], "utf8mb4")
+- `innodb_buffer_pool_size` (Text, [mysqld], "128M")
+
+#### Redis
+- `port` (Port, 顶层, 6379)
+- `bind` (Text, 顶层, "127.0.0.1")
+- `maxmemory` (Text, 顶层, "256mb")
+- `maxmemory-policy` (Select: allkeys-lru/volatile-lru/noeviction, 顶层, "noeviction")
+- `requirepass` (Password, 顶层, "")
+
+#### Nginx
+- `listen` (Port, events 块外, 80)
+- `worker_processes` (Number, 顶层, 4)
+- `root` (Text, http.server 块, "html")
+
+#### MinIO（无配置文件，表单字段 = 启动参数）
+- `api_port` (Port, 默认 9000) — `--address :{api_port}`
+- `console_port` (Port, 默认 9001) — `--console-address :{console_port}`
+- `data_dir` (Text, 默认 "./data") — 位置参数
+- `access_key` (Text, 默认 "minioadmin") — `MINIO_ROOT_USER` env
+- `secret_key` (Password, 默认 "minioadmin") — `MINIO_ROOT_PASSWORD` env
+
+MinIO 表单提交时，字段写入 `InstalledSoftware.config`（不走配置文件），启动时 provider.start_command 读 config 构造 env_vars + args。
+
+#### RustFS（同 MinIO 风格）
+- `api_port` (Port, 默认 9000) — `--address 127.0.0.1:{api_port}`
+- `console_port` (Port, 默认 9001) — `RUSTFS_CONSOLE_ADDRESS` env
+- `data_dir` (Text, 默认 "./data") — 位置参数
+- `access_key` (Text, 默认 "rustfsadmin") — `--access-key` arg
+- `secret_key` (Password, 默认 "rustfsadmin") — `--secret-key` arg
+
+#### JRE
+无 config_schema（不参与管理页配置）。
+
+#### Custom
+无 config_schema（通过 `CustomStartCommandDialog` 配置启动命令）。
 
 ### 表单 schema 示例（MySQL）
 
@@ -586,6 +861,8 @@ fn config_schema(&self) -> Option<ConfigSchema> {
     })
 }
 ```
+
+MinIO / RustFS 的 schema 字段对应启动参数（`api_port` / `console_port` / `data_dir` / `access_key` / `secret_key`），表单提交后写入 `config` 而非配置文件，启动时 provider.start_command 读 config 构造 env_vars + args。
 
 ### 配置文件读写双引擎
 
@@ -1171,12 +1448,16 @@ export const useLifecycleStore = defineStore('lifecycle', () => {
 
 | 模块 | 测试内容 |
 |---|---|
-| `lifecycle.rs` | start_command 派生（provider 各一个）；PID 注册/注销；状态机转换合法性（非法转换拒绝）；stop_one 优雅→强杀流程；restart 调用 stop+start |
+| `lifecycle.rs` | start_command 派生（provider 各一个）；PID 注册/注销；状态机转换合法性（含 Initializing 中间态）；stop_one 优雅→强杀流程；restart 调用 stop+start；CREATE_NO_WINDOW flag 正确设置 |
 | `health_check.rs` | TCP 探测成功/失败；HTTP 状态码匹配/不匹配；ProcessOnly 退化；超时 30 次后返回 Timeout；进程提前退出返回 ProcessExited |
-| `config_editor.rs` | INI 读 port=3306；INI upsert 不破坏其他字段；Redis kv 读 maxmemory；Nginx listen 字段 upsert；备份文件生成；自定义软件无 config_file_path 时跳过 |
+| `config_editor.rs` | INI 读 port=3306；INI upsert 不破坏其他字段；Redis kv 读 maxmemory；Nginx listen 字段 upsert；备份文件生成；自定义软件无 config_file_path 时跳过；MinIO/RustFS 表单字段写入 config（无文件 IO） |
 | `uninstall_guard.rs` | 运行中拒绝卸载；JRE 默认时拒绝；JRE 被 Spring Boot 应用依赖时拒绝；springboot-manager 未实现时不阻塞 |
 | `audit_log.rs` | 日志按事件类型记录；cleanup_old_logs 清理 7 天前文件；日志文件按日滚动命名 |
-| `providers/*` | 每个 provider 的 `start_command` / `health_check` / `config_schema` / `config_file_path` / `working_dir` 字段完整；custom_templates 三种模板字段完整 |
+| `providers/mysql.rs` | `start_command` 含 `--defaults-file=my.ini --console`；`first_run_init` 含 `--initialize-insecure`；`config_schema` 字段完整；`working_dir` 为 `install_path/mysql-{ver}-winx64/` |
+| `providers/minio.rs` | `start_command` 含 `server ./data --address :9000 --console-address :9001`；env_vars 含 `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`；`config_schema` 含 api_port/console_port/data_dir/access_key/secret_key；无 `config_file_path` |
+| `providers/rustfs.rs` | `start_command` 含 `./data --address 127.0.0.1:9000 --access-key ... --secret-key ...`；env_vars 含 `RUSTFS_CONSOLE_ENABLE`/`RUSTFS_CONSOLE_ADDRESS`；`config_schema` 字段完整；无 `config_file_path` |
+| `providers/redis.rs` / `nginx.rs` | `start_command` 含 daemon off / redis.conf；`config_schema` 字段完整 |
+| `providers/custom_templates.rs` | 三种模板（redis-server / nginx / generic）字段完整 |
 
 集成测试：
 
@@ -1187,6 +1468,16 @@ fn start_software_writes_pid_to_installed_json() { ... }
 #[test]
 fn start_then_stop_clears_pid() { ... }
 #[test]
+fn mysql_first_run_initializes_data_dir() { ... }     // 新增
+#[test]
+fn mysql_second_start_skips_initialization() { ... }  // 新增
+#[test]
+fn minio_start_command_has_correct_args() { ... }     // 新增
+#[test]
+fn rustfs_start_command_has_correct_args() { ... }     // 新增
+#[test]
+fn minio_form_save_updates_config_not_file() { ... }  // 新增
+#[test]
 fn uninstall_running_software_blocked() { ... }
 #[test]
 fn auto_start_on_boot_pulls_by_startup_order() { ... }
@@ -1194,6 +1485,8 @@ fn auto_start_on_boot_pulls_by_startup_order() { ... }
 fn config_edit_form_tab_writes_to_my_ini() { ... }
 #[test]
 fn config_edit_source_tab_preserves_unrelated_lines() { ... }
+#[test]
+fn windows_no_console_window_flag_set() { ... }      // 新增：CREATE_NO_WINDOW
 ```
 
 用 `tempfile` 隔离 apps 目录，mock HTTP server（`mockito`）做健康检查测试。
@@ -1210,33 +1503,43 @@ fn config_edit_source_tab_preserves_unrelated_lines() { ... }
 2. `npm run build` — vue-tsc + vite 构建无错
 3. `npm run tauri:dev` 启动后：
    - 已安装的 MySQL/Redis/Nginx 在管理页按分组渲染
-   - 点 MySQL "启动" → 状态从 已停止 → 启动中（黄色脉冲）→ 运行中（绿色），PID 显示在行上
+   - 点 MySQL "启动" → 状态从 已停止 → 初始化中（黄色脉冲，"初始化数据目录…"）→ 启动中 → 运行中，PID 显示在行上
+   - MySQL data 目录创建后，再次启动跳过初始化（状态直接 已停止 → 启动中 → 运行中）
    - 启动中关闭对话框 → 状态仍实时更新（事件驱动）
    - 点"停止" → 运行中 → 停止中 → 已停止
    - 启动 MySQL 8.0.36 和 8.4.10 两个实例 → 端口冲突时第二个标记 Error + 错误提示
-   - 点"配置" → 表单 tab 改 port=3307 → 保存 → 提示重启 → 重启后端口生效
+   - 点 MySQL "配置" → 表单 tab 改 port=3307 → 保存 → 提示重启 → 重启后端口生效
    - 切到源码 tab → 看到磁盘最新内容 → 改一行 → 保存 → 重启验证
+   - MinIO 首次点"启动" → 自动弹出首次配置对话框（API 端口 9000 / 控制台端口 9001 / 数据目录 ./data / access key / secret key）→ 保存 → 启动 → 健康检查通过 → 运行中
+   - MinIO 启动后访问 `http://127.0.0.1:9001` 控制台，用配置的 access/secret key 登录验证
+   - RustFS 首次点"启动" → 同 MinIO 流程，验证 `http://127.0.0.1:9001` 控制台
+   - 启动 MinIO 与 RustFS 同时运行 → 端口冲突时第二个标记 Error
    - 启动设置勾选"随 OPX 启动" → 关闭 OPX → 重新打开 → MySQL 自动拉起
    - 启动一个软件后直接关 OPX → 退应用前看到日志"stop_all_on_exit count=1"
+   - **无 cmd/控制台窗口弹出**（Windows 任务栏无黑色 cmd 图标）
    - 运行中点卸载 → 对话框显示阻止原因"软件正在运行"，卸载按钮禁用
    - 先停止再卸载 → 正常卸载，目录被删除
    - JRE 设置为默认后卸载 → 阻止原因"默认 JRE"
    - 自定义软件首次启动 → 自动打开启动命令配置对话框 → 选"通用可执行文件"模板 → 填路径 → 保存 → 自动启动
    - `logs/software-manager.log.2026-07-02` 文件存在，含完整操作记录
-   - 移动 OPX 目录到其他位置 → 启动 MySQL → 仍正常工作（portable 验证）
+   - 移动 OPX 目录到其他位置 → 启动 MySQL → 仍正常工作（portable 验证，basedir/datadir 相对路径生效）
 
 ## 国际化 keys
 
 ```
 // 启停
-start / stop / restart / starting / stopping / running / stopped / error / unknown /
-processExited / healthCheckTimeout / startFailed / stopFailed / restartFailed
+start / stop / restart / starting / stopping / running / stopped / error / unknown / initializing /
+processExited / healthCheckTimeout / startFailed / stopFailed / restartFailed /
+initializingDataDir / initializationFailed
 
 // 配置编辑
 config / configEdit / formView / sourceView / configDirtyConfirm / saveAndRestart /
 saveWithoutRestart / configSaved / configSaveFailed / configField.{port,bindAddress,...} /
-configField.{port,bindAddress,...}.desc / template.redisServer / template.nginx /
-template.generic / executable / startArgs / workingDir / envVars / healthCheck /
+configField.{port,bindAddress,...}.desc /
+configField.apiPort / configField.consolePort / configField.dataDir /
+configField.accessKey / configField.secretKey /
+template.redisServer / template.nginx / template.generic /
+executable / startArgs / workingDir / envVars / healthCheck /
 noHealthCheck / tcpPort / httpUrl / expectedStatus / customConfigFile
 
 // 卸载
@@ -1245,6 +1548,9 @@ uninstallBlockedJreDefault / uninstallBlockedJreDependents / forceUninstall
 
 // 启动设置
 startupSettings / autoStartOnAppStart / startupOrder / startupOrderDesc
+
+// 首次启动配置（MinIO/RustFS）
+firstRunConfig / firstRunConfigDesc / firstRunConfigMinio / firstRunConfigRustfs
 
 // 审计
 auditLog / operationHistory
@@ -1301,12 +1607,21 @@ tracing-appender = "0.2"
 | 操作日志 | C：全量审计 | 排查 + 可追溯 |
 | Spring Boot 整合 | D：本次不含但预留接口 | 边界清晰 |
 | 模块拆分 | B：按职责分子模块 | 与现有风格一致 |
+| **MySQL 初始化** | `--initialize-insecure` 无密码 | 简单，UI 引导后续设密码；备选 `--initialize` 抓临时密码 |
+| **MinIO 启动参数** | `server ./data --address :9000 --console-address :9001` + env `MINIO_ROOT_USER/PASSWORD` | 官方文档推荐 |
+| **RustFS 启动参数** | `./data --address 127.0.0.1:9000 --access-key --secret-key` + env `RUSTFS_CONSOLE_*` | 官方文档推荐 |
+| **进程窗口模式** | Windows CREATE_NO_WINDOW (0x08000000) | 服务式运行，无黑色 cmd 窗口 |
+| **MinIO/RustFS 首次配置** | 弹出对话框填端口/目录/密钥 | 与自定义软件启动命令配置一致的交互 |
+| **状态机扩展** | 新增 Initializing 中间态 | MySQL 等需首次初始化的软件有明确阶段 |
 
 ## 规格自检
 
 | 检查项 | 状态 | 说明 |
 |---|---|---|
 | 占位符扫描 | ✅ 无 | 没有 TODO 或未完成章节；`try_load_springboot_apps` 返回 None 是明确预期行为，非占位 |
-| 内部一致性 | ✅ 通过 | 架构、数据模型、API、UI、测试各节一致 |
-| 范围检查 | ✅ 合适 | 聚焦启停/配置/卸载，一个实现计划可覆盖 |
+| 内部一致性 | ✅ 通过 | 架构、数据模型、API、UI、测试各节一致；Initializing 状态在状态机/事件/UI/测试均覆盖 |
+| 范围检查 | ✅ 合适 | 聚焦启停/配置/卸载/首次初始化，一个实现计划可覆盖 |
 | 模糊性检查 | ✅ 通过 | 所有需求明确定义，边界清晰 |
+| 官方参数验证 | ✅ 通过 | MinIO/RustFS 启动参数来源于 Context7 查询的官方文档 |
+| 初始化策略 | ✅ 通过 | MySQL `--initialize-insecure` 明确，备选 `--initialize` 抓临时密码 |
+| 窗口隐藏 | ✅ 通过 | Windows CREATE_NO_WINDOW flag 在启动流程与测试清单均覆盖 |
