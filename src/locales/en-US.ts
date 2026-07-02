@@ -60,6 +60,8 @@ export default {
   uninstalling: 'Uninstalling',
   softwareName: 'Software Name',
   custom: 'Custom',
+  builtinSource: 'Builtin',
+  mirrorSource: 'Mirror',
   noInstalledSoftware: 'No installed software',
   noInstalledSoftwareDesc: 'Go to software repository to install',
   uploadCustom: 'Upload Custom Package',

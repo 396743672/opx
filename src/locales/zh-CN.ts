@@ -60,6 +60,8 @@ export default {
   uninstalling: '卸载中',
   softwareName: '软件名称',
   custom: '自定义',
+  builtinSource: '内置',
+  mirrorSource: '网络',
   noInstalledSoftware: '暂无已安装软件',
   noInstalledSoftwareDesc: '去软件仓库安装需要的软件',
   uploadCustom: '上传自定义安装包',
