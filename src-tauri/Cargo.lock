@@ -2638,6 +2638,7 @@ dependencies = [
  "mockito",
  "once_cell",
  "path-slash",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

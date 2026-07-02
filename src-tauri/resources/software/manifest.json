@@ -10,9 +10,9 @@
     }
   },
   "mysql": {
-    "8.4.0": {
-      "sha256": "fb1f0c6cce229be4b3208bec8a605576bb47eabb00512bccbcc4396af332c25c",
-      "size": 258946761
+    "8.4.10": {
+      "sha256": "3b950db31c33fb59252568c012bd9ee5fac50811e778ca7c8f1a0dc91686cd6f",
+      "size": 280672277
     }
   },
   "redis": {

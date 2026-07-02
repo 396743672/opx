@@ -24,7 +24,8 @@ const BUILTIN = {
       'https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u422-b05/OpenJDK8U-jre_x64_windows_hotspot_8u422b05.zip',
   },
   mysql: {
-    '8.4.0': 'https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.0-winx64.zip',
+    // MySQL 本地 zip（8.4.10 离线内置版本）
+    '8.4.10': { localPath: 'C:/Users/39674/Desktop/mysql-8.4.10-winx64.zip' },
   },
   redis: {
     '7.4.9':

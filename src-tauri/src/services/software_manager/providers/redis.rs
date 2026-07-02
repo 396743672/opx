@@ -147,14 +147,15 @@ impl SoftwareProvider for RedisProvider {
         let releases: Vec<serde_json::Value> = response.json().ok()?;
         let mut versions = vec![];
 
-        for release in releases {
+        // 只取第一个（Latest，API 默认按创建时间倒序）
+        if let Some(release) = releases.first() {
             let tag = match release.get("tag_name").and_then(|t| t.as_str()) {
                 Some(t) => t.to_string(),
-                None => continue,
+                None => return None,
             };
             // tag 直接是版本号如 "8.8.0" / "7.4.9"
             // 找 cygwin.zip asset（与现有硬编码一致）
-            if let Some(asset_url) = find_cygwin_asset(&release) {
+            if let Some(asset_url) = find_cygwin_asset(release) {
                 versions.push(CatalogVersion {
                     version: tag,
                     mirrors: vec![MirrorSource {

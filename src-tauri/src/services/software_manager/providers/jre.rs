@@ -174,7 +174,7 @@ impl SoftwareProvider for JreProvider {
 
         for major in [8, 11, 17, 21] {
             let url = format!(
-                "https://api.github.com/repos/adoptium/temurin{}-binaries/releases?per_page=10",
+                "https://api.github.com/repos/adoptium/temurin{}-binaries/releases?per_page=1",
                 major
             );
             let response = match client
@@ -207,7 +207,8 @@ impl SoftwareProvider for JreProvider {
                 }
             };
 
-            for release in releases {
+            // 只取该 LTS 大版本的最新一个 release（API 默认按创建时间倒序）
+            if let Some(release) = releases.first() {
                 let tag = match release.get("tag_name").and_then(|t| t.as_str()) {
                     Some(t) => t.to_string(),
                     None => continue,
@@ -215,7 +216,7 @@ impl SoftwareProvider for JreProvider {
                 // tag 格式如 "jdk-17.0.16+7"，解析为版本号
                 if let Some(version) = parse_adoptium_tag(&tag) {
                     // 找 Windows x64 JRE zip asset
-                    if let Some(asset_url) = find_jre_asset(&release, major) {
+                    if let Some(asset_url) = find_jre_asset(release, major) {
                         versions.push(CatalogVersion {
                             version: version.clone(),
                             mirrors: vec![MirrorSource {
