@@ -97,7 +97,12 @@ export default {
 
   // CustomStartCommandDialog
   customStartCommandHint: 'Configure start command, args, env vars and health check for custom software',
-  template: 'Preset Template',
+  templateLabel: 'Preset Template',
+  template: {
+    redisServer: 'Redis Server',
+    nginx: 'Nginx',
+    generic: 'Generic Executable',
+  },
   noTemplate: 'No template',
   executable: 'Executable',
   startArgs: 'Start Args',
@@ -242,5 +247,55 @@ export default {
   totalRecv: 'Total Received',
 
   // loading
-  loading: 'Loading…'
+  loading: 'Loading…',
+
+  // ===== Task 21: Software management i18n补全 =====
+
+  // Start/stop errors
+  processExited: 'Process exited',
+  healthCheckTimeout: 'Health check timeout',
+  startFailed: 'Start failed',
+  stopFailed: 'Stop failed',
+  restartFailed: 'Restart failed',
+  initializingDataDir: 'Initializing data directory…',
+  initializationFailed: 'Initialization failed',
+
+  // Config edit
+  configDirtyConfirm: 'Unsaved changes will be lost when switching tabs. Continue?',
+  saveWithoutRestart: 'Save',
+  configSaved: 'Configuration saved',
+  configSaveFailed: 'Configuration save failed',
+  expectedStatus: 'Expected Status',
+
+  // Uninstall blocked
+  uninstallBlocked: 'Uninstall Blocked',
+  uninstallBlockedRunning: 'Software is running',
+  uninstallBlockedJreDefault: 'This is the default JRE',
+  uninstallBlockedJreDependents: 'Applications depend on this JRE',
+  forceUninstall: 'Force Uninstall',
+
+  // Config fields (nested object, backend label_i18n uses configField.xxx format)
+  configField: {
+    port: 'Port',
+    portDesc: 'Listen port (1-65535)',
+    bindAddress: 'Bind Address',
+    maxConnections: 'Max Connections',
+    charset: 'Charset',
+    innodbBufferPool: 'InnoDB Buffer Pool Size',
+    bind: 'Bind Address',
+    maxmemory: 'Max Memory',
+    maxmemoryPolicy: 'Max Memory Policy',
+    requirepass: 'Password',
+    listen: 'Listen Port',
+    workerProcesses: 'Worker Processes',
+    root: 'Root Directory',
+    apiPort: 'API Port',
+    apiPortDesc: 'S3 API listen port',
+    consolePort: 'Console Port',
+    consolePortDesc: 'Web console port',
+    dataDir: 'Data Directory',
+    dataDirDesc: 'Relative to install_path, portable-friendly',
+    accessKey: 'Access Key',
+    secretKey: 'Secret Key',
+  }
 }

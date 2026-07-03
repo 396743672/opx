@@ -171,7 +171,7 @@ impl SoftwareProvider for RustfsProvider {
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(9000),
                     section: None,
-                    description_i18n: Some("configField.apiPort.desc".to_string()),
+                    description_i18n: Some("configField.apiPortDesc".to_string()),
                 },
                 ConfigField {
                     key: "console_port".to_string(),
@@ -179,7 +179,7 @@ impl SoftwareProvider for RustfsProvider {
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(9001),
                     section: None,
-                    description_i18n: Some("configField.consolePort.desc".to_string()),
+                    description_i18n: Some("configField.consolePortDesc".to_string()),
                 },
                 ConfigField {
                     key: "data_dir".to_string(),
@@ -187,7 +187,7 @@ impl SoftwareProvider for RustfsProvider {
                     field_type: ConfigFieldType::Text,
                     default_value: serde_json::json!("./data"),
                     section: None,
-                    description_i18n: Some("configField.dataDir.desc".to_string()),
+                    description_i18n: Some("configField.dataDirDesc".to_string()),
                 },
                 ConfigField {
                     key: "access_key".to_string(),

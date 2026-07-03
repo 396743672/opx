@@ -173,7 +173,7 @@ impl SoftwareProvider for MySqlProvider {
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(3306),
                     section: Some("[mysqld]".to_string()),
-                    description_i18n: Some("configField.port.desc".to_string()),
+                    description_i18n: Some("configField.portDesc".to_string()),
                 },
                 ConfigField {
                     key: "bind-address".to_string(),

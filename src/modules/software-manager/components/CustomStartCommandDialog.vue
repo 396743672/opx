@@ -13,7 +13,7 @@
       <div class="hint">{{ $t('customStartCommandHint') }}</div>
 
       <div class="field">
-        <label class="form-field-label">{{ $t('template') }}</label>
+        <label class="form-field-label">{{ $t('templateLabel') }}</label>
         <select v-model="selectedTemplate" class="input" @change="applyTemplate">
           <option value="">{{ $t('noTemplate') }}</option>
           <option v-for="t in templates" :key="t.id" :value="t.id">

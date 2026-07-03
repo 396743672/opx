@@ -97,7 +97,12 @@ export default {
 
   // CustomStartCommandDialog
   customStartCommandHint: '配置自定义软件的启动命令、参数、环境变量与健康检查',
-  template: '预设模板',
+  templateLabel: '预设模板',
+  template: {
+    redisServer: 'Redis Server',
+    nginx: 'Nginx',
+    generic: '通用可执行文件',
+  },
   noTemplate: '不使用模板',
   executable: '可执行文件',
   startArgs: '启动参数',
@@ -242,5 +247,55 @@ export default {
   totalRecv: '累计下载',
 
   // 加载
-  loading: '正在加载…'
+  loading: '正在加载…',
+
+  // ===== 任务 21：软件管理模块 i18n 补全 =====
+
+  // 启停错误
+  processExited: '进程意外退出',
+  healthCheckTimeout: '健康检查超时',
+  startFailed: '启动失败',
+  stopFailed: '停止失败',
+  restartFailed: '重启失败',
+  initializingDataDir: '初始化数据目录…',
+  initializationFailed: '初始化失败',
+
+  // 配置编辑
+  configDirtyConfirm: '当前改动未保存，切换 tab 会丢失，确定吗？',
+  saveWithoutRestart: '仅保存',
+  configSaved: '配置已保存',
+  configSaveFailed: '配置保存失败',
+  expectedStatus: '期望状态码',
+
+  // 卸载阻止
+  uninstallBlocked: '卸载被阻止',
+  uninstallBlockedRunning: '软件正在运行',
+  uninstallBlockedJreDefault: '这是默认 JRE',
+  uninstallBlockedJreDependents: '应用依赖此 JRE',
+  forceUninstall: '强制卸载',
+
+  // 配置字段（嵌套对象，后端 label_i18n 用 configField.xxx 格式访问）
+  configField: {
+    port: '端口',
+    portDesc: '监听端口（1-65535）',
+    bindAddress: '绑定地址',
+    maxConnections: '最大连接数',
+    charset: '字符集',
+    innodbBufferPool: 'InnoDB 缓冲池大小',
+    bind: '绑定地址',
+    maxmemory: '最大内存',
+    maxmemoryPolicy: '内存淘汰策略',
+    requirepass: '访问密码',
+    listen: '监听端口',
+    workerProcesses: '工作进程数',
+    root: '根目录',
+    apiPort: 'API 端口',
+    apiPortDesc: 'S3 API 监听端口',
+    consolePort: '控制台端口',
+    consolePortDesc: 'Web 管理界面端口',
+    dataDir: '数据目录',
+    dataDirDesc: '相对 install_path 的路径，Portable 友好',
+    accessKey: 'Access Key',
+    secretKey: 'Secret Key',
+  }
 }
