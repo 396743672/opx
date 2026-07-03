@@ -84,9 +84,75 @@ pub fn drain() -> Vec<RegisteredProcess> {
     REGISTRY.lock().unwrap().drain()
 }
 
+// —— spawn 执行器 ——
+
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use crate::services::software_manager::providers::{FirstRunInit, StartCommand};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// 用 StartCommand 构造并 spawn 子进程
+/// Windows 上设置 CREATE_NO_WINDOW flag 隐藏控制台窗口
+pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
+    let mut command = Command::new(&cmd.program);
+    command.args(&cmd.args).current_dir(&cmd.working_dir);
+
+    for (k, v) in &cmd.env_vars {
+        command.env(k, v);
+    }
+
+    #[cfg(windows)]
+    command.creation_flags(cmd.creation_flags);
+
+    let child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(child)
+}
+
+/// 执行首次初始化命令（同步等待，最多 60s）
+/// 用于 MySQL --initialize-insecure 等场景
+pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<()> {
+    let init = &fri.init_command;
+    let mut command = Command::new(&init.program);
+    command.args(&init.args).current_dir(&init.working_dir);
+
+    for (k, v) in &init.env_vars {
+        command.env(k, v);
+    }
+
+    #[cfg(windows)]
+    command.creation_flags(init.creation_flags);
+
+    // 用 output() 等待完成并捕获 stdout/stderr（用于抓临时密码）
+    let output = command.output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "初始化命令失败（code={}）：{}",
+            output.status,
+            stderr
+        ));
+    }
+
+    // 若有 temp_secret_output，可在此处抓取（任务 6.3 实现）
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::software_manager::providers::{FirstRunInit, StartCommand};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     #[test]
     fn register_and_get_returns_entry() {
@@ -154,5 +220,84 @@ mod tests {
     fn get_returns_none_for_unknown_id() {
         let reg = ProcessRegistry::new();
         assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn spawn_command_returns_pid_on_success() {
+        // Windows: cmd.exe /c exit 0；Unix: /bin/true
+        let program = if cfg!(windows) { "cmd.exe" } else { "/bin/true" };
+        let args: Vec<String> = if cfg!(windows) {
+            vec!["/c".to_string(), "exit".to_string(), "0".to_string()]
+        } else {
+            vec![]
+        };
+        let cmd = StartCommand {
+            program: program.to_string(),
+            args,
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        let result = spawn_process(cmd);
+        assert!(result.is_ok());
+        let child = result.unwrap();
+        assert!(child.id() > 0);
+    }
+
+    #[test]
+    fn spawn_command_fails_for_nonexistent_program() {
+        let cmd = StartCommand {
+            program: "nonexistent-program-xyz-99999.exe".to_string(),
+            args: vec![],
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        let result = spawn_process(cmd);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_first_run_init_executes_init_command() {
+        let program = if cfg!(windows) { "cmd.exe" } else { "/bin/true" };
+        let args: Vec<String> = if cfg!(windows) {
+            vec!["/c".to_string(), "echo".to_string(), "init".to_string()]
+        } else {
+            vec![]
+        };
+        let init_cmd = StartCommand {
+            program: program.to_string(),
+            args,
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        let fri = FirstRunInit {
+            init_command: init_cmd,
+            temp_secret_output: None,
+        };
+        let result = run_first_run_init(&fri);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_first_run_init_fails_on_nonexistent_program() {
+        let init_cmd = StartCommand {
+            program: "nonexistent-init-xyz.exe".to_string(),
+            args: vec![],
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: 0x08000000,
+            first_run_init: None,
+        };
+        let fri = FirstRunInit {
+            init_command: init_cmd,
+            temp_secret_output: None,
+        };
+        let result = run_first_run_init(&fri);
+        assert!(result.is_err());
     }
 }
