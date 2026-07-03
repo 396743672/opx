@@ -318,13 +318,14 @@ mod tests {
         let ctx = super::HealthContext {
             installed_id: "uuid".to_string(),
             install_path: "apps/rustfs/v1".to_string(),
-            port: 9000,
+            port: 9005,
             config: serde_json::json!({}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, expected_status, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9000/health");
+            crate::models::software::HealthCheckSpec::Http { url, expected_status, timeout_ms } => {
+                assert_eq!(url, "http://127.0.0.1:9005/health");
                 assert_eq!(expected_status, 200);
+                assert_eq!(timeout_ms, 1000);
             }
             _ => panic!("应为 Http"),
         }
@@ -336,7 +337,7 @@ mod tests {
         let ctx = super::HealthContext {
             installed_id: "uuid".to_string(),
             install_path: "apps/rustfs/v1".to_string(),
-            port: 9000,
+            port: 9005,
             config: serde_json::json!({"api_port": 9002}),
         };
         match p.health_check(&ctx) {
