@@ -106,18 +106,9 @@ impl SoftwareProvider for RedisProvider {
             });
         }
 
-        #[cfg(unix)]
-        {
-            versions.push(CatalogVersion {
-                version: "8.8.0".to_string(),
-                mirrors: vec![],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::TarGz,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
+        // 注：Redis 本设计 Windows-only（与 MySQL 决策一致）。
+        // Unix 上 Redis 二进制名是 redis-server（无 .exe），配置路径与启动命令均不同，
+        // 如需 Unix 支持须单独适配。本 provider 不在 Unix catalog 注册版本。
 
         CatalogEntry {
             key: "redis".to_string(),
@@ -209,7 +200,12 @@ impl SoftwareProvider for RedisProvider {
     }
 
     fn health_check(&self, ctx: &HealthContext) -> HealthCheckSpec {
-        let port = if ctx.port > 0 { ctx.port } else { 6379 };
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(if ctx.port > 0 { ctx.port } else { 6379 });
         HealthCheckSpec::Tcp {
             port,
             timeout_ms: 1000,
@@ -248,9 +244,9 @@ impl SoftwareProvider for RedisProvider {
                     label_i18n: "configField.maxmemoryPolicy".to_string(),
                     field_type: ConfigFieldType::Select {
                         options: vec![
-                            "noeviction".to_string(),
                             "allkeys-lru".to_string(),
                             "volatile-lru".to_string(),
+                            "noeviction".to_string(),
                         ],
                     },
                     default_value: serde_json::json!("noeviction"),
@@ -337,12 +333,13 @@ mod tests {
             custom_start_command: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
-        assert!(cmd.program.contains("redis-server"));
+        assert_eq!(cmd.program, "redis-server.exe");
         assert!(cmd.args.contains(&"redis.conf".to_string()));
         assert!(cmd.args.contains(&"--port".to_string()));
         assert!(cmd.args.contains(&"6380".to_string()));
         assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/redis/7.4.9"));
         assert!(cmd.first_run_init.is_none());
+        assert_eq!(cmd.creation_flags, CREATE_NO_WINDOW);
     }
 
     #[test]
@@ -378,6 +375,23 @@ mod tests {
     }
 
     #[test]
+    fn redis_health_check_uses_config_port_over_ctx_port() {
+        let p = RedisProvider::new();
+        let ctx = super::HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/redis/7.4.9".to_string(),
+            port: 6379,
+            config: serde_json::json!({"port": 6390}),
+        };
+        match p.health_check(&ctx) {
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 6390, "config.port 应优先于 ctx.port");
+            }
+            _ => panic!("应为 Tcp"),
+        }
+    }
+
+    #[test]
     fn redis_health_check_falls_back_to_6379_when_port_zero() {
         let p = RedisProvider::new();
         let ctx = super::HealthContext {
@@ -405,6 +419,10 @@ mod tests {
         assert!(keys.contains(&"maxmemory"));
         assert!(keys.contains(&"maxmemory-policy"));
         assert!(keys.contains(&"requirepass"));
+        // Redis 是 KeyValue 格式（无 [section]），所有字段 section 必须为 None
+        for f in &schema.fields {
+            assert!(f.section.is_none(), "Redis 字段 {} 不应有 section", f.key);
+        }
     }
 
     #[test]
