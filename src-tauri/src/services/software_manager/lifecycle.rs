@@ -242,6 +242,66 @@ pub fn build_custom_command(
     })
 }
 
+// —— 通用 kill 流程 ——
+
+use std::time::{Duration, Instant};
+
+use crate::services::software_manager::health_check::is_process_alive;
+
+/// 停止单个进程：优雅停止→等 5s→强杀
+/// 返回 (是否成功, 状态字符串: "stopped" | "killed" | "failed")
+pub fn stop_one(pid: u32) -> (bool, String) {
+    if !is_process_alive(pid) {
+        return (true, "stopped".to_string());
+    }
+
+    // 优雅停止
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string()]);
+        use std::os::windows::process::CommandExt;
+        let _ = cmd.creation_flags(0x08000000).output();
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output();
+    }
+
+    // 轮询等待最多 5s
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if !is_process_alive(pid) {
+            return (true, "stopped".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // 超时强杀
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/F"]);
+        use std::os::windows::process::CommandExt;
+        let _ = cmd.creation_flags(0x08000000).output();
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+
+    std::thread::sleep(Duration::from_millis(300));
+    if is_process_alive(pid) {
+        (false, "failed".to_string())
+    } else {
+        (true, "killed".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,5 +617,42 @@ mod tests {
         let custom = make_custom("bin/app.exe; rm -rf /", None);
         let result = build_custom_command("apps/custom/test", &custom);
         assert!(result.is_err());
+    }
+
+    // —— stop_one 测试 ——
+
+    #[test]
+    fn stop_one_returns_stopped_for_nonexistent_pid() {
+        // 不存在的 PID 应直接返回 stopped
+        let (success, status) = stop_one(99999999);
+        assert!(success);
+        assert_eq!(status, "stopped");
+    }
+
+    #[test]
+    fn stop_one_kills_running_process() {
+        // 启动一个长进程验证 stop_one 能停止它
+        let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd.exe" } else { "sleep" });
+        if cfg!(windows) {
+            cmd.args(["/c", "timeout", "/t", "60", "/nobreak"]);
+        } else {
+            cmd.args(["60"]);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let child = cmd.spawn().expect("spawn failed");
+        let pid = child.id();
+
+        let (success, status) = stop_one(pid);
+        assert!(success);
+        // 状态应为 stopped 或 killed
+        assert!(
+            status == "stopped" || status == "killed",
+            "状态应为 stopped 或 killed，实际：{}",
+            status
+        );
     }
 }
