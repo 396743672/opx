@@ -90,6 +90,11 @@ export default {
   configEditRestartHint: '配置改动需重启软件后生效',
   configEditSourceHint: '直接编辑配置文件源码，保存后生效',
 
+  // StartupSettingsDialog
+  autoStartOnAppStart: '应用启动时自动拉起',
+  autoStartOnAppStartDesc: '勾选后应用启动时按启动顺序自动启动此软件',
+  startupOrderDesc: '数字越小越早启动（同序号并发拉起）',
+
   // 软件仓库新增
   selectMirror: '选择镜像源',
   setAsDefaultJre: '设为全局默认 JRE',

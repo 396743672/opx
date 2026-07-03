@@ -90,6 +90,11 @@ export default {
   configEditRestartHint: 'Config changes take effect after restart',
   configEditSourceHint: 'Edit config file source directly, takes effect after save',
 
+  // StartupSettingsDialog
+  autoStartOnAppStart: 'Auto start on app launch',
+  autoStartOnAppStartDesc: 'When checked, this software starts automatically on app launch by startup order',
+  startupOrderDesc: 'Lower number starts earlier (same number starts in parallel)',
+
   // software repository additions
   selectMirror: 'Select Mirror',
   setAsDefaultJre: 'Set as Global Default JRE',
