@@ -4,13 +4,15 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    CatalogEntry, ConfigSchema, CustomInstallParams, InstallParams, InstalledSoftware,
-    SoftwareStatus,
+    CatalogEntry, ConfigSchema, CustomInstallParams, CustomStartCommand, InstallParams,
+    InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
 };
 use crate::services::software_manager::{
-    catalog, config_editor, health_check, installer, lifecycle, providers, SoftwareManager,
+    catalog, config_editor, health_check, installer, lifecycle, providers, uninstall_guard,
+    SoftwareManager,
 };
 use crate::services::software_manager::config_editor::FormData;
+use crate::services::software_manager::providers::custom_templates;
 use crate::services::software_manager::providers::{ConfigContext, HealthContext, StartContext};
 
 /// 获取可安装软件列表（catalog）
@@ -133,15 +135,49 @@ pub async fn install_custom(
 }
 
 /// 卸载已安装软件
+///
+/// 流程：
+/// 1. 复查卸载安全性（防止前端绕过 check_uninstall_safety 直接调用）
+/// 2. 强杀兜底（防意外残留 PID）
+/// 3. 从 installed.json 移除记录 + 删除安装目录
+/// 4. emit "software-uninstalled" 事件
 #[tauri::command]
 pub async fn uninstall_software(
     manager: State<'_, Arc<SoftwareManager>>,
+    app: AppHandle,
     installed_id: String,
 ) -> Result<bool, String> {
+    // 复查卸载安全性
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let report = uninstall_guard::check_uninstall_safety(&software)
+        .map_err(|e| e.to_string())?;
+    if !report.safe {
+        let reasons = report
+            .blockers
+            .iter()
+            .map(|b| b.kind.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("卸载被阻止：{}", reasons));
+    }
+
+    // 强杀兜底（防意外残留 PID）
+    if let Some(pid) = software.pid {
+        if health_check::is_process_alive(pid) {
+            let _ = lifecycle::stop_one(pid);
+        }
+    }
+    lifecycle::unregister(&installed_id);
+
+    // 删除记录 + 安装目录
     manager
         .remove_installed(&installed_id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let _ = app.emit("software-uninstalled", &installed_id);
+    Ok(true)
 }
 
 // ===== 启停命令（任务 10.1）=====
@@ -685,4 +721,80 @@ fn load_software_for_id(
         .into_iter()
         .find(|s| s.id == installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))
+}
+
+// ===== 卸载校验 + 自定义启动命令 + 启动设置命令（任务 10.3）=====
+
+/// 检查卸载是否安全
+/// - 运行中/启动中/停止中/初始化中 → 阻止
+/// - JRE 且是默认或被依赖 → 阻止
+#[tauri::command]
+pub async fn check_uninstall_safety(
+    installed_id: String,
+) -> Result<UninstallSafetyReport, String> {
+    let software = load_software_for_id(&installed_id)?;
+    uninstall_guard::check_uninstall_safety(&software).map_err(|e| e.to_string())
+}
+
+/// 检查 JRE 是否被使用（默认 JRE / 被 SpringBoot 应用依赖）
+#[tauri::command]
+pub async fn check_jre_in_use(
+    jre_installed_id: String,
+) -> Result<JreUsageReport, String> {
+    uninstall_guard::check_jre_in_use(&jre_installed_id).map_err(|e| e.to_string())
+}
+
+/// 获取自定义软件的启动命令配置
+/// 标准软件返回 None
+#[tauri::command]
+pub async fn get_custom_start_command(
+    installed_id: String,
+) -> Result<Option<CustomStartCommand>, String> {
+    let software = load_software_for_id(&installed_id)?;
+    Ok(software.custom_start_command)
+}
+
+/// 保存自定义软件的启动命令
+/// 复用 SoftwareManager::set_custom_start_command（含写锁 + 持久化）
+#[tauri::command]
+pub async fn save_custom_start_command(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    cmd: CustomStartCommand,
+) -> Result<(), String> {
+    manager
+        .set_custom_start_command(&installed_id, cmd)
+        .map_err(|e| e.to_string())
+}
+
+/// 列出内置自定义模板
+/// 返回简化 JSON（前端按 id 选择模板后填表）
+#[tauri::command]
+pub async fn list_custom_templates() -> Result<Vec<serde_json::Value>, String> {
+    let templates = custom_templates::builtin_templates();
+    Ok(templates
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "name_i18n": t.name_i18n,
+                "executable": t.executable,
+                "args": t.args,
+                "config_file_relative": t.config_file_relative,
+            })
+        })
+        .collect())
+}
+
+/// 保存启动设置（auto_start + startup_order）
+#[tauri::command]
+pub async fn save_startup_settings(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    auto_start: bool,
+    order: u32,
+) -> Result<(), String> {
+    manager
+        .update_startup_settings(&installed_id, auto_start, order)
+        .map_err(|e| e.to_string())
 }
