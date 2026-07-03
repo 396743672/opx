@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Local, NaiveDateTime};
 
 use crate::models::settings::AppSettings;
-use crate::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList};
+use crate::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList, SoftwareStatus};
 use crate::utils::paths;
 
 /// 进行中的安装任务状态（用于查重和未来取消）
@@ -171,6 +171,96 @@ impl SoftwareManager {
         let content = std::fs::read_to_string(&sp).ok()?;
         let settings = serde_json::from_str::<AppSettings>(&content).ok()?;
         settings.jre_default_id
+    }
+
+    /// 按 installed_id 查找单条记录
+    pub fn find_installed(&self, installed_id: &str) -> Option<InstalledSoftware> {
+        let installed = self.installed.read().unwrap();
+        installed
+            .software
+            .iter()
+            .find(|s| s.id == installed_id)
+            .cloned()
+    }
+
+    /// 更新单条记录的运行时字段（status / pid / last_started_at 等）
+    /// 同时持久化到 installed.json
+    pub fn update_runtime_fields(
+        &self,
+        installed_id: &str,
+        status: SoftwareStatus,
+        pid: Option<u32>,
+        last_started_at: Option<NaiveDateTime>,
+        last_stopped_at: Option<NaiveDateTime>,
+        last_error: Option<String>,
+    ) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.status = status;
+        item.pid = pid;
+        if let Some(t) = last_started_at {
+            item.last_started_at = Some(t);
+        }
+        if let Some(t) = last_stopped_at {
+            item.last_stopped_at = Some(t);
+        }
+        item.last_error = last_error;
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+    /// 更新 installed.json 中某条记录的 config（配置编辑后调用）
+    pub fn update_config(&self, installed_id: &str, config: serde_json::Value) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.config = config;
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+    /// 更新启动设置（auto_start + startup_order）
+    pub fn update_startup_settings(
+        &self,
+        installed_id: &str,
+        auto_start: bool,
+        order: u32,
+    ) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.auto_start_on_app_start = auto_start;
+        item.startup_order = order;
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+    /// 获取所有 auto_start=true 的实例（按 startup_order 升序排序）
+    pub fn list_auto_start(&self) -> Vec<InstalledSoftware> {
+        let installed = self.installed.read().unwrap();
+        let mut v: Vec<_> = installed
+            .software
+            .iter()
+            .filter(|s| s.auto_start_on_app_start)
+            .cloned()
+            .collect();
+        v.sort_by_key(|s| s.startup_order);
+        v
+    }
+
+    /// 暴露 installed.json 写锁（命令层少量场景使用，如保存 custom_start_command）
+    pub fn installed_write(&self) -> std::sync::RwLockWriteGuard<'_, InstalledSoftwareList> {
+        self.installed.write().unwrap()
     }
 }
 

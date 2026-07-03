@@ -302,6 +302,39 @@ pub fn stop_one(pid: u32) -> (bool, String) {
     }
 }
 
+// —— 事件推送 ——
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SoftwareStatusEvent {
+    pub installed_id: String,
+    pub status: String,
+    pub pid: Option<u32>,
+    pub error: Option<String>,
+    pub timestamp: String,
+}
+
+/// 通过 Tauri Emitter 推送 software-status-changed 事件
+/// 前端 Pinia store 监听此事件实时更新 UI 状态
+pub fn emit_status_changed(
+    app: &AppHandle,
+    installed_id: &str,
+    status: SoftwareStatus,
+    pid: Option<u32>,
+    error: Option<String>,
+) {
+    let event = SoftwareStatusEvent {
+        installed_id: installed_id.to_string(),
+        status: format!("{:?}", status),
+        pid,
+        error,
+        timestamp: chrono::Local::now().to_rfc3339(),
+    };
+    let _ = app.emit("software-status-changed", event);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +687,49 @@ mod tests {
             "状态应为 stopped 或 killed，实际：{}",
             status
         );
+    }
+
+    // —— emit_status_changed 测试 ——
+
+    #[test]
+    fn software_status_event_serializes_correctly() {
+        let event = SoftwareStatusEvent {
+            installed_id: "uuid".to_string(),
+            status: "Running".to_string(),
+            pid: Some(12345),
+            error: None,
+            timestamp: "2026-07-02T14:00:00+08:00".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"installed_id\":\"uuid\""));
+        assert!(json.contains("\"status\":\"Running\""));
+        assert!(json.contains("\"pid\":12345"));
+    }
+
+    #[test]
+    fn software_status_event_with_error_serializes() {
+        let event = SoftwareStatusEvent {
+            installed_id: "uuid".to_string(),
+            status: "Error".to_string(),
+            pid: Some(99),
+            error: Some("健康检查超时".to_string()),
+            timestamp: "2026-07-02T14:00:00+08:00".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"status\":\"Error\""));
+        assert!(json.contains("\"error\":\"健康检查超时\""));
+    }
+
+    #[test]
+    fn software_status_event_with_null_pid_serializes() {
+        let event = SoftwareStatusEvent {
+            installed_id: "uuid".to_string(),
+            status: "Stopped".to_string(),
+            pid: None,
+            error: None,
+            timestamp: "2026-07-02T14:00:00+08:00".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"pid\":null"));
     }
 }
