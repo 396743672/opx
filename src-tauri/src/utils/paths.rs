@@ -68,6 +68,25 @@ pub fn builtin_zip_relative(key: &str, version: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("software/{}/{}.zip", key, version))
 }
 
+/// 解析内置资源文件路径，跨平台兼容。
+/// Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下；
+/// macOS 上 resource_dir() 返回 .app/Contents/Resources/，资源直接在其下；
+/// Linux 上路径形如 /usr/lib/<exe>/，资源在其中的 resources/ 或根目录。
+/// 该函数尝试多个候选路径，返回第一个存在的。
+pub fn resolve_builtin_resource(resource_dir: &Path, rel: &str) -> Option<PathBuf> {
+    // 候选 1: resource_dir/resources/{rel}（Windows 打包后 + dev 模式）
+    let p1 = resource_dir.join("resources").join(rel);
+    if p1.exists() {
+        return Some(p1);
+    }
+    // 候选 2: resource_dir/{rel}（macOS / Linux / 旧式布局）
+    let p2 = resource_dir.join(rel);
+    if p2.exists() {
+        return Some(p2);
+    }
+    None
+}
+
 /// 通用辅助：在指定 root 下解析 name。
 /// name 空时返回 root 本身，否则返回 root.join(name)。
 pub fn resolve_under(root: &Path, name: &str) -> PathBuf {
@@ -136,5 +155,93 @@ mod tests {
 
         let p3 = builtin_zip_relative("nginx", "1.31.2");
         assert_eq!(p3.to_string_lossy(), "software/nginx/1.31.2.zip");
+    }
+
+    #[test]
+    fn resolve_builtin_resource_finds_under_resources_subdir() {
+        // Windows 风格：资源在 resource_dir/resources/software/ 下
+        let tmp = std::env::temp_dir().join(format!(
+            "opx_paths_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sw_dir = tmp.join("resources").join("software").join("mysql");
+        fs::create_dir_all(&sw_dir).unwrap();
+        let zip = sw_dir.join("8.4.10.zip");
+        fs::write(&zip, b"test").unwrap();
+
+        let result = resolve_builtin_resource(&tmp, "software/mysql/8.4.10.zip");
+        assert!(result.is_some(), "应能在 resources/ 子目录下找到资源");
+        assert_eq!(result.unwrap(), zip);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_builtin_resource_finds_under_root() {
+        // macOS 风格：资源直接在 resource_dir 下
+        let tmp = std::env::temp_dir().join(format!(
+            "opx_paths_test2_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sw_dir = tmp.join("software").join("nginx");
+        fs::create_dir_all(&sw_dir).unwrap();
+        let zip = sw_dir.join("1.31.2.zip");
+        fs::write(&zip, b"test").unwrap();
+
+        let result = resolve_builtin_resource(&tmp, "software/nginx/1.31.2.zip");
+        assert!(result.is_some(), "应能在根目录下找到资源");
+        assert_eq!(result.unwrap(), zip);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_builtin_resource_returns_none_when_missing() {
+        let tmp = std::env::temp_dir().join(format!(
+            "opx_paths_test3_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&tmp).unwrap();
+        let result = resolve_builtin_resource(&tmp, "software/nonexistent/1.0.zip");
+        assert!(result.is_none(), "资源不存在时应返回 None");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_builtin_resource_prefers_resources_subdir() {
+        // 两个候选都存在时优先 resources/ 子目录
+        let tmp = std::env::temp_dir().join(format!(
+            "opx_paths_test4_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let in_resources = tmp.join("resources").join("software").join("jre");
+        fs::create_dir_all(&in_resources).unwrap();
+        fs::write(in_resources.join("1.8.zip"), b"in-resources").unwrap();
+
+        let in_root = tmp.join("software").join("jre");
+        fs::create_dir_all(&in_root).unwrap();
+        fs::write(in_root.join("1.8.zip"), b"in-root").unwrap();
+
+        let result = resolve_builtin_resource(&tmp, "software/jre/1.8.zip");
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with(tmp.join("resources")));
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

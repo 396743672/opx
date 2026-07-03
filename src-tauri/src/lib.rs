@@ -26,11 +26,10 @@ pub fn run() {
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
                 // 初始化内置 zip manifest（resource_dir/software/manifest.json）
-                let manifest_path = app
-                    .path()
-                    .resource_dir()
-                    .ok()
-                    .map(|d| d.join("software").join("manifest.json"));
+                // Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下
+                let manifest_path = app.path().resource_dir().ok().and_then(|d| {
+                    crate::utils::paths::resolve_builtin_resource(&d, "software/manifest.json")
+                });
                 if let Some(mp) = manifest_path {
                     crate::services::software_manager::providers::init_builtin_manifest(&mp);
                 }

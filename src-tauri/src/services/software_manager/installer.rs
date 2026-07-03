@@ -250,7 +250,8 @@ pub async fn install_software(
         );
 
         match version_info.archive.format {
-            ArchiveFormat::Zip => archive::extract_zip(&cache_path, &install_path)?,
+            // 剥掉 zip 内单一顶层目录，避免 install_path 下多一层冗余目录
+            ArchiveFormat::Zip => archive::extract_zip_flatten(&cache_path, &install_path)?,
             ArchiveFormat::TarGz => archive::extract_tar_gz(&cache_path, &install_path)?,
             ArchiveFormat::Executable => {
                 // 单个可执行文件：直接复制到 install_path 下，文件名用 cache_path 的文件名
@@ -545,11 +546,28 @@ async fn install_from_builtin(
     let install_path = paths::apps_dir().join(&params.key).join(&params.version);
 
     // 1. 解析 resource 路径
+    // Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下；
+    // macOS 上 resource_dir() 已是 .app/Contents/Resources/，资源直接在其下。
+    // resolve_builtin_resource 会尝试两个候选路径并返回第一个存在的。
     let resource_zip = match app.path().resource_dir() {
-        Ok(d) => d
-            .join("software")
-            .join(&params.key)
-            .join(format!("{}.zip", &params.version)),
+        Ok(d) => {
+            let rel = format!("software/{}/{}.zip", &params.key, &params.version);
+            match crate::utils::paths::resolve_builtin_resource(&d, &rel) {
+                Some(p) => p,
+                None => {
+                    emit_event(
+                        &app,
+                        serde_json::json!({
+                            "install_id": install_id,
+                            "phase": "failed",
+                            "error": "内置安装包缺失，请重新安装应用",
+                            "stage": "extract"
+                        }),
+                    );
+                    return;
+                }
+            }
+        }
         Err(e) => {
             emit_event(
                 &app,
@@ -644,7 +662,8 @@ async fn install_from_builtin(
         );
 
         match version_info.archive.format {
-            ArchiveFormat::Zip => archive::extract_zip(&resource_zip, &install_path)?,
+            // 剥掉 zip 内单一顶层目录，避免 install_path 下多一层冗余目录
+            ArchiveFormat::Zip => archive::extract_zip_flatten(&resource_zip, &install_path)?,
             ArchiveFormat::TarGz => archive::extract_tar_gz(&resource_zip, &install_path)?,
             ArchiveFormat::Executable => {
                 // 单个可执行文件：直接复制到 install_path 下，文件名用 resource_zip 的文件名

@@ -101,15 +101,15 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        // MySQL zip 解压后包含 mysql-{version}-winx64 子目录
-        // my.ini 应放在该子目录内（MySQL 程序目录根），basedir/datadir 也指向该子目录
+        // 解压已剥掉 mysql-{version}-winx64 顶层目录，install_dir 即 MySQL 程序目录根，
+        // my.ini 直接放 install_dir，basedir/datadir 指向 install_dir。
+        // 兼容旧结构：若仍存在 mysql-{version}-winx64 子目录，则沿用该子目录。
         let mysql_subdir_name = format!("mysql-{}-winx64", ctx.version);
         let mysql_dir = ctx.install_dir().join(&mysql_subdir_name);
 
         let (my_ini_path, basedir) = if mysql_dir.is_dir() {
             (mysql_dir.join("my.ini"), mysql_dir)
         } else {
-            // 兜底：解压结构不同时，放到 install_dir 根
             (ctx.install_dir().join("my.ini"), ctx.install_dir().to_path_buf())
         };
 
