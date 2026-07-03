@@ -86,8 +86,8 @@ pub fn drain() -> Vec<RegisteredProcess> {
 
 // —— spawn 执行器 ——
 
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
 
 use crate::services::software_manager::providers::{FirstRunInit, StartCommand};
 
@@ -145,6 +145,101 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<()> {
 
     // 若有 temp_secret_output，可在此处抓取（任务 6.3 实现）
     Ok(())
+}
+
+// —— 状态转换校验 ——
+
+use crate::models::software::{CustomStartCommand, SoftwareStatus};
+
+/// 校验启动状态转换是否合法
+pub fn validate_start_transition(current: SoftwareStatus) -> anyhow::Result<()> {
+    match current {
+        SoftwareStatus::Stopped => Ok(()),
+        SoftwareStatus::Unknown => Ok(()),
+        SoftwareStatus::Error => Ok(()),
+        SoftwareStatus::Running => Err(anyhow::anyhow!(
+            "当前状态为运行中，无法启动（请先停止）"
+        )),
+        SoftwareStatus::Starting => Err(anyhow::anyhow!(
+            "当前状态为启动中，无法重复启动"
+        )),
+        SoftwareStatus::Stopping => Err(anyhow::anyhow!(
+            "当前状态为停止中，无法启动"
+        )),
+        SoftwareStatus::Initializing => Err(anyhow::anyhow!(
+            "当前状态为初始化中，无法启动"
+        )),
+    }
+}
+
+/// 校验停止状态转换是否合法
+pub fn validate_stop_transition(current: SoftwareStatus) -> anyhow::Result<()> {
+    match current {
+        SoftwareStatus::Running => Ok(()),
+        SoftwareStatus::Starting => Ok(()),
+        SoftwareStatus::Error => Ok(()),
+        SoftwareStatus::Stopped => Err(anyhow::anyhow!("已停止，无需再次停止")),
+        SoftwareStatus::Stopping => Err(anyhow::anyhow!("停止中，请等待")),
+        SoftwareStatus::Unknown => Err(anyhow::anyhow!("未知状态，无法停止")),
+        SoftwareStatus::Initializing => Err(anyhow::anyhow!("初始化中，请等待")),
+    }
+}
+
+/// 校验相对路径白名单：仅允许字母数字 _./- 且不含 ..
+/// 用于自定义软件 executable / working_dir / data_dir 等路径防御
+const VALID_PATH_CHARS: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-";
+
+pub fn validate_relative_path(path: &str) -> anyhow::Result<()> {
+    if path.is_empty() {
+        return Err(anyhow::anyhow!("路径不能为空"));
+    }
+    // 禁止绝对路径（Windows 盘符 X: 或 Unix / 开头）
+    if path.len() >= 2 {
+        let bytes = path.as_bytes();
+        if bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+            return Err(anyhow::anyhow!("不允许绝对路径（盘符）"));
+        }
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return Err(anyhow::anyhow!("不允许绝对路径"));
+    }
+    // 禁止 ..
+    if path.contains("..") {
+        return Err(anyhow::anyhow!("路径不允许 .."));
+    }
+    // 白名单字符
+    for c in path.chars() {
+        if !VALID_PATH_CHARS.contains(c) {
+            return Err(anyhow::anyhow!("路径含非法字符: {}", c));
+        }
+    }
+    Ok(())
+}
+
+/// 用 CustomStartCommand 构造 StartCommand
+/// 校验 executable / working_dir 相对路径白名单（防注入）
+pub fn build_custom_command(
+    install_path: &str,
+    custom: &CustomStartCommand,
+) -> anyhow::Result<StartCommand> {
+    validate_relative_path(&custom.executable)?;
+    if let Some(wd) = &custom.working_dir {
+        validate_relative_path(wd)?;
+    }
+
+    let working_dir = match &custom.working_dir {
+        Some(wd) => PathBuf::from(install_path).join(wd),
+        None => PathBuf::from(install_path),
+    };
+
+    Ok(StartCommand {
+        program: custom.executable.clone(),
+        args: custom.args.clone(),
+        env_vars: custom.env_vars.clone(),
+        working_dir,
+        creation_flags: 0x08000000, // CREATE_NO_WINDOW
+        first_run_init: None,
+    })
 }
 
 #[cfg(test)]
@@ -298,6 +393,169 @@ mod tests {
             temp_secret_output: None,
         };
         let result = run_first_run_init(&fri);
+        assert!(result.is_err());
+    }
+
+    // —— 状态转换校验测试 ——
+
+    #[test]
+    fn validate_start_transition_allows_stopped_to_starting() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Stopped);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_start_transition_allows_unknown_to_starting() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Unknown);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_start_transition_allows_error_to_starting() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Error);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_start_transition_rejects_running() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Running);
+        assert!(result.is_err());
+        let err_msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err_msg.contains("运行中"), "错误信息应含运行中，实际：{}", err_msg);
+    }
+
+    #[test]
+    fn validate_start_transition_rejects_starting() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Starting);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_start_transition_rejects_stopping() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Stopping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_start_transition_rejects_initializing() {
+        let result = validate_start_transition(crate::models::software::SoftwareStatus::Initializing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_stop_transition_allows_running() {
+        let result = validate_stop_transition(crate::models::software::SoftwareStatus::Running);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_stop_transition_allows_starting() {
+        let result = validate_stop_transition(crate::models::software::SoftwareStatus::Starting);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_stop_transition_allows_error() {
+        let result = validate_stop_transition(crate::models::software::SoftwareStatus::Error);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_stop_transition_rejects_stopped() {
+        let result = validate_stop_transition(crate::models::software::SoftwareStatus::Stopped);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_stop_transition_rejects_stopping() {
+        let result = validate_stop_transition(crate::models::software::SoftwareStatus::Stopping);
+        assert!(result.is_err());
+    }
+
+    // —— build_custom_command 测试 ——
+
+    use crate::models::software::{CustomHealthSpec, CustomStartCommand};
+
+    fn make_custom(executable: &str, working_dir: Option<&str>) -> CustomStartCommand {
+        CustomStartCommand {
+            executable: executable.to_string(),
+            args: vec!["--port=8080".to_string()],
+            working_dir: working_dir.map(|s| s.to_string()),
+            env_vars: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("KEY".to_string(), "val".to_string());
+                m
+            },
+            health_check: CustomHealthSpec::Tcp { port: 8080 },
+            config_file_relative: None,
+        }
+    }
+
+    #[test]
+    fn build_custom_command_uses_custom_start_command() {
+        let custom = make_custom("bin/app.exe", Some("subdir"));
+        let cmd = build_custom_command("apps/custom/test", &custom).unwrap();
+        assert_eq!(cmd.program, "bin/app.exe");
+        assert!(cmd.args.contains(&"--port=8080".to_string()));
+        assert_eq!(cmd.env_vars.get("KEY").unwrap(), "val");
+        assert_eq!(cmd.working_dir, PathBuf::from("apps/custom/test/subdir"));
+        assert!(cmd.first_run_init.is_none());
+    }
+
+    #[test]
+    fn build_custom_command_uses_install_path_when_no_working_dir() {
+        let custom = make_custom("bin/app.exe", None);
+        let cmd = build_custom_command("apps/custom/test", &custom).unwrap();
+        assert_eq!(cmd.working_dir, PathBuf::from("apps/custom/test"));
+    }
+
+    #[test]
+    fn build_custom_command_rejects_path_traversal() {
+        let custom = make_custom("../etc/passwd", None);
+        let result = build_custom_command("apps/custom/test", &custom);
+        assert!(result.is_err());
+        let err_msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err_msg.contains(".."), "错误信息应含 ..，实际：{}", err_msg);
+    }
+
+    #[test]
+    fn build_custom_command_rejects_absolute_path_windows() {
+        let custom = make_custom("C:/Windows/system32/cmd.exe", None);
+        let result = build_custom_command("apps/custom/test", &custom);
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(
+            err.contains("绝对") || err.contains("absolute") || err.contains("盘符"),
+            "错误信息应含绝对路径，实际：{}",
+            err
+        );
+    }
+
+    #[test]
+    fn build_custom_command_rejects_leading_slash_unix_path() {
+        let custom = make_custom("/etc/passwd", None);
+        let result = build_custom_command("apps/custom/test", &custom);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_custom_command_rejects_working_dir_traversal() {
+        let custom = make_custom("bin/app.exe", Some("../etc"));
+        let result = build_custom_command("apps/custom/test", &custom);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_custom_command_rejects_empty_executable() {
+        let custom = make_custom("", None);
+        let result = build_custom_command("apps/custom/test", &custom);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_custom_command_rejects_illegal_chars() {
+        let custom = make_custom("bin/app.exe; rm -rf /", None);
+        let result = build_custom_command("apps/custom/test", &custom);
         assert!(result.is_err());
     }
 }
