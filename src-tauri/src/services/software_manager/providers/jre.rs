@@ -6,7 +6,7 @@ use crate::models::software::{
 };
 use crate::services::software_manager::providers::builtin_manifest;
 
-use super::{InstallContext, SoftwareProvider};
+use super::{InstallContext, SoftwareProvider, StartContext};
 
 pub struct JreProvider;
 
@@ -201,7 +201,7 @@ impl SoftwareProvider for JreProvider {
     }
 
     fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
-        Err(anyhow::anyhow!("start_command 尚未实现（待任务 3 实现）"))
+        Err(anyhow::anyhow!("JRE 不参与启停管理（作为依赖项被 Spring Boot 应用拉起）"))
     }
 }
 
@@ -256,5 +256,27 @@ mod tests {
         // 只验证方法签名存在（编译通过即说明 trait 方法已覆写）
         let _ = provider.fetch_remote_versions();
         // 不断言返回值（网络环境可能失败返回 None）
+    }
+
+    #[test]
+    fn jre_start_command_returns_error_because_jre_not_managed() {
+        let p = JreProvider::new();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/jre/17.0.15".to_string(),
+            version: "17.0.15".to_string(),
+            config: serde_json::json!({}),
+            custom_start_command: None,
+        };
+        let result = p.start_command(&ctx);
+        assert!(result.is_err());
+        let err_msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err_msg.contains("JRE"), "错误信息应包含 JRE，实际：{}", err_msg);
+    }
+
+    #[test]
+    fn jre_config_schema_returns_none() {
+        let p = JreProvider::new();
+        assert!(p.config_schema().is_none());
     }
 }
