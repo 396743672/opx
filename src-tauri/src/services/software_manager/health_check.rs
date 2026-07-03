@@ -12,7 +12,13 @@ pub enum HealthCheckResult {
 /// 执行健康检查调度
 /// - ProcessOnly: 直接返回 Healthy（进程存活由调用方先检查）
 /// - Tcp: 每 interval_ms 尝试连接，max_attempts 次
-/// - Http: GET url，期望 expected_status
+/// - Http: GET url，期望 expected_status（不跟随重定向）
+///
+/// # PID 检查职责约定
+/// 本函数接受 `pid_alive: bool` 一次性参数，仅在循环外检查一次。
+/// 调用方（lifecycle 层）应额外 spawn 一个 `child.wait()` 监听器，
+/// 发现进程退出后通过 `CancellationToken` 取消本 task，
+/// 否则进程在 30s 轮询期间崩溃会被误报为 Timeout 而非 ProcessExited。
 pub async fn run_health_check(
     spec: &HealthCheckSpec,
     pid_alive: bool,
@@ -60,7 +66,12 @@ pub async fn tcp_probe(host: &str, port: u16, timeout: Duration) -> bool {
 }
 
 pub async fn http_probe(url: &str, expected_status: u16, timeout: Duration) -> bool {
-    let client = match reqwest::Client::builder().timeout(timeout).build() {
+    // 健康检查语义上不应跟随重定向（如 Nginx 默认 301 → /index.html）
+    let client = match reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
         Ok(c) => c,
         Err(_) => return false,
     };
