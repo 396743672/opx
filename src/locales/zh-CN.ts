@@ -82,6 +82,14 @@ export default {
   uninstallCheck: '卸载校验',
   todoPlaceholder: '功能待实现',
 
+  // ConfigEditDialog
+  noConfigSchema: '该软件无配置表单',
+  formView: '表单视图',
+  sourceView: '源码视图',
+  saveAndRestart: '保存并重启',
+  configEditRestartHint: '配置改动需重启软件后生效',
+  configEditSourceHint: '直接编辑配置文件源码，保存后生效',
+
   // 软件仓库新增
   selectMirror: '选择镜像源',
   setAsDefaultJre: '设为全局默认 JRE',

@@ -82,6 +82,14 @@ export default {
   uninstallCheck: 'Uninstall Check',
   todoPlaceholder: 'Feature to be implemented',
 
+  // ConfigEditDialog
+  noConfigSchema: 'No config schema for this software',
+  formView: 'Form View',
+  sourceView: 'Source View',
+  saveAndRestart: 'Save & Restart',
+  configEditRestartHint: 'Config changes take effect after restart',
+  configEditSourceHint: 'Edit config file source directly, takes effect after save',
+
   // software repository additions
   selectMirror: 'Select Mirror',
   setAsDefaultJre: 'Set as Global Default JRE',
