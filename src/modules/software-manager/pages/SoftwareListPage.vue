@@ -110,18 +110,20 @@ interface Group {
 
 const grouped = computed<Group[]>(() => {
   const groups: Record<string, Group> = {
+    runtime: { category: 'runtime', label: 'runtime', icon: 'mdi:language-java', items: [] },
     database: { category: 'database', label: 'database', icon: 'mdi:database', items: [] },
     cache: { category: 'cache', label: 'cache', icon: 'mdi:lightning-bolt', items: [] },
     webserver: { category: 'webserver', label: 'webServer', icon: 'mdi:web', items: [] },
     storage: { category: 'storage', label: 'objectStorage', icon: 'mdi:storage', items: [] },
     custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
   }
-  // JRE 不进管理页（独立展示在别处）
-  const list = installed.value.filter((s) => s.key !== 'jre')
+  // JRE 也纳入管理页（提供卸载入口），放在 runtime 分组
+  const list = [...installed.value]
   list.sort((a, b) => a.key.localeCompare(b.key) || a.version.localeCompare(b.version))
   for (const sw of list) {
     let g: keyof typeof groups
     if (sw.is_custom) g = 'custom'
+    else if (sw.key === 'jre') g = 'runtime'
     else if (sw.key === 'mysql') g = 'database'
     else if (sw.key === 'redis') g = 'cache'
     else if (sw.key === 'nginx') g = 'webserver'

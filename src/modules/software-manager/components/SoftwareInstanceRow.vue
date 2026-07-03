@@ -62,6 +62,8 @@ defineEmits<{
 
 const categoryClass = computed(() => {
   switch (props.software.key) {
+    case 'jre':
+      return 'runtime'
     case 'mysql':
       return 'database'
     case 'redis':
@@ -78,6 +80,8 @@ const categoryClass = computed(() => {
 
 const categoryIcon = computed(() => {
   switch (categoryClass.value) {
+    case 'runtime':
+      return 'mdi:language-java'
     case 'database':
       return 'mdi:database'
     case 'cache':
@@ -91,22 +95,28 @@ const categoryIcon = computed(() => {
   }
 })
 
+// JRE 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
+const isRuntime = computed(() => props.software.key === 'jre')
+
 const canStart = computed(
   () =>
-    props.software.status === SoftwareStatus.Stopped ||
-    props.software.status === SoftwareStatus.Error ||
-    props.software.status === SoftwareStatus.Unknown,
+    !isRuntime.value &&
+    (props.software.status === SoftwareStatus.Stopped ||
+      props.software.status === SoftwareStatus.Error ||
+      props.software.status === SoftwareStatus.Unknown),
 )
 
 const canStop = computed(
   () =>
-    props.software.status === SoftwareStatus.Running ||
-    props.software.status === SoftwareStatus.Starting ||
-    props.software.status === SoftwareStatus.Error,
+    !isRuntime.value &&
+    (props.software.status === SoftwareStatus.Running ||
+      props.software.status === SoftwareStatus.Starting ||
+      props.software.status === SoftwareStatus.Error),
 )
 
 const canConfig = computed(
   () =>
+    !isRuntime.value &&
     props.software.status !== SoftwareStatus.Starting &&
     props.software.status !== SoftwareStatus.Stopping &&
     props.software.status !== SoftwareStatus.Initializing,
@@ -157,6 +167,10 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .row-icon.database {
   background: color-mix(in oklch, var(--color-info) 14%, transparent);
   color: var(--color-info);
+}
+.row-icon.runtime {
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
 }
 .row-icon.cache {
   background: color-mix(in oklch, var(--color-destructive) 14%, transparent);

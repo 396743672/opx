@@ -99,8 +99,19 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 用 StartCommand 构造并 spawn 子进程
 /// Windows 上设置 CREATE_NO_WINDOW flag 隐藏控制台窗口
+///
+/// 注：program 若为相对路径（如 "bin/mysqld.exe"），必须拼接 working_dir
+/// 得到绝对路径——Windows CreateProcessW 查找可执行文件时用的是父进程
+/// 工作目录，而非 Command::current_dir() 设置的子进程工作目录，相对路径
+/// 会报 "program not found"。
 pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
-    let mut command = Command::new(&cmd.program);
+    let program_path = if PathBuf::from(&cmd.program).is_absolute() {
+        PathBuf::from(&cmd.program)
+    } else {
+        cmd.working_dir.join(&cmd.program)
+    };
+
+    let mut command = Command::new(&program_path);
     command.args(&cmd.args).current_dir(&cmd.working_dir);
 
     for (k, v) in &cmd.env_vars {
@@ -124,7 +135,13 @@ pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
 /// （如 MySQL `--initialize` 临时密码从 stderr 抓取）。
 pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Output> {
     let init = &fri.init_command;
-    let mut command = Command::new(&init.program);
+    // 与 spawn_process 同理：相对路径 program 必须拼接 working_dir 得到绝对路径
+    let program_path = if PathBuf::from(&init.program).is_absolute() {
+        PathBuf::from(&init.program)
+    } else {
+        init.working_dir.join(&init.program)
+    };
+    let mut command = Command::new(&program_path);
     command.args(&init.args).current_dir(&init.working_dir);
 
     for (k, v) in &init.env_vars {

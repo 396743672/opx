@@ -78,6 +78,7 @@ export default {
   cache: 'Cache',
   webServer: 'Web Server',
   objectStorage: 'Object Storage',
+  runtime: 'Runtime',
 
   // Dialog titles
   customStartCommand: 'Custom Start Command',

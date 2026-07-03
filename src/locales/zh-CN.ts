@@ -78,6 +78,7 @@ export default {
   cache: '缓存',
   webServer: 'Web 服务器',
   objectStorage: '对象存储',
+  runtime: '运行时',
 
   // 对话框标题
   customStartCommand: '自定义启动命令',
