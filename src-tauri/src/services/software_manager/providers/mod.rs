@@ -9,6 +9,7 @@ pub mod redis;
 pub mod nginx;
 pub mod minio;
 pub mod rustfs;
+pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
