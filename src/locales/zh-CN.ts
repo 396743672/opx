@@ -112,6 +112,11 @@ export default {
   browse: '浏览',
   saveAndStart: '保存并启动',
 
+  // UninstallBlockedDialog
+  uninstallConfirm: '卸载确认',
+  checking: '检查中…',
+  uninstallSafeConfirm: '卸载安全，确认继续？',
+
   // 软件仓库新增
   selectMirror: '选择镜像源',
   setAsDefaultJre: '设为全局默认 JRE',

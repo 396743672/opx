@@ -112,6 +112,11 @@ export default {
   browse: 'Browse',
   saveAndStart: 'Save & Start',
 
+  // UninstallBlockedDialog
+  uninstallConfirm: 'Uninstall Confirm',
+  checking: 'Checking…',
+  uninstallSafeConfirm: 'Safe to uninstall, continue?',
+
   // software repository additions
   selectMirror: 'Select Mirror',
   setAsDefaultJre: 'Set as Global Default JRE',
