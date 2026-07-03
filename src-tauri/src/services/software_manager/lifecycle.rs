@@ -366,6 +366,88 @@ pub fn emit_status_changed(
     }
 }
 
+// —— 启动钩子（auto_start）与退出钩子（stop_all）——
+
+use std::sync::Arc;
+
+use crate::models::software::InstalledSoftware;
+use crate::services::software_manager::SoftwareManager;
+
+/// 应用启动时按 startup_order 拉起 auto_start=true 的实例
+///
+/// 同 startup_order 的实例会被分组并发拉起（不等单个完成，仅 sleep 500ms 间隔）；
+/// 不同 startup_order 的批次之间也只 sleep 500ms。
+/// 应在 Tauri setup hook 中通过 `tauri::async_runtime::spawn` 调用。
+pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHandle) {
+    let auto_list = manager.list_auto_start();
+    if auto_list.is_empty() {
+        return;
+    }
+    tracing::info!(count = auto_list.len(), "auto_start_on_boot");
+
+    // 同 startup_order 分组：碰到不同的 order 时先 drain 当前 pending 批次
+    let mut last_order: u32 = 0;
+    let mut pending: Vec<InstalledSoftware> = Vec::new();
+
+    for sw in auto_list {
+        if !pending.is_empty() && sw.startup_order != last_order {
+            for s in pending.drain(..) {
+                spawn_start(manager.clone(), app.clone(), s.id).await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        last_order = sw.startup_order;
+        pending.push(sw);
+    }
+    // 处理剩余
+    for s in pending {
+        spawn_start(manager.clone(), app.clone(), s.id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// spawn 单个 auto_start 任务（fire-and-forget）
+/// 不等待 do_start_software 完成，避免单个慢启动阻塞后续实例
+async fn spawn_start(
+    manager: Arc<SoftwareManager>,
+    app: tauri::AppHandle,
+    installed_id: String,
+) {
+    let manager_clone = manager.clone();
+    let app_clone = app.clone();
+    let id_clone = installed_id.clone();
+    tokio::spawn(async move {
+        let result =
+            crate::commands::software::do_start_software(&manager_clone, &app_clone, &id_clone)
+                .await;
+        if let Err(e) = result {
+            tracing::error!(error = %e, installed_id = %id_clone, "auto_start failed");
+        }
+    });
+}
+
+/// 应用退出时停止所有运行中的软件
+///
+/// 同步调用，遍历注册表中所有进程，逐个 stop_one（含 5s 优雅等待 + 强杀）。
+/// 应在 quit_app 命令中调用。
+pub fn stop_all_on_exit() {
+    let procs = drain();
+    if procs.is_empty() {
+        return;
+    }
+    tracing::info!(count = procs.len(), "stop_all_on_exit");
+    for p in procs {
+        let (success, status) = stop_one(p.pid);
+        tracing::info!(
+            installed_id = %p.installed_id,
+            pid = p.pid,
+            success = success,
+            status = %status,
+            "stopped on exit"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

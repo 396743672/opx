@@ -54,6 +54,39 @@ pub fn run() {
                 crate::services::software_manager::SoftwareManager::new(),
             ));
 
+            // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
+            // guard 必须用 Mutex 包装后 manage 到 Tauri State，
+            // 否则 setup 退出时 guard drop，tracing_appender 会停止 flush
+            let _audit_guard = match crate::services::software_manager::audit_log::init() {
+                Ok(g) => {
+                    let log_dir = crate::utils::paths::logs_dir();
+                    crate::services::software_manager::audit_log::cleanup_old_logs(&log_dir, 7);
+                    Some(g)
+                }
+                Err(e) => {
+                    eprintln!("[audit_log] 初始化失败: {}", e);
+                    None
+                }
+            };
+            if let Some(g) = _audit_guard {
+                app.manage(std::sync::Mutex::new(g));
+            }
+
+            // auto_start 拉起：按 startup_order 升序拉起 auto_start=true 的实例
+            // 后台异步执行，不阻塞 setup；单个实例慢启动不阻塞后续
+            let app_handle_for_auto = app.handle().clone();
+            let manager_arc = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::software_manager::lifecycle::auto_start_all(
+                    &manager_arc,
+                    &app_handle_for_auto,
+                )
+                .await;
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单

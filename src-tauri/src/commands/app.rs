@@ -6,6 +6,8 @@ use crate::services::process_registry;
 /// 以确保停止进度对话框能完整渲染。
 #[tauri::command]
 pub fn quit_app(app: AppHandle) -> Result<(), String> {
+    // 软件管理模块：停止所有运行中的实例（含 5s 优雅等待 + 强杀兜底）
+    crate::services::software_manager::lifecycle::stop_all_on_exit();
     let _results = process_registry::stop_all(&app);
     Ok(())
 }
