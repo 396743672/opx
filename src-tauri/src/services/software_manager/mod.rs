@@ -45,6 +45,20 @@ impl SoftwareManager {
         *self.catalog.write().unwrap() = catalog;
     }
 
+    /// 把某软件动态拉取的远程版本合并进 catalog（内置版本优先、去重）。
+    /// 安装时 install_software 从 catalog 查版本，故网络版本必须先写回 catalog。
+    pub fn merge_entry_versions(
+        &self,
+        key: &str,
+        remote_versions: Vec<crate::models::software::CatalogVersion>,
+    ) {
+        let mut catalog = self.catalog.write().unwrap();
+        if let Some(entry) = catalog.entries.iter_mut().find(|e| e.key == key) {
+            let builtin = std::mem::take(&mut entry.versions);
+            entry.versions = catalog::merge_versions(builtin, Some(remote_versions));
+        }
+    }
+
     pub fn get_installed(&self) -> Vec<InstalledSoftware> {
         self.installed.read().unwrap().software.clone()
     }

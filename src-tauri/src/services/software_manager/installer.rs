@@ -63,7 +63,7 @@ pub async fn install_software(
     params: InstallParams,
     install_id: String,
 ) {
-    // 缓存路径：cache/{key}/{version}.zip（持久保留，复用避免重复下载）
+    // 缓存目录：cache/{key}/（持久保留，复用避免重复下载）
     let cache_key_dir = paths::cache_dir().join(&params.key);
     if let Err(e) = fs::create_dir_all(&cache_key_dir) {
         emit_event(
@@ -77,7 +77,6 @@ pub async fn install_software(
         );
         return;
     }
-    let cache_path = cache_key_dir.join(format!("{}.zip", params.version));
     let install_path = paths::apps_dir()
         .join(&params.key)
         .join(&params.version);
@@ -141,6 +140,22 @@ pub async fn install_software(
         .await;
         return;
     }
+
+    // 缓存文件名按归档格式派生：
+    // - Zip → {version}.zip；TarGz → {version}.tar.gz
+    // - Executable → 取 URL 文件名（如 minio.exe），避免存成误导性的 .zip
+    let cache_file_name = match version_info.archive.format {
+        ArchiveFormat::Zip => format!("{}.zip", params.version),
+        ArchiveFormat::TarGz => format!("{}.tar.gz", params.version),
+        ArchiveFormat::Executable => mirror
+            .url
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("app.exe")
+            .to_string(),
+    };
+    let cache_path = cache_key_dir.join(&cache_file_name);
 
     if manager.is_installed(&params.key, &params.version) {
         emit_event(
@@ -215,18 +230,28 @@ pub async fn install_software(
 
             let app_for_progress = app.clone();
             let install_id_for_progress = install_id.clone();
+            // 节流：大文件按每 chunk 回调会刷屏 IPC，限制为最多每 200ms 或百分比变化时 emit 一次
+            let mut last_emit = std::time::Instant::now();
+            let mut last_percent: i64 = -1;
             download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
                 let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
-                emit_event(
-                    &app_for_progress,
-                    serde_json::json!({
-                        "install_id": install_id_for_progress.clone(),
-                        "phase": "downloading",
-                        "downloaded": downloaded,
-                        "total": total,
-                        "percent": percent
-                    }),
-                );
+                let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
+                if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                    last_emit = std::time::Instant::now();
+                    if let Some(p) = percent {
+                        last_percent = p;
+                    }
+                    emit_event(
+                        &app_for_progress,
+                        serde_json::json!({
+                            "install_id": install_id_for_progress.clone(),
+                            "phase": "downloading",
+                            "downloaded": downloaded,
+                            "total": total,
+                            "percent": percent
+                        }),
+                    );
+                }
             })
             .await?;
         }

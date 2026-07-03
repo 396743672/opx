@@ -18,6 +18,8 @@ interface InstallTask {
 
 export const useInstallStore = defineStore('install', () => {
   const tasks = ref<Record<string, InstallTask>>({})
+  // 竞态缓冲：后端在 createTask 之前 emit 的事件先暂存，createTask 时回放，避免丢事件
+  const pendingEvents = ref<Record<string, any[]>>({})
 
   const activeTasks = computed(() => {
     return Object.values(tasks.value).filter(
@@ -43,6 +45,14 @@ export const useInstallStore = defineStore('install', () => {
       percent: null,
       error: null,
       installedId: null,
+    }
+    // 回放在 createTask 之前到达的缓冲事件（后端可能已开始下载/失败）
+    const buffered = pendingEvents.value[id]
+    if (buffered) {
+      for (const p of buffered) {
+        updateTask(id, p)
+      }
+      delete pendingEvents.value[id]
     }
   }
 
@@ -85,6 +95,10 @@ export const useInstallStore = defineStore('install', () => {
       const id = payload.install_id
       if (tasks.value[id]) {
         updateTask(id, payload)
+      } else {
+        // 任务尚未 createTask（后端已抢先 emit），缓冲待回放
+        if (!pendingEvents.value[id]) pendingEvents.value[id] = []
+        pendingEvents.value[id].push(payload)
       }
     })
   }

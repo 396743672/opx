@@ -67,7 +67,7 @@ impl SoftwareProvider for MinioProvider {
                 version: "latest".to_string(),
                 mirrors: vec![MirrorSource {
                     name: "i18n:minioOfficial".to_string(),
-                    url: "https://dl.min.io/aistor/minio/release/windows-amd64/minio.exe".to_string(),
+                    url: "https://dl.min.io/server/minio/release/windows-amd64/minio.exe".to_string(),
                     builtin: None,
                 }],
                 archive: ArchiveInfo {
