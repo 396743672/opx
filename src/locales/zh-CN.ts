@@ -71,6 +71,17 @@ export default {
   dragFileHere: '拖拽压缩包到这里，或点击选择',
   supportedFormats: '支持 zip、tar.gz 格式',
 
+  // 软件分类（SoftwareListPage 分组标题）
+  database: '数据库',
+  cache: '缓存',
+  webServer: 'Web 服务器',
+  objectStorage: '对象存储',
+
+  // 对话框标题
+  customStartCommand: '自定义启动命令',
+  uninstallCheck: '卸载校验',
+  todoPlaceholder: '功能待实现',
+
   // 软件仓库新增
   selectMirror: '选择镜像源',
   setAsDefaultJre: '设为全局默认 JRE',

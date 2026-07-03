@@ -71,6 +71,17 @@ export default {
   dragFileHere: 'Drag file here, or click to select',
   supportedFormats: 'Supported formats: zip, tar.gz',
 
+  // Software categories (SoftwareListPage group titles)
+  database: 'Database',
+  cache: 'Cache',
+  webServer: 'Web Server',
+  objectStorage: 'Object Storage',
+
+  // Dialog titles
+  customStartCommand: 'Custom Start Command',
+  uninstallCheck: 'Uninstall Check',
+  todoPlaceholder: 'Feature to be implemented',
+
   // software repository additions
   selectMirror: 'Select Mirror',
   setAsDefaultJre: 'Set as Global Default JRE',

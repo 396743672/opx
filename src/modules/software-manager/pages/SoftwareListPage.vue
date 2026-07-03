@@ -25,81 +25,122 @@
     </div>
 
     <div v-else class="content">
-      <div class="installed-list">
-        <div v-for="item in installed" :key="item.id" class="installed-row">
-          <div class="row-icon">
-            <Icon :icon="sourceIcon(item)" />
-          </div>
-          <div class="row-main">
-            <div class="row-name">
-              {{ item.name }}
-              <span v-if="item.is_custom" class="tag custom">{{ $t('custom') }}</span>
-              <span v-else-if="isBuiltin(item)" class="tag builtin">{{ $t('offline') }}</span>
-            </div>
-            <div class="row-path mono">{{ item.install_path }}</div>
-          </div>
-          <div class="row-source">{{ sourceLabel(item) }}</div>
-          <button
-            class="btn danger small"
-            @click="openUninstall(item)"
-            :disabled="uninstallingId === item.id"
-          >
-            <Icon icon="mdi:delete" />
-            <span v-if="uninstallingId === item.id">{{ $t('uninstalling') }}</span>
-            <span v-else>{{ $t('uninstall') }}</span>
-          </button>
+      <div v-for="group in grouped" :key="group.category" class="category-section">
+        <div class="category-title">
+          <Icon :icon="group.icon" />
+          {{ $t(group.label) }}
+          <span class="count">{{ group.items.length }}</span>
+        </div>
+        <div class="instance-list">
+          <SoftwareInstanceRow
+            v-for="item in group.items"
+            :key="item.id"
+            :software="mergeStatus(item)"
+            @start="onStart(item)"
+            @stop="onStop(item)"
+            @config="onConfig(item)"
+            @startup-settings="onStartupSettings(item)"
+            @uninstall="onUninstall(item)"
+          />
         </div>
       </div>
     </div>
 
-    <UninstallConfirmDialog
-      v-if="selectedSoftware && showConfirmDialog"
-      :software="selectedSoftware"
-      :uninstalling="uninstallingId === selectedSoftware.id"
-      @confirm="confirmUninstall"
-      @cancel="cancelUninstall"
+    <ConfigEditDialog
+      v-if="configTarget"
+      :software="configTarget"
+      @close="configTarget = null"
+    />
+    <StartupSettingsDialog
+      v-if="startupTarget"
+      :software="startupTarget"
+      @close="startupTarget = null"
+    />
+    <CustomStartCommandDialog
+      v-if="customTarget"
+      :software="customTarget"
+      @close="customTarget = null"
+    />
+    <UninstallBlockedDialog
+      v-if="uninstallTarget"
+      :software="uninstallTarget"
+      @close="uninstallTarget = null"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import UninstallConfirmDialog from '../components/UninstallConfirmDialog.vue'
-import type { InstalledSoftware } from '@/models/software'
+import SoftwareInstanceRow from '../components/SoftwareInstanceRow.vue'
+import ConfigEditDialog from '../components/ConfigEditDialog.vue'
+import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
+import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
+import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
+import { useLifecycleStore } from '../stores/lifecycle'
+import type { InstalledSoftware, SoftwareStatus } from '@/models/software'
 
-const { t } = useI18n()
+const lifecycleStore = useLifecycleStore()
 
 const installed = ref<InstalledSoftware[]>([])
 const loading = ref(false)
-const selectedSoftware = ref<InstalledSoftware | null>(null)
-const showConfirmDialog = ref(false)
-const uninstallingId = ref<string | null>(null)
+const configTarget = ref<InstalledSoftware | null>(null)
+const startupTarget = ref<InstalledSoftware | null>(null)
+const customTarget = ref<InstalledSoftware | null>(null)
+const uninstallTarget = ref<InstalledSoftware | null>(null)
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
-function isBuiltin(item: InstalledSoftware): boolean {
-  return 'Builtin' in item.source
+interface Group {
+  category: string
+  label: string
+  icon: string
+  items: InstalledSoftware[]
 }
 
-function sourceIcon(item: InstalledSoftware): string {
-  if (item.is_custom) return 'mdi:upload'
-  if (isBuiltin(item)) return 'mdi:package-variant-closed'
-  return 'mdi:download'
-}
+const grouped = computed<Group[]>(() => {
+  const groups: Record<string, Group> = {
+    database: { category: 'database', label: 'database', icon: 'mdi:database', items: [] },
+    cache: { category: 'cache', label: 'cache', icon: 'mdi:lightning-bolt', items: [] },
+    webserver: { category: 'webserver', label: 'webServer', icon: 'mdi:web', items: [] },
+    storage: { category: 'storage', label: 'objectStorage', icon: 'mdi:storage', items: [] },
+    custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
+  }
+  // JRE 不进管理页（独立展示在别处）
+  const list = installed.value.filter((s) => s.key !== 'jre')
+  list.sort((a, b) => a.key.localeCompare(b.key) || a.version.localeCompare(b.version))
+  for (const sw of list) {
+    let g: keyof typeof groups
+    if (sw.is_custom) g = 'custom'
+    else if (sw.key === 'mysql') g = 'database'
+    else if (sw.key === 'redis') g = 'cache'
+    else if (sw.key === 'nginx') g = 'webserver'
+    else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
+    else continue
+    groups[g].items.push(sw)
+  }
+  return Object.values(groups).filter((g) => g.items.length > 0)
+})
 
-function sourceLabel(item: InstalledSoftware): string {
-  if (item.is_custom) return t('custom')
-  if (isBuiltin(item)) return t('builtinSource')
-  return t('mirrorSource')
+function mergeStatus(item: InstalledSoftware): InstalledSoftware {
+  const liveStatus = lifecycleStore.getStatus(item.id)
+  const livePid = lifecycleStore.getPid(item.id)
+  const liveError = lifecycleStore.getError(item.id)
+  return {
+    ...item,
+    // lifecycle store 有实时状态时优先用，否则回退到后端列表快照
+    status: (liveStatus !== 'Unknown' ? liveStatus : item.status) as SoftwareStatus,
+    pid: livePid ?? item.pid,
+    last_error: liveError ?? item.last_error,
+  }
 }
 
 async function loadInstalled() {
   loading.value = true
   try {
-    installed.value = await invoke('list_installed_software') as InstalledSoftware[]
+    installed.value = (await invoke('list_installed_software')) as InstalledSoftware[]
   } catch (e) {
     console.error('Failed to load installed:', e)
   } finally {
@@ -107,34 +148,52 @@ async function loadInstalled() {
   }
 }
 
-function openUninstall(item: InstalledSoftware) {
-  selectedSoftware.value = item
-  showConfirmDialog.value = true
-}
-
-function cancelUninstall() {
-  showConfirmDialog.value = false
-  selectedSoftware.value = null
-}
-
-async function confirmUninstall() {
-  if (!selectedSoftware.value) return
-  const id = selectedSoftware.value.id
-  uninstallingId.value = id
+async function onStart(item: InstalledSoftware) {
+  // 自定义软件未配置启动命令时弹对话框
+  if (item.is_custom && !item.custom_start_command) {
+    customTarget.value = item
+    return
+  }
   try {
-    await invoke('uninstall_software', { installedId: id })
-    showConfirmDialog.value = false
-    selectedSoftware.value = null
-    await loadInstalled()
+    await invoke('start_software', { installedId: item.id })
   } catch (e) {
-    console.error('Failed to uninstall:', e)
-  } finally {
-    uninstallingId.value = null
+    console.error('start failed:', e)
   }
 }
 
-onMounted(() => {
-  loadInstalled()
+async function onStop(item: InstalledSoftware) {
+  try {
+    await invoke('stop_software', { installedId: item.id })
+  } catch (e) {
+    console.error('stop failed:', e)
+  }
+}
+
+function onConfig(item: InstalledSoftware) {
+  configTarget.value = item
+}
+
+function onStartupSettings(item: InstalledSoftware) {
+  startupTarget.value = item
+}
+
+function onUninstall(item: InstalledSoftware) {
+  uninstallTarget.value = item
+}
+
+onMounted(async () => {
+  await lifecycleStore.initListener()
+  await loadInstalled()
+  // 30s 兜底轮询（事件丢失时仍能同步状态）
+  pollTimer = setInterval(loadInstalled, 30_000)
+})
+
+onBeforeUnmount(() => {
+  lifecycleStore.destroyListener()
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
 
@@ -142,75 +201,38 @@ onMounted(() => {
 .content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 28px;
 }
-.installed-list {
+.category-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.installed-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-}
-.row-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
-  color: var(--color-primary);
-  font-size: 20px;
-}
-.row-main {
-  flex: 1;
-  min-width: 0;
-}
-.row-name {
-  font-size: 14px;
+.category-title {
+  font-size: 12px;
   font-weight: 600;
+  color: var(--color-muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.row-path {
-  font-size: 12px;
-  color: var(--color-muted-foreground);
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mono {
-  font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
-}
-.tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 600;
-}
-.tag.custom {
-  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
-  color: var(--color-warning);
-}
-.tag.builtin {
-  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+.category-title svg {
+  width: 14px;
+  height: 14px;
   color: var(--color-primary);
 }
-.row-source {
+.category-title .count {
+  margin-left: auto;
   font-size: 11px;
-  color: var(--color-muted-foreground);
-  flex-shrink: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.instance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .btn {
   display: inline-flex;
@@ -227,19 +249,6 @@ onMounted(() => {
 }
 .btn:hover {
   background: var(--color-muted);
-}
-.btn.small {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-.btn.danger {
-  background: var(--color-destructive);
-  color: white;
-  border-color: var(--color-destructive);
-}
-.btn.danger:hover {
-  background: color-mix(in oklch, var(--color-destructive) 88%, var(--color-background));
 }
 .btn:disabled {
   opacity: 0.5;
