@@ -6,7 +6,13 @@ use std::io::Write;
 use std::path::Path;
 
 pub fn download(url: &str, destination: &Path) -> Result<()> {
-    let response = reqwest::blocking::get(url)?.error_for_status()?;
+    // 设置 User-Agent：部分镜像对无 UA 请求返回 403
+    let response = reqwest::blocking::Client::builder()
+        .user_agent("OPX")
+        .build()?
+        .get(url)
+        .send()?
+        .error_for_status()?;
     let content = response.bytes()?;
     std::fs::write(destination, content)?;
     Ok(())
@@ -20,8 +26,10 @@ pub async fn download_with_progress<F>(
 where
     F: FnMut(u64, Option<u64>),
 {
+    // 设置 User-Agent：reqwest 默认不发该 header，部分镜像（如清华 TUNA）会对无 UA 请求返回 403
     let response = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
+        .user_agent("OPX")
         .build()?
         .get(url)
         .send()

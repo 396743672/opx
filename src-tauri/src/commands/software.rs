@@ -57,6 +57,7 @@ pub async fn refresh_catalog(
 /// 返回包装后的 CatalogEntry（含远程版本），失败返回错误信息供前端展示
 #[tauri::command]
 pub async fn fetch_remote_versions_for(
+    manager: State<'_, Arc<SoftwareManager>>,
     key: String,
 ) -> Result<Vec<CatalogEntry>, String> {
     // 用 spawn_blocking 调用 provider 的 sync fetch_remote_versions
@@ -75,7 +76,11 @@ pub async fn fetch_remote_versions_for(
 
     match result {
         Ok(Some(versions)) => {
-            // 包装成单条 CatalogEntry 返回（前端合并到 catalog）
+            // 关键：把远程版本合并进 manager 的 catalog，
+            // 否则安装时 install_software 从 catalog 查不到网络版本，报"不支持版本"
+            manager.merge_entry_versions(&key, versions.clone());
+
+            // 包装成单条 CatalogEntry 返回（前端合并展示）
             let providers = providers::all_providers();
             let provider = providers.iter().find(|p| p.key() == key);
             if let Some(p) = provider {
