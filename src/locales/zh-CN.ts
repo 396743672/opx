@@ -95,6 +95,23 @@ export default {
   autoStartOnAppStartDesc: '勾选后应用启动时按启动顺序自动启动此软件',
   startupOrderDesc: '数字越小越早启动（同序号并发拉起）',
 
+  // CustomStartCommandDialog
+  customStartCommandHint: '配置自定义软件的启动命令、参数、环境变量与健康检查',
+  template: '预设模板',
+  noTemplate: '不使用模板',
+  executable: '可执行文件',
+  startArgs: '启动参数',
+  workingDir: '工作目录',
+  workingDirDefault: '默认为安装目录',
+  envVars: '环境变量',
+  healthCheck: '健康检查',
+  noHealthCheck: '不检查',
+  tcpPort: 'TCP 端口',
+  httpUrl: 'HTTP URL',
+  customConfigFile: '配置文件（相对路径，可选）',
+  browse: '浏览',
+  saveAndStart: '保存并启动',
+
   // 软件仓库新增
   selectMirror: '选择镜像源',
   setAsDefaultJre: '设为全局默认 JRE',

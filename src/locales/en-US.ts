@@ -95,6 +95,23 @@ export default {
   autoStartOnAppStartDesc: 'When checked, this software starts automatically on app launch by startup order',
   startupOrderDesc: 'Lower number starts earlier (same number starts in parallel)',
 
+  // CustomStartCommandDialog
+  customStartCommandHint: 'Configure start command, args, env vars and health check for custom software',
+  template: 'Preset Template',
+  noTemplate: 'No template',
+  executable: 'Executable',
+  startArgs: 'Start Args',
+  workingDir: 'Working Directory',
+  workingDirDefault: 'Defaults to install directory',
+  envVars: 'Environment Variables',
+  healthCheck: 'Health Check',
+  noHealthCheck: 'No check',
+  tcpPort: 'TCP Port',
+  httpUrl: 'HTTP URL',
+  customConfigFile: 'Config file (relative path, optional)',
+  browse: 'Browse',
+  saveAndStart: 'Save & Start',
+
   // software repository additions
   selectMirror: 'Select Mirror',
   setAsDefaultJre: 'Set as Global Default JRE',
