@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod installer;
 pub mod providers;
+pub mod audit_log;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
