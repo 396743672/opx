@@ -55,6 +55,9 @@ export enum SoftwareStatus {
   Stopped = 'Stopped',
   Error = 'Error',
   Unknown = 'Unknown',
+  Starting = 'Starting',
+  Stopping = 'Stopping',
+  Initializing = 'Initializing',
 }
 
 export type InstallSource =
@@ -76,6 +79,13 @@ export interface InstalledSoftware {
   auto_start_on_app_start: boolean
   startup_order: number
   source: InstallSource
+
+  // 运行时字段（任务 10/11 新增）
+  pid: number | null
+  last_started_at: string | null
+  last_stopped_at: string | null
+  last_error: string | null
+  custom_start_command: CustomStartCommand | null
 }
 
 export interface InstalledSoftwareList {
@@ -102,3 +112,102 @@ export interface SoftwareMeta {
   available_versions: string[]
   default_version: string
 }
+
+// ===== 任务 12：软件管理模块扩展类型 =====
+// 注意：Rust 端用 #[serde(tag = "kind", content = "spec")] 序列化枚举，
+// 序列化格式为 { kind: "Variant", spec: {...} | null }，
+// 不是 { Variant: ... } 形式
+
+/// 自定义软件启动命令
+export interface CustomStartCommand {
+  executable: string
+  args: string[]
+  working_dir: string | null
+  env_vars: Record<string, string>
+  health_check: CustomHealthSpec
+  config_file_relative: string | null
+}
+
+/// 自定义软件健康检查规格
+/// serde tag=kind, content=spec
+export type CustomHealthSpec =
+  | { kind: 'None'; spec: null }
+  | { kind: 'Tcp'; spec: { port: number } }
+  | { kind: 'Http'; spec: { url: string; expected_status: number } }
+
+/// 标准软件健康检查规格
+/// serde tag=kind, content=spec
+export type HealthCheckSpec =
+  | { kind: 'ProcessOnly'; spec: null }
+  | { kind: 'Tcp'; spec: { port: number; timeout_ms: number } }
+  | { kind: 'Http'; spec: { url: string; expected_status: number; timeout_ms: number } }
+
+/// 配置表单 schema
+export interface ConfigSchema {
+  fields: ConfigField[]
+}
+
+export interface ConfigField {
+  key: string
+  label_i18n: string
+  field_type: ConfigFieldType
+  default_value: any
+  section: string | null
+  description_i18n: string | null
+}
+
+/// 配置字段类型
+/// serde tag="type"（无 content，因 unit variant 无负载）
+export type ConfigFieldType =
+  | { type: 'Text' }
+  | { type: 'Number' }
+  | { type: 'Port' }
+  | { type: 'Password' }
+  | { type: 'Select'; options: string[] }
+
+/// 卸载安全性报告
+export interface UninstallSafetyReport {
+  safe: boolean
+  blockers: UninstallBlocker[]
+}
+
+export interface UninstallBlocker {
+  kind: string
+  message_i18n: string
+  dependents: JreDependent[]
+}
+
+/// JRE 使用情况报告
+export interface JreUsageReport {
+  in_use: boolean
+  is_default: boolean
+  dependents: JreDependent[]
+}
+
+export interface JreDependent {
+  kind: string
+  id: string
+  name: string
+  status: string
+}
+
+/// Tauri 事件 software-status-changed 载荷
+export interface SoftwareStatusEvent {
+  installed_id: string
+  status: SoftwareStatus
+  pid: number | null
+  error: string | null
+  timestamp: string
+}
+
+/// 内置自定义模板
+export interface CustomTemplate {
+  id: string
+  name_i18n: string
+  executable: string
+  args: string[]
+  config_file_relative: string | null
+}
+
+/// 配置表单数据（key → 字段值）
+export type FormData = Record<string, any>
