@@ -4,12 +4,14 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    CatalogEntry, CustomInstallParams, InstallParams, InstalledSoftware, SoftwareStatus,
+    CatalogEntry, ConfigSchema, CustomInstallParams, InstallParams, InstalledSoftware,
+    SoftwareStatus,
 };
 use crate::services::software_manager::{
-    catalog, health_check, installer, lifecycle, providers, SoftwareManager,
+    catalog, config_editor, health_check, installer, lifecycle, providers, SoftwareManager,
 };
-use crate::services::software_manager::providers::{HealthContext, StartContext};
+use crate::services::software_manager::config_editor::FormData;
+use crate::services::software_manager::providers::{ConfigContext, HealthContext, StartContext};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -524,4 +526,163 @@ pub async fn get_software_status(
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
     Ok(sw.status)
+}
+
+// ===== 配置编辑命令（任务 10.2）=====
+
+/// 获取指定软件的表单 schema
+/// 自定义软件返回 None（无统一表单）
+#[tauri::command]
+pub async fn get_config_schema(
+    installed_id: String,
+) -> Result<Option<ConfigSchema>, String> {
+    let software = load_software_for_id(&installed_id)?;
+    if software.is_custom {
+        return Ok(None);
+    }
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    Ok(provider.config_schema())
+}
+
+/// 读表单数据：根据 schema 从配置文件中提取字段值
+#[tauri::command]
+pub async fn read_config_form(
+    installed_id: String,
+) -> Result<FormData, String> {
+    let software = load_software_for_id(&installed_id)?;
+    if software.is_custom {
+        return Err("自定义软件无表单 schema".to_string());
+    }
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let schema = provider
+        .config_schema()
+        .ok_or_else(|| "该软件无表单 schema".to_string())?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    config_editor::read_config_as_form(&full_path, &schema).map_err(|e| e.to_string())
+}
+
+/// 写表单数据：把表单字段写回配置文件，并同步更新 installed.json 的 config
+#[tauri::command]
+pub async fn write_config_form(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    data: FormData,
+) -> Result<(), String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    if software.is_custom {
+        return Err("自定义软件无表单 schema".to_string());
+    }
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let schema = provider
+        .config_schema()
+        .ok_or_else(|| "该软件无表单 schema".to_string())?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    config_editor::write_form_to_config(&full_path, &schema, &data).map_err(|e| e.to_string())?;
+
+    // 同步 config 到 installed.json（MinIO/RustFS 无文件，仅更新 config 字段）
+    let mut new_config = software.config.clone();
+    if let Some(obj) = new_config.as_object_mut() {
+        for (k, v) in &data {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    manager
+        .update_config(&installed_id, new_config)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读配置文件源码（整个文件内容）
+#[tauri::command]
+pub async fn read_config_source(
+    installed_id: String,
+) -> Result<String, String> {
+    let software = load_software_for_id(&installed_id)?;
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    config_editor::read_config_source(&full_path).map_err(|e| e.to_string())
+}
+
+/// 写配置文件源码（整个文件内容，含备份 + 原子写）
+#[tauri::command]
+pub async fn write_config_source(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    content: String,
+) -> Result<(), String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    config_editor::write_config_source(&full_path, &content).map_err(|e| e.to_string())
+}
+
+/// 辅助：按 installed_id 从 installed.json 读单条记录（不依赖 State）
+/// 适用于不需要修改 installed.json 的只读命令（如 get_config_schema、read_config_form）
+fn load_software_for_id(
+    installed_id: &str,
+) -> Result<InstalledSoftware, String> {
+    let path = crate::utils::paths::config_dir().join("installed.json");
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let list: crate::models::software::InstalledSoftwareList =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    list.software
+        .into_iter()
+        .find(|s| s.id == installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))
 }
