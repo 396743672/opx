@@ -67,6 +67,8 @@ export default {
   mirrorSource: '网络',
   noInstalledSoftware: '暂无已安装软件',
   noInstalledSoftwareDesc: '去软件仓库安装需要的软件',
+  noManageableSoftware: '无可管理的软件',
+  noManageableSoftwareDesc: '当前仅安装了 JRE，JRE 不在软件管理页显示。去软件仓库安装 MySQL/Redis/Nginx 等可管理的软件',
   uploadCustom: '上传自定义安装包',
   dragFileHere: '拖拽压缩包到这里，或点击选择',
   supportedFormats: '支持 zip、tar.gz 格式',

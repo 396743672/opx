@@ -6,7 +6,7 @@ use crate::models::software::{
 };
 use crate::services::software_manager::providers::builtin_manifest;
 
-use super::{InstallContext, SoftwareProvider, StartContext};
+use super::{InstallContext, SoftwareProvider};
 
 pub struct JreProvider;
 

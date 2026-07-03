@@ -67,6 +67,8 @@ export default {
   mirrorSource: 'Mirror',
   noInstalledSoftware: 'No installed software',
   noInstalledSoftwareDesc: 'Go to software repository to install',
+  noManageableSoftware: 'No manageable software',
+  noManageableSoftwareDesc: 'Only JRE is installed, which is not shown on this page. Go to repository to install MySQL/Redis/Nginx etc.',
   uploadCustom: 'Upload Custom Package',
   dragFileHere: 'Drag file here, or click to select',
   supportedFormats: 'Supported formats: zip, tar.gz',

@@ -24,6 +24,14 @@
       />
     </div>
 
+    <div v-else-if="grouped.length === 0">
+      <EmptyState
+        icon="mdi:package-variant-closed"
+        :title="$t('noManageableSoftware')"
+        :description="$t('noManageableSoftwareDesc')"
+      />
+    </div>
+
     <div v-else class="content">
       <div v-for="group in grouped" :key="group.category" class="category-section">
         <div class="category-title">

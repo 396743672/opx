@@ -146,7 +146,8 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
         match child.try_wait()? {
             Some(status) => {
                 // 进程已退出，收集 output（child 已 piped，wait_with_output 会消费 child）
-                drop(status); // status 已在 Output.status 里
+                // status 已在 Output.status 里，这里显式忽略避免 unused 警告
+                let _ = status;
                 let output = child.wait_with_output()?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
