@@ -4,6 +4,7 @@ pub mod providers;
 pub mod audit_log;
 pub mod health_check;
 pub mod lifecycle;
+pub mod config_editor;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
