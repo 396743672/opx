@@ -289,8 +289,7 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, expected_status, .. } => {
-                assert!(url.contains("127.0.0.1"));
-                assert!(url.contains("/"));
+                assert_eq!(url, "http://127.0.0.1:80/");
                 assert_eq!(expected_status, 200);
             }
             _ => panic!("应为 Http"),
@@ -308,7 +307,24 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert!(url.contains(":8080"), "应使用 config.listen 端口");
+                assert_eq!(url, "http://127.0.0.1:8080/", "应使用 config.listen 端口");
+            }
+            _ => panic!("应为 Http"),
+        }
+    }
+
+    #[test]
+    fn nginx_health_check_uses_ctx_port_when_config_missing() {
+        let p = NginxProvider::new();
+        let ctx = super::HealthContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/nginx/1.31.2".to_string(),
+            port: 8081,
+            config: serde_json::json!({}),
+        };
+        match p.health_check(&ctx) {
+            crate::models::software::HealthCheckSpec::Http { url, .. } => {
+                assert_eq!(url, "http://127.0.0.1:8081/", "ctx.port 应优先于默认 80");
             }
             _ => panic!("应为 Http"),
         }
@@ -325,7 +341,7 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert!(url.contains(":80"), "应回退到 80 端口");
+                assert_eq!(url, "http://127.0.0.1:80/", "应回退到 80 端口");
             }
             _ => panic!("应为 Http"),
         }
