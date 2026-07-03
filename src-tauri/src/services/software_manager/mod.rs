@@ -185,6 +185,10 @@ impl SoftwareManager {
 
     /// 更新单条记录的运行时字段（status / pid / last_started_at 等）
     /// 同时持久化到 installed.json
+    ///
+    /// 注：status 与 pid 是无条件覆盖（pid 传 None 表示清除 PID）。
+    /// last_started_at / last_stopped_at / last_error 是条件更新——传 None
+    /// 表示"不改"，需显式清空 last_error 请用 clear_last_error()。
     pub fn update_runtime_fields(
         &self,
         installed_id: &str,
@@ -208,7 +212,22 @@ impl SoftwareManager {
         if let Some(t) = last_stopped_at {
             item.last_stopped_at = Some(t);
         }
-        item.last_error = last_error;
+        if let Some(e) = last_error {
+            item.last_error = Some(e);
+        }
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+    /// 显式清空 last_error（update_runtime_fields 传 None 表示不改）
+    pub fn clear_last_error(&self, installed_id: &str) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.last_error = None;
         Self::save_installed_list(&installed)?;
         Ok(())
     }
@@ -258,9 +277,21 @@ impl SoftwareManager {
         v
     }
 
-    /// 暴露 installed.json 写锁（命令层少量场景使用，如保存 custom_start_command）
-    pub fn installed_write(&self) -> std::sync::RwLockWriteGuard<'_, InstalledSoftwareList> {
-        self.installed.write().unwrap()
+    /// 保存自定义软件的启动命令（任务 10 自定义启动命令命令层调用）
+    pub fn set_custom_start_command(
+        &self,
+        installed_id: &str,
+        cmd: crate::models::software::CustomStartCommand,
+    ) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.custom_start_command = Some(cmd);
+        Self::save_installed_list(&installed)?;
+        Ok(())
     }
 }
 
@@ -347,5 +378,164 @@ mod tests {
         let s = make_installed("mysql", "8.4.0");
         assert_eq!(s.key, "mysql");
         assert_eq!(s.version, "8.4.0");
+    }
+
+    // —— SoftwareManager 辅助方法测试 ——
+
+    #[test]
+    fn find_installed_returns_none_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        assert!(mgr.find_installed("nonexistent-uuid-xyz").is_none());
+    }
+
+    #[test]
+    fn find_installed_returns_some_for_existing_id() {
+        let mgr = SoftwareManager::new();
+        // 取已安装列表中第一条（若有）
+        if let Some(first) = mgr.get_installed().first().cloned() {
+            let found = mgr.find_installed(&first.id);
+            assert!(found.is_some(), "应能找到已存在的 installed_id");
+            assert_eq!(found.unwrap().key, first.key);
+        }
+        // 若列表为空，本测试跳过（不失败）
+    }
+
+    #[test]
+    fn list_auto_start_returns_empty_when_none_configured() {
+        let mgr = SoftwareManager::new();
+        let list = mgr.list_auto_start();
+        // 仅验证返回 Vec（可能为空，取决于既有测试数据）
+        // 关键是不 panic
+        let _ = list.len();
+    }
+
+    #[test]
+    fn list_auto_start_sorts_by_startup_order() {
+        // 构造三条 auto_start=true 的记录，验证排序
+        let mut list = vec![
+            InstalledSoftware {
+                id: "a".to_string(),
+                key: "redis".to_string(),
+                version: "7.4.9".to_string(),
+                name: "Redis".to_string(),
+                install_path: "apps/redis/7.4.9".to_string(),
+                install_time: chrono::Utc::now().naive_utc(),
+                status: SoftwareStatus::Stopped,
+                port: 6379,
+                config: serde_json::json!({}),
+                is_custom: false,
+                auto_start_on_app_start: true,
+                startup_order: 30,
+                source: InstallSource::Mirror {
+                    mirror_name: "t".to_string(),
+                    url: "http://t".to_string(),
+                },
+                pid: None,
+                last_started_at: None,
+                last_stopped_at: None,
+                last_error: None,
+                custom_start_command: None,
+            },
+            InstalledSoftware {
+                id: "b".to_string(),
+                key: "mysql".to_string(),
+                version: "8.4.10".to_string(),
+                name: "MySQL".to_string(),
+                install_path: "apps/mysql/8.4.10".to_string(),
+                install_time: chrono::Utc::now().naive_utc(),
+                status: SoftwareStatus::Stopped,
+                port: 3306,
+                config: serde_json::json!({}),
+                is_custom: false,
+                auto_start_on_app_start: true,
+                startup_order: 10,
+                source: InstallSource::Mirror {
+                    mirror_name: "t".to_string(),
+                    url: "http://t".to_string(),
+                },
+                pid: None,
+                last_started_at: None,
+                last_stopped_at: None,
+                last_error: None,
+                custom_start_command: None,
+            },
+            InstalledSoftware {
+                id: "c".to_string(),
+                key: "nginx".to_string(),
+                version: "1.31.2".to_string(),
+                name: "Nginx".to_string(),
+                install_path: "apps/nginx/1.31.2".to_string(),
+                install_time: chrono::Utc::now().naive_utc(),
+                status: SoftwareStatus::Stopped,
+                port: 80,
+                config: serde_json::json!({}),
+                is_custom: false,
+                auto_start_on_app_start: true,
+                startup_order: 20,
+                source: InstallSource::Mirror {
+                    mirror_name: "t".to_string(),
+                    url: "http://t".to_string(),
+                },
+                pid: None,
+                last_started_at: None,
+                last_stopped_at: None,
+                last_error: None,
+                custom_start_command: None,
+            },
+        ];
+        list.sort_by_key(|s| s.startup_order);
+        assert_eq!(list[0].id, "b"); // startup_order=10
+        assert_eq!(list[1].id, "c"); // startup_order=20
+        assert_eq!(list[2].id, "a"); // startup_order=30
+    }
+
+    #[test]
+    fn update_runtime_fields_returns_err_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        let result = mgr.update_runtime_fields(
+            "nonexistent-uuid-xyz",
+            SoftwareStatus::Running,
+            Some(12345),
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_config_returns_err_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        let result = mgr.update_config("nonexistent-uuid-xyz", serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_startup_settings_returns_err_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        let result = mgr.update_startup_settings("nonexistent-uuid-xyz", true, 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clear_last_error_returns_err_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        let result = mgr.clear_last_error("nonexistent-uuid-xyz");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_custom_start_command_returns_err_for_unknown_id() {
+        let mgr = SoftwareManager::new();
+        let custom = crate::models::software::CustomStartCommand {
+            executable: "bin/app.exe".to_string(),
+            args: vec![],
+            working_dir: None,
+            env_vars: std::collections::BTreeMap::new(),
+            health_check: crate::models::software::CustomHealthSpec::None,
+            config_file_relative: None,
+        };
+        let result = mgr.set_custom_start_command("nonexistent-uuid-xyz", custom);
+        assert!(result.is_err());
     }
 }

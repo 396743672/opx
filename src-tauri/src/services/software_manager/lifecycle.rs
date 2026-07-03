@@ -119,7 +119,10 @@ pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
 
 /// 执行首次初始化命令（同步等待，最多 60s）
 /// 用于 MySQL --initialize-insecure 等场景
-pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<()> {
+///
+/// 返回 `std::process::Output` 供调用方提取 stdout/stderr
+/// （如 MySQL `--initialize` 临时密码从 stderr 抓取）。
+pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Output> {
     let init = &fri.init_command;
     let mut command = Command::new(&init.program);
     command.args(&init.args).current_dir(&init.working_dir);
@@ -131,20 +134,42 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<()> {
     #[cfg(windows)]
     command.creation_flags(init.creation_flags);
 
-    // 用 output() 等待完成并捕获 stdout/stderr（用于抓临时密码）
-    let output = command.output()?;
+    // spawn 后手动轮询 + 60s 超时，避免磁盘满/权限问题挂起永久阻塞
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!(
-            "初始化命令失败（code={}）：{}",
-            output.status,
-            stderr
-        ));
+    let start = Instant::now();
+    let timeout = Duration::from_secs(60);
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                // 进程已退出，收集 output（child 已 piped，wait_with_output 会消费 child）
+                drop(status); // status 已在 Output.status 里
+                let output = child.wait_with_output()?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!(
+                        "初始化命令失败（code={}）：{}",
+                        output.status,
+                        stderr
+                    ));
+                }
+                return Ok(output);
+            }
+            None => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    return Err(anyhow::anyhow!(
+                        "初始化命令超时（{}s），已终止子进程",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
     }
-
-    // 若有 temp_secret_output，可在此处抓取（任务 6.3 实现）
-    Ok(())
 }
 
 // —— 状态转换校验 ——
@@ -249,8 +274,12 @@ use std::time::{Duration, Instant};
 use crate::services::software_manager::health_check::is_process_alive;
 
 /// 停止单个进程：优雅停止→等 5s→强杀
-/// 返回 (是否成功, 状态字符串: "stopped" | "killed" | "failed")
+/// 返回 (是否成功, 状态字符串: "stopped" | "killed" | "failed" | "invalid")
 pub fn stop_one(pid: u32) -> (bool, String) {
+    // 防御 PID 0（Unix kill 0 会杀整个进程组）
+    if pid == 0 {
+        return (false, "invalid".to_string());
+    }
     if !is_process_alive(pid) {
         return (true, "stopped".to_string());
     }
@@ -259,9 +288,9 @@ pub fn stop_one(pid: u32) -> (bool, String) {
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/PID", &pid.to_string()]);
+        cmd.args(["/PID", &pid.to_string(), "/T"]);
         use std::os::windows::process::CommandExt;
-        let _ = cmd.creation_flags(0x08000000).output();
+        let _ = cmd.creation_flags(CREATE_NO_WINDOW).output();
     }
     #[cfg(unix)]
     {
@@ -283,9 +312,9 @@ pub fn stop_one(pid: u32) -> (bool, String) {
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/PID", &pid.to_string(), "/F"]);
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
         use std::os::windows::process::CommandExt;
-        let _ = cmd.creation_flags(0x08000000).output();
+        let _ = cmd.creation_flags(CREATE_NO_WINDOW).output();
     }
     #[cfg(unix)]
     {
@@ -332,7 +361,9 @@ pub fn emit_status_changed(
         error,
         timestamp: chrono::Local::now().to_rfc3339(),
     };
-    let _ = app.emit("software-status-changed", event);
+    if let Err(e) = app.emit("software-status-changed", event) {
+        tracing::warn!(error = %e, installed_id = %installed_id, "emit software-status-changed 失败");
+    }
 }
 
 #[cfg(test)]
@@ -467,8 +498,8 @@ mod tests {
             init_command: init_cmd,
             temp_secret_output: None,
         };
-        let result = run_first_run_init(&fri);
-        assert!(result.is_ok());
+        let output = run_first_run_init(&fri).expect("init should succeed");
+        assert!(output.status.success(), "exit status should be success");
     }
 
     #[test]
@@ -663,14 +694,26 @@ mod tests {
     }
 
     #[test]
+    fn stop_one_rejects_pid_zero() {
+        // PID 0 应被拒绝（Unix kill 0 会杀整个进程组）
+        let (success, status) = stop_one(0);
+        assert!(!success);
+        assert_eq!(status, "invalid");
+    }
+
+    #[test]
     fn stop_one_kills_running_process() {
-        // 启动一个长进程验证 stop_one 能停止它
-        let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd.exe" } else { "sleep" });
-        if cfg!(windows) {
-            cmd.args(["/c", "timeout", "/t", "60", "/nobreak"]);
+        // 启动一个稳定长进程验证 stop_one 能停止它
+        // 用 ping 而非 timeout（Git Bash 会把 timeout 解析为 GNU timeout）
+        let mut cmd = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd.exe");
+            c.args(["/c", "ping -n 60 127.0.0.1 > nul"]);
+            c
         } else {
-            cmd.args(["60"]);
-        }
+            let mut c = std::process::Command::new("sleep");
+            c.args(["60"]);
+            c
+        };
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -679,13 +722,27 @@ mod tests {
         let child = cmd.spawn().expect("spawn failed");
         let pid = child.id();
 
+        // 前置断言：确保进程真的活着再调 stop_one（避免假阳性）
+        // 给进程一点启动时间
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            is_process_alive(pid),
+            "测试前置失败：长进程未启动成功，pid={}",
+            pid
+        );
+
         let (success, status) = stop_one(pid);
-        assert!(success);
-        // 状态应为 stopped 或 killed
+        assert!(success, "stop_one 应成功");
         assert!(
             status == "stopped" || status == "killed",
             "状态应为 stopped 或 killed，实际：{}",
             status
+        );
+        // 验证进程确实被停止
+        assert!(
+            !is_process_alive(pid),
+            "停止后进程应不存在，pid={}",
+            pid
         );
     }
 

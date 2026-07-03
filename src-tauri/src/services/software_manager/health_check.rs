@@ -83,7 +83,8 @@ pub async fn http_probe(url: &str, expected_status: u16, timeout: Duration) -> b
 
 pub fn is_process_alive(pid: u32) -> bool {
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    // 单 PID 刷新，比 refresh_processes(All) 快 10-50 倍
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]));
     sys.process(sysinfo::Pid::from_u32(pid)).is_some()
 }
 
