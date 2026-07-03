@@ -35,6 +35,7 @@ export default {
   unknown: 'Unknown',
   starting: 'Starting',
   stopping: 'Stopping',
+  initializing: 'Initializing',
 
   // system monitor
   cpuUsage: 'CPU Usage',
