@@ -16,7 +16,7 @@ pub enum ConfigFormat {
 
 pub fn detect_format(file_path: &Path) -> ConfigFormat {
     let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if name.ends_with(".ini") {
+    if name.ends_with(".ini") || name == "my.cnf" {
         ConfigFormat::Ini
     } else if name == "redis.conf" {
         ConfigFormat::KeyValue
@@ -78,7 +78,10 @@ pub fn write_form_to_config(
     }
 
     backup_config(file_path)?;
-    std::fs::write(file_path, new_content)?;
+    // 原子写：写 .tmp + rename，避免崩溃/断电损坏配置文件
+    let tmp_path = file_path.with_extension("tmp");
+    std::fs::write(&tmp_path, new_content)?;
+    std::fs::rename(&tmp_path, file_path)?;
     Ok(())
 }
 
@@ -88,15 +91,18 @@ pub fn read_config_source(file_path: &Path) -> Result<String> {
 
 pub fn write_config_source(file_path: &Path, content: &str) -> Result<()> {
     backup_config(file_path)?;
-    std::fs::write(file_path, content)?;
+    // 原子写
+    let tmp_path = file_path.with_extension("tmp");
+    std::fs::write(&tmp_path, content)?;
+    std::fs::rename(&tmp_path, file_path)?;
     Ok(())
 }
 
 pub fn backup_config(file_path: &Path) -> Result<PathBuf> {
-    let backup_dir = file_path
+    let parent = file_path
         .parent()
-        .map(|p| p.join("backups"))
-        .unwrap_or_else(|| PathBuf::from("backups"));
+        .ok_or_else(|| anyhow::anyhow!("配置文件路径无父目录: {}", file_path.display()))?;
+    let backup_dir = parent.join("backups");
     std::fs::create_dir_all(&backup_dir)?;
 
     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
@@ -104,17 +110,26 @@ pub fn backup_config(file_path: &Path) -> Result<PathBuf> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("config");
-    let backup_path = backup_dir.join(format!("{}_{}", ts, filename));
+    let backup_name = format!("{}_{}", ts, filename);
+    let backup_path = backup_dir.join(&backup_name);
     if file_path.exists() {
         std::fs::copy(file_path, &backup_path)?;
     }
-    cleanup_old_backups(&backup_dir, 5)?;
+    // 按文件名后缀过滤，只清理本配置文件的备份，避免误删其他文件的备份
+    cleanup_old_backups(&backup_dir, filename, 5)?;
     Ok(backup_path)
 }
 
-fn cleanup_old_backups(dir: &Path, retain: usize) -> Result<()> {
+fn cleanup_old_backups(dir: &Path, target_filename: &str, retain: usize) -> Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
+        .filter(|e| {
+            // 仅保留以 _{target_filename} 结尾的条目（本配置文件的备份）
+            e.file_name()
+                .to_str()
+                .map(|name| name.ends_with(&format!("_{}", target_filename)))
+                .unwrap_or(false)
+        })
         .collect();
     entries.sort_by_key(|e| e.file_name());
     if entries.len() > retain {
@@ -200,7 +215,8 @@ fn ini_upsert(
     let mut insert_at = start + 1;
     for i in start + 1..lines.len() {
         let t = lines[i].trim();
-        if t.starts_with('[') && t.ends_with(']') && section_idx.is_some() {
+        // section=None 时，遇到第一个 [section] 块就停止（与 ini_lookup 语义对称）
+        if t.starts_with('[') && t.ends_with(']') {
             break;
         }
         if let Some(eq) = t.find('=') {
@@ -334,9 +350,10 @@ fn json_upsert(
     } else {
         serde_json::from_str(content)?
     };
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert(key.to_string(), value.clone());
-    }
+    let obj = v
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("JSON 根不是对象，无法 upsert 字段 {}", key))?;
+    obj.insert(key.to_string(), value.clone());
     Ok(serde_json::to_string_pretty(&v)?)
 }
 
@@ -391,6 +408,12 @@ mod tests {
     #[test]
     fn detect_format_ini_for_my_ini() {
         assert_eq!(detect_format(&PathBuf::from("my.ini")), ConfigFormat::Ini);
+    }
+
+    #[test]
+    fn detect_format_ini_for_my_cnf() {
+        // MySQL Linux 下常用 my.cnf（INI 格式）
+        assert_eq!(detect_format(&PathBuf::from("my.cnf")), ConfigFormat::Ini);
     }
 
     #[test]
@@ -557,6 +580,15 @@ mod tests {
         assert!(new_content.contains("\"port\": 3307"));
     }
 
+    #[test]
+    fn json_upsert_returns_err_for_non_object_root() {
+        let content = r#"[1, 2, 3]"#; // 数组根
+        let result = json_upsert(content, "port", &serde_json::json!(3306));
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("不是对象"), "错误应含'不是对象'，实际：{}", err);
+    }
+
     // —— parse_value / value_to_string ——
 
     #[test]
@@ -610,7 +642,7 @@ mod tests {
 
         let backup_dir = tmp.path().join("backups");
         std::fs::create_dir_all(&backup_dir).unwrap();
-        // 预创建 5 个旧备份
+        // 预创建 5 个旧备份（须以 _my.ini 结尾才会被 cleanup 处理）
         for i in 0..5 {
             std::fs::write(
                 backup_dir.join(format!("2026010{}_my.ini", i)),
@@ -622,6 +654,51 @@ mod tests {
         backup_config(&cfg_path).unwrap();
         let count = std::fs::read_dir(&backup_dir).unwrap().count();
         assert!(count <= 5, "应保留最多 5 个备份，实际 {}", count);
+    }
+
+    #[test]
+    fn cleanup_does_not_touch_other_files_backups() {
+        // 同目录下 my.ini 与 redis.conf 的备份不应互相误删
+        let tmp = tempfile::tempdir().unwrap();
+        let backup_dir = tmp.path().join("backups");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        // 预创建 6 个 my.ini 备份 + 3 个 redis.conf 备份
+        for i in 0..6 {
+            std::fs::write(backup_dir.join(format!("2026010{}_my.ini", i)), "old").unwrap();
+        }
+        for i in 0..3 {
+            std::fs::write(backup_dir.join(format!("2026010{}_redis.conf", i)), "old").unwrap();
+        }
+
+        // cleanup my.ini，保留 5 个
+        cleanup_old_backups(&backup_dir, "my.ini", 5).unwrap();
+
+        let entries: Vec<_> = std::fs::read_dir(&backup_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        let my_count = entries
+            .iter()
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.ends_with("_my.ini"))
+                    .unwrap_or(false)
+            })
+            .count();
+        let redis_count = entries
+            .iter()
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.ends_with("_redis.conf"))
+                    .unwrap_or(false)
+            })
+            .count();
+
+        assert_eq!(my_count, 5, "my.ini 备份应保留 5 个");
+        assert_eq!(redis_count, 3, "redis.conf 备份不应被误删，应保留 3 个");
     }
 
     #[test]
