@@ -3,6 +3,7 @@ pub mod installer;
 pub mod providers;
 pub mod audit_log;
 pub mod health_check;
+pub mod lifecycle;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
