@@ -19,6 +19,21 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// 获取系统内存（MB）和 CPU 核数，用于动态生成 MySQL 配置
+/// 失败时回退到保守默认值（4GB 内存 / 4 核）
+fn get_system_info() -> (u64, usize) {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    // sysinfo 0.31: total_memory() 返回 KB
+    let total_mem_mb = sys.total_memory() / 1024 / 1024;
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let mem = if total_mem_mb > 0 { total_mem_mb } else { 4096 };
+    let cpu = if cpu_count > 0 { cpu_count } else { 4 };
+    (mem, cpu)
+}
+
 pub struct MySqlProvider;
 
 impl MySqlProvider {
@@ -102,10 +117,43 @@ impl SoftwareProvider for MySqlProvider {
         let basedir = ctx.install_dir().to_path_buf();
 
         let basedir_forward = basedir.to_string_lossy().replace('\\', "/");
+
+        // 根据系统内存/CPU 动态生成配置
+        let (total_mem_mb, cpu_count) = get_system_info();
+        // innodb_buffer_pool_size: 系统内存的 50%，限制在 128M~4G
+        let buffer_pool_mb = (total_mem_mb / 2).max(128).min(4096);
+        // thread_cache_size: CPU 核数 * 4
+        let thread_cache = cpu_count * 4;
+        // innodb_io_threads: CPU 核数（最少 4）
+        let io_threads = cpu_count.max(4);
+
         let mut file = File::create(&my_ini_path)?;
         let content = format!(
-            "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\nport=3306\nbasedir={}\ndatadir={}/data\ncharacter-set-server=utf8mb4\ndefault-storage-engine=INNODB\n",
-            basedir_forward, basedir_forward
+            "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\n\
+port=3306\n\
+basedir={basedir}\n\
+datadir={basedir}/data\n\
+socket={basedir}/mysql.sock\n\
+character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
+default-storage-engine=INNODB\n\
+sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
+max_connections=151\n\
+thread_cache_size={thread_cache}\n\
+innodb_buffer_pool_size={buffer_pool}M\n\
+innodb_log_file_size=256M\n\
+innodb_log_buffer_size=64M\n\
+innodb_flush_log_at_trx_commit=1\n\
+innodb_lock_wait_timeout=50\n\
+innodb_io_threads={io_threads}\n\
+innodb_read_io_threads={io_threads}\n\
+innodb_write_io_threads={io_threads}\n\
+innodb_flush_method=normal\n\
+innodb_doublewrite=1\n\
+lower_case_table_names=1\n",
+            basedir = basedir_forward,
+            thread_cache = thread_cache,
+            buffer_pool = buffer_pool_mb,
+            io_threads = io_threads,
         );
         file.write_all(content.as_bytes())?;
         Ok(())

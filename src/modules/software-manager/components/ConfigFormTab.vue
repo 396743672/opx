@@ -48,11 +48,12 @@ const emit = defineEmits<{ 'update:dirty': [boolean] }>()
 const loading = ref(true)
 const formData = ref<FormData>({})
 
-onMounted(async () => {
+async function loadForm() {
   if (!props.schema) {
     loading.value = false
     return
   }
+  loading.value = true
   try {
     formData.value = await invoke<FormData>('read_config_form', {
       installedId: props.software.id,
@@ -61,6 +62,15 @@ onMounted(async () => {
     console.error('read config form failed:', e)
   }
   loading.value = false
+}
+
+onMounted(loadForm)
+
+// schema 是父组件异步加载的（初始可能为 null），加载完成后重新读表单
+watch(() => props.schema, (newSchema) => {
+  if (newSchema) {
+    loadForm()
+  }
 })
 
 watch(formData, () => emit('update:dirty', true), { deep: true })

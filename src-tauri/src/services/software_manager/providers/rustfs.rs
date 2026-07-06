@@ -133,9 +133,19 @@ impl SoftwareProvider for RustfsProvider {
             format!("127.0.0.1:{}", console_port),
         );
 
+        // data_dir 解析为绝对路径，确保启动时目录存在
+        let abs_data_dir = if std::path::Path::new(&data_dir).is_absolute() {
+            data_dir.to_string()
+        } else {
+            std::path::PathBuf::from(&ctx.install_path)
+                .join(data_dir)
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        let _ = std::fs::create_dir_all(&abs_data_dir);
+
         // RustFS 命令格式（参考官方文档）：
         // rustfs --address :9000 --access-key <key> --secret-key <key> --console-enable <data_dir>
-        // 数据目录是最后的位置参数
         Ok(StartCommand {
             program: "rustfs.exe".to_string(),
             args: vec![
@@ -146,7 +156,7 @@ impl SoftwareProvider for RustfsProvider {
                 "--secret-key".to_string(),
                 secret_key,
                 "--console-enable".to_string(),
-                data_dir,
+                abs_data_dir,
             ],
             env_vars,
             working_dir: PathBuf::from(&ctx.install_path),
@@ -162,10 +172,9 @@ impl SoftwareProvider for RustfsProvider {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 9000 });
-        // RustFS 兼容 MinIO API，健康检查端点与 MinIO 一致
-        HealthCheckSpec::Http {
-            url: format!("http://127.0.0.1:{}/minio/health/live", port),
-            expected_status: 200,
+        // 用 TCP 检查端口监听（RustFS 健康检查端点未明确文档化，TCP 更可靠）
+        HealthCheckSpec::Tcp {
+            port,
             timeout_ms: 1000,
         }
     }
@@ -283,19 +292,15 @@ mod tests {
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "rustfs.exe");
-        assert_eq!(
-            cmd.args,
-            vec![
-                "--address".to_string(),
-                ":9000".to_string(),
-                "--access-key".to_string(),
-                "rustfsadmin".to_string(),
-                "--secret-key".to_string(),
-                "rustfsadmin".to_string(),
-                "--console-enable".to_string(),
-                "./data".to_string(),
-            ]
-        );
+        // data_dir 解析为绝对路径，只检查关键参数顺序
+        assert_eq!(cmd.args[0], "--address");
+        assert_eq!(cmd.args[1], ":9000");
+        assert_eq!(cmd.args[2], "--access-key");
+        assert_eq!(cmd.args[3], "rustfsadmin");
+        assert_eq!(cmd.args[4], "--secret-key");
+        assert_eq!(cmd.args[5], "rustfsadmin");
+        assert_eq!(cmd.args[6], "--console-enable");
+        assert!(cmd.args[7].ends_with("/data") || cmd.args[7].ends_with("\\data"));
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ENABLE").unwrap(), "true");
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ADDRESS").unwrap(), "127.0.0.1:9001");
         assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/rustfs/v1"));
@@ -314,7 +319,10 @@ mod tests {
             custom_start_command: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
-        assert!(cmd.args.contains(&"./data".to_string()));
+        assert!(cmd
+            .args
+            .iter()
+            .any(|a| a.ends_with("/data") || a.ends_with("\\data")));
         assert!(cmd.args.contains(&":9000".to_string()));
         assert!(cmd.args.contains(&"rustfsadmin".to_string()));
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ENABLE").unwrap(), "true");
@@ -322,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn rustfs_health_check_uses_health_endpoint() {
+    fn rustfs_health_check_uses_tcp_port() {
         let p = RustfsProvider::new();
         let ctx = super::HealthContext {
             installed_id: "uuid".to_string(),
@@ -331,12 +339,11 @@ mod tests {
             config: serde_json::json!({}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, expected_status, timeout_ms } => {
-                assert_eq!(url, "http://127.0.0.1:9005/minio/health/live");
-                assert_eq!(expected_status, 200);
+            crate::models::software::HealthCheckSpec::Tcp { port, timeout_ms } => {
+                assert_eq!(port, 9005);
                 assert_eq!(timeout_ms, 1000);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 
@@ -350,10 +357,10 @@ mod tests {
             config: serde_json::json!({"api_port": 9002}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9002/minio/health/live");
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 9002);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 
@@ -367,10 +374,10 @@ mod tests {
             config: serde_json::json!({}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9000/minio/health/live");
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 9000);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 

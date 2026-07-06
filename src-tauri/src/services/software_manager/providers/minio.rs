@@ -130,11 +130,23 @@ impl SoftwareProvider for MinioProvider {
         env_vars.insert("MINIO_ROOT_USER".to_string(), access_key);
         env_vars.insert("MINIO_ROOT_PASSWORD".to_string(), secret_key);
 
+        // data_dir 解析为绝对路径（相对于 install_path），避免 minio 在错误目录创建
+        let abs_data_dir = if std::path::Path::new(&data_dir).is_absolute() {
+            data_dir.to_string()
+        } else {
+            std::path::PathBuf::from(&ctx.install_path)
+                .join(data_dir)
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        // 确保 data_dir 存在（首次启动或用户改路径时）
+        let _ = std::fs::create_dir_all(&abs_data_dir);
+
         Ok(StartCommand {
             program: "minio.exe".to_string(),
             args: vec![
                 "server".to_string(),
-                data_dir,
+                abs_data_dir,
                 "--address".to_string(),
                 format!(":{}", api_port),
                 "--console-address".to_string(),
@@ -154,9 +166,9 @@ impl SoftwareProvider for MinioProvider {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 9000 });
-        HealthCheckSpec::Http {
-            url: format!("http://127.0.0.1:{}/minio/health/live", port),
-            expected_status: 200,
+        // 用 TCP 检查端口监听（比 HTTP 健康检查更可靠，不依赖具体端点路径）
+        HealthCheckSpec::Tcp {
+            port,
             timeout_ms: 1000,
         }
     }
@@ -275,7 +287,11 @@ mod tests {
         let cmd = p.start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "minio.exe");
         assert!(cmd.args.contains(&"server".to_string()));
-        assert!(cmd.args.contains(&"./data".to_string()));
+        // data_dir 解析为绝对路径（install_path + data_dir）
+        assert!(cmd
+            .args
+            .iter()
+            .any(|a| a.ends_with("/data") || a.ends_with("\\data")));
         assert!(cmd.args.contains(&"--address".to_string()));
         assert!(cmd.args.contains(&":9000".to_string()));
         assert!(cmd.args.contains(&"--console-address".to_string()));
@@ -300,13 +316,16 @@ mod tests {
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd.args.contains(&":9000".to_string()));
         assert!(cmd.args.contains(&":9001".to_string()));
-        assert!(cmd.args.contains(&"./data".to_string()));
+        assert!(cmd
+            .args
+            .iter()
+            .any(|a| a.ends_with("/data") || a.ends_with("\\data")));
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_USER").unwrap(), "minioadmin");
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_PASSWORD").unwrap(), "minioadmin");
     }
 
     #[test]
-    fn minio_health_check_uses_minio_health_live() {
+    fn minio_health_check_uses_tcp_port() {
         let p = MinioProvider::new();
         let ctx = super::HealthContext {
             installed_id: "uuid".to_string(),
@@ -315,11 +334,10 @@ mod tests {
             config: serde_json::json!({}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, expected_status, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9000/minio/health/live");
-                assert_eq!(expected_status, 200);
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 9000);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 
@@ -333,10 +351,10 @@ mod tests {
             config: serde_json::json!({"api_port": 9002}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9002/minio/health/live");
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 9002);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 
@@ -350,10 +368,10 @@ mod tests {
             config: serde_json::json!({}),
         };
         match p.health_check(&ctx) {
-            crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9000/minio/health/live");
+            crate::models::software::HealthCheckSpec::Tcp { port, .. } => {
+                assert_eq!(port, 9000);
             }
-            _ => panic!("应为 Http"),
+            _ => panic!("应为 Tcp"),
         }
     }
 
