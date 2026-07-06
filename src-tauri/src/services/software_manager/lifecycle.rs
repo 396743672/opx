@@ -229,10 +229,11 @@ pub fn validate_stop_transition(current: SoftwareStatus) -> anyhow::Result<()> {
         SoftwareStatus::Running => Ok(()),
         SoftwareStatus::Starting => Ok(()),
         SoftwareStatus::Error => Ok(()),
+        // Initializing 允许停止（初始化失败卡住时需要能停止恢复）
+        SoftwareStatus::Initializing => Ok(()),
         SoftwareStatus::Stopped => Err(anyhow::anyhow!("已停止，无需再次停止")),
         SoftwareStatus::Stopping => Err(anyhow::anyhow!("停止中，请等待")),
         SoftwareStatus::Unknown => Err(anyhow::anyhow!("未知状态，无法停止")),
-        SoftwareStatus::Initializing => Err(anyhow::anyhow!("初始化中，请等待")),
     }
 }
 

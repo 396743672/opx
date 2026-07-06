@@ -288,7 +288,27 @@ pub async fn do_start_software(
             .get("initialized")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if !initialized {
+        // 检查 data 目录是否已存在且非空（如之前初始化失败残留）
+        // 非空则跳过初始化（假设已初始化，避免 --initialize-insecure 因目录非空失败）
+        let data_dir = fri.init_command.working_dir.join("data");
+        let data_already_initialized = data_dir.exists()
+            && std::fs::read_dir(&data_dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+        if !initialized && data_already_initialized {
+            tracing::info!(
+                installed_id = %installed_id,
+                "data dir non-empty, skipping first_run_init"
+            );
+            // 标记 initialized = true
+            let mut new_config = software.config.clone();
+            if let Some(obj) = new_config.as_object_mut() {
+                obj.insert("initialized".to_string(), serde_json::json!(true));
+            } else {
+                new_config = serde_json::json!({ "initialized": true });
+            }
+            manager.update_config(installed_id, new_config)?;
+        } else if !initialized {
             manager.update_runtime_fields(
                 installed_id,
                 SoftwareStatus::Initializing,
@@ -425,11 +445,40 @@ pub async fn do_start_software(
     let manager_clone = manager.clone();
     let app_clone = app.clone();
     let installed_id_clone = installed_id.to_string();
+    let pid_for_check = pid;
     tokio::spawn(async move {
-        // 注意：这里 pid_alive=true 是初始假设；后续若发现进程已退出，
-        // 由 health_check 返回 ProcessExited 时再处理
+        // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
+        let pid_alive = tokio::task::spawn_blocking(move || {
+            health_check::is_process_alive(pid_for_check)
+        })
+        .await
+        .unwrap_or(false);
+        if !pid_alive {
+            let _ = manager_clone.update_runtime_fields(
+                &installed_id_clone,
+                SoftwareStatus::Error,
+                None,
+                None,
+                None,
+                Some("进程意外退出（启动后立即崩溃，请检查端口冲突或 data 目录权限）".to_string()),
+            );
+            lifecycle::emit_status_changed(
+                &app_clone,
+                &installed_id_clone,
+                SoftwareStatus::Error,
+                None,
+                Some("进程意外退出".to_string()),
+            );
+            lifecycle::unregister(&installed_id_clone);
+            tracing::error!(
+                installed_id = %installed_id_clone,
+                pid = pid_for_check,
+                "process exited immediately after spawn"
+            );
+            return;
+        }
         // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
-        let result = health_check::run_health_check(&spec, true, 60, 1000).await;
+        let result = health_check::run_health_check(&spec, pid_alive, 60, 1000).await;
         match result {
             health_check::HealthCheckResult::Healthy => {
                 let _ = manager_clone.update_runtime_fields(
@@ -503,9 +552,31 @@ pub async fn stop_software(
 
     lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
 
-    let pid = software
-        .pid
-        .ok_or_else(|| "无 PID 记录，可能已停止".to_string())?;
+    // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
+    let pid = match software.pid {
+        Some(p) => p,
+        None => {
+            manager
+                .update_runtime_fields(
+                    &installed_id,
+                    SoftwareStatus::Stopped,
+                    None,
+                    None,
+                    Some(Local::now().naive_local()),
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+            lifecycle::unregister(&installed_id);
+            lifecycle::emit_status_changed(
+                &app,
+                &installed_id,
+                SoftwareStatus::Stopped,
+                None,
+                None,
+            );
+            return Ok(true);
+        }
+    };
 
     // 更新状态为 Stopping
     manager

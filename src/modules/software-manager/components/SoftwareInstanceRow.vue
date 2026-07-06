@@ -111,7 +111,8 @@ const canStop = computed(
     !isRuntime.value &&
     (props.software.status === SoftwareStatus.Running ||
       props.software.status === SoftwareStatus.Starting ||
-      props.software.status === SoftwareStatus.Error),
+      props.software.status === SoftwareStatus.Error ||
+      props.software.status === SoftwareStatus.Initializing),
 )
 
 const canConfig = computed(
