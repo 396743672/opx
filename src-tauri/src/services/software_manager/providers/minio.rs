@@ -134,8 +134,13 @@ impl SoftwareProvider for MinioProvider {
         let abs_data_dir = if std::path::Path::new(&data_dir).is_absolute() {
             data_dir.to_string()
         } else {
+            // 去掉 ./ 或 .\\ 前缀，避免 join 后出现 /./ 路径片段
+            let clean = data_dir
+                .strip_prefix("./")
+                .or_else(|| data_dir.strip_prefix(".\\"))
+                .unwrap_or(&data_dir);
             std::path::PathBuf::from(&ctx.install_path)
-                .join(data_dir)
+                .join(clean)
                 .to_string_lossy()
                 .replace('\\', "/")
         };
