@@ -73,6 +73,7 @@
       v-if="uninstallTarget"
       :software="uninstallTarget"
       @close="uninstallTarget = null"
+      @uninstalled="onUninstalled"
     />
   </div>
 </template>
@@ -89,7 +90,7 @@ import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
-import type { InstalledSoftware, SoftwareStatus } from '@/models/software'
+import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
 
@@ -138,12 +139,24 @@ function mergeStatus(item: InstalledSoftware): InstalledSoftware {
   const liveStatus = lifecycleStore.getStatus(item.id)
   const livePid = lifecycleStore.getPid(item.id)
   const liveError = lifecycleStore.getError(item.id)
+  const status = (liveStatus !== SoftwareStatus.Unknown ? liveStatus : item.status) as SoftwareStatus
+
+  // 根据状态决定显示：
+  // - Running/Starting: 显示 pid（进程在跑）
+  // - Stopped/Error: 清除 pid 显示（进程已停）
+  // - Running/Stopped: 清除 last_error（旧错误不展示）
+  // - Error: 显示 last_error（错误原因）
+  const pid =
+    status === SoftwareStatus.Running || status === SoftwareStatus.Starting
+      ? (livePid ?? item.pid)
+      : null
+  const last_error = status === SoftwareStatus.Error ? (liveError ?? item.last_error) : null
+
   return {
     ...item,
-    // lifecycle store 有实时状态时优先用，否则回退到后端列表快照
-    status: (liveStatus !== 'Unknown' ? liveStatus : item.status) as SoftwareStatus,
-    pid: livePid ?? item.pid,
-    last_error: liveError ?? item.last_error,
+    status,
+    pid,
+    last_error,
   }
 }
 
@@ -189,6 +202,11 @@ function onStartupSettings(item: InstalledSoftware) {
 
 function onUninstall(item: InstalledSoftware) {
   uninstallTarget.value = item
+}
+
+function onUninstalled() {
+  uninstallTarget.value = null
+  loadInstalled()
 }
 
 onMounted(async () => {

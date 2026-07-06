@@ -208,6 +208,7 @@ impl SoftwareProvider for JreProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::StartContext;
 
     #[test]
     fn jre_18_has_builtin_as_first_mirror() {
@@ -261,7 +262,7 @@ mod tests {
     #[test]
     fn jre_start_command_returns_error_because_jre_not_managed() {
         let p = JreProvider::new();
-        let ctx = super::StartContext {
+        let ctx = StartContext {
             installed_id: "uuid".to_string(),
             install_path: "apps/jre/17.0.15".to_string(),
             version: "17.0.15".to_string(),

@@ -327,7 +327,7 @@ pub async fn do_start_software(
     let child = lifecycle::spawn_process(cmd)?;
     let pid = child.id();
 
-    // 更新状态为 Starting
+    // 更新状态为 Starting，清除旧的 last_error（避免启动成功后仍显示旧错误）
     manager.update_runtime_fields(
         installed_id,
         SoftwareStatus::Starting,
@@ -336,6 +336,7 @@ pub async fn do_start_software(
         None,
         None,
     )?;
+    let _ = manager.clear_last_error(installed_id);
 
     // 注册到 lifecycle
     let kind = format!("{:?}", provider.catalog_entry().category);
@@ -347,6 +348,7 @@ pub async fn do_start_software(
         kind,
     );
 
+    // emit 时 error 显式传 None（清除前端旧错误）
     lifecycle::emit_status_changed(app, installed_id, SoftwareStatus::Starting, Some(pid), None);
     tracing::info!(installed_id = %installed_id, pid = pid, "start_software spawned");
 
@@ -390,7 +392,8 @@ pub async fn do_start_software(
     tokio::spawn(async move {
         // 注意：这里 pid_alive=true 是初始假设；后续若发现进程已退出，
         // 由 health_check 返回 ProcessExited 时再处理
-        let result = health_check::run_health_check(&spec, true, 30, 1000).await;
+        // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
+        let result = health_check::run_health_check(&spec, true, 60, 1000).await;
         match result {
             health_check::HealthCheckResult::Healthy => {
                 let _ = manager_clone.update_runtime_fields(
@@ -589,7 +592,8 @@ pub async fn get_config_schema(
     Ok(provider.config_schema())
 }
 
-/// 读表单数据：根据 schema 从配置文件中提取字段值
+/// 读表单数据：优先从 installed.json 的 config 字段读（权威来源），
+/// 缺失字段用 schema default_value 兜底
 #[tauri::command]
 pub async fn read_config_form(
     installed_id: String,
@@ -606,16 +610,18 @@ pub async fn read_config_form(
     let schema = provider
         .config_schema()
         .ok_or_else(|| "该软件无表单 schema".to_string())?;
-    let cctx = ConfigContext {
-        install_path: software.install_path.clone(),
-        version: software.version.clone(),
-        config: software.config.clone(),
-    };
-    let file_path = provider
-        .config_file_path(&cctx)
-        .ok_or_else(|| "该软件无配置文件".to_string())?;
-    let full_path = std::path::Path::new(&software.install_path).join(file_path);
-    config_editor::read_config_as_form(&full_path, &schema).map_err(|e| e.to_string())
+
+    // 从 installed.json 的 config 字段读，缺失用 default_value
+    let mut form = FormData::new();
+    for field in &schema.fields {
+        let value = software
+            .config
+            .get(&field.key)
+            .cloned()
+            .unwrap_or_else(|| field.default_value.clone());
+        form.insert(field.key.clone(), value);
+    }
+    Ok(form)
 }
 
 /// 写表单数据：把表单字段写回配置文件，并同步更新 installed.json 的 config

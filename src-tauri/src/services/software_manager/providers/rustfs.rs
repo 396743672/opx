@@ -155,8 +155,9 @@ impl SoftwareProvider for RustfsProvider {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 9000 });
+        // RustFS 兼容 MinIO API，健康检查端点与 MinIO 一致
         HealthCheckSpec::Http {
-            url: format!("http://127.0.0.1:{}/health", port),
+            url: format!("http://127.0.0.1:{}/minio/health/live", port),
             expected_status: 200,
             timeout_ms: 1000,
         }
@@ -323,7 +324,7 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, expected_status, timeout_ms } => {
-                assert_eq!(url, "http://127.0.0.1:9005/health");
+                assert_eq!(url, "http://127.0.0.1:9005/minio/health/live");
                 assert_eq!(expected_status, 200);
                 assert_eq!(timeout_ms, 1000);
             }
@@ -342,7 +343,7 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9002/health");
+                assert_eq!(url, "http://127.0.0.1:9002/minio/health/live");
             }
             _ => panic!("应为 Http"),
         }
@@ -359,7 +360,7 @@ mod tests {
         };
         match p.health_check(&ctx) {
             crate::models::software::HealthCheckSpec::Http { url, .. } => {
-                assert_eq!(url, "http://127.0.0.1:9000/health");
+                assert_eq!(url, "http://127.0.0.1:9000/minio/health/live");
             }
             _ => panic!("应为 Http"),
         }

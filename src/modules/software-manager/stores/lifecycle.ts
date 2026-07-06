@@ -25,15 +25,15 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
   function setStatus(
     id: string,
     status: SoftwareStatus,
-    pid?: number,
+    pid?: number | null,
     error?: string | null,
   ) {
     statuses.value[id] = status
-    // pid 传 undefined 时保留旧值；传 null 时清除
+    // pid: undefined 不改，null 清除，number 设置
     if (pid !== undefined) {
       pids.value[id] = pid
     }
-    // error 传 undefined 时保留旧值；传 null/string 时覆盖
+    // error: undefined 不改，null 清除，string 设置
     if (error !== undefined) {
       errors.value[id] = error
     }
@@ -57,7 +57,8 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
       'software-status-changed',
       (e) => {
         const { installed_id, status, pid, error } = e.payload
-        setStatus(installed_id, status as SoftwareStatus, pid ?? undefined, error ?? undefined)
+        // 直接传 pid/error（可能是 null），让 setStatus 区分 null（清除）与 undefined（不改）
+        setStatus(installed_id, status as SoftwareStatus, pid, error)
       },
     )
   }

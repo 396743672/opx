@@ -96,17 +96,10 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        // 解压已剥掉 mysql-{version}-winx64 顶层目录，install_dir 即 MySQL 程序目录根，
-        // my.ini 直接放 install_dir，basedir/datadir 指向 install_dir。
-        // 兼容旧结构：若仍存在 mysql-{version}-winx64 子目录，则沿用该子目录。
-        let mysql_subdir_name = format!("mysql-{}-winx64", ctx.version);
-        let mysql_dir = ctx.install_dir().join(&mysql_subdir_name);
-
-        let (my_ini_path, basedir) = if mysql_dir.is_dir() {
-            (mysql_dir.join("my.ini"), mysql_dir)
-        } else {
-            (ctx.install_dir().join("my.ini"), ctx.install_dir().to_path_buf())
-        };
+        // extract_zip_flatten 已剥掉 mysql-{version}-winx64 顶层目录，
+        // install_dir 即 MySQL 程序目录根，my.ini 直接放 install_dir
+        let my_ini_path = ctx.install_dir().join("my.ini");
+        let basedir = ctx.install_dir().to_path_buf();
 
         let basedir_forward = basedir.to_string_lossy().replace('\\', "/");
         let mut file = File::create(&my_ini_path)?;
@@ -119,8 +112,9 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
-        let mysql_subdir = format!("mysql-{}-winx64", ctx.version);
-        let working_dir = PathBuf::from(&ctx.install_path).join(&mysql_subdir);
+        // extract_zip_flatten 已剥掉 zip 顶层目录，install_path 即 MySQL 程序目录根
+        // bin/mysqld.exe 直接在 install_path/bin/ 下
+        let working_dir = PathBuf::from(&ctx.install_path);
 
         let init_command = StartCommand {
             program: "bin/mysqld.exe".to_string(),
@@ -218,13 +212,11 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {
-        let mysql_subdir = format!("mysql-{}-winx64", ctx.version);
-        Some(PathBuf::from(&ctx.install_path).join(mysql_subdir).join("my.ini"))
+        Some(PathBuf::from(&ctx.install_path).join("my.ini"))
     }
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
-        let mysql_subdir = format!("mysql-{}-winx64", ctx.version);
-        PathBuf::from(&ctx.install_path).join(mysql_subdir)
+        PathBuf::from(&ctx.install_path)
     }
 }
 
@@ -266,7 +258,7 @@ mod tests {
         assert!(cmd.args.contains(&"--console".to_string()));
         assert_eq!(
             cmd.working_dir,
-            std::path::PathBuf::from("apps/mysql/8.4.10/mysql-8.4.10-winx64")
+            std::path::PathBuf::from("apps/mysql/8.4.10")
         );
         assert_eq!(cmd.creation_flags, CREATE_NO_WINDOW);
     }
@@ -356,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn mysql_config_file_path_returns_my_ini_in_subdir() {
+    fn mysql_config_file_path_returns_my_ini_in_install_path() {
         let p = MySqlProvider::new();
         let ctx = super::ConfigContext {
             install_path: "apps/mysql/8.4.10".to_string(),
@@ -364,12 +356,12 @@ mod tests {
             config: serde_json::json!({}),
         };
         let path = p.config_file_path(&ctx).expect("应有路径");
-        assert!(path.to_string_lossy().contains("mysql-8.4.10-winx64"));
+        assert!(!path.to_string_lossy().contains("mysql-8.4.10-winx64"));
         assert!(path.to_string_lossy().ends_with("my.ini"));
     }
 
     #[test]
-    fn mysql_working_dir_is_install_path_plus_subdir() {
+    fn mysql_working_dir_is_install_path() {
         let p = MySqlProvider::new();
         let ctx = super::WorkingDirContext {
             install_path: "apps/mysql/8.4.10".to_string(),
@@ -377,7 +369,7 @@ mod tests {
         };
         assert_eq!(
             p.working_dir(&ctx),
-            std::path::PathBuf::from("apps/mysql/8.4.10/mysql-8.4.10-winx64")
+            std::path::PathBuf::from("apps/mysql/8.4.10")
         );
     }
 }
