@@ -289,7 +289,7 @@ pub async fn do_start_software(
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         // 检查 data 目录是否已存在且非空（如之前初始化失败残留）
-        // 非空则跳过初始化（假设已初始化，避免 --initialize-insecure 因目录非空失败）
+        // 非空则跳过初始化（避免 --initialize-insecure 因目录非空失败）
         let data_dir = fri.init_command.working_dir.join("data");
         let data_already_initialized = data_dir.exists()
             && std::fs::read_dir(&data_dir)
@@ -298,6 +298,7 @@ pub async fn do_start_software(
         if !initialized && data_already_initialized {
             tracing::info!(
                 installed_id = %installed_id,
+                data_dir = %data_dir.display(),
                 "data dir non-empty, skipping first_run_init"
             );
             // 标记 initialized = true
@@ -309,6 +310,17 @@ pub async fn do_start_software(
             }
             manager.update_config(installed_id, new_config)?;
         } else if !initialized {
+            // 打印初始化命令方便诊断
+            tracing::info!(
+                installed_id = %installed_id,
+                program = %fri.init_command.program,
+                args = ?fri.init_command.args,
+                working_dir = %fri.init_command.working_dir.display(),
+                "running first_run_init"
+            );
+
+            // 确保 data 目录存在（MySQL 要求 datadir 存在）
+            let _ = std::fs::create_dir_all(&data_dir);
             manager.update_runtime_fields(
                 installed_id,
                 SoftwareStatus::Initializing,
