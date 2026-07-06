@@ -121,7 +121,6 @@ impl SoftwareProvider for MinioProvider {
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         let api_port = config_u64(&ctx.config, "api_port", 9000);
-        let console_port = config_u64(&ctx.config, "console_port", 9001);
         let data_dir = config_str(&ctx.config, "data_dir", "./data");
         let access_key = config_str(&ctx.config, "access_key", "minioadmin");
         let secret_key = config_str(&ctx.config, "secret_key", "minioadmin");
@@ -134,7 +133,6 @@ impl SoftwareProvider for MinioProvider {
         let abs_data_dir = if std::path::Path::new(&data_dir).is_absolute() {
             data_dir.to_string()
         } else {
-            // 去掉 ./ 或 .\\ 前缀，避免 join 后出现 /./ 路径片段
             let clean = data_dir
                 .strip_prefix("./")
                 .or_else(|| data_dir.strip_prefix(".\\"))
@@ -144,8 +142,14 @@ impl SoftwareProvider for MinioProvider {
                 .to_string_lossy()
                 .replace('\\', "/")
         };
-        // 确保 data_dir 存在（首次启动或用户改路径时）
         let _ = std::fs::create_dir_all(&abs_data_dir);
+
+        // MinIO 2021-04-22 不支持 --console-address（该参数在 2021-10 后引入），
+        // 旧版控制台通过 MINIO_BROWSER_ADDRESS 环境变量设置，或默认在 api_port 上
+        env_vars.insert(
+            "MINIO_BROWSER_ADDRESS".to_string(),
+            format!(":{}", config_u64(&ctx.config, "console_port", 9001)),
+        );
 
         Ok(StartCommand {
             program: "minio.exe".to_string(),
@@ -154,8 +158,6 @@ impl SoftwareProvider for MinioProvider {
                 abs_data_dir,
                 "--address".to_string(),
                 format!(":{}", api_port),
-                "--console-address".to_string(),
-                format!(":{}", console_port),
             ],
             env_vars,
             working_dir: PathBuf::from(&ctx.install_path),
@@ -299,10 +301,11 @@ mod tests {
             .any(|a| a.ends_with("/data") || a.ends_with("\\data")));
         assert!(cmd.args.contains(&"--address".to_string()));
         assert!(cmd.args.contains(&":9000".to_string()));
-        assert!(cmd.args.contains(&"--console-address".to_string()));
-        assert!(cmd.args.contains(&":9001".to_string()));
+        // MinIO 2021-04-22 无 --console-address，改用 MINIO_BROWSER_ADDRESS 环境变量
+        assert!(!cmd.args.contains(&"--console-address".to_string()));
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_USER").unwrap(), "minioadmin");
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_PASSWORD").unwrap(), "minioadmin");
+        assert_eq!(cmd.env_vars.get("MINIO_BROWSER_ADDRESS").unwrap(), ":9001");
         assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/minio/RELEASE.2021-04-22"));
         assert!(cmd.first_run_init.is_none());
         assert_eq!(cmd.creation_flags, CREATE_NO_WINDOW);
@@ -320,7 +323,8 @@ mod tests {
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd.args.contains(&":9000".to_string()));
-        assert!(cmd.args.contains(&":9001".to_string()));
+        // 控制台端口通过 MINIO_BROWSER_ADDRESS 环境变量设置（2021-04-22 无 --console-address）
+        assert_eq!(cmd.env_vars.get("MINIO_BROWSER_ADDRESS").unwrap(), ":9001");
         assert!(cmd
             .args
             .iter()
