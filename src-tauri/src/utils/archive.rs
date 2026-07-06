@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn extract_zip_flatten_strips_minio_release_dir() {
-        // 模拟 minio 的 RELEASE.2021-04-22T15-44-28Z/minio.exe 结构
+        // 模拟 minio 的 RELEASE.2025-04-22T15-44-28Z/minio.exe 结构
         let root = temp_path("flatten_minio");
         fs::create_dir_all(&root).expect("temp root should be created");
         let archive_path = root.join("sample.zip");
@@ -276,15 +276,15 @@ mod tests {
         let archive_file = fs::File::create(&archive_path).expect("zip should be created");
         let mut zip = zip::ZipWriter::new(archive_file);
         let options = zip::write::FileOptions::default();
-        zip.add_directory("RELEASE.2021-04-22T15-44-28Z/", options).unwrap();
-        zip.start_file("RELEASE.2021-04-22T15-44-28Z/minio.exe", options).unwrap();
+        zip.add_directory("RELEASE.2025-04-22T15-44-28Z/", options).unwrap();
+        zip.start_file("RELEASE.2025-04-22T15-44-28Z/minio.exe", options).unwrap();
         zip.write_all(b"minio-bin").unwrap();
         zip.finish().expect("zip should be finalized");
 
         extract_zip_flatten(&archive_path, &dest_dir).expect("should extract");
 
         assert_eq!(fs::read_to_string(dest_dir.join("minio.exe")).unwrap(), "minio-bin");
-        assert!(!dest_dir.join("RELEASE.2021-04-22T15-44-28Z").exists());
+        assert!(!dest_dir.join("RELEASE.2025-04-22T15-44-28Z").exists());
         fs::remove_dir_all(root).ok();
     }
 }

@@ -52,24 +52,24 @@ impl SoftwareProvider for MinioProvider {
 
         #[cfg(windows)]
         {
-            // 版本 1：RELEASE.2021-04-22（内置 zip，离线）
+            // 版本 1：RELEASE.2025-04-22（内置 zip，离线）
             versions.push(CatalogVersion {
-                version: "RELEASE.2021-04-22".to_string(),
+                version: "RELEASE.2025-04-22".to_string(),
                 mirrors: {
                     let mut m = vec![];
                     let sha = builtin_manifest()
-                        .get_builtin("minio", "RELEASE.2021-04-22")
+                        .get_builtin("minio", "RELEASE.2025-04-22")
                         .map(|e| e.sha256.clone())
                         .unwrap_or_default();
                     let size = builtin_manifest()
-                        .get_builtin("minio", "RELEASE.2021-04-22")
+                        .get_builtin("minio", "RELEASE.2025-04-22")
                         .map(|e| e.size)
                         .unwrap_or(0);
                     m.push(MirrorSource {
                         name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/minio/RELEASE.2021-04-22.zip".to_string(),
+                        url: "builtin://software/minio/RELEASE.2025-04-22.zip".to_string(),
                         builtin: Some(BuiltinInfo {
-                            version: "RELEASE.2021-04-22".to_string(),
+                            version: "RELEASE.2025-04-22".to_string(),
                             sha256: sha,
                             size: size,
                         }),
@@ -108,7 +108,7 @@ impl SoftwareProvider for MinioProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "RELEASE.2021-04-22".to_string(),
+            default_version: "RELEASE.2025-04-22".to_string(),
         }
     }
 
@@ -145,9 +145,9 @@ impl SoftwareProvider for MinioProvider {
         };
         let _ = std::fs::create_dir_all(&abs_data_dir);
 
-        // 内置版 RELEASE.2021-04-22 不支持 --console-address（该参数 2021-10 后引入），
+        // 内置版 RELEASE.2025-04-22 不支持 --console-address（该参数 2021-10 后引入），
         // 旧版用 MINIO_BROWSER_ADDRESS 环境变量；网络版是最新版，支持 --console-address
-        let is_old_version = ctx.version == "RELEASE.2021-04-22";
+        let is_old_version = ctx.version == "RELEASE.2025-04-22";
         let mut args = vec![
             "server".to_string(),
             abs_data_dir,
@@ -249,7 +249,7 @@ mod tests {
         let entry = MinioProvider::new().catalog_entry();
         assert_eq!(entry.versions.len(), 2);
         let versions: Vec<_> = entry.versions.iter().map(|v| v.version.as_str()).collect();
-        assert!(versions.contains(&"RELEASE.2021-04-22"));
+        assert!(versions.contains(&"RELEASE.2025-04-22"));
         assert!(versions.contains(&"latest"));
     }
 
@@ -259,8 +259,8 @@ mod tests {
         let v = entry
             .versions
             .iter()
-            .find(|v| v.version == "RELEASE.2021-04-22")
-            .expect("应有 RELEASE.2021-04-22 版本");
+            .find(|v| v.version == "RELEASE.2025-04-22")
+            .expect("应有 RELEASE.2025-04-22 版本");
         assert!(v.mirrors[0].builtin.is_some());
         assert_eq!(v.archive.format, ArchiveFormat::Zip);
     }
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn minio_default_version_is_release() {
         let entry = MinioProvider::new().catalog_entry();
-        assert_eq!(entry.default_version, "RELEASE.2021-04-22");
+        assert_eq!(entry.default_version, "RELEASE.2025-04-22");
     }
 
     #[test]
@@ -288,8 +288,8 @@ mod tests {
         let p = MinioProvider::new();
         let ctx = super::StartContext {
             installed_id: "uuid".to_string(),
-            install_path: "apps/minio/RELEASE.2021-04-22".to_string(),
-            version: "RELEASE.2021-04-22".to_string(),
+            install_path: "apps/minio/RELEASE.2025-04-22".to_string(),
+            version: "RELEASE.2025-04-22".to_string(),
             config: serde_json::json!({
                 "api_port": 9000,
                 "console_port": 9001,
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_USER").unwrap(), "minioadmin");
         assert_eq!(cmd.env_vars.get("MINIO_ROOT_PASSWORD").unwrap(), "minioadmin");
         assert_eq!(cmd.env_vars.get("MINIO_BROWSER_ADDRESS").unwrap(), ":9001");
-        assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/minio/RELEASE.2021-04-22"));
+        assert_eq!(cmd.working_dir, std::path::PathBuf::from("apps/minio/RELEASE.2025-04-22"));
         assert!(cmd.first_run_init.is_none());
         assert_eq!(cmd.creation_flags, CREATE_NO_WINDOW);
     }

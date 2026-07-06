@@ -1374,8 +1374,8 @@ fn minio_start_command_uses_server_data_address_console() {
     let p = MinioProvider::new();
     let ctx = super::StartContext {
         installed_id: "uuid".to_string(),
-        install_path: "apps/minio/RELEASE.2021-04-22".to_string(),
-        version: "RELEASE.2021-04-22".to_string(),
+        install_path: "apps/minio/RELEASE.2025-04-22".to_string(),
+        version: "RELEASE.2025-04-22".to_string(),
         config: serde_json::json!({
             "api_port": 9000,
             "console_port": 9001,

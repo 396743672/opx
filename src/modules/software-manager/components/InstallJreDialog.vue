@@ -119,7 +119,7 @@ const fetchingVersions = ref(false)
 const fetchError = ref<string | null>(null)
 const remoteVersions = ref<CatalogVersion[]>([])
 
-// 版本号比较：支持如 "17.0.16"、"1.8"、"8.4.10"、"RELEASE.2021-04-22" 等
+// 版本号比较：支持如 "17.0.16"、"1.8"、"8.4.10"、"RELEASE.2025-04-22" 等
 function compareVersion(a: string, b: string): number {
   // 提取数字部分
   const numA = (a.match(/\d+/g) || []).map(Number)

@@ -34,7 +34,7 @@ const BUILTIN = {
   },
   minio: {
     // MinIO 本地 zip（离线内置版本），从本地路径复制
-    'RELEASE.2021-04-22': { localPath: 'D:/软件/onlilne/minio/RELEASE.2021-04-22T15-44-28Z.zip' },
+    'RELEASE.2025-04-22': { localPath: 'D:/软件/onlilne/minio/RELEASE.2025-04-22T15-44-28Z.zip' },
   },
   rustfs: {
     '1.0.0-beta.8':

@@ -24,7 +24,7 @@
     }
   },
   "minio": {
-    "RELEASE.2021-04-22": {
+    "RELEASE.2025-04-22": {
       "sha256": "5359e0ebf24e5c0c86cd90f4dfddeced1b8163ea2d875fdab706232ac5ea83ea",
       "size": 16328790
     }
