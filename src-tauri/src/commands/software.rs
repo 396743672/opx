@@ -379,7 +379,16 @@ pub async fn do_start_software(
         }
     }
 
-    // spawn 子进程
+    // spawn 子进程（打印完整命令方便诊断启动问题）
+    tracing::info!(
+        installed_id = %installed_id,
+        program = %cmd.program,
+        args = ?cmd.args,
+        working_dir = %cmd.working_dir.display(),
+        env_vars = ?cmd.env_vars,
+        "spawning software"
+    );
+
     let child = lifecycle::spawn_process(cmd)?;
     let pid = child.id();
 

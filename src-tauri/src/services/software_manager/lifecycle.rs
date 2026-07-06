@@ -175,10 +175,12 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
                 let _ = status;
                 let output = child.wait_with_output()?;
                 if !output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     return Err(anyhow::anyhow!(
-                        "初始化命令失败（code={}）：{}",
+                        "初始化命令失败（code={}）：\nstdout: {}\nstderr: {}",
                         output.status,
+                        stdout,
                         stderr
                     ));
                 }
