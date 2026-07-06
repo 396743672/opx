@@ -128,7 +128,8 @@ const canUninstall = computed(
   () =>
     props.software.status === SoftwareStatus.Stopped ||
     props.software.status === SoftwareStatus.Error ||
-    props.software.status === SoftwareStatus.Unknown,
+    props.software.status === SoftwareStatus.Unknown ||
+    props.software.status === SoftwareStatus.Initializing,
 )
 
 const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后再卸载'))

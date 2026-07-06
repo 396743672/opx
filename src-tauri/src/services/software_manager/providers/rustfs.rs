@@ -112,7 +112,10 @@ impl SoftwareProvider for RustfsProvider {
         }
     }
 
-    fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
+    fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // 预创建 data_dir，避免 RustFS 启动时因目录不存在而崩溃
+        let data_dir = ctx.install_dir().join("data");
+        std::fs::create_dir_all(&data_dir)?;
         Ok(())
     }
 
@@ -130,16 +133,20 @@ impl SoftwareProvider for RustfsProvider {
             format!("127.0.0.1:{}", console_port),
         );
 
+        // RustFS 命令格式（参考官方文档）：
+        // rustfs --address :9000 --access-key <key> --secret-key <key> --console-enable <data_dir>
+        // 数据目录是最后的位置参数
         Ok(StartCommand {
             program: "rustfs.exe".to_string(),
             args: vec![
-                data_dir,
                 "--address".to_string(),
-                format!("127.0.0.1:{}", api_port),
+                format!(":{}", api_port),
                 "--access-key".to_string(),
                 access_key,
                 "--secret-key".to_string(),
                 secret_key,
+                "--console-enable".to_string(),
+                data_dir,
             ],
             env_vars,
             working_dir: PathBuf::from(&ctx.install_path),
@@ -279,13 +286,14 @@ mod tests {
         assert_eq!(
             cmd.args,
             vec![
-                "./data".to_string(),
                 "--address".to_string(),
-                "127.0.0.1:9000".to_string(),
+                ":9000".to_string(),
                 "--access-key".to_string(),
                 "rustfsadmin".to_string(),
                 "--secret-key".to_string(),
                 "rustfsadmin".to_string(),
+                "--console-enable".to_string(),
+                "./data".to_string(),
             ]
         );
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ENABLE").unwrap(), "true");
@@ -307,7 +315,7 @@ mod tests {
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd.args.contains(&"./data".to_string()));
-        assert!(cmd.args.contains(&"127.0.0.1:9000".to_string()));
+        assert!(cmd.args.contains(&":9000".to_string()));
         assert!(cmd.args.contains(&"rustfsadmin".to_string()));
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ENABLE").unwrap(), "true");
         assert_eq!(cmd.env_vars.get("RUSTFS_CONSOLE_ADDRESS").unwrap(), "127.0.0.1:9001");

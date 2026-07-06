@@ -112,7 +112,10 @@ impl SoftwareProvider for MinioProvider {
         }
     }
 
-    fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
+    fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // 预创建 data_dir，避免 MinIO 启动时因目录不存在而崩溃
+        let data_dir = ctx.install_dir().join("data");
+        std::fs::create_dir_all(&data_dir)?;
         Ok(())
     }
 

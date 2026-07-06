@@ -307,9 +307,45 @@ pub async fn do_start_software(
 
             // 用 spawn_blocking 包裹阻塞的 output() 调用
             // fri 的所有权移入闭包，闭包内 &fri 借用闭包自身拥有的数据，满足 'static
-            let output = tokio::task::spawn_blocking(move || lifecycle::run_first_run_init(&fri))
+            let init_result = tokio::task::spawn_blocking(move || lifecycle::run_first_run_init(&fri))
                 .await
-                .map_err(|e| anyhow::anyhow!("初始化任务 join 失败: {}", e))??;
+                .map_err(|e| anyhow::anyhow!("初始化任务 join 失败: {}", e));
+
+            // 初始化失败时恢复状态为 Error（否则会卡在 Initializing 无法卸载/重启）
+            let output = match init_result {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => {
+                    let msg = format!("初始化失败：{}", e);
+                    manager.update_runtime_fields(
+                        installed_id,
+                        SoftwareStatus::Error,
+                        None,
+                        None,
+                        None,
+                        Some(msg.clone()),
+                    )?;
+                    lifecycle::emit_status_changed(
+                        app,
+                        installed_id,
+                        SoftwareStatus::Error,
+                        None,
+                        Some(msg),
+                    );
+                    return Err(e);
+                }
+                Err(e) => {
+                    let err = anyhow::anyhow!("初始化任务 join 失败: {}", e);
+                    manager.update_runtime_fields(
+                        installed_id,
+                        SoftwareStatus::Error,
+                        None,
+                        None,
+                        None,
+                        Some(format!("{}", err)),
+                    )?;
+                    return Err(err);
+                }
+            };
             let _ = output; // 暂不使用 stderr 输出（如 MySQL 临时密码），保留接口
 
             // 标记 initialized = true

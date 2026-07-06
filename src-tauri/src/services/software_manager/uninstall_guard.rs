@@ -58,11 +58,10 @@ pub fn check_uninstall_safety(software: &InstalledSoftware) -> Result<UninstallS
 pub fn is_running_or_transitioning(software: &InstalledSoftware) -> bool {
     matches!(
         software.status,
-        SoftwareStatus::Running
-            | SoftwareStatus::Starting
-            | SoftwareStatus::Stopping
-            | SoftwareStatus::Initializing
+        SoftwareStatus::Running | SoftwareStatus::Starting | SoftwareStatus::Stopping
     )
+    // Initializing 不阻止卸载：初始化失败会卡在 Initializing，
+    // 用户需要能卸载重装（Initializing 时无 PID 注册到 lifecycle）
 }
 
 /// 检查 JRE 是否被使用
@@ -184,10 +183,11 @@ mod tests {
     }
 
     #[test]
-    fn initializing_software_is_unsafe() {
+    fn initializing_software_is_safe_to_uninstall() {
+        // Initializing 状态初始化失败会卡住，需要能卸载重装
         let sw = make_software("mysql", SoftwareStatus::Initializing, "uuid-init");
         let report = check_uninstall_safety(&sw).unwrap();
-        assert!(!report.safe);
+        assert!(report.safe);
     }
 
     #[test]
@@ -229,7 +229,8 @@ mod tests {
             SoftwareStatus::Stopping,
             "3"
         )));
-        assert!(is_running_or_transitioning(&make_software(
+        // Initializing 不再被视为运行中（允许初始化失败时卸载重装）
+        assert!(!is_running_or_transitioning(&make_software(
             "x",
             SoftwareStatus::Initializing,
             "4"
