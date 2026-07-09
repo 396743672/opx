@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Local;
@@ -197,6 +198,7 @@ pub async fn start_software(
     manager: State<'_, Arc<SoftwareManager>>,
     app: AppHandle,
     installed_id: String,
+    init_password: Option<String>,
 ) -> Result<(), String> {
     let software = manager
         .find_installed(&installed_id)
@@ -217,7 +219,7 @@ pub async fn start_software(
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
-        let result = do_start_software(&manager_arc, &app_handle, &installed_id_for_task).await;
+        let result = do_start_software(&manager_arc, &app_handle, &installed_id_for_task, init_password).await;
         if let Err(e) = result {
             let _ = manager_arc.update_runtime_fields(
                 &installed_id_for_task,
@@ -250,6 +252,7 @@ pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
     app: &AppHandle,
     installed_id: &str,
+    init_password: Option<String>,
 ) -> anyhow::Result<()> {
     let software = manager
         .find_installed(installed_id)
@@ -267,6 +270,7 @@ pub async fn do_start_software(
         version: software.version.clone(),
         config: software.config.clone(),
         custom_start_command: software.custom_start_command.clone(),
+        init_password: init_password.clone(),
     };
 
     // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）
@@ -280,6 +284,16 @@ pub async fn do_start_software(
         provider.start_command(&start_ctx)?
     };
 
+    // 捕获首次初始化通过 --init-file 注入的临时 SQL 文件路径（MySQL 设置 root 密码用）。
+    // RC4 修复：不在 do_start_software 返回时立即删除（InitSqlGuard 竞态），
+    // 而是延迟到健康检查完成后删除——此时 mysqld 已启动并必然读取过 --init-file。
+    // spawn_process 失败时在此处立即清理。
+    let init_sql_path: Option<PathBuf> = cmd
+        .args
+        .iter()
+        .find_map(|a| a.strip_prefix("--init-file="))
+        .map(std::path::PathBuf::from);
+
     // 首次初始化（如 mysqld --initialize-insecure）
     // 用 take() 取出所有权，避免后续 spawn_process(cmd) 时 cmd 仍被借用
     if let Some(fri) = cmd.first_run_init.take() {
@@ -288,28 +302,27 @@ pub async fn do_start_software(
             .get("initialized")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // 检查 data 目录是否已存在且非空（如之前初始化失败残留）
-        // 非空则跳过初始化（避免 --initialize-insecure 因目录非空失败）
         let data_dir = fri.init_command.working_dir.join("data");
-        let data_already_initialized = data_dir.exists()
-            && std::fs::read_dir(&data_dir)
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false);
-        if !initialized && data_already_initialized {
+        if initialized {
+            // 已成功初始化过（config.initialized == true），直接跳过
             tracing::info!(
                 installed_id = %installed_id,
                 data_dir = %data_dir.display(),
-                "data dir non-empty, skipping first_run_init"
+                "already initialized, skipping first_run_init"
             );
-            // 标记 initialized = true
-            let mut new_config = software.config.clone();
-            if let Some(obj) = new_config.as_object_mut() {
-                obj.insert("initialized".to_string(), serde_json::json!(true));
-            } else {
-                new_config = serde_json::json!({ "initialized": true });
+        } else {
+            // 未初始化：若 data 目录非空（上次 init 超时/kill 残留的半初始化文件，
+            // 即 RC3 链式放大），先彻底清空再重新初始化，避免用损坏的 data 目录
+            // 直接拉起 mysqld 导致卡死/崩溃。
+            let wiped = lifecycle::wipe_data_dir_if_nonempty(&data_dir)?;
+            if wiped {
+                tracing::warn!(
+                    installed_id = %installed_id,
+                    data_dir = %data_dir.display(),
+                    "data dir non-empty but not initialized; wiped before re-init (RC3)"
+                );
             }
-            manager.update_config(installed_id, new_config)?;
-        } else if !initialized {
+            // 继续执行下方初始化流程
             // 打印初始化命令方便诊断
             tracing::info!(
                 installed_id = %installed_id,
@@ -401,7 +414,15 @@ pub async fn do_start_software(
         "spawning software"
     );
 
-    let child = lifecycle::spawn_process(cmd)?;
+    let child = match lifecycle::spawn_process(cmd) {
+        Ok(child) => child,
+        Err(e) => {
+            if let Some(ref p) = init_sql_path {
+                let _ = std::fs::remove_file(p);
+            }
+            return Err(e.into());
+        }
+    };
     let pid = child.id();
 
     // 更新状态为 Starting，清除旧的 last_error（避免启动成功后仍显示旧错误）
@@ -467,6 +488,7 @@ pub async fn do_start_software(
     let app_clone = app.clone();
     let installed_id_clone = installed_id.to_string();
     let pid_for_check = pid;
+    let init_sql_path_for_cleanup = init_sql_path.clone();
     tokio::spawn(async move {
         // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
         let pid_alive = tokio::task::spawn_blocking(move || {
@@ -496,6 +518,9 @@ pub async fn do_start_software(
                 pid = pid_for_check,
                 "process exited immediately after spawn"
             );
+            if let Some(ref p) = init_sql_path_for_cleanup {
+                let _ = std::fs::remove_file(p);
+            }
             return;
         }
         // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
@@ -554,6 +579,12 @@ pub async fn do_start_software(
                 );
                 lifecycle::unregister(&installed_id_clone);
             }
+        }
+        // RC4: 健康检查完成后清理 init SQL 文件。
+        // 此时 mysqld 已经历完整启动序列（或已退出），无论结果如何，
+        // --init-file 都已被读取（或不再需要），可以安全删除明文密码文件。
+        if let Some(ref p) = init_sql_path_for_cleanup {
+            let _ = std::fs::remove_file(p);
         }
     });
 
@@ -653,6 +684,7 @@ pub async fn restart_software(
     manager: State<'_, Arc<SoftwareManager>>,
     app: AppHandle,
     installed_id: String,
+    init_password: Option<String>,
 ) -> Result<(), String> {
     let software = manager
         .find_installed(&installed_id)
@@ -682,7 +714,7 @@ pub async fn restart_software(
     let app_clone = app.clone();
     let installed_id_clone = installed_id.clone();
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-    do_start_software(&manager_arc, &app_clone, &installed_id_clone)
+    do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -742,11 +774,21 @@ pub async fn read_config_form(
     // 从 installed.json 的 config 字段读，缺失用 default_value
     let mut form = FormData::new();
     for field in &schema.fields {
-        let value = software
+        let mut value = software
             .config
             .get(&field.key)
             .cloned()
             .unwrap_or_else(|| field.default_value.clone());
+        // 归一化 innodb_buffer_pool_size：前端 Number 输入不认 "128M" 字符串，
+        // 把已存储的带 M/G 后缀值转为纯数字，避免 v-model.number 得 NaN
+        if field.key == "innodb_buffer_pool_size" {
+            if let Some(s) = value.as_str() {
+                let stripped = s.trim_end_matches('M').trim_end_matches('G');
+                if let Ok(n) = stripped.parse::<i64>() {
+                    value = serde_json::json!(n);
+                }
+            }
+        }
         form.insert(field.key.clone(), value);
     }
     Ok(form)
@@ -757,7 +799,7 @@ pub async fn read_config_form(
 pub async fn write_config_form(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
-    data: FormData,
+    mut data: FormData,
 ) -> Result<(), String> {
     let software = manager
         .find_installed(&installed_id)
@@ -773,21 +815,49 @@ pub async fn write_config_form(
     let schema = provider
         .config_schema()
         .ok_or_else(|| "该软件无表单 schema".to_string())?;
+
+    // 归一化 innodb_buffer_pool_size：前端 Number 输入传纯数字（如 512），
+    // MySQL 要求带 M/G 单位后缀；若值不含单位则自动追加 "M"
+    if let Some(v) = data.get("innodb_buffer_pool_size") {
+        let needs_suffix = match v {
+            serde_json::Value::Number(_) => true,
+            serde_json::Value::String(s) => !s.ends_with('M') && !s.ends_with('G'),
+            _ => false,
+        };
+        if needs_suffix {
+            let num_str = match v {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => String::new(),
+            };
+            if !num_str.is_empty() {
+                data.insert(
+                    "innodb_buffer_pool_size".to_string(),
+                    serde_json::Value::String(format!("{}M", num_str)),
+                );
+            }
+        }
+    }
+
     let cctx = ConfigContext {
         install_path: software.install_path.clone(),
         version: software.version.clone(),
         config: software.config.clone(),
     };
-    let file_path = provider
-        .config_file_path(&cctx)
-        .ok_or_else(|| "该软件无配置文件".to_string())?;
-    let full_path = std::path::Path::new(&software.install_path).join(file_path);
-    config_editor::write_form_to_config(&full_path, &schema, &data).map_err(|e| e.to_string())?;
+    // MinIO/RustFS 无配置文件（config_file_path 返回 None），此时仅更新 installed.json 的 config 字段
+    if let Some(file_path) = provider.config_file_path(&cctx) {
+        let full_path = std::path::Path::new(&software.install_path).join(file_path);
+        config_editor::write_form_to_config(&full_path, &schema, &data).map_err(|e| e.to_string())?;
+    }
 
-    // 同步 config 到 installed.json（MinIO/RustFS 无文件，仅更新 config 字段）
+    // 同步 config 到 installed.json
     let mut new_config = software.config.clone();
     if let Some(obj) = new_config.as_object_mut() {
         for (k, v) in &data {
+            // 跳过 ephemeral 字段（如 MySQL 初始化密码），绝不写入 installed.json（不落盘）
+            if schema.ephemeral_keys.iter().any(|ek| ek == k) {
+                continue;
+            }
             obj.insert(k.clone(), v.clone());
         }
     }

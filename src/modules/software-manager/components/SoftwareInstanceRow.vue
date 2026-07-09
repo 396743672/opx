@@ -50,6 +50,7 @@ import { InstalledSoftware, SoftwareStatus } from '@/models/software'
 
 const props = defineProps<{
   software: InstalledSoftware
+  actingStates?: Record<string, 'start' | 'stop'>
 }>()
 
 defineEmits<{
@@ -103,7 +104,8 @@ const canStart = computed(
     !isRuntime.value &&
     (props.software.status === SoftwareStatus.Stopped ||
       props.software.status === SoftwareStatus.Error ||
-      props.software.status === SoftwareStatus.Unknown),
+      props.software.status === SoftwareStatus.Unknown) &&
+    props.actingStates?.[props.software.id] !== 'start',
 )
 
 const canStop = computed(
@@ -112,12 +114,15 @@ const canStop = computed(
     (props.software.status === SoftwareStatus.Running ||
       props.software.status === SoftwareStatus.Starting ||
       props.software.status === SoftwareStatus.Error ||
-      props.software.status === SoftwareStatus.Initializing),
+      props.software.status === SoftwareStatus.Initializing) &&
+    props.actingStates?.[props.software.id] !== 'stop',
 )
 
+// Bug 3 修复：运行中的软件不允许修改配置（Running 状态下配置按钮置灰）
 const canConfig = computed(
   () =>
     !isRuntime.value &&
+    props.software.status !== SoftwareStatus.Running &&
     props.software.status !== SoftwareStatus.Starting &&
     props.software.status !== SoftwareStatus.Stopping &&
     props.software.status !== SoftwareStatus.Initializing,

@@ -63,6 +63,10 @@ pub fn write_form_to_config(
     let mut new_content = content;
 
     for (key, value) in form {
+        // 跳过 ephemeral 字段：敏感一次性值（如 MySQL 初始化密码）绝不写入配置文件
+        if schema.ephemeral_keys.iter().any(|k| k == key) {
+            continue;
+        }
         let field = schema.fields.iter().find(|f| &f.key == key);
         if let Some(field) = field {
             new_content = match format {
@@ -400,6 +404,7 @@ mod tests {
                 section: section.map(|s| s.to_string()),
                 description_i18n: None,
             }],
+            ephemeral_keys: vec![],
         }
     }
 

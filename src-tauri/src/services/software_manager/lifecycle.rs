@@ -141,11 +141,17 @@ pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
     Ok(child)
 }
 
-/// 执行首次初始化命令（同步等待，最多 60s）
+/// 首次初始化命令超时阈值（秒）。
+/// MySQL 在慢盘/首次生成随机数据初始化时可超过 60s，放宽到 180s 避免误杀。
+const INIT_TIMEOUT_SECS: u64 = 180;
+
+/// 执行首次初始化命令（同步等待，最多 `INIT_TIMEOUT_SECS` 秒）
 /// 用于 MySQL --initialize-insecure 等场景
 ///
-/// 返回 `std::process::Output` 供调用方提取 stdout/stderr
-/// （如 MySQL `--initialize` 临时密码从 stderr 抓取）。
+/// stdout/stderr 设为 `Stdio::null()`（见 RC1 修复）：避免在轮询期间不读管道而
+/// 造成管道缓冲死锁，也避免把 mysqld 的真实报错闷在管道里。诊断由 provider 的
+/// --log-error 落文件。因此返回的 `Output` 中 stdout/stderr 为空。
+/// `temp_secret_output` 仍由调用方（software.rs）按需处理。
 pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Output> {
     let init = &fri.init_command;
     let program_path = resolve_program_path(&init.program, &init.working_dir);
@@ -159,45 +165,77 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
     #[cfg(windows)]
     command.creation_flags(init.creation_flags);
 
-    // spawn 后手动轮询 + 60s 超时，避免磁盘满/权限问题挂起永久阻塞
+    // 反模式修正（F1/RC1）：原先 piped stdout+stderr 但轮询期间从不读取，会造成管道
+    // 缓冲死锁、且把 mysqld 真实报错闷在管道。改为 Stdio::null()，诊断统一由 provider
+    // 的 --log-error 落文件（见 mysql.rs init 命令）。--initialize-insecure 无临时密码
+    // 需求，null 管道不影响后续逻辑。
     let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()?;
 
     let start = Instant::now();
-    let timeout = Duration::from_secs(60);
+    let timeout = Duration::from_secs(INIT_TIMEOUT_SECS);
     loop {
         match child.try_wait()? {
-            Some(status) => {
-                // 进程已退出，收集 output（child 已 piped，wait_with_output 会消费 child）
-                // status 已在 Output.status 里，这里显式忽略避免 unused 警告
-                let _ = status;
-                let output = child.wait_with_output()?;
-                if !output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(anyhow::anyhow!(
-                        "初始化命令失败（code={}）：\nstdout: {}\nstderr: {}",
-                        output.status,
-                        stdout,
-                        stderr
-                    ));
+            Some(_) => {
+                // 进程已退出（stdout/stderr 为 null，无管道需回收）；
+                // child.wait() 取最终状态（std 已缓存 status，重复调用安全）。
+                let status = child.wait()?;
+                if !status.success() {
+                    return Err(anyhow::anyhow!("初始化命令失败（code={}）", status));
                 }
-                return Ok(output);
+                // stdout/stderr 为 null，组装空 Output 以保持函数返回类型不变
+                return Ok(std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
             }
             None => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     return Err(anyhow::anyhow!(
                         "初始化命令超时（{}s），已终止子进程",
-                        timeout.as_secs()
+                        INIT_TIMEOUT_SECS
                     ));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
     }
+}
+
+/// 首次初始化前清理可能残留的半初始化 data 目录（RC3 修复的一部分）。
+///
+/// 行为契约：
+/// - `data_dir` 不存在 → 返回 `Ok(false)`（首次运行，无需清理）。
+/// - `data_dir` 存在且为空目录 → 返回 `Ok(false)`（无需清理）。
+/// - `data_dir` 存在且为非空目录 → `remove_dir_all` 后 `create_dir_all` 重建，
+///   返回 `Ok(true)`（已清空重建）。
+/// - `data_dir` 存在但不是目录（如误用成文件/安装根）→ 返回 `Err`，避免误删/误用。
+///
+/// 调用方必须保证 `data_dir` 仅为 MySQL 的数据子目录（install_path/data），
+/// 而非安装根目录本身；删除前通过 `is_dir()` 二次校验，避免误删安装根。
+pub(crate) fn wipe_data_dir_if_nonempty(data_dir: &std::path::Path) -> anyhow::Result<bool> {
+    let exists_and_nonempty = data_dir.exists()
+        && std::fs::read_dir(data_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    if !exists_and_nonempty {
+        return Ok(false);
+    }
+    if data_dir.is_dir() {
+        std::fs::remove_dir_all(data_dir)?;
+    } else {
+        // 不是目录：可能是误用（路径指向安装根或文件），不盲目删除
+        return Err(anyhow::anyhow!(
+            "data 路径存在但不是目录，无法安全清空: {}",
+            data_dir.display()
+        ));
+    }
+    std::fs::create_dir_all(data_dir)?;
+    Ok(true)
 }
 
 // —— 状态转换校验 ——
@@ -447,7 +485,7 @@ async fn spawn_start(
     let id_clone = installed_id.clone();
     tokio::spawn(async move {
         let result =
-            crate::commands::software::do_start_software(&manager_clone, &app_clone, &id_clone)
+            crate::commands::software::do_start_software(&manager_clone, &app_clone, &id_clone, None)
                 .await;
         if let Err(e) = result {
             tracing::error!(error = %e, installed_id = %id_clone, "auto_start failed");
@@ -899,5 +937,215 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"pid\":null"));
+    }
+
+    // ============ MySQL 初始化修复（F1/F3）回归测试 ============
+
+    /// 在临时目录创建唯一子目录，测试结束后清理。
+    fn qa_temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "opx_qa_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建临时目录失败");
+        dir
+    }
+
+    /// 返回（program, args）：子进程向 stdout 输出 > 64KB 后正常退出。
+    /// 用于验证 `Stdio::null()` 不会因 OS 管道缓冲（Windows ~64KB / Linux 64KB）
+    /// 而触发死锁（RC1）。
+    fn large_stdout_program() -> (String, Vec<String>) {
+        if cfg!(windows) {
+            // cmd.exe 输出 5000 行 × 40 字符 ≈ 200KB，随后退出
+            (
+                "cmd.exe".to_string(),
+                vec![
+                    "/c".to_string(),
+                    "(for /L %i in (1,1,5000) do @echo ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)"
+                        .to_string(),
+                ],
+            )
+        } else {
+            // `yes A | head -c 131072` 输出 128KB 后退出（需 GNU/BSD coreutils）
+            (
+                "sh".to_string(),
+                vec!["-c".to_string(), "yes A | head -c 131072".to_string()],
+            )
+        }
+    }
+
+    #[test]
+    fn first_run_init_null_stdio_large_output_no_deadlock() {
+        // F1/RC1 护栏：即便子进程产生 > 64KB 输出，run_first_run_init 用 Stdio::null()
+        // 丢弃输出，不应被管道缓冲死锁，应在数秒内返回。
+        let (program, args) = large_stdout_program();
+        let init_cmd = StartCommand {
+            program,
+            args,
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: if cfg!(windows) { 0x08000000 } else { 0 },
+            first_run_init: None,
+        };
+        let fri = FirstRunInit {
+            init_command: init_cmd,
+            temp_secret_output: None,
+        };
+
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        let handle = std::thread::spawn(move || {
+            let r = run_first_run_init(&fri);
+            done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            r
+        });
+
+        // 看门狗：若 15s 内未返回，说明出现管道死锁回归，主动 abort 避免 CI 挂死
+        let watchdog = {
+            let done_w = done.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                if !done_w.load(std::sync::atomic::Ordering::SeqCst) {
+                    eprintln!(
+                        "WATCHDOG: run_first_run_init 超过 15s 未返回，疑似管道死锁回归（RC1）"
+                    );
+                    std::process::abort();
+                }
+            })
+        };
+
+        let result = handle.join().expect("run_first_run_init 线程 panic");
+        let _ = watchdog.join();
+        assert!(result.is_ok(), "大输出量下初始化应成功（无管道死锁）");
+        let output = result.unwrap();
+        assert!(output.status.success(), "退出状态应成功");
+        // F1 契约：null() 下 stdout/stderr 必须为空
+        assert!(output.stdout.is_empty(), "null() 下 stdout 必须为空");
+        assert!(output.stderr.is_empty(), "null() 下 stderr 必须为空");
+    }
+
+    #[test]
+    fn first_run_init_returns_empty_output_with_null_stdio() {
+        // F1 契约：Stdio::null() 下返回的 Output 中 stdout/stderr 为空。
+        let program = if cfg!(windows) { "cmd.exe" } else { "/bin/true" };
+        let args: Vec<String> = if cfg!(windows) {
+            vec!["/c".to_string(), "echo".to_string(), "hello".to_string()]
+        } else {
+            vec![]
+        };
+        let init_cmd = StartCommand {
+            program: program.to_string(),
+            args,
+            env_vars: BTreeMap::new(),
+            working_dir: PathBuf::from("."),
+            creation_flags: if cfg!(windows) { 0x08000000 } else { 0 },
+            first_run_init: None,
+        };
+        let fri = FirstRunInit {
+            init_command: init_cmd,
+            temp_secret_output: None,
+        };
+        let output = run_first_run_init(&fri).expect("init 应成功");
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty(), "null() 下 stdout 必须为空");
+        assert!(output.stderr.is_empty(), "null() 下 stderr 必须为空");
+    }
+
+    #[test]
+    fn piped_stdio_without_draining_blocks_child_antipattern() {
+        // 反模式护栏（RC1）：复现"piped 双管道 + 父进程轮询期间从不读取"——
+        // 子进程输出超过管道缓冲后被阻塞、无法自行退出，造成死锁。
+        // 本测试仅观察 3s 即杀掉残留子进程，用于证明该风险真实存在，
+        // 从而说明 run_first_run_init 改用 Stdio::null() 的必要性。
+        let (program, args) = large_stdout_program();
+        let mut cmd = std::process::Command::new(&program);
+        cmd.args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().expect("spawn 失败");
+
+        let start = std::time::Instant::now();
+        let mut still_running = false;
+        while start.elapsed() < std::time::Duration::from_secs(3) {
+            match child.try_wait().expect("try_wait 失败") {
+                Some(_) => {
+                    still_running = false;
+                    break;
+                }
+                None => {
+                    still_running = true;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+        assert!(
+            still_running,
+            "piped 且父不读时，子进程应被管道缓冲阻塞而持续运行（死锁风险 RC1）"
+        );
+        // 清理：杀掉残留子进程，避免泄漏（Windows 下 for 循环为 cmd 内部，无孤儿）
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn wipe_data_dir_if_nonempty_missing_is_noop() {
+        // F3：data 目录不存在 → 返回 false，且不创建目录。
+        let dir = qa_temp_dir("wipe_missing");
+        let data = dir.join("data_nonexistent_xyz");
+        assert!(!data.exists());
+        let wiped = wipe_data_dir_if_nonempty(&data).expect("不存在的路径应 Ok");
+        assert!(!wiped, "不存在的 data 目录应返回 false");
+        assert!(!data.exists(), "不应创建目录");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wipe_data_dir_if_nonempty_empty_dir_is_noop() {
+        // F3：data 目录存在但为空 → 返回 false，不重建。
+        let dir = qa_temp_dir("wipe_empty");
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let wiped = wipe_data_dir_if_nonempty(&data).expect("空目录应 Ok");
+        assert!(!wiped, "空 data 目录应返回 false（不重建）");
+        assert!(data.exists() && data.is_dir(), "空目录应保留");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wipe_data_dir_if_nonempty_nonempty_dir_wipes_and_recreates() {
+        // F3：data 目录非空 → 清空并重建为空目录，返回 true（RC3 修复核心）。
+        let dir = qa_temp_dir("wipe_nonempty");
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("ibdata1"), b"some mysql data").unwrap();
+        assert!(data.join("ibdata1").exists());
+
+        let wiped = wipe_data_dir_if_nonempty(&data).expect("清空应成功");
+
+        assert!(wiped, "非空 data 目录应返回 true（已清空）");
+        assert!(data.exists() && data.is_dir(), "清空后应重建为空目录");
+        assert!(!data.join("ibdata1").exists(), "残留文件应被清空");
+        let entries: Vec<_> = std::fs::read_dir(&data).unwrap().collect();
+        assert!(entries.is_empty(), "重建后的 data 目录应为空");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wipe_data_dir_if_nonempty_file_path_errors() {
+        // F3 安全护栏：data 路径指向文件而非目录 → 返回 Err，避免误删/误用。
+        let dir = qa_temp_dir("wipe_file");
+        let data = dir.join("data");
+        std::fs::write(&data, b"i am a file, not a dir").unwrap();
+        assert!(data.is_file());
+        let result = wipe_data_dir_if_nonempty(&data);
+        assert!(result.is_err(), "指向文件而非目录时应返回 Err");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

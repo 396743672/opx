@@ -177,7 +177,13 @@ async function fetchRemoteVersions() {
 }
 
 onMounted(() => {
-  fetchRemoteVersions()
+  // 纯内置软件条目跳过网络拉取版本（如所有 mirrors 都是 builtin，没有动态远程版本）
+  const hasNonBuiltinMirror = props.entry.versions.some(v =>
+    v.mirrors.some(m => !m.builtin)
+  )
+  if (hasNonBuiltinMirror) {
+    fetchRemoteVersions()
+  }
 })
 
 async function install() {

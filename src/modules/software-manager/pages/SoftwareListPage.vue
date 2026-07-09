@@ -44,6 +44,7 @@
             v-for="item in group.items"
             :key="item.id"
             :software="mergeStatus(item)"
+            :acting-states="actingStates"
             @start="onStart(item)"
             @stop="onStop(item)"
             @config="onConfig(item)"
@@ -79,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import PageHeader from '@/components/PageHeader.vue'
@@ -100,6 +101,8 @@ const configTarget = ref<InstalledSoftware | null>(null)
 const startupTarget = ref<InstalledSoftware | null>(null)
 const customTarget = ref<InstalledSoftware | null>(null)
 const uninstallTarget = ref<InstalledSoftware | null>(null)
+// 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
+const actingStates = ref<Record<string, 'start' | 'stop'>>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 interface Group {
@@ -172,27 +175,55 @@ async function loadInstalled() {
 }
 
 async function onStart(item: InstalledSoftware) {
+  // 防重：如果该软件正在启动或停止中，忽略重复点击
+  if (actingStates.value[item.id]) return
   // 自定义软件未配置启动命令时弹对话框
   if (item.is_custom && !item.custom_start_command) {
     customTarget.value = item
     return
   }
+  actingStates.value[item.id] = 'start'
+  // 安全兜底：如果 status-changed 事件丢失，5 秒后强制清除 acting 状态
+  const safetyTimer = setTimeout(() => {
+    delete actingStates.value[item.id]
+  }, 5000)
   try {
-    await invoke('start_software', { installedId: item.id })
+    // 从运行时 store 取初始化密码（如 MySQL 初始化 root 密码），仅首次初始化消费一次；
+    // 已初始化或为空则不传，维持后端向后兼容的空密码行为。
+    const initPw = lifecycleStore.getInitPassword(item.id)
+    const args: Record<string, unknown> = { installedId: item.id }
+    if (initPw) (args as any).initPassword = initPw
+    await invoke('start_software', args)
   } catch (e) {
     console.error('start failed:', e)
+    // 启动命令本身失败（如 validate 阶段拒绝），立即清除 acting 状态 + 取消安全计时器
+    clearTimeout(safetyTimer)
+    delete actingStates.value[item.id]
   }
 }
 
 async function onStop(item: InstalledSoftware) {
+  // 防重：如果该软件正在启动或停止中，忽略重复点击
+  if (actingStates.value[item.id]) return
+  actingStates.value[item.id] = 'stop'
+  // 安全兜底：如果 status-changed 事件丢失，5 秒后强制清除 acting 状态
+  const safetyTimer = setTimeout(() => {
+    delete actingStates.value[item.id]
+  }, 5000)
   try {
     await invoke('stop_software', { installedId: item.id })
   } catch (e) {
     console.error('stop failed:', e)
+    // 停止命令本身失败，立即清除 acting 状态 + 取消安全计时器
+    clearTimeout(safetyTimer)
+    delete actingStates.value[item.id]
   }
 }
 
 function onConfig(item: InstalledSoftware) {
+  // 防御性检查：运行中的软件不允许修改配置
+  const status = mergeStatus(item).status
+  if (status === SoftwareStatus.Running) return
   configTarget.value = item
 }
 
@@ -215,6 +246,28 @@ onMounted(async () => {
   // 30s 兜底轮询（事件丢失时仍能同步状态）
   pollTimer = setInterval(loadInstalled, 30_000)
 })
+
+// 监听 lifecycle store 状态变更：当状态转为 Starting/Stopping/Stopped/Error/Running
+// 时清除对应的 actingStates，让按钮恢复可用（不再依赖 finally 中立即清除，
+// 避免 start_software 命令立即返回后按钮过早恢复可点击的竞态窗口）。
+watch(
+  () => lifecycleStore.statuses,
+  (newStatuses) => {
+    for (const id of Object.keys(actingStates.value)) {
+      const s = newStatuses[id]
+      if (
+        s === SoftwareStatus.Starting ||
+        s === SoftwareStatus.Stopping ||
+        s === SoftwareStatus.Stopped ||
+        s === SoftwareStatus.Running ||
+        s === SoftwareStatus.Error
+      ) {
+        delete actingStates.value[id]
+      }
+    }
+  },
+  { deep: true },
+)
 
 onBeforeUnmount(() => {
   lifecycleStore.destroyListener()

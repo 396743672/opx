@@ -268,6 +268,7 @@ mod tests {
             version: "17.0.15".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let result = p.start_command(&ctx);
         assert!(result.is_err());

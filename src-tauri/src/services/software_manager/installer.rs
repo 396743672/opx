@@ -274,10 +274,42 @@ pub async fn install_software(
             }),
         );
 
+        // 解压进度上报：复用 install-progress 事件的 extracting 阶段，
+        // 按「已解压字节数 / 总字节数」换算百分比，并节流——
+        // 节流方式与 installer.rs 内「下载进度回调」闭包一致（每 200ms 或百分比变化时 emit 一次，避免大包刷屏 IPC）。
+        let app_ep = app.clone();
+        let id_ep = install_id.clone();
+        let mut last_emit = std::time::Instant::now();
+        let mut last_percent: i64 = -1;
+        let on_progress = move |extracted: u64, total: u64| {
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
+            let percent_changed = percent != last_percent;
+            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                last_emit = std::time::Instant::now();
+                last_percent = percent;
+                emit_event(
+                    &app_ep,
+                    serde_json::json!({
+                        "install_id": id_ep.clone(),
+                        "phase": "extracting",
+                        "percent": percent
+                    }),
+                );
+            }
+        };
+
         match version_info.archive.format {
             // 剥掉 zip 内单一顶层目录，避免 install_path 下多一层冗余目录
-            ArchiveFormat::Zip => archive::extract_zip_flatten(&cache_path, &install_path)?,
-            ArchiveFormat::TarGz => archive::extract_tar_gz(&cache_path, &install_path)?,
+            ArchiveFormat::Zip => {
+                archive::extract_zip_flatten(&cache_path, &install_path, on_progress)?
+            }
+            ArchiveFormat::TarGz => {
+                archive::extract_tar_gz(&cache_path, &install_path, on_progress)?
+            }
             ArchiveFormat::Executable => {
                 // 单个可执行文件：直接复制到 install_path 下，文件名用 cache_path 的文件名
                 let dest_file = install_path.join(
@@ -294,7 +326,7 @@ pub async fn install_software(
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
-                "percent": 50
+                "percent": 100
             }),
         );
 
@@ -486,10 +518,36 @@ pub async fn install_custom(
             }),
         );
 
+        // 解压进度上报：复用 extracting 阶段事件，按字节数节流 emit
+        let app_ep = app.clone();
+        let id_ep = install_id.clone();
+        let mut last_emit = std::time::Instant::now();
+        let mut last_percent: i64 = -1;
+        let on_progress = move |extracted: u64, total: u64| {
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
+            let percent_changed = percent != last_percent;
+            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                last_emit = std::time::Instant::now();
+                last_percent = percent;
+                emit_event(
+                    &app_ep,
+                    serde_json::json!({
+                        "install_id": id_ep.clone(),
+                        "phase": "extracting",
+                        "percent": percent
+                    }),
+                );
+            }
+        };
+
         if is_zip {
-            archive::extract_zip(archive_path, &install_path)?;
+            archive::extract_zip(archive_path, &install_path, on_progress)?;
         } else {
-            archive::extract_tar_gz(archive_path, &install_path)?;
+            archive::extract_tar_gz(archive_path, &install_path, on_progress)?;
         }
 
         emit_event(
@@ -677,46 +735,101 @@ async fn install_from_builtin(
         params.version.clone(),
     );
 
+    // 5. 立即通知前端进入 extracting 阶段（内置软件无需下载），
+    //    避免 createTask 默认的 "downloading" 阶段在拷贝/校验期间滞留。
+    emit_event(
+        &app,
+        serde_json::json!({
+            "install_id": install_id.clone(),
+            "phase": "extracting",
+            "percent": 0
+        }),
+    );
+
     let result: Result<()> = async {
-        // 5. sha256 校验（仅当 manifest 提供了非空 sha256）
+        // 6. 拷贝到临时目录保护原始资源文件（resources/software/ 下的内置包不可丢失）
+        //    后续 sha256 校验和解压均操作临时副本，确保原始文件完全不受影响。
+        let tmp_dir = paths::tmp_dir();
+        let temp_zip = tmp_dir.join(format!(
+            "builtin_{}_{}.zip",
+            &params.key, &params.version
+        ));
+        fs::copy(&resource_zip, &temp_zip).map_err(|e| {
+            anyhow::anyhow!("拷贝内置安装包到临时目录失败: {}", e)
+        })?;
+
+        // 用 scopeguard 风格的手动清理闭包：无论成功/失败都删除临时副本
+        let cleanup_temp = |p: &std::path::Path| {
+            let _ = fs::remove_file(p);
+        };
+
+        // 6a. sha256 校验（仅当 manifest 提供了非空 sha256）——校验临时副本
         if !builtin.sha256.is_empty() {
-            let computed = compute_sha256(&resource_zip)?;
+            let computed = compute_sha256(&temp_zip)?;
             if computed != builtin.sha256.to_lowercase() {
+                cleanup_temp(&temp_zip);
                 return Err(anyhow::anyhow!("内置安装包校验失败，文件可能损坏"));
             }
         }
 
-        // 6. 解压（跳过 downloading，直接 extracting）
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id.clone(),
-                "phase": "extracting",
-                "percent": 0
-            }),
-        );
+        // 解压进度上报：复用 extracting 阶段事件，按字节数节流 emit
+        let app_ep = app.clone();
+        let id_ep = install_id.clone();
+        let mut last_emit = std::time::Instant::now();
+        let mut last_percent: i64 = -1;
+        let on_progress = move |extracted: u64, total: u64| {
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
+            let percent_changed = percent != last_percent;
+            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                last_emit = std::time::Instant::now();
+                last_percent = percent;
+                emit_event(
+                    &app_ep,
+                    serde_json::json!({
+                        "install_id": id_ep.clone(),
+                        "phase": "extracting",
+                        "percent": percent
+                    }),
+                );
+            }
+        };
 
-        match version_info.archive.format {
+        let extract_result = match version_info.archive.format {
             // 剥掉 zip 内单一顶层目录，避免 install_path 下多一层冗余目录
-            ArchiveFormat::Zip => archive::extract_zip_flatten(&resource_zip, &install_path)?,
-            ArchiveFormat::TarGz => archive::extract_tar_gz(&resource_zip, &install_path)?,
+            ArchiveFormat::Zip => {
+                archive::extract_zip_flatten(&temp_zip, &install_path, on_progress)
+            }
+            ArchiveFormat::TarGz => {
+                archive::extract_tar_gz(&temp_zip, &install_path, on_progress)
+            }
             ArchiveFormat::Executable => {
-                // 单个可执行文件：直接复制到 install_path 下，文件名用 resource_zip 的文件名
+                // 单个可执行文件：从临时副本复制到 install_path 下
+                // （文件名仍用原始 resource_zip 的文件名，保持语义一致）
                 let dest_file = install_path.join(
                     resource_zip
                         .file_name()
                         .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
                 );
-                fs::copy(&resource_zip, &dest_file)?;
+                fs::copy(&temp_zip, &dest_file).map(|_| ()).map_err(Into::into)
             }
-        }
+        };
+
+        // 无论解压成功与否，立即清理临时副本
+        cleanup_temp(&temp_zip);
+
+        // 传播解压结果
+        extract_result?;
 
         emit_event(
             &app,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
-                "percent": 50
+                "percent": 100
             }),
         );
 

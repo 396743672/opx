@@ -229,6 +229,7 @@ impl SoftwareProvider for NginxProvider {
                     description_i18n: None,
                 },
             ],
+            ephemeral_keys: vec![],
         })
     }
 
@@ -268,6 +269,7 @@ mod tests {
             version: "1.31.2".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "nginx.exe");

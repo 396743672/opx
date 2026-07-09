@@ -300,5 +300,7 @@ export default {
     dataDirDesc: 'Relative to install_path, portable-friendly',
     accessKey: 'Access Key',
     secretKey: 'Secret Key',
+    initPassword: 'Init Password',
+    initPasswordDesc: 'Sets root password on first init only; not saved; disabled after init',
   }
 }

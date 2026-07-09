@@ -162,6 +162,11 @@ pub enum CustomHealthSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSchema {
     pub fields: Vec<ConfigField>,
+    /// 标记为 ephemeral 的字段 key 列表。这些字段（如 MySQL 初始化密码）只用于首次初始化，
+    /// 是敏感的一次性值，绝不写入配置文件 / installed.json（不落盘）。
+    /// 前端将其渲染为红色敏感字段；后端 write_config_form / write_form_to_config 会跳过它们。
+    #[serde(default)]
+    pub ephemeral_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -436,6 +441,7 @@ mod tests {
                 section: Some("[mysqld]".to_string()),
                 description_i18n: None,
             }],
+            ephemeral_keys: vec![],
         };
         let json = serde_json::to_string(&schema).unwrap();
         let de: ConfigSchema = serde_json::from_str(&json).unwrap();

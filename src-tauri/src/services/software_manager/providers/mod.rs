@@ -79,6 +79,9 @@ pub struct StartContext {
     pub version: String,
     pub config: serde_json::Value,
     pub custom_start_command: Option<CustomStartCommand>,
+    /// 首次初始化密码（如 MySQL 初始化 root 密码）。来自 start_software 命令的可选参数，
+    /// 仅在未初始化时由 provider 消费一次，绝不持久化到 installed.json / 配置文件。
+    pub init_password: Option<String>,
 }
 
 /// 停止上下文
@@ -293,6 +296,7 @@ mod tests {
             version: "8.4.10".to_string(),
             config: serde_json::json!({"port": 3306}),
             custom_start_command: None,
+            init_password: None,
         };
         assert_eq!(ctx.install_path, "apps/mysql/8.4.10");
         assert_eq!(ctx.config["port"], 3306);

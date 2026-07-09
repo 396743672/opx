@@ -124,16 +124,17 @@ impl SoftwareProvider for MySqlProvider {
         let buffer_pool_mb = (total_mem_mb / 2).max(128).min(4096);
         // thread_cache_size: CPU 核数 * 4
         let thread_cache = cpu_count * 4;
-        // innodb_io_threads: CPU 核数（最少 4）
+        // io_threads: CPU 核数（最少 4），用于 innodb_read_io_threads / innodb_write_io_threads
         let io_threads = cpu_count.max(4);
 
         let mut file = File::create(&my_ini_path)?;
         let content = format!(
             "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\n\
 port=3306\n\
-basedir={basedir}\n\
-datadir={basedir}/data\n\
-socket={basedir}/mysql.sock\n\
+bind-address=127.0.0.1\n\
+basedir=\"{basedir}\"\n\
+datadir=\"{basedir}/data\"\n\
+socket=\"{basedir}/mysql.sock\"\n\
 character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
 default-storage-engine=INNODB\n\
 sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
@@ -144,7 +145,6 @@ innodb_log_file_size=256M\n\
 innodb_log_buffer_size=64M\n\
 innodb_flush_log_at_trx_commit=1\n\
 innodb_lock_wait_timeout=50\n\
-innodb_io_threads={io_threads}\n\
 innodb_read_io_threads={io_threads}\n\
 innodb_write_io_threads={io_threads}\n\
 innodb_flush_method=normal\n\
@@ -163,13 +163,17 @@ lower_case_table_names=1\n",
         // extract_zip_flatten 已剥掉 zip 顶层目录，install_path 即 MySQL 程序目录根
         // bin/mysqld.exe 直接在 install_path/bin/ 下
         let working_dir = PathBuf::from(&ctx.install_path);
+        // 绝对路径化：避免依赖子进程 CWD 解析相对路径（曾导致 .\data\mysql-init.err
+        // 创建时被拒 "Permission denied"）。F2 的 --log-error 诊断落盘路径改为绝对路径。
+        let data_dir = PathBuf::from(&ctx.install_path).join("data");
 
         let init_command = StartCommand {
             program: "bin/mysqld.exe".to_string(),
             args: vec![
                 "--initialize-insecure".to_string(),
-                "--basedir=.".to_string(),
-                "--datadir=./data".to_string(),
+                "--basedir=".to_string() + &ctx.install_path,
+                "--datadir=".to_string() + &data_dir.to_string_lossy(),
+                "--log-error=".to_string() + &data_dir.join("mysql-init.err").to_string_lossy(),
             ],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
@@ -177,12 +181,49 @@ lower_case_table_names=1\n",
             first_run_init: None,
         };
 
+        // 首次初始化密码注入（方案 B）：
+        // - 仅在「未初始化」且用户提供了 init_password 时生效；
+        // - 方式：把 `ALTER USER 'root'@'localhost' IDENTIFIED BY '...';` 写入安装根目录下的
+        //   临时 SQL 文件（绝对路径，避免相对路径 Permission denied；且放 install_path 根目录
+        //   而非 data/，防止被 first_run_init 的 wipe_data_dir_if_nonempty 误删），
+        //   并在「首次正常启动」命令上挂 --init-file=<绝对路径>。
+        //   注意：--init-file 在 --initialize-insecure（bootstrap 模式）下受限，账户管理语句
+        //   （ALTER USER）不会执行；因此挂在首次「正常启动」命令上，启动后由 lifecycle 删除文件。
+        // - 已初始化（initialized == true）时不注入：密码仅消费一次，且防御性清理可能残留的文件。
+        let initialized = ctx
+            .config
+            .get("initialized")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut main_args = vec![
+            "--defaults-file=my.ini".to_string(),
+            "--console".to_string(),
+        ];
+
+        if initialized {
+            // 防御性清理：已初始化不应再有初始化密码临时文件，删除可能残留的明文文件
+            let stale = PathBuf::from(&ctx.install_path).join(".mysql-init-password.sql");
+            let _ = std::fs::remove_file(&stale);
+        } else if let Some(pw) = &ctx.init_password {
+            if !pw.is_empty() {
+                // 放 install_path 根目录（非 data/），避免被 wipe_data_dir_if_nonempty 误删
+                let init_sql_path =
+                    PathBuf::from(&ctx.install_path).join(".mysql-init-password.sql");
+                // SQL 字符串转义：先转义反斜杠，再转义单引号（MySQL 字符串字面量规则）
+                let mut escaped = pw.replace('\\', "\\\\");
+                escaped = escaped.replace('\'', "\\'");
+                let sql = format!(
+                    "ALTER USER 'root'@'localhost' IDENTIFIED BY '{}';\n",
+                    escaped
+                );
+                std::fs::write(&init_sql_path, sql)?;
+                main_args.push(format!("--init-file={}", init_sql_path.to_string_lossy()));
+            }
+        }
+
         Ok(StartCommand {
             program: "bin/mysqld.exe".to_string(),
-            args: vec![
-                "--defaults-file=my.ini".to_string(),
-                "--console".to_string(),
-            ],
+            args: main_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
             creation_flags: CREATE_NO_WINDOW,
@@ -218,14 +259,6 @@ lower_case_table_names=1\n",
                     description_i18n: Some("configField.portDesc".to_string()),
                 },
                 ConfigField {
-                    key: "bind-address".to_string(),
-                    label_i18n: "configField.bindAddress".to_string(),
-                    field_type: ConfigFieldType::Text,
-                    default_value: serde_json::json!("0.0.0.0"),
-                    section: Some("[mysqld]".to_string()),
-                    description_i18n: None,
-                },
-                ConfigField {
                     key: "max_connections".to_string(),
                     label_i18n: "configField.maxConnections".to_string(),
                     field_type: ConfigFieldType::Number,
@@ -250,17 +283,29 @@ lower_case_table_names=1\n",
                 ConfigField {
                     key: "innodb_buffer_pool_size".to_string(),
                     label_i18n: "configField.innodbBufferPool".to_string(),
-                    field_type: ConfigFieldType::Text,
-                    default_value: serde_json::json!("128M"),
+                    field_type: ConfigFieldType::Number,
+                    default_value: serde_json::json!(128),
                     section: Some("[mysqld]".to_string()),
                     description_i18n: None,
                 },
+                ConfigField {
+                    key: "init_password".to_string(),
+                    label_i18n: "configField.initPassword".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.initPasswordDesc".to_string()),
+                },
             ],
+            // init_password 为一次性敏感字段：仅首次初始化消费，绝不写入 my.ini / installed.json
+            ephemeral_keys: vec!["init_password".to_string()],
         })
     }
 
-    fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {
-        Some(PathBuf::from(&ctx.install_path).join("my.ini"))
+    fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
+        // 仅返回相对文件名，调用方（write_config_form / read_config_source）
+        // 会自行拼接 install_path，避免双路径拼接 bug。
+        Some(PathBuf::from("my.ini"))
     }
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
@@ -299,6 +344,7 @@ mod tests {
             version: "8.4.10".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd.program.contains("mysqld.exe"));
@@ -320,12 +366,27 @@ mod tests {
             version: "8.4.10".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         let fri = cmd.first_run_init.expect("MySQL 应有首次初始化");
         assert!(fri.init_command.args.contains(&"--initialize-insecure".to_string()));
-        assert!(fri.init_command.args.contains(&"--basedir=.".to_string()));
-        assert!(fri.init_command.args.contains(&"--datadir=./data".to_string()));
+        // B：--basedir / --datadir 改为基于 install_path 的绝对路径（不再用相对 ./data）
+        // 使用平台感知的路径分隔符（Windows \、Unix /）
+        let sep = std::path::MAIN_SEPARATOR_STR;
+        let expected_datadir = format!("apps/mysql/8.4.10{}data", sep);
+        let expected_logerror = format!("apps/mysql/8.4.10{}data{}mysql-init.err", sep, sep);
+        assert!(fri.init_command.args.contains(&"--basedir=apps/mysql/8.4.10".to_string()));
+        assert!(fri.init_command.args.contains(&format!("--datadir={}", expected_datadir)));
+        // F2/B：--log-error 现在为绝对路径，且全 args 中仅一份
+        assert!(fri.init_command.args.contains(&format!("--log-error={}", expected_logerror)));
+        let log_error_count = fri
+            .init_command
+            .args
+            .iter()
+            .filter(|a| a.starts_with("--log-error="))
+            .count();
+        assert_eq!(log_error_count, 1, "init args 中应仅有一份 --log-error");
         // 防递归：init 命令不应再嵌套 first_run_init
         assert!(fri.init_command.first_run_init.is_none());
         // init 与正式启动共享 working_dir
@@ -387,12 +448,86 @@ mod tests {
     }
 
     #[test]
-    fn mysql_config_schema_has_five_fields_in_mysqld_section() {
+    fn mysql_config_schema_has_five_fields_and_init_password_is_ephemeral() {
         let p = MySqlProvider::new();
         let schema = p.config_schema().expect("MySQL 应有 schema");
+        // 4 个持久化字段 + 1 个 ephemeral 的 init_password
         assert_eq!(schema.fields.len(), 5);
         assert_eq!(schema.fields[0].key, "port");
         assert_eq!(schema.fields[0].section.as_deref(), Some("[mysqld]"));
+        // init_password 为最后一个字段，且被标记为 ephemeral
+        assert_eq!(schema.fields[4].key, "init_password");
+        assert_eq!(schema.fields[4].field_type, ConfigFieldType::Password);
+        assert!(schema.ephemeral_keys.contains(&"init_password".to_string()));
+    }
+
+    #[test]
+    fn mysql_start_command_injects_init_file_when_password_provided_and_not_initialized() {
+        let p = MySqlProvider::new();
+        let install_path = "apps/mysql/8.4.10";
+        // 确保安装目录存在（start_command 会在其中写临时 SQL 文件）
+        std::fs::create_dir_all(install_path).unwrap();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: install_path.to_string(),
+            version: "8.4.10".to_string(),
+            config: serde_json::json!({}),
+            custom_start_command: None,
+            init_password: Some("S3cret!Pass".to_string()),
+        };
+        let cmd = p.start_command(&ctx).unwrap();
+        // 主启动命令应挂 --init-file=<绝对路径>
+        let init_file_arg = cmd
+            .args
+            .iter()
+            .find(|a| a.starts_with("--init-file="))
+            .expect("应注入 --init-file");
+        assert!(
+            init_file_arg.ends_with(".mysql-init-password.sql"),
+            "init-file 路径应为安装根目录下的临时 SQL 文件，实际：{}",
+            init_file_arg
+        );
+        assert!(
+            !init_file_arg.contains("/data/") && !init_file_arg.contains("\\data\\"),
+            "init-file 不应放在 data/ 下（避免被 wipe_data_dir 误删），实际：{}",
+            init_file_arg
+        );
+    }
+
+    #[test]
+    fn mysql_start_command_skips_init_file_when_initialized() {
+        let p = MySqlProvider::new();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/mysql/8.4.10".to_string(),
+            version: "8.4.10".to_string(),
+            config: serde_json::json!({"initialized": true}),
+            custom_start_command: None,
+            init_password: Some("S3cret!Pass".to_string()),
+        };
+        let cmd = p.start_command(&ctx).unwrap();
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("--init-file=")),
+            "已初始化后不应再注入 --init-file"
+        );
+    }
+
+    #[test]
+    fn mysql_start_command_skips_init_file_when_password_empty() {
+        let p = MySqlProvider::new();
+        let ctx = super::StartContext {
+            installed_id: "uuid".to_string(),
+            install_path: "apps/mysql/8.4.10".to_string(),
+            version: "8.4.10".to_string(),
+            config: serde_json::json!({}),
+            custom_start_command: None,
+            init_password: Some("".to_string()),
+        };
+        let cmd = p.start_command(&ctx).unwrap();
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("--init-file=")),
+            "空密码不应注入 --init-file（维持空密码行为）"
+        );
     }
 
     #[test]

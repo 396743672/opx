@@ -1,5 +1,6 @@
 <template>
-  <div class="overlay" @click.self="$emit('close')">
+  <Teleport to="body">
+  <div class="overlay">
     <div class="dialog wide">
       <div class="dialog-head">
         <div class="dialog-title">
@@ -49,13 +50,14 @@
 
       <div class="dialog-footer">
         <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
-        <button class="btn" :disabled="!dirty" @click="onSave">{{ $t('save') }}</button>
-        <button class="btn primary" :disabled="!dirty" @click="onSaveAndRestart">
+        <button class="btn" :disabled="!dirty || saving" @click="onSave(true)">{{ $t('save') }}</button>
+        <button class="btn primary" :disabled="!dirty || saving" @click="onSaveAndRestart">
           {{ $t('saveAndRestart') }}
         </button>
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -64,13 +66,17 @@ import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import ConfigFormTab from './ConfigFormTab.vue'
 import ConfigSourceTab from './ConfigSourceTab.vue'
+import { useLifecycleStore } from '../stores/lifecycle'
 import type { ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
+
+const lifecycleStore = useLifecycleStore()
 
 const props = defineProps<{ software: InstalledSoftware }>()
 const emit = defineEmits<{ close: [] }>()
 
 const tab = ref<'form' | 'source'>('form')
 const dirty = ref(false)
+const saving = ref(false)
 const schema = ref<ConfigSchema | null>(null)
 const formTabRef = ref<InstanceType<typeof ConfigFormTab>>()
 const sourceTabRef = ref<InstanceType<typeof ConfigSourceTab>>()
@@ -102,7 +108,8 @@ function onSourceContent(c: string) {
   sourceContent = c
 }
 
-async function onSave() {
+async function onSave(closeAfter?: boolean) {
+  saving.value = true
   try {
     if (tab.value === 'form' && formTabRef.value) {
       const data: FormData = (formTabRef.value as any).formData
@@ -110,6 +117,9 @@ async function onSave() {
         installedId: props.software.id,
         data,
       })
+      // 把 ephemeral 字段（如 MySQL 初始化密码）暂存到运行时 store，供 start_software 消费；
+      // 这些字段不会被 write_config_form 持久化（后端跳过），仅存于内存、一次性消费。
+      syncInitPassword(data)
     } else if (tab.value === 'source' && sourceTabRef.value) {
       const content =
         (sourceTabRef.value as any).getContent?.() ?? sourceContent
@@ -119,19 +129,60 @@ async function onSave() {
       })
     }
     dirty.value = false
+    if (closeAfter) {
+      emit('close')
+    }
   } catch (e) {
     console.error('save config failed:', e)
+  } finally {
+    saving.value = false
+  }
+}
+
+// 把 ephemeral 字段（如 MySQL 初始化密码）从表单暂存到运行时 store（绝不持久化）
+function syncInitPassword(data: FormData) {
+  const schemaKeys = schema.value?.ephemeral_keys
+  if (!schemaKeys || schemaKeys.length === 0) return
+  for (const key of schemaKeys) {
+    const v = data[key]
+    const s = typeof v === 'string' ? v : ''
+    // 仅在有值时暂存；空值不清除，避免用户仅修改其它字段（未动密码框）保存时误清已暂存的密码。
+    // 已暂存的密码会在 server 起来（Running）后由 lifecycle store 自动清除。
+    if (s) lifecycleStore.setInitPassword(props.software.id, s)
   }
 }
 
 async function onSaveAndRestart() {
-  await onSave()
+  saving.value = true
   try {
-    await invoke('restart_software', { installedId: props.software.id })
+    // 内联保存逻辑（而非调用 onSave），确保 saving 在整个保存+重启流程中保持 true
+    if (tab.value === 'form' && formTabRef.value) {
+      const data: FormData = (formTabRef.value as any).formData
+      await invoke('write_config_form', {
+        installedId: props.software.id,
+        data,
+      })
+      syncInitPassword(data)
+    } else if (tab.value === 'source' && sourceTabRef.value) {
+      const content =
+        (sourceTabRef.value as any).getContent?.() ?? sourceContent
+      await invoke('write_config_source', {
+        installedId: props.software.id,
+        content,
+      })
+    }
+    dirty.value = false
+    // 从运行时 store 取初始化密码，传给 restart_software（仅首次初始化消费一次）
+    const initPw = lifecycleStore.getInitPassword(props.software.id)
+    const args: Record<string, unknown> = { installedId: props.software.id }
+    if (initPw) (args as any).initPassword = initPw
+    await invoke('restart_software', args)
+    emit('close')
   } catch (e) {
-    console.error('restart failed:', e)
+    console.error('saveAndRestart failed:', e)
+  } finally {
+    saving.value = false
   }
-  emit('close')
 }
 </script>
 

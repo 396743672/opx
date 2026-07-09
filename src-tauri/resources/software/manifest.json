@@ -1,38 +1,38 @@
 {
   "jre": {
     "1.8": {
-      "sha256": "7ac37757292c85ed00a2cc7a38cc0b82d48b337eddea9c7f71414bc7bf439af0",
-      "size": 40132081
+      "sha256": "3f8023711d90489917dc93ee1d7062fdd342f457f18249a023a17519dec791b0",
+      "size": 83436707
     }
   },
   "mysql": {
     "8.4.10": {
-      "sha256": "3b950db31c33fb59252568c012bd9ee5fac50811e778ca7c8f1a0dc91686cd6f",
-      "size": 280672277
+      "sha256": "19b40b3d1ea458b9e8a7ec0a9bda539cc6e96c88b98163a0f88297fa3b183898",
+      "size": 280544089
     }
   },
   "redis": {
     "7.4.9": {
-      "sha256": "da0a1b42b683607d80937048c568b6b483683cf24c130fcded06ac99f3f3c7e9",
-      "size": 12162621
+      "sha256": "b72b902282bbbb0856122d23c2275744cd9d35ed8376608a797d62e94f4f583e",
+      "size": 12117917
     }
   },
   "nginx": {
     "1.31.2": {
-      "sha256": "e69cc6f99962ba0a75b55e5e72514a13e2e3d284a9728e4890ac1073f8f8ca6a",
-      "size": 2780911
+      "sha256": "f0283ba84c1ff69da451104157cde6c90bf5b1d80ab0fdb41b7d588c7fbde5c2",
+      "size": 2772537
     }
   },
   "minio": {
     "RELEASE.2025-04-22": {
-      "sha256": "5359e0ebf24e5c0c86cd90f4dfddeced1b8163ea2d875fdab706232ac5ea83ea",
-      "size": 16328790
+      "sha256": "e1cd8e34ae678724793a72d751b486b930a306643ccb810618c28290921cd64c",
+      "size": 41940548
     }
   },
   "rustfs": {
     "1.0.0-beta.8": {
-      "sha256": "8f377e2123f4d460be9d812f725cc7658d2e1a7b5de17347a98dc04984a17095",
-      "size": 87706760
+      "sha256": "e22ef226eafa69242d3c131000eb57f2fa3f1761ee77601e24575adb71bbf880",
+      "size": 89215886
     }
   }
 }

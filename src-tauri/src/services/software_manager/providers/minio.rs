@@ -232,6 +232,7 @@ impl SoftwareProvider for MinioProvider {
                     description_i18n: None,
                 },
             ],
+            ephemeral_keys: vec![],
         })
     }
 
@@ -298,6 +299,7 @@ mod tests {
                 "secret_key": "minioadmin"
             }),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "minio.exe");
@@ -328,6 +330,7 @@ mod tests {
             version: "v1".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd.args.contains(&":9000".to_string()));

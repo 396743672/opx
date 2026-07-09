@@ -227,6 +227,7 @@ impl SoftwareProvider for RustfsProvider {
                     description_i18n: None,
                 },
             ],
+            ephemeral_keys: vec![],
         })
     }
 
@@ -293,6 +294,7 @@ mod tests {
                 "secret_key": "rustfsadmin"
             }),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "rustfs.exe");
@@ -321,6 +323,7 @@ mod tests {
             version: "v1".to_string(),
             config: serde_json::json!({}),
             custom_start_command: None,
+            init_password: None,
         };
         let cmd = p.start_command(&ctx).unwrap();
         assert!(cmd

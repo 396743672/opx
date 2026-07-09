@@ -300,5 +300,7 @@ export default {
     dataDirDesc: '相对 install_path 的路径，Portable 友好',
     accessKey: 'Access Key',
     secretKey: 'Secret Key',
+    initPassword: '初始化密码',
+    initPasswordDesc: '仅首次初始化时设置 root 密码，不保存，初始化后禁用',
   }
 }

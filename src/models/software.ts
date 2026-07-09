@@ -145,6 +145,9 @@ export type HealthCheckSpec =
 /// 配置表单 schema
 export interface ConfigSchema {
   fields: ConfigField[]
+  /// 标记为 ephemeral 的字段 key 列表（如 MySQL 初始化密码）。
+  /// 这些字段是敏感的一次性值，绝不写入配置文件 / installed.json；前端渲染为红色敏感字段。
+  ephemeral_keys?: string[]
 }
 
 export interface ConfigField {

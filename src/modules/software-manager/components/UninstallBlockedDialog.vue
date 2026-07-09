@@ -1,4 +1,5 @@
 <template>
+  <Teleport to="body">
   <div class="overlay" @click.self="$emit('close')">
     <div class="dialog narrow">
       <div class="dialog-head">
@@ -54,6 +55,7 @@
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

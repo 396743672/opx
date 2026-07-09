@@ -1,5 +1,5 @@
 # 忽略内置 zip/exe（由 fetch-builtin.mjs 下载或本地复制，不入 git）
-#*.zip
+*.zip
 *.exe
 # manifest.json 入 git（记录校验和）
 !manifest.json

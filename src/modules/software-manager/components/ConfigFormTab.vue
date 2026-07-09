@@ -9,7 +9,7 @@
         class="field"
         :class="{ full: isPort(field) }"
       >
-        <label class="form-field-label">{{ $t(field.label_i18n) }}</label>
+        <label class="form-field-label" :class="{ danger: isEphemeral(field) }">{{ $t(field.label_i18n) }}</label>
         <input
           v-if="isText(field)"
           v-model="formData[field.key]"
@@ -27,6 +27,7 @@
           v-model="formData[field.key]"
           type="password"
           class="input"
+          :disabled="isEphemeral(field) && isInitialized"
         />
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
           <option v-for="opt in selectOptions(field)" :key="opt" :value="opt">{{ opt }}</option>
@@ -38,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
 
@@ -95,6 +96,16 @@ function selectOptions(f: ConfigField): string[] {
   return f.field_type.type === 'Select' ? f.field_type.options : []
 }
 
+// ephemeral 字段（如 MySQL 初始化密码）：渲染为红色敏感字段，不落盘
+function isEphemeral(f: ConfigField): boolean {
+  return (props.schema?.ephemeral_keys ?? []).includes(f.key)
+}
+
+// 该实例是否已完成首次初始化（initialized == true）：ephemeral 字段应禁用
+const isInitialized = computed(
+  () => (props.software.config as Record<string, any> | undefined)?.initialized === true,
+)
+
 defineExpose({ formData })
 </script>
 
@@ -112,6 +123,11 @@ defineExpose({ formData })
   font-size: 12px;
   color: var(--color-muted-foreground);
   margin-bottom: 6px;
+}
+/* ephemeral 敏感字段（如初始化密码）：标签标红，提示一次性/不落盘 */
+.form-field-label.danger {
+  color: #e5484d;
+  font-weight: 600;
 }
 .input {
   width: 100%;

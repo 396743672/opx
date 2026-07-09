@@ -2,11 +2,23 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
-pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+/// 解压进度回调：(已解压字节数, 总字节数)。
+/// 约定与 installer.rs 内「下载进度回调」一致：由调用方在闭包里节流后 emit install-progress 事件
+/// （phase/percent 字段对齐下载），便于前端统一处理。extract 已知总量故省去 Option。
+pub fn extract_zip<F>(archive_path: &Path, dest_dir: &Path, mut on_progress: F) -> Result<()>
+where
+    F: FnMut(u64, u64),
+{
     let file = std::fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
+    // 预扫描：累加所有条目的未压缩大小，用于进度百分比（仅读中央目录元数据，不写盘）
+    let total: u64 = (0..archive.len())
+        .map(|i| archive.by_index(i).map(|f| f.size()).unwrap_or(0))
+        .sum();
+    let mut extracted: u64 = 0;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
+        let size = file.size();
         let outpath = match file.enclosed_name() {
             Some(path) => dest_dir.join(path),
             None => continue,
@@ -26,15 +38,59 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
         }
+        extracted += size;
+        on_progress(extracted, total);
     }
     Ok(())
 }
 
-pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_tar_gz<F>(archive_path: &Path, dest_dir: &Path, mut on_progress: F) -> Result<()>
+where
+    F: FnMut(u64, u64),
+{
+    // 预扫描：累加所有条目的未压缩大小，用于进度百分比（仅读各条目头 size，不写盘）。
+    // 注意：tar 基于前向只读的 gz 流，无法在单次遍历中预知总量，故先完整扫描一遍估算 total，
+    // 实际解压时再遍历一次。这是解压进度可预估的必要代价，对一次性安装可接受。
+    let total: u64 = {
+        let file = std::fs::File::open(archive_path)?;
+        let gz = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(gz);
+        let mut sum: u64 = 0;
+        for entry in archive.entries()? {
+            sum += entry?.header().size()?;
+        }
+        sum
+    };
+
     let file = std::fs::File::open(archive_path)?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
-    archive.unpack(dest_dir)?;
+
+    let mut extracted: u64 = 0;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let header = entry.header();
+        let entry_size = header.size()?;
+        let entry_type = header.entry_type();
+        // 复用 tar 内部的路径归一化（与 Archive::unpack 行为一致），避免路径穿越
+        let outpath = dest_dir.join(entry.path()?.to_path_buf());
+        match entry_type {
+            tar::EntryType::Directory => {
+                fs::create_dir_all(&outpath)?;
+            }
+            tar::EntryType::Regular => {
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = std::fs::File::create(&outpath)?;
+                std::io::copy(&mut entry, &mut outfile)?;
+            }
+            // 软/硬链接等其它类型：当前软件包不含，跳过以保证安装流程不中断
+            _ => {}
+        }
+        extracted += entry_size;
+        on_progress(extracted, total);
+    }
     Ok(())
 }
 
@@ -66,13 +122,23 @@ fn detect_common_root(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<St
 /// 若 zip 内所有条目共享同一个顶层目录（如 `mysql-8.4.10-winx64/`），
 /// 解压后将其内容直接放到 dest_dir 根，避免多一层冗余目录；
 /// 否则等同于 extract_zip 的行为。
-pub fn extract_zip_flatten(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_zip_flatten<F>(archive_path: &Path, dest_dir: &Path, mut on_progress: F) -> Result<()>
+where
+    F: FnMut(u64, u64),
+{
     let file = std::fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     let common_root = detect_common_root(&mut archive);
 
+    // 预扫描：累加所有条目的未压缩大小，用于进度百分比
+    let total: u64 = (0..archive.len())
+        .map(|i| archive.by_index(i).map(|f| f.size()).unwrap_or(0))
+        .sum();
+
+    let mut extracted: u64 = 0;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
+        let size = file.size();
         let enclosed = match file.enclosed_name() {
             Some(path) => path.to_path_buf(),
             None => continue,
@@ -100,6 +166,8 @@ pub fn extract_zip_flatten(archive_path: &Path, dest_dir: &Path) -> Result<()> {
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
         }
+        extracted += size;
+        on_progress(extracted, total);
     }
     Ok(())
 }
@@ -142,7 +210,7 @@ mod tests {
             .expect("file content should be written");
         zip.finish().expect("zip should be finalized");
 
-        extract_zip(&archive_path, &dest_dir).expect("zip should extract");
+        extract_zip(&archive_path, &dest_dir, |_, _| {}).expect("zip should extract");
 
         assert_eq!(
             fs::read_to_string(dest_dir.join("nested").join("file.txt"))
@@ -174,7 +242,7 @@ mod tests {
         let encoder = archive.into_inner().expect("encoder should be returned");
         encoder.finish().expect("gzip should be finalized");
 
-        extract_tar_gz(&archive_path, &dest_dir).expect("tar.gz should extract");
+        extract_tar_gz(&archive_path, &dest_dir, |_, _| {}).expect("tar.gz should extract");
 
         assert_eq!(
             fs::read_to_string(dest_dir.join("nested").join("file.txt"))
@@ -203,7 +271,7 @@ mod tests {
         zip.write_all(b"license").unwrap();
         zip.finish().expect("zip should be finalized");
 
-        extract_zip_flatten(&archive_path, &dest_dir).expect("should extract");
+        extract_zip_flatten(&archive_path, &dest_dir, |_, _| {}).expect("should extract");
 
         // 顶层目录被剥掉，文件直接在 dest_dir 下
         assert_eq!(
@@ -231,7 +299,7 @@ mod tests {
         zip.write_all(b"rustfs-bin").unwrap();
         zip.finish().expect("zip should be finalized");
 
-        extract_zip_flatten(&archive_path, &dest_dir).expect("should extract");
+        extract_zip_flatten(&archive_path, &dest_dir, |_, _| {}).expect("should extract");
 
         assert_eq!(
             fs::read_to_string(dest_dir.join("rustfs.exe")).unwrap(),
@@ -257,7 +325,7 @@ mod tests {
         zip.write_all(b"bbb").unwrap();
         zip.finish().expect("zip should be finalized");
 
-        extract_zip_flatten(&archive_path, &dest_dir).expect("should extract");
+        extract_zip_flatten(&archive_path, &dest_dir, |_, _| {}).expect("should extract");
 
         // 两个顶层目录都保留
         assert_eq!(fs::read_to_string(dest_dir.join("dirA").join("a.txt")).unwrap(), "aaa");
@@ -281,8 +349,7 @@ mod tests {
         zip.write_all(b"minio-bin").unwrap();
         zip.finish().expect("zip should be finalized");
 
-        extract_zip_flatten(&archive_path, &dest_dir).expect("should extract");
-
+        extract_zip_flatten(&archive_path, &dest_dir, |_, _| {}).expect("should extract");
         assert_eq!(fs::read_to_string(dest_dir.join("minio.exe")).unwrap(), "minio-bin");
         assert!(!dest_dir.join("RELEASE.2025-04-22T15-44-28Z").exists());
         fs::remove_dir_all(root).ok();

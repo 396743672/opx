@@ -14,7 +14,8 @@ dist-ssr
 *.local
 
 # Editor directories and files
-.vscode/*
+.workbuddy
+.vscode
 !.vscode/extensions.json
 .idea
 .DS_Store
@@ -27,3 +28,5 @@ design-mockup.html
 *.njsproj
 *.sln
 *.sw?
+/.vscode/
+/.workbuddy/

@@ -20,6 +20,9 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
   const statuses = ref<Record<string, SoftwareStatus>>({})
   const errors = ref<Record<string, string | null>>({})
   const pids = ref<Record<string, number | null>>({})
+  // 运行时暂存的「初始化密码」（如 MySQL 初始化 root 密码）。
+  // 仅存在于内存，绝不持久化到磁盘；首次初始化消费一次后（server 起来）清除。
+  const initPasswords = ref<Record<string, string>>({})
   let unlisten: UnlistenFn | null = null
 
   function setStatus(
@@ -37,6 +40,23 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
     if (error !== undefined) {
       errors.value[id] = error
     }
+    // 初始化密码仅消费一次：server 起来后清除运行时暂存，避免明文密码常驻内存
+    if (status === SoftwareStatus.Running) {
+      delete initPasswords.value[id]
+    }
+  }
+
+  function setInitPassword(id: string, password: string) {
+    if (password) initPasswords.value[id] = password
+    else delete initPasswords.value[id]
+  }
+
+  function getInitPassword(id: string): string | undefined {
+    return initPasswords.value[id]
+  }
+
+  function clearInitPassword(id: string) {
+    delete initPasswords.value[id]
   }
 
   function getStatus(id: string): SoftwareStatus {
@@ -74,10 +94,14 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
     statuses,
     errors,
     pids,
+    initPasswords,
     setStatus,
     getStatus,
     getError,
     getPid,
+    setInitPassword,
+    getInitPassword,
+    clearInitPassword,
     initListener,
     destroyListener,
   }
