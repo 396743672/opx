@@ -1,41 +1,49 @@
 <template>
-  <div class="instance-row" :class="{ 'has-error': software.status === SoftwareStatus.Error }">
-    <div class="row-icon" :class="categoryClass">
-      <Icon :icon="categoryIcon" />
-    </div>
-    <div class="row-main">
-      <div class="row-name">
-        {{ software.name }} <span class="ver">{{ software.version }}</span>
-        <span v-if="software.is_custom" class="tag custom">{{ $t('custom') }}</span>
+  <div class="instance-card" :class="{ 'has-error': software.status === SoftwareStatus.Error }">
+    <div class="card-head">
+      <div class="card-title">
+        <div class="card-icon" :class="categoryClass">
+          <Icon :icon="categoryIcon" />
+        </div>
+        <div>
+          <div class="name">
+            {{ software.name }} <span class="ver">{{ software.version }}</span>
+          </div>
+          <div v-if="software.is_custom" class="tag custom">{{ $t('custom') }}</div>
+        </div>
       </div>
-      <div class="row-path mono">{{ software.install_path }}</div>
-      <div class="row-meta">
+      <StatusBadge :status="software.status" :error="software.last_error" />
+    </div>
+
+    <div class="card-body">
+      <div class="path mono">{{ software.install_path }}</div>
+      <div class="meta">
         <span v-if="software.pid" class="kv">
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
         <span v-if="software.port" class="kv">
           <Icon icon="mdi:ethernet-port" /> {{ $t('port') }} <b class="tnum">{{ software.port }}</b>
         </span>
-        <span v-if="software.last_error" class="kv error-text">
-          <Icon icon="mdi:alert-circle" /> {{ software.last_error }}
-        </span>
+      </div>
+      <div v-if="software.last_error" class="error-text">
+        <Icon icon="mdi:alert-circle" /> {{ software.last_error }}
       </div>
     </div>
-    <StatusBadge :status="software.status" :error="software.last_error" />
-    <div class="row-actions">
-      <button class="btn small" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
+
+    <div class="card-actions">
+      <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
         <Icon icon="mdi:play" /> {{ $t('start') }}
       </button>
-      <button class="btn small" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
+      <button class="btn" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
         <Icon icon="mdi:stop" /> {{ $t('stop') }}
       </button>
-      <button class="btn small" :disabled="!canConfig" @click="$emit('config')">
+      <button class="btn" :disabled="!canConfig" @click="$emit('config')">
         <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
       </button>
-      <button class="btn small ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
+      <button class="btn ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
         <Icon icon="mdi:tune-vertical" />
       </button>
-      <button class="btn small danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
+      <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
         <Icon icon="mdi:delete" />
       </button>
     </div>
@@ -143,24 +151,35 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 </script>
 
 <style scoped>
-.instance-row {
+.instance-card {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
-  border-radius: var(--radius-lg);
+  border-radius: 10px;
   box-shadow: var(--shadow-card);
   transition: border-color 0.15s;
 }
-.instance-row:hover {
+.instance-card:hover {
   border-color: color-mix(in oklch, var(--color-primary) 30%, var(--color-border));
 }
-.instance-row.has-error {
+.instance-card.has-error {
   border-color: color-mix(in oklch, var(--color-destructive) 40%, var(--color-border));
 }
-.row-icon {
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-icon {
   width: 36px;
   height: 36px;
   border-radius: 8px;
@@ -172,59 +191,60 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   background: color-mix(in oklch, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
 }
-.row-icon.database {
+.card-icon.database {
   background: color-mix(in oklch, var(--color-info) 14%, transparent);
   color: var(--color-info);
 }
-.row-icon.runtime {
+.card-icon.runtime {
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
 }
-.row-icon.cache {
+.card-icon.cache {
   background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
   color: var(--color-destructive);
 }
-.row-icon.webserver {
+.card-icon.webserver {
   background: color-mix(in oklch, var(--color-success) 14%, transparent);
   color: var(--color-success);
 }
-.row-icon.storage {
+.card-icon.storage {
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
 }
-.row-icon.custom {
+.card-icon.custom {
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
 }
-.row-main {
-  flex: 1;
-  min-width: 0;
-}
-.row-name {
+.name {
   font-size: 14px;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  margin-bottom: 2px;
 }
-.row-name .ver {
+.name .ver {
   font-weight: 400;
   color: var(--color-muted-foreground);
   font-size: 13px;
 }
-.row-path {
+.card-body {
+  flex: 1;
+  min-width: 0;
+}
+.path {
   font-size: 12px;
   color: var(--color-muted-foreground);
-  margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-bottom: 6px;
 }
-.row-meta {
+.meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-top: 4px;
   font-size: 11px;
   color: var(--color-muted-foreground);
 }
@@ -239,12 +259,18 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 }
 .error-text {
   color: var(--color-destructive);
+  font-size: 11px;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .tag {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
   font-weight: 600;
+  display: inline-block;
 }
 .tag.custom {
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
@@ -256,21 +282,23 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .tnum {
   font-variant-numeric: tabular-nums;
 }
-.row-actions {
+.card-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-muted);
 }
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 10px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
   color: var(--color-foreground);
@@ -291,11 +319,6 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .btn.ghost {
   background: transparent;
   border-color: transparent;
-}
-.btn.small {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
 }
 .btn:disabled {
   opacity: 0.4;

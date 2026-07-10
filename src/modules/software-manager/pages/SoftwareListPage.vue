@@ -39,7 +39,7 @@
           {{ $t(group.label) }}
           <span class="count">{{ group.items.length }}</span>
         </div>
-        <div class="instance-list">
+        <div class="instance-grid">
           <SoftwareInstanceRow
             v-for="item in group.items"
             :key="item.id"
@@ -290,7 +290,7 @@ onBeforeUnmount(() => {
 .category-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 .category-title {
   font-size: 12px;
@@ -313,10 +313,15 @@ onBeforeUnmount(() => {
   text-transform: none;
   letter-spacing: 0;
 }
-.instance-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.instance-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .instance-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 .btn {
   display: inline-flex;
