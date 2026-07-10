@@ -1,1 +1,77 @@
 pub mod nginx_conf;
+
+use std::path::PathBuf;
+use std::sync::RwLock;
+
+use anyhow::Result;
+
+use crate::models::website::{Site, WebsiteList};
+use crate::utils::paths;
+
+pub struct WebsiteManager {
+    websites: RwLock<WebsiteList>,
+}
+
+impl WebsiteManager {
+    pub fn new() -> Self {
+        Self {
+            websites: RwLock::new(Self::load().unwrap_or_default()),
+        }
+    }
+
+    fn store_path() -> PathBuf {
+        paths::config_dir().join("websites.json")
+    }
+
+    fn load() -> Result<WebsiteList> {
+        let p = Self::store_path();
+        if !p.exists() {
+            return Ok(WebsiteList::default());
+        }
+        Ok(serde_json::from_str(&std::fs::read_to_string(&p)?)?)
+    }
+
+    fn save_list(list: &WebsiteList) -> Result<()> {
+        std::fs::write(Self::store_path(), serde_json::to_string_pretty(list)?)?;
+        Ok(())
+    }
+
+    pub fn list(&self) -> Vec<Site> {
+        self.websites.read().unwrap().websites.clone()
+    }
+
+    pub fn get(&self, id: &str) -> Option<Site> {
+        self.websites.read().unwrap().websites.iter().find(|s| s.id == id).cloned()
+    }
+
+    /// 按 id 更新，无则追加
+    pub fn upsert(&self, site: Site) -> Result<()> {
+        let mut l = self.websites.write().unwrap();
+        if let Some(existing) = l.websites.iter_mut().find(|s| s.id == site.id) {
+            *existing = site;
+        } else {
+            l.websites.push(site);
+        }
+        Self::save_list(&l)
+    }
+
+    pub fn remove(&self, id: &str) -> Result<()> {
+        let mut l = self.websites.write().unwrap();
+        l.websites.retain(|s| s.id != id);
+        Self::save_list(&l)
+    }
+
+    pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let mut l = self.websites.write().unwrap();
+        if let Some(s) = l.websites.iter_mut().find(|s| s.id == id) {
+            s.enabled = enabled;
+        }
+        Self::save_list(&l)
+    }
+}
+
+impl Default for WebsiteManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
