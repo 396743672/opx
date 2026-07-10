@@ -42,14 +42,6 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 ## 读写规则
 - **大文本读写规则**： 对于大文件内容 读、写 拆分成多个任务分开读、写 避免出现 Stream idle timeout - no chunks received
 - **禁止读取规则** :  禁止读取 这些目录及目录下所有文件 /.idea/ /.superpowers/ /.vscode/ /.workbuddy/ /dist/ /node_modules/ /target/
-## 模型使用规则
-
-根据任务类型选择模型：
-
-- **带图片的问题 / 一般问答**：使用主模型或 Haiku（如截图诊断、UI 观察、解释说明、轻量查询）。
-- **修改代码**：使用 Opus 模型（如实现功能、修复 bug、重构、编辑源文件）。
-
-分派子智能体（Agent 工具）时同样遵循：代码实现类子智能体用 `opus`，图片/问答类用主模型或 `haiku`。
 
 ## Tauri + Vue 3 + TypeScript + I18n 项目最佳实践
 
