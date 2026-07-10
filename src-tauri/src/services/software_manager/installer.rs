@@ -638,28 +638,15 @@ async fn install_from_builtin(
     };
     let install_path = paths::apps_dir().join(&params.key).join(&params.version);
 
-    // 1. 解析 resource 路径
+    // 1. 解析本地 resource 路径（离线优先）
     // Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下；
     // macOS 上 resource_dir() 已是 .app/Contents/Resources/，资源直接在其下。
-    // resolve_builtin_resource 会尝试两个候选路径并返回第一个存在的。
-    let resource_zip = match app.path().resource_dir() {
+    // resolve_builtin_resource 会尝试两个候选路径并返回第一个存在的；不存在则返回 None。
+    // resource_zip 改为 Option：本地存在时为 Some(路径)，缺失时为 None（交由下方回退下载）。
+    let resource_zip: Option<std::path::PathBuf> = match app.path().resource_dir() {
         Ok(d) => {
             let rel = format!("software/{}/{}.zip", &params.key, &params.version);
-            match crate::utils::paths::resolve_builtin_resource(&d, &rel) {
-                Some(p) => p,
-                None => {
-                    emit_event(
-                        &app,
-                        serde_json::json!({
-                            "install_id": install_id,
-                            "phase": "failed",
-                            "error": "内置安装包缺失，请重新安装应用",
-                            "stage": "extract"
-                        }),
-                    );
-                    return;
-                }
-            }
+            crate::utils::paths::resolve_builtin_resource(&d, &rel)
         }
         Err(e) => {
             emit_event(
@@ -675,18 +662,115 @@ async fn install_from_builtin(
         }
     };
 
-    // 2. 校验文件存在
-    if !resource_zip.exists() {
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id,
-                "phase": "failed",
-                "error": "内置安装包缺失，请重新安装应用",
-                "stage": "extract"
-            }),
-        );
-        return;
+    // 本地缺失时的回退下载源：取版本内 builtin:None 的 http(s) mirror（如官网 CDN）。
+    // 仅 MySQL 等超过代码托管单文件体积限制的内置软件会配置此回退源；
+    // 其余内置软件（jre/redis 等）包体已入库，本地必定存在，不会走到此分支。
+    let download_url = version_info
+        .mirrors
+        .iter()
+        .find(|m| m.builtin.is_none() && m.url.starts_with("http"))
+        .map(|m| m.url.clone());
+
+    // 2. 准备临时副本 temp_zip（后续 sha256 校验与解压均操作它，原始资源不受影响）。
+    //    来源优先级：本地存在 → 直接拷贝到临时目录；本地缺失且有回退源 → 联网下载到临时目录；
+    //    两者皆无 → 清晰报错，提示手动放置安装包或检查网络。
+    let tmp_dir = paths::tmp_dir();
+    let temp_zip = tmp_dir.join(format!("builtin_{}_{}.zip", &params.key, &params.version));
+    let cleanup_temp = |p: &std::path::Path| {
+        let _ = fs::remove_file(p);
+    };
+
+    let local_exists = resource_zip.as_ref().map(|p| p.exists()).unwrap_or(false);
+    // downloaded 标记：仅当安装包来自「联网下载」时为 true，用于下方 sha256 校验判定。
+    // 本地内置资源（builtin）可能经过人工修改（如重命名目录），其 sha256 与官网原版不一致，
+    // 故本地来源不校验；下载来源必须校验官方 sha256，防止损坏/篡改。
+    let mut downloaded = false;
+    if !local_exists {
+        match &download_url {
+            Some(url) => {
+                // 进入 downloading 阶段，联网拉取官方安装包
+                emit_event(
+                    &app,
+                    serde_json::json!({
+                        "install_id": install_id.clone(),
+                        "phase": "downloading",
+                        "downloaded": 0,
+                        "total": serde_json::Value::Null,
+                        "percent": serde_json::Value::Null
+                    }),
+                );
+                let app_ep = app.clone();
+                let id_ep = install_id.clone();
+                let mut last_emit = std::time::Instant::now();
+                let mut last_percent: i64 = -1;
+                if let Err(e) = download::download_with_progress(url, &temp_zip, move |downloaded, total| {
+                    let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+                    let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
+                    if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                        last_emit = std::time::Instant::now();
+                        if let Some(p) = percent {
+                            last_percent = p;
+                        }
+                        emit_event(
+                            &app_ep,
+                            serde_json::json!({
+                                "install_id": id_ep.clone(),
+                                "phase": "downloading",
+                                "downloaded": downloaded,
+                                "total": total,
+                                "percent": percent
+                            }),
+                        );
+                    }
+                })
+                .await
+                {
+                    cleanup_temp(&temp_zip);
+                    emit_event(
+                        &app,
+                        serde_json::json!({
+                            "install_id": install_id,
+                            "phase": "failed",
+                            "error": format!("下载安装包失败: {}", e),
+                            "stage": "download"
+                        }),
+                    );
+                    return;
+                }
+                downloaded = true;
+            }
+            None => {
+                cleanup_temp(&temp_zip);
+                emit_event(
+                    &app,
+                    serde_json::json!({
+                        "install_id": install_id,
+                        "phase": "failed",
+                        "error": format!(
+                            "内置安装包缺失，请将 {}.zip 放到 resources/software/{}/ 后重试，或检查网络连接",
+                            &params.version, &params.key
+                        ),
+                        "stage": "extract"
+                    }),
+                );
+                return;
+            }
+        }
+    } else {
+        // 本地存在：拷贝到临时目录保护原始资源
+        if let Err(e) = fs::copy(resource_zip.as_ref().unwrap(), &temp_zip) {
+            cleanup_temp(&temp_zip);
+            emit_event(
+                &app,
+                serde_json::json!({
+                    "install_id": install_id,
+                    "phase": "failed",
+                    "error": format!("拷贝内置安装包到临时目录失败: {}", e),
+                    "stage": "extract"
+                }),
+            );
+            return;
+        }
     }
 
     // 3. 查重
@@ -735,8 +819,9 @@ async fn install_from_builtin(
         params.version.clone(),
     );
 
-    // 5. 立即通知前端进入 extracting 阶段（内置软件无需下载），
-    //    避免 createTask 默认的 "downloading" 阶段在拷贝/校验期间滞留。
+    // 5. 通知前端进入 extracting 阶段。
+    //    本地存在时跳过了 downloading；走回退下载时已先行 emit 过 downloading，
+    //    此处切到 extracting 衔接解压，避免 createTask 默认 downloading 阶段滞留。
     emit_event(
         &app,
         serde_json::json!({
@@ -747,24 +832,13 @@ async fn install_from_builtin(
     );
 
     let result: Result<()> = async {
-        // 6. 拷贝到临时目录保护原始资源文件（resources/software/ 下的内置包不可丢失）
-        //    后续 sha256 校验和解压均操作临时副本，确保原始文件完全不受影响。
-        let tmp_dir = paths::tmp_dir();
-        let temp_zip = tmp_dir.join(format!(
-            "builtin_{}_{}.zip",
-            &params.key, &params.version
-        ));
-        fs::copy(&resource_zip, &temp_zip).map_err(|e| {
-            anyhow::anyhow!("拷贝内置安装包到临时目录失败: {}", e)
-        })?;
+        // 6. temp_zip / cleanup_temp 已在上方准备：本地存在则已拷贝，本地缺失则已下载。
 
-        // 用 scopeguard 风格的手动清理闭包：无论成功/失败都删除临时副本
-        let cleanup_temp = |p: &std::path::Path| {
-            let _ = fs::remove_file(p);
-        };
-
-        // 6a. sha256 校验（仅当 manifest 提供了非空 sha256）——校验临时副本
-        if !builtin.sha256.is_empty() {
+        // 6a. sha256 校验（仅对「联网下载」的安装包校验，比对官网 sha256）
+        //     本地内置资源（builtin）可能经过人工修改（如重命名目录），其 sha256 与官网
+        //     原版不一致，故本地来源跳过校验、信任本地文件；下载来源必须校验官方 sha256，
+        //     防止文件损坏或被篡改。
+        if downloaded && !builtin.sha256.is_empty() {
             let computed = compute_sha256(&temp_zip)?;
             if computed != builtin.sha256.to_lowercase() {
                 cleanup_temp(&temp_zip);
@@ -811,7 +885,8 @@ async fn install_from_builtin(
                 // （文件名仍用原始 resource_zip 的文件名，保持语义一致）
                 let dest_file = install_path.join(
                     resource_zip
-                        .file_name()
+                        .as_ref()
+                        .and_then(|p| p.file_name())
                         .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
                 );
                 fs::copy(&temp_zip, &dest_file).map(|_| ()).map_err(Into::into)

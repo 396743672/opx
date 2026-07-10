@@ -1,5 +1,7 @@
 # 忽略内置 zip/exe（由 fetch-builtin.mjs 下载或本地复制，不入 git）
 *.zip
+# 注意：MySQL 8.4.10 压缩包约 267MB，超过 Gitee 单文件 100MB 限制，故不入库，
+# 改为安装时联网从官网 CDN 下载（见 installer.rs install_from_builtin 的回退逻辑）。
 *.exe
 # manifest.json 入 git（记录校验和）
 !manifest.json

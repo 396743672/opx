@@ -226,6 +226,29 @@ mod tests {
         assert_eq!(merged.len(), 2);
     }
 
+    #[test]
+    fn mysql_8_4_10_has_cdn_fallback_mirror() {
+        let catalog = build_builtin_catalog();
+        let mysql = catalog
+            .entries
+            .iter()
+            .find(|e| e.key == "mysql")
+            .expect("catalog 应含 mysql");
+        let v = mysql
+            .versions
+            .iter()
+            .find(|v| v.version == "8.4.10")
+            .expect("mysql 应含 8.4.10");
+        let has_cdn = v
+            .mirrors
+            .iter()
+            .any(|m| m.builtin.is_none() && m.url.starts_with("http"));
+        assert!(
+            has_cdn,
+            "MySQL 8.4.10 应配置官网 CDN 回退源，供本地包缺失时下载"
+        );
+    }
+
     fn make_version(v: &str) -> CatalogVersion {
         CatalogVersion {
             version: v.to_string(),
