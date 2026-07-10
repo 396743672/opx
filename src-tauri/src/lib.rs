@@ -53,6 +53,9 @@ pub fn run() {
             app.manage(std::sync::Arc::new(
                 crate::services::software_manager::SoftwareManager::new(),
             ));
+            app.manage(std::sync::Arc::new(
+                crate::services::website_manager::WebsiteManager::new(),
+            ));
 
             // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
             // guard 必须用 Mutex 包装后 manage 到 Tauri State，
@@ -172,6 +175,11 @@ pub fn run() {
             commands::software::save_custom_start_command,
             commands::software::list_custom_templates,
             commands::software::save_startup_settings,
+            commands::website::list_websites,
+            commands::website::save_website,
+            commands::website::delete_website,
+            commands::website::set_website_enabled,
+            commands::website::upload_site_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
