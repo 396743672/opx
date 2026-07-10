@@ -68,6 +68,15 @@ impl WebsiteManager {
         }
         Self::save_list(&l)
     }
+
+    /// 设置站点的手写模式标记：true 时该站点 conf 由源码视图维护、不参与表单重建
+    pub fn set_custom_conf(&self, id: &str, custom: bool) -> Result<()> {
+        let mut l = self.websites.write().unwrap();
+        if let Some(s) = l.websites.iter_mut().find(|s| s.id == id) {
+            s.custom_conf = custom;
+        }
+        Self::save_list(&l)
+    }
 }
 
 impl Default for WebsiteManager {

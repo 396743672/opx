@@ -218,22 +218,26 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
 /// 调用方必须保证 `data_dir` 仅为 MySQL 的数据子目录（install_path/data），
 /// 而非安装根目录本身；删除前通过 `is_dir()` 二次校验，避免误删安装根。
 pub(crate) fn wipe_data_dir_if_nonempty(data_dir: &std::path::Path) -> anyhow::Result<bool> {
-    let exists_and_nonempty = data_dir.exists()
-        && std::fs::read_dir(data_dir)
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false);
-    if !exists_and_nonempty {
+    // 不存在 → 无需清理
+    if !data_dir.exists() {
         return Ok(false);
     }
-    if data_dir.is_dir() {
-        std::fs::remove_dir_all(data_dir)?;
-    } else {
-        // 不是目录：可能是误用（路径指向安装根或文件），不盲目删除
+    // 存在但不是目录：可能是误用（路径指向安装根或文件），先拦截再判空，
+    // 否则 read_dir 会对文件返回 Err 被吞掉，绕过此护栏。
+    if !data_dir.is_dir() {
         return Err(anyhow::anyhow!(
             "data 路径存在但不是目录，无法安全清空: {}",
             data_dir.display()
         ));
     }
+    // 空目录 → 无需清理
+    let nonempty = std::fs::read_dir(data_dir)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    if !nonempty {
+        return Ok(false);
+    }
+    std::fs::remove_dir_all(data_dir)?;
     std::fs::create_dir_all(data_dir)?;
     Ok(true)
 }

@@ -3,7 +3,7 @@
     <PageHeader icon="mdi:web-box" :title="$t('websiteManagement')" :subtitle="$t('websiteList')">
       <template #actions>
         <button class="btn primary" @click="openNew">
-          <Icon icon="mdi:plus" /> {{ $t('newSite') }}
+          <Icon icon="mdi:web-plus" /> {{ $t('newSite') }}
         </button>
       </template>
     </PageHeader>
@@ -25,12 +25,20 @@
           <div class="font-semibold flex items-center gap-2">
             <Icon icon="mdi:web" class="text-primary" /> {{ s.name }}
           </div>
-          <span
-            class="text-xs px-2 py-0.5 rounded-full"
-            :class="s.enabled ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'"
-          >
-            {{ s.enabled ? $t('running') : $t('stopped') }}
-          </span>
+          <div class="flex items-center gap-1.5">
+            <span
+              v-if="s.custom_conf"
+              class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 inline-flex items-center gap-1"
+            >
+              <Icon icon="mdi:code-tags" /> {{ $t('customConfBadge') }}
+            </span>
+            <span
+              class="text-xs px-2 py-0.5 rounded-full"
+              :class="s.enabled ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'"
+            >
+              {{ s.enabled ? $t('running') : $t('stopped') }}
+            </span>
+          </div>
         </div>
         <div class="text-sm font-mono text-sky-600 mb-2">{{ addr(s) }}</div>
         <div class="flex flex-wrap gap-1 mb-3">
@@ -43,17 +51,24 @@
             {{ l.path }} {{ l.kind === 'Proxy' ? '→ ' + (l.target || '') : $t('typeStatic') }}
           </span>
         </div>
-        <div class="flex gap-2">
-          <button class="btn" @click="openEdit(s)"><Icon icon="mdi:pencil" /> {{ $t('editSite') }}</button>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn" @click="openEdit(s)"><Icon icon="mdi:pencil" /></button>
           <button class="btn" @click="toggle(s)">
-            {{ s.enabled ? $t('stopped') : $t('running') }}
+            <Icon :icon="s.enabled ? 'mdi:stop' : 'mdi:play'" />
           </button>
-          <button class="btn danger" @click="remove(s)"><Icon icon="mdi:delete" /></button>
+          <button
+            class="btn danger"
+            :disabled="s.enabled"
+            :title="s.enabled ? $t('deleteRunningHint') : ''"
+            @click="remove(s)"
+          >
+            <Icon icon="mdi:delete" />
+          </button>
         </div>
       </div>
     </div>
 
-    <SiteEditDialog v-if="editing" :site="editing" @close="editing = null" @saved="onSaved" />
+    <SiteEditDialog v-if="editing" :site="editing" :is-new="isNew" @close="editing = null" @saved="onSaved" />
   </div>
 </template>
 
@@ -61,14 +76,17 @@
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SiteEditDialog from '../components/SiteEditDialog.vue'
 import { emptySite, type Site } from '@/models/website'
 
+const { t } = useI18n()
 const sites = ref<Site[]>([])
 const loading = ref(false)
 const editing = ref<Site | null>(null)
+const isNew = ref(false)
 
 function addr(s: Site): string {
   return s.server_name && s.server_name.trim() ? `${s.server_name}:${s.listen}` : `:${s.listen}`
@@ -86,9 +104,11 @@ async function load() {
 }
 
 function openNew() {
+  isNew.value = true
   editing.value = emptySite()
 }
 function openEdit(s: Site) {
+  isNew.value = false
   editing.value = JSON.parse(JSON.stringify(s))
 }
 function onSaved() {
@@ -106,6 +126,10 @@ async function toggle(s: Site) {
 }
 
 async function remove(s: Site) {
+  if (s.enabled) {
+    window.alert(t('deleteRunningHint'))
+    return
+  }
   if (!confirm(`删除站点「${s.name}」？`)) return
   try {
     await invoke('delete_website', { id: s.id })

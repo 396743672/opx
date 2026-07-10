@@ -11,9 +11,23 @@
       </div>
 
       <div v-if="l.kind === 'Static'" class="space-y-2">
-        <div class="seg">
-          <button :class="l.source === 'Dir' ? 'on' : 'off'" @click="l.source = 'Dir'">{{ $t('sourceDir') }}</button>
-          <button :class="l.source === 'Upload' ? 'on' : 'off'" @click="l.source = 'Upload'">{{ $t('sourceUpload') }}</button>
+        <div class="seg" :class="{ locked }">
+          <button
+            :class="l.source === 'Dir' ? 'on' : 'off'"
+            :disabled="locked"
+            :title="locked ? $t('deployTypeLocked') : ''"
+            @click="!locked && (l.source = 'Dir')"
+          >
+            {{ $t('sourceDir') }}
+          </button>
+          <button
+            :class="l.source === 'Upload' ? 'on' : 'off'"
+            :disabled="locked"
+            :title="locked ? $t('deployTypeLocked') : ''"
+            @click="!locked && (l.source = 'Upload')"
+          >
+            {{ $t('sourceUpload') }}
+          </button>
         </div>
         <div class="flex gap-2">
           <input v-model="l.root" class="input flex-1 font-mono" :placeholder="$t('staticRoot')" />
@@ -37,10 +51,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { SiteLocation } from '@/models/website'
 
-const props = defineProps<{ modelValue: SiteLocation[]; siteId: string }>()
+const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; locked?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [SiteLocation[]] }>()
 
 const model = props.modelValue
+const locked = props.locked ?? false
 
 function add() {
   model.push({ path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null })
@@ -71,6 +86,8 @@ async function upload(l: SiteLocation) {
 .seg button { padding: 4px 10px; font-size: 12px; }
 .seg .on { background: var(--color-primary); color: var(--color-primary-foreground); }
 .seg .off { background: var(--color-card); color: var(--color-muted-foreground); }
+.seg.locked { opacity: 0.6; }
+.seg button:disabled { cursor: not-allowed; }
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; }
 .input:focus { border-color: var(--color-primary); background: var(--color-card); }
 .btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }

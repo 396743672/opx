@@ -208,6 +208,15 @@ export default {
   saveAndApply: 'Save & Apply',
   noSites: 'No sites yet',
   noSitesDesc: 'Click "New Site" to deploy pages with nginx',
+  tabForm: 'Form',
+  tabSource: 'Source',
+  customConfLocked: 'This site uses a custom config; form edits are ignored',
+  sourceNewHint: 'Save the site first to edit its source',
+  restoreForm: 'Restore form-generated',
+  restoreFormConfirm: 'Restoring will discard the custom config and regenerate from the form. Continue?',
+  customConfBadge: 'Custom',
+  deleteRunningHint: 'Stop the site before deleting it',
+  deployTypeLocked: 'Deploy type cannot be changed after creation',
 
   // settings
   appearance: 'Appearance',

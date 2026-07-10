@@ -25,6 +25,8 @@ export interface Site {
   ssl: SslConfig
   enabled: boolean
   locations: SiteLocation[]
+  /** 手写模式：true 时该站点 conf 由源码视图维护，不再被表单自动重建覆盖 */
+  custom_conf?: boolean
 }
 
 /** 新建空站点（前端生成 id） */
@@ -39,5 +41,6 @@ export function emptySite(): Site {
     locations: [
       { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null },
     ],
+    custom_conf: false,
   }
 }

@@ -180,6 +180,9 @@ pub fn run() {
             commands::website::delete_website,
             commands::website::set_website_enabled,
             commands::website::upload_site_bundle,
+            commands::website::get_site_conf,
+            commands::website::set_site_conf,
+            commands::website::unlock_site_conf,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");

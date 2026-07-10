@@ -7,7 +7,17 @@
           <button class="x" @click="$emit('close')"><Icon icon="mdi:close" /></button>
         </div>
 
-        <div class="body">
+        <div class="tab-bar">
+          <button :class="{ active: tab === 'form' }" @click="tab = 'form'">{{ $t('tabForm') }}</button>
+          <button :class="{ active: tab === 'source' }" :disabled="isNew" @click="!isNew && (tab = 'source')">
+            {{ $t('tabSource') }}
+          </button>
+        </div>
+
+        <div class="body" v-if="tab === 'form'">
+          <div v-if="site.custom_conf" class="locked-tip">
+            <Icon icon="mdi:information-outline" /> {{ $t('customConfLocked') }}
+          </div>
           <label class="lbl">{{ $t('siteName') }}</label>
           <input v-model="form.name" class="input w-full mb-3" />
 
@@ -29,13 +39,27 @@
           </label>
 
           <label class="lbl">{{ $t('routeRules') }}</label>
-          <LocationEditor v-model="form.locations" :site-id="form.id" />
+          <LocationEditor v-model="form.locations" :site-id="form.id" :locked="!isNew" />
+        </div>
+
+        <div class="body source-view" v-else>
+          <div v-if="site.custom_conf" class="locked-tip between">
+            <span><Icon icon="mdi:code-tags" /> {{ $t('customConfLocked') }}</span>
+            <button class="btn sm" @click="unlock">{{ $t('restoreForm') }}</button>
+          </div>
+          <textarea ref="sourceText" spellcheck="false" class="source-input" @input="sourceDirty = true"></textarea>
         </div>
 
         <div class="foot">
           <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
-          <button class="btn" :disabled="saving" @click="save(false)">{{ $t('save') }}</button>
-          <button class="btn primary" :disabled="saving" @click="save(true)">{{ $t('saveAndApply') }}</button>
+          <button
+            class="btn primary"
+            :disabled="saving || (tab === 'form' && !!site.custom_conf)"
+            :title="tab === 'form' && site.custom_conf ? $t('customConfLocked') : ''"
+            @click="save()"
+          >
+            {{ $t('save') }}
+          </button>
         </div>
       </div>
     </div>
@@ -43,22 +67,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
 import type { Site } from '@/models/website'
 
-const props = defineProps<{ site: Site }>()
+const { t } = useI18n()
+const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const form = ref<Site>(props.site)
 const saving = ref(false)
+const tab = ref<'form' | 'source'>('form')
+const sourceText = ref<HTMLTextAreaElement | null>(null)
+const sourceDirty = ref(false)
+const sourceLoaded = ref(false)
 
-async function save(apply: boolean) {
+async function save() {
   saving.value = true
   try {
-    await invoke('save_website', { site: form.value, apply })
+    if (tab.value === 'source') {
+      await invoke('set_site_conf', {
+        id: props.site.id,
+        content: sourceText.value?.value ?? '',
+      })
+    } else {
+      // 保存即生效：nginx 运行中时后端自动校验并 reload
+      await invoke('save_website', { site: form.value })
+    }
     emit('saved')
   } catch (e) {
     window.alert(String(e))
@@ -66,6 +104,35 @@ async function save(apply: boolean) {
     saving.value = false
   }
 }
+
+// 解除手写模式：恢复表单生成
+async function unlock() {
+  if (!window.confirm(t('restoreFormConfirm'))) return
+  saving.value = true
+  try {
+    await invoke('unlock_site_conf', { id: props.site.id })
+    emit('saved')
+  } catch (e) {
+    window.alert(String(e))
+  } finally {
+    saving.value = false
+  }
+}
+
+// 切换到源码视图时首次拉取当前配置；已编辑（dirty）则不覆盖
+watch(tab, async (t) => {
+  if (t === 'source' && !sourceDirty.value && !sourceLoaded.value) {
+    try {
+      const src = await invoke<string>('get_site_conf', { id: props.site.id })
+      if (sourceText.value) {
+        sourceText.value.value = src
+      }
+      sourceLoaded.value = true
+    } catch (e) {
+      console.error(e)
+    }
+  }
+})
 </script>
 
 <style scoped>
@@ -83,5 +150,15 @@ async function save(apply: boolean) {
 .input:focus { border-color: var(--color-primary); background: var(--color-card); }
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); }
+.tab-bar button { height: 32px; padding: 0 14px; border: none; background: transparent; color: var(--color-muted-foreground); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab-bar button.active { color: var(--color-foreground); border-bottom-color: var(--color-primary); }
+.tab-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+.source-view { display: flex; flex-direction: column; gap: 10px; }
+.source-input { width: 100%; min-height: 340px; padding: 12px; background: var(--color-muted); border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; tab-size: 4; outline: none; resize: vertical; box-sizing: border-box; }
+.source-input:focus { border-color: var(--color-primary); }
+.locked-tip { display: flex; align-items: center; gap: 6px; padding: 8px 10px; margin-bottom: 12px; border-radius: 6px; background: oklch(0.7 0.12 300 / 0.12); color: oklch(0.55 0.15 300); font-size: 12px; }
+.locked-tip.between { justify-content: space-between; margin-bottom: 0; }
 </style>

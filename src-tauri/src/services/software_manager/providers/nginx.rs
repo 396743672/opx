@@ -96,7 +96,21 @@ impl SoftwareProvider for NginxProvider {
         }
     }
 
-    fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
+    fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // 安装后向主配置注入：
+        // 1. include sites/*.conf; —— 站点管理生成的 server 块由此加载
+        // 2. map $http_upgrade $connection_upgrade {...} —— WebSocket 反代所需变量
+        // 二者均幂等，重复安装/已存在时不重复注入。
+        use crate::services::website_manager::nginx_conf;
+        let conf_path = PathBuf::from(&ctx.install_path)
+            .join("conf")
+            .join("nginx.conf");
+        if let Ok(content) = std::fs::read_to_string(&conf_path) {
+            let updated = nginx_conf::ensure_map_upgrade(&nginx_conf::ensure_include(&content));
+            if updated != content {
+                std::fs::write(&conf_path, updated)?;
+            }
+        }
         Ok(())
     }
 

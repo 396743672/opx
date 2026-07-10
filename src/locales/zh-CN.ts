@@ -208,6 +208,15 @@ export default {
   saveAndApply: '保存并生效',
   noSites: '还没有站点',
   noSitesDesc: '点击"新建站点"用 nginx 部署你的页面',
+  tabForm: '表单视图',
+  tabSource: '源码视图',
+  customConfLocked: '该站点已切换为手写配置，表单编辑将被忽略',
+  sourceNewHint: '请先保存站点后再编辑源码',
+  restoreForm: '恢复表单生成',
+  restoreFormConfirm: '恢复表单生成将丢弃手写配置，改用表单重新生成，确定？',
+  customConfBadge: '手写',
+  deleteRunningHint: '请先停用站点后再删除',
+  deployTypeLocked: '部署类型创建后不可修改',
 
   // 设置
   appearance: '外观',
