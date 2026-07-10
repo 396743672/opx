@@ -3,6 +3,7 @@ export default {
   systemMonitor: 'System Monitor',
   softwareManagement: 'Software Management',
   softwareRepository: 'Software Repository',
+  websiteManagement: 'Website Management',
   springBoot: 'SpringBoot',
   settings: 'Settings',
 
@@ -183,6 +184,30 @@ export default {
   startAll: 'Start All',
   stopAll: 'Stop All',
   startingInOrder: 'Starting in order...',
+
+  // ===== Website Management =====
+  websiteList: 'Sites',
+  newSite: 'New Site',
+  editSite: 'Edit Site',
+  siteName: 'Site Name',
+  serverNameLabel: 'Domain (optional)',
+  serverNameHint: 'Leave empty to access by port only',
+  listenPort: 'Listen Port',
+  httpsReserved: 'Enable HTTPS (cert path…) — coming soon',
+  routeRules: 'Route Rules',
+  addRoute: 'Add Route',
+  routePath: 'Path',
+  typeStatic: 'Static',
+  typeProxy: 'Proxy',
+  sourceDir: 'Point to Dir',
+  sourceUpload: 'Upload',
+  staticRoot: 'Static Dir',
+  uploadZip: 'Upload zip',
+  proxyTarget: 'Backend',
+  proxyHint: 'Forward only; backend not managed here',
+  saveAndApply: 'Save & Apply',
+  noSites: 'No sites yet',
+  noSitesDesc: 'Click "New Site" to deploy pages with nginx',
 
   // settings
   appearance: 'Appearance',

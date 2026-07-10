@@ -3,6 +3,7 @@ export default {
   systemMonitor: '系统监控',
   softwareManagement: '软件管理',
   softwareRepository: '软件仓库',
+  websiteManagement: '网站管理',
   springBoot: 'SpringBoot',
   settings: '系统设置',
 
@@ -183,6 +184,30 @@ export default {
   startAll: '批量启动',
   stopAll: '全部停止',
   startingInOrder: '按顺序启动中...',
+
+  // ===== 网站管理 =====
+  websiteList: '站点列表',
+  newSite: '新建站点',
+  editSite: '编辑站点',
+  siteName: '站点名称',
+  serverNameLabel: '域名（可空）',
+  serverNameHint: '留空则只按端口访问',
+  listenPort: '监听端口',
+  httpsReserved: '启用 HTTPS（证书路径…）— 即将支持',
+  routeRules: '路由规则',
+  addRoute: '添加路由规则',
+  routePath: '路径',
+  typeStatic: '静态',
+  typeProxy: '反代',
+  sourceDir: '指向目录',
+  sourceUpload: '上传部署',
+  staticRoot: '静态目录',
+  uploadZip: '上传 zip',
+  proxyTarget: '后端地址',
+  proxyHint: '仅转发，不启停该后端',
+  saveAndApply: '保存并生效',
+  noSites: '还没有站点',
+  noSitesDesc: '点击"新建站点"用 nginx 部署你的页面',
 
   // 设置
   appearance: '外观',

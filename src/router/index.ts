@@ -24,6 +24,12 @@ const routes = [
     meta: { title: 'softwareManagement' },
   },
   {
+    path: '/websites',
+    name: 'websites',
+    component: () => import('@/modules/website-manager/pages/WebsiteListPage.vue'),
+    meta: { title: 'websiteManagement' },
+  },
+  {
     path: '/springboot',
     name: 'springboot',
     component: () => import('@/modules/springboot-manager/pages/SpringBootPage.vue'),
