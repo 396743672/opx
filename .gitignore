@@ -30,3 +30,4 @@ design-mockup.html
 *.sw?
 /.vscode/
 /.workbuddy/
+/.claude/

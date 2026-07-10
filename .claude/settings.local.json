@@ -18,7 +18,17 @@
       "Bash(curl -sL \"https://api.github.com/repos/t8y2/dbx/contents/src-tauri/src\")",
       "Bash(curl -sL \"https://api.github.com/repos/t8y2/dbx/contents/apps/desktop/src\")",
       "Bash(curl -sL \"https://api.github.com/repos/t8y2/dbx/contents/apps/desktop/src/components\")",
-      "Bash(curl -sL \"https://api.github.com/repos/t8y2/dbx/contents/apps/desktop/src/views\")"
+      "Bash(curl -sL \"https://api.github.com/repos/t8y2/dbx/contents/apps/desktop/src/views\")",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(npm run *)",
+      "Bash(cd /d/object/opx/src-tauri/target/debug/apps/nginx/1.31.2/conf/sites)",
+      "Bash(ls -la)",
+      "Bash(cat /d/object/opx/src-tauri/target/debug/config/websites.json)",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git push *)"
     ]
   }
 }
