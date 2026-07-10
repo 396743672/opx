@@ -243,7 +243,9 @@ impl SoftwareProvider for RedisProvider {
                 ConfigField {
                     key: "maxmemory".to_string(),
                     label_i18n: "configField.maxmemory".to_string(),
-                    field_type: ConfigFieldType::Text,
+                    field_type: ConfigFieldType::Size {
+                        units: vec!["mb".to_string(), "gb".to_string()],
+                    },
                     default_value: serde_json::json!("256mb"),
                     section: None,
                     description_i18n: None,

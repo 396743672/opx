@@ -215,8 +215,34 @@ impl SoftwareProvider for NginxProvider {
                 ConfigField {
                     key: "worker_processes".to_string(),
                     label_i18n: "configField.workerProcesses".to_string(),
-                    field_type: ConfigFieldType::Number,
-                    default_value: serde_json::json!(4),
+                    field_type: ConfigFieldType::Select {
+                        options: vec![
+                            "auto".to_string(),
+                            "1".to_string(),
+                            "2".to_string(),
+                            "4".to_string(),
+                            "8".to_string(),
+                            "16".to_string(),
+                        ],
+                    },
+                    // auto = nginx 自动取 CPU 核数（最优），故默认 auto 即按当前系统 CPU 最优
+                    default_value: serde_json::json!("auto"),
+                    section: None,
+                    description_i18n: None,
+                },
+                ConfigField {
+                    key: "worker_connections".to_string(),
+                    label_i18n: "configField.workerConnections".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec![
+                            "512".to_string(),
+                            "1024".to_string(),
+                            "2048".to_string(),
+                            "4096".to_string(),
+                            "8192".to_string(),
+                        ],
+                    },
+                    default_value: serde_json::json!("1024"),
                     section: None,
                     description_i18n: None,
                 },
@@ -350,13 +376,14 @@ mod tests {
     }
 
     #[test]
-    fn nginx_config_schema_has_three_fields() {
+    fn nginx_config_schema_has_four_fields() {
         let p = NginxProvider::new();
         let schema = p.config_schema().expect("Nginx 应有 schema");
-        assert_eq!(schema.fields.len(), 3);
+        assert_eq!(schema.fields.len(), 4);
         let keys: Vec<_> = schema.fields.iter().map(|f| f.key.as_str()).collect();
         assert!(keys.contains(&"listen"));
         assert!(keys.contains(&"worker_processes"));
+        assert!(keys.contains(&"worker_connections"));
         assert!(keys.contains(&"root"));
         for f in &schema.fields {
             assert!(f.section.is_none(), "Nginx 字段 {} 不应有 section", f.key);

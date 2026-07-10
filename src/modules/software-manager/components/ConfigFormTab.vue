@@ -32,6 +32,21 @@
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
           <option v-for="opt in selectOptions(field)" :key="opt" :value="opt">{{ opt }}</option>
         </select>
+        <div v-else-if="isSize(field)" class="size-field">
+          <input
+            type="number"
+            class="input tnum"
+            :value="sizeNum(field.key)"
+            @input="setSize(field, ($event.target as HTMLInputElement).value, sizeUnit(field))"
+          />
+          <select
+            class="input unit"
+            :value="sizeUnit(field)"
+            @change="setSize(field, sizeNum(field.key), ($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="u in sizeUnits(field)" :key="u" :value="u">{{ u }}</option>
+          </select>
+        </div>
         <div v-if="field.description_i18n" class="form-field-desc">{{ $t(field.description_i18n) }}</div>
       </div>
     </div>
@@ -96,6 +111,30 @@ function selectOptions(f: ConfigField): string[] {
   return f.field_type.type === 'Select' ? f.field_type.options : []
 }
 
+// Size 字段：值形如 "256mb"，拆成「数字 + 单位」编辑，单位只能从下拉里选（防手写单位出错）
+function isSize(f: ConfigField) {
+  return f.field_type.type === 'Size'
+}
+function sizeUnits(f: ConfigField): string[] {
+  return f.field_type.type === 'Size' ? f.field_type.units : []
+}
+function parseSize(v: unknown): { num: string; unit: string } {
+  const s = String(v ?? '')
+  const m = s.match(/^\s*(\d+)\s*([a-zA-Z]+)\s*$/)
+  return m ? { num: m[1], unit: m[2] } : { num: s.replace(/\D/g, ''), unit: '' }
+}
+function sizeNum(key: string): string {
+  return parseSize(formData.value[key]).num
+}
+function sizeUnit(f: ConfigField): string {
+  const u = parseSize(formData.value[f.key]).unit
+  const units = sizeUnits(f)
+  return u && units.includes(u) ? u : (units[0] ?? '')
+}
+function setSize(f: ConfigField, num: string, unit: string) {
+  formData.value[f.key] = `${num}${unit}`
+}
+
 // ephemeral 字段（如 MySQL 初始化密码）：渲染为红色敏感字段，不落盘
 function isEphemeral(f: ConfigField): boolean {
   return (props.schema?.ephemeral_keys ?? []).includes(f.key)
@@ -146,6 +185,14 @@ defineExpose({ formData })
 }
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+.size-field {
+  display: flex;
+  gap: 8px;
+}
+.size-field .unit {
+  width: 90px;
+  flex: none;
 }
 .form-field-desc {
   font-size: 11px;

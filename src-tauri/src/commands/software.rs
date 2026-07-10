@@ -247,6 +247,45 @@ pub async fn start_software(
     Ok(())
 }
 
+/// 收集软件启动将监听的端口，用于启动前占用校验。
+/// 标准软件：取 config_schema 中 field_type=Port 的字段，从 config 读端口值（缺失回退字段默认值）。
+/// 自定义软件：从 custom_start_command 的健康检查规格推导（Tcp 端口 / Http url 端口）。
+fn collect_configured_ports(
+    software: &InstalledSoftware,
+    provider: &dyn providers::SoftwareProvider,
+) -> Vec<u16> {
+    use crate::models::software::{ConfigFieldType, CustomHealthSpec};
+    let mut ports = Vec::new();
+    if software.is_custom {
+        if let Some(c) = &software.custom_start_command {
+            match &c.health_check {
+                CustomHealthSpec::Tcp { port } => ports.push(*port),
+                CustomHealthSpec::Http { url, .. } => {
+                    if let Some(p) = reqwest::Url::parse(url)
+                        .ok()
+                        .and_then(|u| u.port_or_known_default())
+                    {
+                        ports.push(p);
+                    }
+                }
+                CustomHealthSpec::None => {}
+            }
+        }
+    } else if let Some(schema) = provider.config_schema() {
+        for field in &schema.fields {
+            if matches!(field.field_type, ConfigFieldType::Port) {
+                let v = software.config.get(&field.key).unwrap_or(&field.default_value);
+                if let Some(p) = v.as_u64() {
+                    if (1..=65535).contains(&p) {
+                        ports.push(p as u16);
+                    }
+                }
+            }
+        }
+    }
+    ports
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -263,6 +302,17 @@ pub async fn do_start_software(
         .iter()
         .find(|p| p.key() == software.key)
         .ok_or_else(|| anyhow::anyhow!("未找到 provider: {}", software.key))?;
+
+    // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
+    // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
+    for port in collect_configured_ports(&software, &**provider) {
+        if !health_check::is_port_free(port) {
+            return Err(anyhow::anyhow!(
+                "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",
+                port
+            ));
+        }
+    }
 
     let start_ctx = StartContext {
         installed_id: software.id.clone(),
@@ -714,9 +764,26 @@ pub async fn restart_software(
     let app_clone = app.clone();
     let installed_id_clone = installed_id.clone();
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-    do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password).await {
+        // 启动失败（如端口占用）：置为 Error 并 emit，让管理页显示失败原因
+        let msg = format!("启动失败：{}", e);
+        let _ = manager_arc.update_runtime_fields(
+            &installed_id_clone,
+            SoftwareStatus::Error,
+            None,
+            None,
+            None,
+            Some(msg.clone()),
+        );
+        lifecycle::emit_status_changed(
+            &app_clone,
+            &installed_id_clone,
+            SoftwareStatus::Error,
+            None,
+            Some(msg.clone()),
+        );
+        return Err(msg);
+    }
     Ok(())
 }
 

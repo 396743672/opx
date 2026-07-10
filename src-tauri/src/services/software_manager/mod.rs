@@ -30,6 +30,24 @@ pub struct SoftwareManager {
     install_tasks: Mutex<HashMap<String, InstallTaskState>>,
 }
 
+/// 启动对账：应用刚启动时子进程都不在，把上次退出残留的"运行中/启动中/停止中/初始化中"
+/// 重置为 Stopped 并清 PID，避免按钮卡在"启动中"（如退出 stop_all_on_exit 杀了进程但未落盘状态，
+/// 或应用崩溃/被强杀）。Stopped/Error/Unknown 保持不变。
+fn reconcile_stale_statuses(list: &mut InstalledSoftwareList) {
+    for s in &mut list.software {
+        if matches!(
+            s.status,
+            SoftwareStatus::Running
+                | SoftwareStatus::Starting
+                | SoftwareStatus::Stopping
+                | SoftwareStatus::Initializing
+        ) {
+            s.status = SoftwareStatus::Stopped;
+            s.pid = None;
+        }
+    }
+}
+
 impl SoftwareManager {
     pub fn new() -> Self {
         let builtin = catalog::build_builtin_catalog();
@@ -151,7 +169,8 @@ impl SoftwareManager {
             return Ok(InstalledSoftwareList::default());
         }
         let content = std::fs::read_to_string(&path)?;
-        let list = serde_json::from_str(&content)?;
+        let mut list: InstalledSoftwareList = serde_json::from_str(&content)?;
+        reconcile_stale_statuses(&mut list);
         Ok(list)
     }
 
@@ -347,6 +366,36 @@ mod tests {
             last_error: None,
             custom_start_command: None,
         }
+    }
+
+    #[test]
+    fn reconcile_resets_stale_active_statuses_to_stopped() {
+        let mut list = InstalledSoftwareList::default();
+        for (st, pid) in [
+            (SoftwareStatus::Running, Some(111)),
+            (SoftwareStatus::Starting, Some(222)),
+            (SoftwareStatus::Stopping, Some(333)),
+            (SoftwareStatus::Initializing, None),
+        ] {
+            let mut s = make_installed("mysql", "8.4.0");
+            s.status = st;
+            s.pid = pid;
+            list.software.push(s);
+        }
+        // Error / Stopped 应保持不变
+        let mut err = make_installed("redis", "7.0");
+        err.status = SoftwareStatus::Error;
+        err.pid = Some(999);
+        list.software.push(err);
+
+        reconcile_stale_statuses(&mut list);
+
+        for s in &list.software[..4] {
+            assert_eq!(s.status, SoftwareStatus::Stopped);
+            assert_eq!(s.pid, None);
+        }
+        assert_eq!(list.software[4].status, SoftwareStatus::Error);
+        assert_eq!(list.software[4].pid, Some(999));
     }
 
     #[test]

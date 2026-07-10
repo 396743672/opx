@@ -79,6 +79,11 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
         const { installed_id, status, pid, error } = e.payload
         // 直接传 pid/error（可能是 null），让 setStatus 区分 null（清除）与 undefined（不改）
         setStatus(installed_id, status as SoftwareStatus, pid, error)
+        // 启动/重启失败（如端口占用）弹框提示原因，而不只是把按钮状态置为 Error。
+        // ponytail: 用原生 alert（本项目已在用 confirm），需要更友好样式再换 toast 组件。
+        if (status === SoftwareStatus.Error && error) {
+          window.alert(error)
+        }
       },
     )
   }

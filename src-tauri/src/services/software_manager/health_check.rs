@@ -81,6 +81,12 @@ pub async fn http_probe(url: &str, expected_status: u16, timeout: Duration) -> b
     }
 }
 
+/// 检测本机端口是否空闲：能 bind 127.0.0.1:port 即视为空闲，bind 失败即被占用。
+/// ponytail: 只探 127.0.0.1，绑 0.0.0.0 的软件极少见；需要时再扩。
+pub fn is_port_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
 pub fn is_process_alive(pid: u32) -> bool {
     let mut sys = sysinfo::System::new();
     // 单 PID 刷新，比 refresh_processes(All) 快 10-50 倍
@@ -139,6 +145,16 @@ mod tests {
     #[test]
     fn is_process_alive_returns_false_for_invalid_pid() {
         assert!(!is_process_alive(99999999));
+    }
+
+    #[test]
+    fn is_port_free_detects_occupied_port() {
+        // 自己 bind 一个端口后，is_port_free 应判定为被占用
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!is_port_free(port), "已被本测试占用的端口应判定为占用");
+        drop(listener);
+        assert!(is_port_free(port), "释放后端口应恢复空闲");
     }
 
     #[test]

@@ -283,8 +283,10 @@ lower_case_table_names=1\n",
                 ConfigField {
                     key: "innodb_buffer_pool_size".to_string(),
                     label_i18n: "configField.innodbBufferPool".to_string(),
-                    field_type: ConfigFieldType::Number,
-                    default_value: serde_json::json!(128),
+                    field_type: ConfigFieldType::Size {
+                        units: vec!["M".to_string(), "G".to_string()],
+                    },
+                    default_value: serde_json::json!("128M"),
                     section: Some("[mysqld]".to_string()),
                     description_i18n: None,
                 },

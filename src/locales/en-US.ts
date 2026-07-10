@@ -291,6 +291,7 @@ export default {
     requirepass: 'Password',
     listen: 'Listen Port',
     workerProcesses: 'Worker Processes',
+    workerConnections: 'Worker Connections',
     root: 'Root Directory',
     apiPort: 'API Port',
     apiPortDesc: 'S3 API listen port',

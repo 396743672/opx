@@ -113,8 +113,9 @@ const canStop = computed(
     !isRuntime.value &&
     (props.software.status === SoftwareStatus.Running ||
       props.software.status === SoftwareStatus.Starting ||
-      props.software.status === SoftwareStatus.Error ||
-      props.software.status === SoftwareStatus.Initializing) &&
+      props.software.status === SoftwareStatus.Initializing ||
+      // Error 仅在仍有存活进程时可停止（如健康检查超时）；启动失败/崩溃无 PID，不显示停止
+      (props.software.status === SoftwareStatus.Error && props.software.pid != null)) &&
     props.actingStates?.[props.software.id] !== 'stop',
 )
 

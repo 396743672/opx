@@ -291,6 +291,7 @@ export default {
     requirepass: '访问密码',
     listen: '监听端口',
     workerProcesses: '工作进程数',
+    workerConnections: '每进程连接数',
     root: '根目录',
     apiPort: 'API 端口',
     apiPortDesc: 'S3 API 监听端口',

@@ -146,11 +146,14 @@ function mergeStatus(item: InstalledSoftware): InstalledSoftware {
 
   // 根据状态决定显示：
   // - Running/Starting: 显示 pid（进程在跑）
-  // - Stopped/Error: 清除 pid 显示（进程已停）
+  // - Error: 保留事件带回的 pid（健康检查超时时进程仍活，可停止；启动失败/崩溃时 pid 为 null）
+  // - Stopped: 清除 pid 显示
   // - Running/Stopped: 清除 last_error（旧错误不展示）
   // - Error: 显示 last_error（错误原因）
   const pid =
-    status === SoftwareStatus.Running || status === SoftwareStatus.Starting
+    status === SoftwareStatus.Running ||
+    status === SoftwareStatus.Starting ||
+    status === SoftwareStatus.Error
       ? (livePid ?? item.pid)
       : null
   const last_error = status === SoftwareStatus.Error ? (liveError ?? item.last_error) : null
