@@ -30,7 +30,7 @@
           </button>
         </div>
         <div class="flex gap-2">
-          <input v-model="l.root" class="input flex-1 font-mono" :placeholder="$t('staticRoot')" />
+          <input v-model="l.root" class="input flex-1 font-mono" :placeholder="$t('staticRoot')" :readonly="!!l.root && l.source === 'Upload'" :title="l.root && l.source === 'Upload' ? $t('uploadPathReadonly') : ''" />
           <button v-if="l.source === 'Upload'" class="btn" @click="upload(l)"><Icon icon="mdi:upload" /> {{ $t('uploadZip') }}</button>
         </div>
       </div>
@@ -51,7 +51,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { SiteLocation } from '@/models/website'
 
-const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; locked?: boolean }>()
+const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; siteName: string; locked?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [SiteLocation[]] }>()
 
 const model = props.modelValue
@@ -72,6 +72,7 @@ async function upload(l: SiteLocation) {
   try {
     l.root = await invoke<string>('upload_site_bundle', {
       id: props.siteId,
+      name: props.siteName,
       locPath: l.path,
       zipPath: file,
     })

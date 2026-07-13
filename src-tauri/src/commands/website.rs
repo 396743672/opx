@@ -173,18 +173,25 @@ pub fn set_website_enabled(
     regenerate(&sm, &wm, true)
 }
 
-/// 上传静态包：解压 zip 到 <nginx>/sites-data/<id>/<sanitized-path>/，返回该目录路径供前端写入 location.root
+/// 上传静态包：解压 zip 到 <nginx>/sites-data/<sanitized_name>/<sanitized-path>/，返回该目录路径供前端写入 location.root
 #[tauri::command]
 pub fn upload_site_bundle(
     sm: State<'_, Arc<SoftwareManager>>,
     id: String,
+    name: String,
     loc_path: String,
     zip_path: String,
 ) -> Result<String, String> {
     let nginx = resolve_nginx(&sm)?;
     let base = PathBuf::from(&nginx.install_path);
+    let name_seg = sanitize_seg(&name);
+    let name_seg = if name_seg.is_empty() || name_seg == "root" {
+        id.chars().take(8).collect::<String>()
+    } else {
+        name_seg
+    };
     let sub = sanitize_seg(&loc_path);
-    let dest = base.join("sites-data").join(&id).join(&sub);
+    let dest = base.join("sites-data").join(&name_seg).join(&sub);
     // 重新上传：先清空目标目录
     let _ = std::fs::remove_dir_all(&dest);
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;

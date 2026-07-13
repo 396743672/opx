@@ -34,9 +34,10 @@
             </span>
             <span
               class="text-xs px-2 py-0.5 rounded-full"
-              :class="s.enabled ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'"
+              :class="s.enabled && nginxRunning ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'"
+              :title="s.enabled && !nginxRunning ? $t('nginxNotRunning') : ''"
             >
-              {{ s.enabled ? $t('running') : $t('stopped') }}
+              {{ s.enabled && nginxRunning ? $t('running') : $t('stopped') }}
             </span>
           </div>
         </div>
@@ -87,6 +88,7 @@ const sites = ref<Site[]>([])
 const loading = ref(false)
 const editing = ref<Site | null>(null)
 const isNew = ref(false)
+const nginxRunning = ref(false)
 
 function addr(s: Site): string {
   return s.server_name && s.server_name.trim() ? `${s.server_name}:${s.listen}` : `:${s.listen}`
@@ -96,6 +98,10 @@ async function load() {
   loading.value = true
   try {
     sites.value = await invoke<Site[]>('list_websites')
+    // 检查 nginx 是否在运行
+    const installed = await invoke<any[]>('list_installed_software')
+    const nginx = installed.find((s: any) => s.key === 'nginx')
+    nginxRunning.value = nginx?.status === 'Running'
   } catch (e) {
     console.error(e)
   } finally {
@@ -117,6 +123,11 @@ function onSaved() {
 }
 
 async function toggle(s: Site) {
+  // 若启用站点但 nginx 未运行，先提示
+  if (!s.enabled && !nginxRunning.value) {
+    window.alert(t('nginxNotRunning'))
+    return
+  }
   try {
     await invoke('set_website_enabled', { id: s.id, enabled: !s.enabled })
     load()

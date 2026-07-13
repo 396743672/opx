@@ -18,8 +18,10 @@
           <div v-if="site.custom_conf" class="locked-tip">
             <Icon icon="mdi:information-outline" /> {{ $t('customConfLocked') }}
           </div>
-          <label class="lbl">{{ $t('siteName') }}</label>
-          <input v-model="form.name" class="input w-full mb-3" />
+          <label class="lbl">{{ $t('siteName') }} <span class="text-destructive">*</span></label>
+          <input v-model="form.name" class="input w-full mb-1" :class="{ 'border-destructive': nameError }" @input="nameError = ''" />
+          <div v-if="nameError" class="text-xs text-destructive mb-3">{{ nameError }}</div>
+          <div v-else class="text-xs hint mb-3">{{ $t('siteNameHint') }}</div>
 
           <div class="flex gap-3 mb-3">
             <div class="flex-1">
@@ -39,7 +41,7 @@
           </label>
 
           <label class="lbl">{{ $t('routeRules') }}</label>
-          <LocationEditor v-model="form.locations" :site-id="form.id" :locked="!isNew" />
+          <LocationEditor v-model="form.locations" :site-id="form.id" :site-name="form.name" :locked="!isNew" />
         </div>
 
         <div class="body source-view" v-else>
@@ -84,8 +86,24 @@ const tab = ref<'form' | 'source'>('form')
 const sourceText = ref<HTMLTextAreaElement | null>(null)
 const sourceDirty = ref(false)
 const sourceLoaded = ref(false)
+const nameError = ref('')
+
+function validateName(): boolean {
+  const v = form.value.name.trim()
+  if (!v) {
+    nameError.value = t('siteNameRequired')
+    return false
+  }
+  if (/[\u4e00-\u9fff\u3400-\u4dbf]/.test(v)) {
+    nameError.value = t('siteNameNoCJK')
+    return false
+  }
+  nameError.value = ''
+  return true
+}
 
 async function save() {
+  if (tab.value === 'form' && !validateName()) return
   saving.value = true
   try {
     if (tab.value === 'source') {

@@ -217,6 +217,11 @@ export default {
   customConfBadge: '手写',
   deleteRunningHint: '请先停用站点后再删除',
   deployTypeLocked: '部署类型创建后不可修改',
+  siteNameRequired: '站点名称不能为空',
+  siteNameNoCJK: '站点名称不能包含中文',
+  siteNameHint: '仅支持英文、数字和连字符，创建后不可修改部署类型',
+  uploadPathReadonly: '上传部署路径由系统自动生成',
+  nginxNotRunning: 'Web 服务器（nginx）未启动，请先启动 nginx',
 
   // 设置
   appearance: '外观',

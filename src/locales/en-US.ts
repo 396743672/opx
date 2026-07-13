@@ -217,6 +217,11 @@ export default {
   customConfBadge: 'Custom',
   deleteRunningHint: 'Stop the site before deleting it',
   deployTypeLocked: 'Deploy type cannot be changed after creation',
+  siteNameRequired: 'Site name is required',
+  siteNameNoCJK: 'Chinese characters not allowed in site name',
+  siteNameHint: 'English, numbers and hyphens only. Deploy type locked after creation.',
+  uploadPathReadonly: 'Upload path is auto-generated',
+  nginxNotRunning: 'Nginx is not running. Please start it first.',
 
   // settings
   appearance: 'Appearance',
