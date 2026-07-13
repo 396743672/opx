@@ -274,13 +274,18 @@ fn kv_upsert(
         let mut parts = t.splitn(2, char::is_whitespace);
         if let Some(k) = parts.next() {
             if k == key {
-                lines[i] = format!("{} {}", key, v_str);
+                if v_str.is_empty() {
+                    // 空值：注释掉该行，避免配置文件中出现 bare key 如 `requirepass` 导致启动失败
+                    lines[i] = format!("#{}", lines[i]);
+                } else {
+                    lines[i] = format!("{} {}", key, v_str);
+                }
                 found = true;
                 break;
             }
         }
     }
-    if !found {
+    if !found && !v_str.is_empty() {
         lines.push(format!("{} {}", key, v_str));
     }
     Ok(lines.join("\n"))
@@ -321,13 +326,17 @@ fn nginx_upsert(
         let mut parts = t.splitn(2, char::is_whitespace);
         if let Some(k) = parts.next() {
             if k == key {
-                lines[i] = format!("{} {};", key, v_str);
+                if v_str.is_empty() {
+                    lines[i] = format!("#{}", lines[i]);
+                } else {
+                    lines[i] = format!("{} {};", key, v_str);
+                }
                 found = true;
                 break;
             }
         }
     }
-    if !found {
+    if !found && !v_str.is_empty() {
         lines.push(format!("{} {};", key, v_str));
     }
     Ok(lines.join("\n"))
