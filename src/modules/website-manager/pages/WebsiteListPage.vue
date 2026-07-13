@@ -53,17 +53,14 @@
           </span>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <button class="btn" :disabled="s.enabled" :title="s.enabled ? $t('runningSiteConfigDisabled') : ''" @click="openEdit(s)"><Icon icon="mdi:pencil" /></button>
-          <button class="btn" @click="toggle(s)">
-            <Icon :icon="s.enabled ? 'mdi:stop' : 'mdi:play'" />
+          <button class="btn" :disabled="s.enabled" :title="s.enabled ? $t('runningSiteConfigDisabled') : ''" @click="openEdit(s)">
+            <Icon icon="mdi:pencil" /> {{ $t('editSite') }}
           </button>
-          <button
-            class="btn danger"
-            :disabled="s.enabled"
-            :title="s.enabled ? $t('deleteRunningHint') : ''"
-            @click="remove(s)"
-          >
-            <Icon icon="mdi:delete" />
+          <button class="btn" :class="s.enabled ? 'primary' : ''" @click="toggle(s)">
+            <Icon :icon="s.enabled ? 'mdi:stop' : 'mdi:play'" /> {{ s.enabled ? $t('stop') : $t('start') }}
+          </button>
+          <button class="btn danger" :disabled="s.enabled" :title="s.enabled ? $t('deleteRunningHint') : ''" @click="remove(s)">
+            <Icon icon="mdi:delete" /> {{ $t('delete') }}
           </button>
         </div>
       </div>
