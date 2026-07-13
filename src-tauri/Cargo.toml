@@ -49,6 +49,3 @@ winapi = { version = "0.3", features = ["winbase", "winnt", "handleapi"] }
 default = []
 service = ["windows-service"]
 
-[dev-dependencies]
-mockito = "1.0"
-tempfile = "3.0"
