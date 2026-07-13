@@ -141,3 +141,40 @@ async function remove(s: Site) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-foreground);
+}
+.btn:hover {
+  background: var(--color-muted);
+}
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
+}
+.btn.danger {
+  background: var(--color-destructive);
+  color: white;
+  border-color: var(--color-destructive);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+</style>
