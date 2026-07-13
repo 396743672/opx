@@ -110,6 +110,26 @@ pub fn ensure_map_upgrade(nginx_conf: &str) -> String {
     nginx_conf.to_string()
 }
 
+/// 确保主配置 http {} 块内含常用推荐设置（幂等）：
+/// - client_max_body_size 200m
+/// - underscores_in_headers on
+/// - gzip on（原生配置里该行被注释，改为启用）
+pub fn ensure_common_settings(nginx_conf: &str) -> String {
+    let mut out = nginx_conf.to_string();
+
+    if !out.contains("client_max_body_size") {
+        out = out.replace("keepalive_timeout  65;", "keepalive_timeout  65;\n    client_max_body_size 200m;");
+    }
+    if !out.contains("underscores_in_headers") {
+        out = out.replace("client_max_body_size 200m;", "client_max_body_size 200m;\n    underscores_in_headers on;");
+    }
+    if out.contains("#gzip  on;") {
+        out = out.replace("#gzip  on;", "gzip  on;");
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +218,18 @@ mod tests {
         assert!(once.contains("''      close;"));
         let twice = ensure_map_upgrade(&once);
         assert_eq!(once, twice, "已有 map 时不应重复注入");
+    }
+
+    #[test]
+    fn ensure_common_settings_injects_and_is_idempotent() {
+        let conf = "keepalive_timeout  65;\n    #gzip  on;\n";
+        let once = ensure_common_settings(conf);
+        assert!(once.contains("client_max_body_size 200m;"));
+        assert!(once.contains("underscores_in_headers on;"));
+        assert!(once.contains("gzip  on;"));
+        assert!(!once.contains("#gzip  on;"));
+        let twice = ensure_common_settings(&once);
+        assert_eq!(once, twice, "已有设置时不应重复注入");
     }
 
     #[test]
