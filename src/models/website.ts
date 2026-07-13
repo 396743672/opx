@@ -37,7 +37,7 @@ export function emptySite(): Site {
     server_name: '',
     listen: 80,
     ssl: { enabled: false, cert_path: null, key_path: null },
-    enabled: true,
+    enabled: false,
     locations: [
       { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null },
       { path: '/api', kind: 'Proxy', source: null, root: null, spa_fallback: false, target: null },
