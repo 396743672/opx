@@ -59,7 +59,7 @@
           <button class="btn" :class="s.enabled ? 'primary' : ''" @click="toggle(s)">
             <Icon :icon="s.enabled ? 'mdi:stop' : 'mdi:play'" /> {{ s.enabled ? $t('stop') : $t('start') }}
           </button>
-          <button class="btn danger" :disabled="s.enabled" :title="s.enabled ? $t('deleteRunningHint') : ''" @click="remove(s)">
+          <button class="btn danger" :disabled="s.enabled && nginxRunning" :title="s.enabled && nginxRunning ? $t('deleteRunningHint') : ''" @click="remove(s)">
             <Icon icon="mdi:delete" /> {{ $t('delete') }}
           </button>
         </div>
