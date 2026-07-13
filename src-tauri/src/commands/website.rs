@@ -77,24 +77,22 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
 
 /// 同步 sites 目录下的 conf 文件到与站点列表一致的状态（纯文件 IO，便于单测）。
 ///
-/// # 规则
-/// - **表单站点**（custom_conf=false）：conf 由数据重建，可无损重建。
-///   启用 → 写 `<name>.conf`；停用/删除 → 不写（清理阶段移除残留）。
-/// - **手写站点**（custom_conf=true）：内容仅存在于文件中，**绝不删除**，避免永久丢失。
-///   启用 → 保留/恢复为 `.conf`（若之前被禁用为 `.conf.disabled` 则改回）；
-///   停用 → 改名为 `.conf.disabled`（内容保留，`include sites/*.conf` 不匹配 → 不加载）。
+/// # 规则（全部站点统一）
+/// - **启用** → 确保 `.conf` 存在（若当前为 `.conf.disabled` 则改回；不存在则从数据生成）
+/// - **停用** → `.conf` 改名为 `.conf.disabled`（内容保留，nginx 不加载）
+/// - **已删除** → 清理阶段删掉不再属于任何站点的 `.conf` / `.conf.disabled`
+/// - **手写站点** 的 `.conf` 通过源码视图写入，此处仅改名不覆盖
 fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
-    // 手写站点的文件名（启用态 .conf 与停用态 .conf.disabled）都要保护，清理阶段不得删除
+    // 所有站点的文件名（启用态 .conf 与停用态 .conf.disabled）都要保护，清理阶段不得删除
     let protected: std::collections::HashSet<String> = sites
         .iter()
-        .filter(|s| s.custom_conf)
         .flat_map(|s| {
             let f = nginx_conf::site_conf_filename(s);
             [format!("{}.disabled", f), f]
         })
         .collect();
 
-    // 清理：删除所有非手写站点残留的 .conf / .conf.disabled（表单站点可重建，无损）
+    // 清理：删除不属于任何站点的残留 .conf / .conf.disabled（如已删除站点）
     if let Ok(rd) = std::fs::read_dir(sites_dir) {
         for entry in rd.flatten() {
             let path = entry.path();
@@ -111,21 +109,20 @@ fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
         let conf_path = sites_dir.join(&fname);
         let disabled_path = sites_dir.join(format!("{}.disabled", fname));
 
-        if site.custom_conf {
-            // 手写站点：仅改名切换加载状态，绝不删除内容
-            if site.enabled {
-                if disabled_path.exists() && !conf_path.exists() {
-                    std::fs::rename(&disabled_path, &conf_path)?;
-                }
-            } else if conf_path.exists() {
-                std::fs::rename(&conf_path, &disabled_path)?;
-            }
-        } else if site.enabled {
-            // 表单站点：启用则由数据重建
-            let block = nginx_conf::generate_server_block(site);
-            std::fs::write(&conf_path, block)?;
+        if site.enabled {
+            // 启用态：确保 .conf 存在
+            if disabled_path.exists() && !conf_path.exists() {
+                // 从停用恢复：只改名，不写内容
+                std::fs::rename(&disabled_path, &conf_path)?;
+            } else if !conf_path.exists() && !disabled_path.exists() {
+                // 全新启用：从数据生成
+                let block = nginx_conf::generate_server_block(site);
+                std::fs::write(&conf_path, block)?;
+            } // else .conf 已存在 → 跳过（手写站点或已生成）
+        } else if conf_path.exists() {
+            // 停用态：改为 .disabled（保留内容，nginx 不加载）
+            std::fs::rename(&conf_path, &disabled_path)?;
         }
-        // 表单站点停用：清理阶段已移除其 .conf，无需处理
     }
     Ok(())
 }
@@ -455,8 +452,8 @@ mod tests {
     }
 
     #[test]
-    fn stop_form_site_deletes_conf_recoverable() {
-        // 表单站点停用 → .conf 被删；重新启用 → 从数据重建，内容恢复
+    fn stop_form_site_renames_to_disabled_not_deleted() {
+        // 表单站点停用 → .conf → .conf.disabled（改名保留内容）；重新启用 → 改回
         let dir = TempDir::new().unwrap();
         let mut s = site("deadbeef", "formsite", 80, false, true);
 
@@ -466,15 +463,20 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("formsite_80_deadbeef.conf")).unwrap();
         assert!(content.contains("listen 80;"));
 
-        // 停用 → .conf 被删（内容在数据，无损）
+        // 停用 → .conf 改名为 .conf.disabled（内容保留）
         s.enabled = false;
         sync_site_files(dir.path(), &[s.clone()]).unwrap();
         assert!(!dir.path().join("formsite_80_deadbeef.conf").exists());
+        assert!(dir.path().join("formsite_80_deadbeef.conf.disabled").exists());
 
-        // 重新启用 → 从数据重建 .conf
+        // 重新启用 → .conf.disabled 改回 .conf（保留原有内容）
         s.enabled = true;
         sync_site_files(dir.path(), &[s]).unwrap();
         assert!(dir.path().join("formsite_80_deadbeef.conf").exists());
+        assert!(!dir.path().join("formsite_80_deadbeef.conf.disabled").exists());
+        // 内容不变（从改名恢复，非重建）
+        let restored = std::fs::read_to_string(dir.path().join("formsite_80_deadbeef.conf")).unwrap();
+        assert_eq!(restored, content);
     }
 
     #[test]
