@@ -134,14 +134,8 @@ async function toggle(s: Site) {
 }
 
 async function remove(s: Site) {
-  const msg = s.enabled
-    ? `站点「${s.name}」正在运行，删除前将先停用。\n此操作将删除配置文件及上传文件，不可恢复。确定删除？`
-    : `删除站点「${s.name}」\n此操作将删除配置文件及上传文件，不可恢复。确定删除？`
-  if (!confirm(msg)) return
+  if (!confirm(`删除站点「${s.name}」？`)) return
   try {
-    if (s.enabled) {
-      await invoke('set_website_enabled', { id: s.id, enabled: false })
-    }
     await invoke('delete_website', { id: s.id })
     load()
   } catch (e) {
