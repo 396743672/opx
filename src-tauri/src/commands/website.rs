@@ -152,14 +152,27 @@ pub fn delete_website(
     wm: State<'_, Arc<WebsiteManager>>,
     id: String,
 ) -> Result<(), String> {
-    // 运行中（enabled）的站点禁止删除，须先停用
-    if let Some(site) = wm.get(&id) {
-        if site.enabled {
+    let site = wm.get(&id);
+    if let Some(ref s) = site {
+        if s.enabled {
             return Err("请先停用站点后再删除".to_string());
         }
     }
+    // 记录名称用于清理上传文件（必须在 wm.remove 之前获取）
+    let name_seg = site.as_ref().and_then(|s| {
+        let n = sanitize_seg(&s.name);
+        if n.is_empty() || n == "root" { None } else { Some(n) }
+    });
     wm.remove(&id).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)
+    regenerate(&sm, &wm, true)?;
+    // 删除站点对应的上传文件（sites-data/<name>/），避免下次同名站点文件残留
+    if let Some(seg) = name_seg {
+        if let Ok(nginx) = resolve_nginx(&sm) {
+            let data_dir = PathBuf::from(&nginx.install_path).join("sites-data").join(&seg);
+            let _ = std::fs::remove_dir_all(&data_dir);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
