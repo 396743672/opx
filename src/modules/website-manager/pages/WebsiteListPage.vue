@@ -53,7 +53,7 @@
           </span>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <button class="btn" @click="openEdit(s)"><Icon icon="mdi:pencil" /></button>
+          <button class="btn" :disabled="s.enabled" :title="s.enabled ? $t('runningSiteConfigDisabled') : ''" @click="openEdit(s)"><Icon icon="mdi:pencil" /></button>
           <button class="btn" @click="toggle(s)">
             <Icon :icon="s.enabled ? 'mdi:stop' : 'mdi:play'" />
           </button>

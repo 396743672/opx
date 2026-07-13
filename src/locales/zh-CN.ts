@@ -222,6 +222,8 @@ export default {
   siteNameHint: '仅支持英文、数字和连字符，创建后不可修改部署类型',
   uploadPathReadonly: '上传部署路径由系统自动生成',
   nginxNotRunning: 'Web 服务器（nginx）未启动，请先启动 nginx',
+  uninstallBlockedNginxSites: '请先删除所有站点后再卸载 nginx',
+  runningSiteConfigDisabled: '站点运行中，请先停用后再修改配置',
 
   // 设置
   appearance: '外观',

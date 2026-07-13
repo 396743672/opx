@@ -222,6 +222,8 @@ export default {
   siteNameHint: 'English, numbers and hyphens only. Deploy type locked after creation.',
   uploadPathReadonly: 'Upload path is auto-generated',
   nginxNotRunning: 'Nginx is not running. Please start it first.',
+  uninstallBlockedNginxSites: 'Delete all sites before uninstalling nginx',
+  runningSiteConfigDisabled: 'Site is running. Stop it first to edit config.',
 
   // settings
   appearance: 'Appearance',
