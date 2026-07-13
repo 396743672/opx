@@ -135,12 +135,48 @@ pub fn list_websites(wm: State<'_, Arc<WebsiteManager>>) -> Vec<Site> {
     wm.list()
 }
 
+/// 解析站点中待处理的 zip 标记（_pending_/*），解压到 sites-data/<name>/<path>/ 并替换 root
+fn resolve_pending_zips(site: &mut Site, install_path: &Path) -> anyhow::Result<()> {
+    let pending_dir = install_path.join("sites-data").join(".pending");
+    for loc in &mut site.locations {
+        let root = match &loc.root {
+            Some(r) if r.starts_with("_pending_/") => r.clone(),
+            _ => continue,
+        };
+        // root = "_pending_/{id}_{path}.zip" → 匹配出 zip 文件名
+        let zip_name = root.trim_start_matches("_pending_/");
+        let staged = pending_dir.join(zip_name);
+        if !staged.exists() {
+            continue;
+        }
+        // 目标目录：sites-data/<sanitized_name>/<sanitized_path>/
+        let name_seg = sanitize_seg(&site.name);
+        let name_seg = if name_seg.is_empty() || name_seg == "root" {
+            site.id.chars().take(8).collect::<String>()
+        } else {
+            name_seg
+        };
+        let path_seg = sanitize_seg(&loc.path);
+        let dest = install_path.join("sites-data").join(&name_seg).join(&path_seg);
+        let _ = std::fs::remove_dir_all(&dest);
+        std::fs::create_dir_all(&dest)?;
+        archive::extract_zip_flatten(&staged, &dest, |_, _| {})?;
+        let _ = std::fs::remove_file(&staged);
+        loc.root = Some(dest.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn save_website(
     sm: State<'_, Arc<SoftwareManager>>,
     wm: State<'_, Arc<WebsiteManager>>,
-    site: Site,
+    mut site: Site,
 ) -> Result<(), String> {
+    // 先解压待处理的 zip（upload 时只暂存 zip，保存时才真正解压）
+    if let Ok(nginx) = resolve_nginx(&sm) {
+        resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
+    }
     wm.upsert(site).map_err(|e| e.to_string())?;
     // 保存即生效：nginx 运行中时 regenerate 内部会自动校验并 reload
     regenerate(&sm, &wm, true)
@@ -186,32 +222,23 @@ pub fn set_website_enabled(
     regenerate(&sm, &wm, true)
 }
 
-/// 上传静态包：解压 zip 到 <nginx>/sites-data/<sanitized_name>/<sanitized-path>/，返回该目录路径供前端写入 location.root
+/// 上传静态包：将 zip 暂存到 <nginx>/sites-data/.pending/，返回标记路径供保存时解压
 #[tauri::command]
 pub fn upload_site_bundle(
     sm: State<'_, Arc<SoftwareManager>>,
     id: String,
-    name: String,
     loc_path: String,
     zip_path: String,
 ) -> Result<String, String> {
     let nginx = resolve_nginx(&sm)?;
-    let base = PathBuf::from(&nginx.install_path);
-    let name_seg = sanitize_seg(&name);
-    let name_seg = if name_seg.is_empty() || name_seg == "root" {
-        id.chars().take(8).collect::<String>()
-    } else {
-        name_seg
-    };
+    let pending_dir = PathBuf::from(&nginx.install_path).join("sites-data").join(".pending");
+    std::fs::create_dir_all(&pending_dir).map_err(|e| e.to_string())?;
     let sub = sanitize_seg(&loc_path);
-    let dest = base.join("sites-data").join(&name_seg).join(&sub);
-    // 重新上传：先清空目标目录
-    let _ = std::fs::remove_dir_all(&dest);
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    // 复用带路径穿越防护的解压；使用 flatten 变体自动剥去 zip 内公共顶层目录
-    // （如 Vue 打包的 dist/、React 的 build/），使 index.html 直接落在 dest 下。
-    archive::extract_zip_flatten(Path::new(&zip_path), &dest, |_, _| {}).map_err(|e| e.to_string())?;
-    Ok(dest.to_string_lossy().replace('\\', "/"))
+    let staged = pending_dir.join(format!("{}_{}.zip", id, sub));
+    // 覆盖式复制：重新上传时替换旧文件
+    std::fs::copy(&zip_path, &staged).map_err(|e| e.to_string())?;
+    // 返回标记路径，格式：_pending_/{id}/{path}.zip
+    Ok(format!("_pending_/{}_{}.zip", id, sub))
 }
 
 /// 把 location path 转成安全目录段："/" -> "root"，其余非字母数字转 '_'

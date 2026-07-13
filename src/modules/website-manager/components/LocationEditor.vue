@@ -51,7 +51,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { SiteLocation } from '@/models/website'
 
-const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; siteName: string; locked?: boolean }>()
+const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; locked?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [SiteLocation[]] }>()
 
 const model = props.modelValue
@@ -72,7 +72,6 @@ async function upload(l: SiteLocation) {
   try {
     l.root = await invoke<string>('upload_site_bundle', {
       id: props.siteId,
-      name: props.siteName,
       locPath: l.path,
       zipPath: file,
     })

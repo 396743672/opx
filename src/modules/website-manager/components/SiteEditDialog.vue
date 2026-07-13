@@ -41,7 +41,7 @@
           </label>
 
           <label class="lbl">{{ $t('routeRules') }}</label>
-          <LocationEditor v-model="form.locations" :site-id="form.id" :site-name="form.name" :locked="!isNew" />
+          <LocationEditor v-model="form.locations" :site-id="form.id" :locked="!isNew" />
         </div>
 
         <div class="body source-view" v-else>
