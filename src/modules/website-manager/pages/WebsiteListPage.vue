@@ -138,7 +138,7 @@ async function remove(s: Site) {
     window.alert(t('deleteRunningHint'))
     return
   }
-  if (!confirm(`删除站点「${s.name}」？`)) return
+  if (!confirm(`删除站点「${s.name}」\n此操作将删除配置文件及上传文件，不可恢复。确定删除？`)) return
   try {
     await invoke('delete_website', { id: s.id })
     load()
