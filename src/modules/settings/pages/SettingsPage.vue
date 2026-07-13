@@ -14,7 +14,7 @@
           <span class="text-sm">{{ $t('themeLabel') }}</span>
           <select
             v-model="themeValue"
-            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
           >
             <option value="auto">{{ $t('auto') }}</option>
             <option value="light">{{ $t('light') }}</option>
@@ -25,7 +25,7 @@
           <span class="text-sm">{{ $t('languageLabel') }}</span>
           <select
             v-model="languageValue"
-            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
           >
             <option value="zh-CN">中文</option>
             <option value="en-US">English</option>
@@ -42,7 +42,7 @@
           <span class="text-sm">{{ $t('closeBehavior') }}</span>
           <select
             v-model="closeActionValue"
-            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
           >
             <option value="CloseToTray">{{ $t('closeToTray') }}</option>
             <option value="Exit">{{ $t('exitProgram') }}</option>
