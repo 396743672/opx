@@ -72,7 +72,7 @@ import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
-import type { Site } from '@/models/website'
+import type { Site, SiteLocation } from '@/models/website'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
@@ -119,18 +119,66 @@ async function unlock() {
   }
 }
 
+// 新建站点：从表单数据生成 nginx 配置预览，跳过后端读取（尚未落库）
+function generateNginxPreview(s: Site): string {
+  const serverName = s.server_name?.trim() || '_'
+  let out = `# 配置预览（来源于表单数据，保存后写入文件）\nserver {\n`
+  out += `    listen ${s.listen};\n`
+  out += `    server_name ${serverName};\n`
+  out += `\n`
+  for (const loc of s.locations) {
+    out += `    ${genLocForPreview(loc)}\n`
+  }
+  out += `}\n`
+  return out
+}
+
+function genLocForPreview(loc: SiteLocation): string {
+  if (loc.kind === 'Static') {
+    const root = loc.root?.replace(/\\/g, '/') || ''
+    let block = `location ${loc.path} {\n`
+    if (root) block += `        root "${root}";\n`
+    block += `        index index.html;\n`
+    if (loc.spa_fallback) block += `        try_files \$uri \$uri/ /index.html;\n`
+    block += `    }`
+    return block
+  }
+  // Proxy
+  const target = loc.target?.trim()
+  if (!target) return `# location ${loc.path} { proxy_pass … }  // 填写后端地址后生效`
+  let block = `location ${loc.path} {\n`
+  block += `        proxy_pass ${target};\n`
+  block += `        proxy_http_version 1.1;\n`
+  block += `        proxy_set_header Host \$host;\n`
+  block += `        proxy_set_header X-Real-IP \$remote_addr;\n`
+  block += `        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n`
+  block += `        proxy_set_header X-Forwarded-Proto \$scheme;\n`
+  block += `        proxy_set_header Upgrade \$http_upgrade;\n`
+  block += `        proxy_set_header Connection \$connection_upgrade;\n`
+  block += `    }`
+  return block
+}
+
 // 切换到源码视图时首次拉取当前配置；已编辑（dirty）则不覆盖
 watch(tab, async (t) => {
   if (t === 'source' && !sourceDirty.value && !sourceLoaded.value) {
-    try {
-      const src = await invoke<string>('get_site_conf', { id: props.site.id })
+    if (props.isNew) {
+      // 新建态：从表单数据生成预览（站点未落库，后端 get_site_conf 只能返回默认模板）
       if (sourceText.value) {
-        sourceText.value.value = src
+        sourceText.value.value = generateNginxPreview(form.value)
       }
-      sourceLoaded.value = true
-    } catch (e) {
-      console.error(e)
+    } else {
+      // 已有站点：从后端读取配置
+      try {
+        const src = await invoke<string>('get_site_conf', { id: props.site.id })
+        if (sourceText.value) {
+          sourceText.value.value = src
+        }
+      } catch (e) {
+        console.error(e)
+      }
     }
+    sourceLoaded.value = true
   }
 })
 </script>

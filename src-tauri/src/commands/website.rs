@@ -188,8 +188,9 @@ pub fn upload_site_bundle(
     // 重新上传：先清空目标目录
     let _ = std::fs::remove_dir_all(&dest);
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    // 复用带路径穿越防护的解压（enclosed_name 已过滤 ..）
-    archive::extract_zip(Path::new(&zip_path), &dest, |_, _| {}).map_err(|e| e.to_string())?;
+    // 复用带路径穿越防护的解压；使用 flatten 变体自动剥去 zip 内公共顶层目录
+    // （如 Vue 打包的 dist/、React 的 build/），使 index.html 直接落在 dest 下。
+    archive::extract_zip_flatten(Path::new(&zip_path), &dest, |_, _| {}).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().replace('\\', "/"))
 }
 
