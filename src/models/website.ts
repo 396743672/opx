@@ -29,7 +29,7 @@ export interface Site {
   custom_conf?: boolean
 }
 
-/** 新建空站点（前端生成 id） */
+/** 新建空站点（前端生成 id），默认含前端静态路由 + API 代理路由，适配前后端分离部署 */
 export function emptySite(): Site {
   return {
     id: crypto.randomUUID(),
@@ -40,6 +40,7 @@ export function emptySite(): Site {
     enabled: true,
     locations: [
       { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null },
+      { path: '/api', kind: 'Proxy', source: null, root: null, spa_fallback: false, target: null },
     ],
     custom_conf: false,
   }

@@ -50,15 +50,17 @@ fn generate_location(loc: &Location) -> String {
         }
         LocationKind::Proxy => {
             if let Some(target) = &loc.target {
-                s.push_str(&format!("        proxy_pass {};\n", target));
-                s.push_str("        proxy_http_version 1.1;\n");
-                s.push_str("        proxy_set_header Host $host;\n");
-                s.push_str("        proxy_set_header X-Real-IP $remote_addr;\n");
-                s.push_str("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
-                s.push_str("        proxy_set_header X-Forwarded-Proto $scheme;\n");
-                // WebSocket / 长连接支持（$connection_upgrade 由主配置 map 提供）
-                s.push_str("        proxy_set_header Upgrade $http_upgrade;\n");
-                s.push_str("        proxy_set_header Connection $connection_upgrade;\n");
+                if !target.trim().is_empty() {
+                    s.push_str(&format!("        proxy_pass {};\n", target));
+                    s.push_str("        proxy_http_version 1.1;\n");
+                    s.push_str("        proxy_set_header Host $host;\n");
+                    s.push_str("        proxy_set_header X-Real-IP $remote_addr;\n");
+                    s.push_str("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+                    s.push_str("        proxy_set_header X-Forwarded-Proto $scheme;\n");
+                    // WebSocket / 长连接支持（$connection_upgrade 由主配置 map 提供）
+                    s.push_str("        proxy_set_header Upgrade $http_upgrade;\n");
+                    s.push_str("        proxy_set_header Connection $connection_upgrade;\n");
+                }
             }
         }
     }
