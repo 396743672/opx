@@ -55,7 +55,7 @@ impl SpringBootManager {
         let version = read_jar_version(&jar_path).unwrap_or_else(|| "unknown".to_string());
         // ponytail: 日志在 JAR 同级的 logs/ 目录下
         let log_path = if params.log_path.is_empty() {
-            app_dir.join("logs").join("app.log").to_str().unwrap().to_string()
+            app_dir.join("logs").join("info.log").to_str().unwrap().to_string()
         } else {
             params.log_path.clone()
         };

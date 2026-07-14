@@ -68,10 +68,9 @@ pub async fn start_app(
         }
     };
 
-    // 确保日志目录存在
-    if let Some(parent) = std::path::Path::new(&app.log_path).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    // ponytail: 日志目录（JAR 同级 logs/）
+    let log_dir = std::path::Path::new(&app.jar_path).parent().unwrap().join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
 
     // 构建命令
     let mut cmd = std::process::Command::new(&java_bin);
@@ -79,27 +78,18 @@ pub async fn start_app(
         cmd.arg(opt);
     }
     cmd.arg("-jar").arg(&app.jar_path);
-    if let Some(p) = app.port {
-        cmd.arg(format!("--server.port={}", p));
-    }
-    if !app.profile.is_empty() {
-        cmd.arg(format!("--spring.profiles.active={}", app.profile));
-    }
-    for arg in &app.program_args {
-        cmd.arg(arg);
-    }
-    for (k, v) in &app.env_vars {
-        cmd.env(k, v);
-    }
+    if let Some(p) = app.port { cmd.arg(format!("--server.port={}", p)); }
+    if !app.profile.is_empty() { cmd.arg(format!("--spring.profiles.active={}", app.profile)); }
+    for arg in &app.program_args { cmd.arg(arg); }
+    for (k, v) in &app.env_vars { cmd.env(k, v); }
 
-    // stdout/stderr -> 日志文件
-    let log_file =
-        std::fs::File::create(&app.log_path).map_err(|e| format!("无法创建日志文件: {}", e))?;
-    let log_file_clone = log_file
-        .try_clone()
-        .map_err(|e| format!("无法克隆日志文件句柄: {}", e))?;
-    cmd.stdout(std::process::Stdio::from(log_file));
-    cmd.stderr(std::process::Stdio::from(log_file_clone));
+    // ponytail: stdout/stderr → console.log，Spring Boot 自己的日志（info.log 等）不受影响
+    let console = std::fs::File::create(log_dir.join("console.log"))
+        .map_err(|e| format!("无法创建控制台日志: {}", e))?;
+    let console_clone = console.try_clone()
+        .map_err(|e| format!("无法克隆句柄: {}", e))?;
+    cmd.stdout(std::process::Stdio::from(console));
+    cmd.stderr(std::process::Stdio::from(console_clone));
 
     let child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
     let pid = child.id();
