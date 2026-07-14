@@ -6,23 +6,27 @@ export enum AppStatus {
   Stopping = 'Stopping',
 }
 
-export interface SpringApp {
+export interface SpringBootApp {
   id: string
   name: string
   jar_path: string
   version: string
-  env: string
-  port: number
-  jvm_opts: string
-  args: string
+  jdk_installed_id: string
+  jvm_opts: string[]
+  program_args: string[]
+  profile: string
+  env_vars: [string, string][]
   status: AppStatus
+  pid: number | null
+  port: number
   log_path: string
   start_time: string | null
-  backup_enabled: boolean
+  last_error: string | null
+  dependencies: string[]
+  auto_start: boolean
+  startup_order: number
   auto_restart: boolean
   group: string | null
-  auto_start_on_app_start: boolean
-  startup_order: number
 }
 
 export interface AppGroup {
@@ -41,7 +45,49 @@ export interface JvmInfo {
   gc_time: number
 }
 
-export interface SpringAppList {
-  applications: SpringApp[]
-  groups: AppGroup[]
+export interface ReplaceResult {
+  backup_path: string
+  old_version: string
+  new_version: string
+}
+
+export interface CreateAppParams {
+  jar_path: string
+  name: string
+  jdk_installed_id: string
+  jvm_opts: string[]
+  program_args: string[]
+  profile: string
+  env_vars: [string, string][]
+  port: number
+  log_path: string
+  dependencies: string[]
+  auto_start: boolean
+  startup_order: number
+  auto_restart: boolean
+  group: string | null
+}
+
+export interface UpdateAppParams {
+  name?: string
+  jdk_installed_id?: string
+  jvm_opts?: string[]
+  program_args?: string[]
+  profile?: string
+  env_vars?: [string, string][]
+  port?: number
+  log_path?: string
+  dependencies?: string[]
+  auto_start?: boolean
+  startup_order?: number
+  auto_restart?: boolean
+  group?: string | null
+}
+
+export interface JvmOptsTemplate {
+  xms_mb: number
+  xmx_mb: number
+  metaspace_mb: number
+  gc_type: string
+  extra_flags: string[]
 }
