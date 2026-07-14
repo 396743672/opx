@@ -27,6 +27,7 @@ export interface SpringBootApp {
   startup_order: number
   auto_restart: boolean
   group: string | null
+  health_check_timeout_secs: number
 }
 
 export interface AppGroup {
@@ -66,6 +67,7 @@ export interface CreateAppParams {
   startup_order: number
   auto_restart: boolean
   group: string | null
+  health_check_timeout_secs: number
 }
 
 export interface UpdateAppParams {
@@ -82,6 +84,7 @@ export interface UpdateAppParams {
   startup_order?: number
   auto_restart?: boolean
   group?: string | null
+  health_check_timeout_secs?: number
 }
 
 export interface JvmOptsTemplate {

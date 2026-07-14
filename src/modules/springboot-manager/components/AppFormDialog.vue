@@ -253,6 +253,7 @@ const form = reactive({
   startup_order: 0,
   auto_restart: false,
   group: null as string | null,
+  health_check_timeout_secs: 30,
 })
 
 const programArgsText = ref('')
@@ -279,6 +280,7 @@ onMounted(() => {
     form.startup_order = props.app.startup_order
     form.auto_restart = props.app.auto_restart
     form.group = props.app.group
+    form.health_check_timeout_secs = props.app.health_check_timeout_secs
     programArgsText.value = props.app.program_args.join('\n')
 
     const parsed = parseJvmOpts(props.app.jvm_opts)
@@ -354,6 +356,7 @@ async function save() {
         auto_start: form.auto_start,
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
+        health_check_timeout_secs: form.health_check_timeout_secs,
         group: form.group,
       })
       emit('saved', updated)
@@ -372,6 +375,7 @@ async function save() {
         auto_start: form.auto_start,
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
+        health_check_timeout_secs: form.health_check_timeout_secs,
         group: form.group,
       })
       emit('saved', created)

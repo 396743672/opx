@@ -53,8 +53,9 @@ impl SpringBootManager {
         let jar_path = target_jar.to_str().unwrap().to_string();
 
         let version = read_jar_version(&jar_path).unwrap_or_else(|| "unknown".to_string());
+        // ponytail: 日志在 JAR 同级的 logs/ 目录下
         let log_path = if params.log_path.is_empty() {
-            paths::data_dir().join("logs").join(&params.name).to_str().unwrap().to_string()
+            app_dir.join("logs").join("app.log").to_str().unwrap().to_string()
         } else {
             params.log_path.clone()
         };
@@ -63,7 +64,7 @@ impl SpringBootManager {
         let app = SpringBootApp {
             id: Uuid::new_v4().to_string(),
             name: params.name,
-            jar_path: params.jar_path,
+            jar_path,
             version,
             jdk_installed_id: params.jdk_installed_id,
             jvm_opts: params.jvm_opts,
@@ -81,6 +82,7 @@ impl SpringBootManager {
             startup_order: params.startup_order,
             auto_restart: params.auto_restart,
             group: params.group,
+            health_check_timeout_secs: params.health_check_timeout_secs,
         };
         let app_clone = app.clone();
         {
@@ -112,6 +114,7 @@ impl SpringBootManager {
         if let Some(v) = params.startup_order { app.startup_order = v; }
         if let Some(v) = params.auto_restart { app.auto_restart = v; }
         if let Some(v) = params.group { app.group = v; }
+		if let Some(v) = params.health_check_timeout_secs { app.health_check_timeout_secs = v; }
         let cloned = app.clone();
         Self::save_store(&store)?;
         Ok(cloned)

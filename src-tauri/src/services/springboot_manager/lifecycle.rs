@@ -108,8 +108,8 @@ pub async fn start_app(
     let reg_id = process_registry::register(pid, app.name.clone(), "springboot".to_string());
     APP_REG_IDS.lock().unwrap().insert(app_id.to_string(), reg_id);
 
-    // 健康检查：有端口则 TCP 探活，无端口则等 5s 直接标记运行
-    let max_attempts = 30u32;
+    // ponytail: 健康检查超时由 health_check_timeout_secs 控制
+    let max_attempts = app.health_check_timeout_secs.max(5);
     let mut healthy = app.port.is_none(); // 无端口时直接认为健康
     for _ in 0..max_attempts {
         if let Some(port) = app.port {

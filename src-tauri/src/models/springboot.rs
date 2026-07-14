@@ -40,6 +40,7 @@ pub struct SpringBootApp {
     pub startup_order: u32,
     pub auto_restart: bool,
     pub group: Option<String>,
+    pub health_check_timeout_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +99,7 @@ pub struct CreateAppParams {
     pub startup_order: u32,
     pub auto_restart: bool,
     pub group: Option<String>,
+    pub health_check_timeout_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +117,7 @@ pub struct UpdateAppParams {
     pub startup_order: Option<u32>,
     pub auto_restart: Option<bool>,
     pub group: Option<Option<String>>,
+    pub health_check_timeout_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
