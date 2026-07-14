@@ -197,3 +197,16 @@ pub async fn read_jar_port(
 ) -> Result<Option<u16>, String> {
     Ok(crate::services::springboot_manager::read_port_from_jar(&jar_path))
 }
+
+/// ponytail: 后端读日志，绕过 fs 插件路径限制
+#[tauri::command]
+pub async fn read_springboot_log(path: String) -> Result<Vec<String>, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Ok(vec!["日志文件尚未生成，请先启动应用".to_string()]);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取日志失败: {}", e))?;
+    let all: Vec<&str> = content.lines().collect();
+    let tail = all.len().saturating_sub(500);
+    let lines: Vec<String> = all[tail..].iter().map(|s| s.to_string()).collect();
+    Ok(lines)
+}

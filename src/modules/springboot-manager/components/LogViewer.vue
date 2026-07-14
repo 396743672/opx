@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { Icon } from '@iconify/vue'
-import { readTextFile, exists } from '@tauri-apps/plugin-fs'
+import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{ appId: string; appName: string; logPath: string }>()
 defineEmits<{ close: [] }>()
@@ -35,12 +35,9 @@ async function loadTail() {
   error.value = ''
   if (!props.logPath) { error.value = '日志路径未配置'; return }
   try {
-    const fileExists = await exists(props.logPath)
-    if (!fileExists) { error.value = '日志文件尚未生成，请先启动应用'; return }
-    const content = await readTextFile(props.logPath)
-    lines.value = content ? content.split('\n').slice(-500) : []
+    lines.value = await invoke<string[]>('read_springboot_log', { path: props.logPath })
   } catch (e: any) {
-    error.value = '无法读取日志: ' + (typeof e === 'string' ? e : props.logPath)
+    error.value = '无法读取日志: ' + (typeof e === 'string' ? e : (e?.message || ''))
   }
 }
 

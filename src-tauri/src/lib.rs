@@ -202,6 +202,7 @@ pub fn run() {
             commands::springboot::list_springboot_dependency_candidates,
             commands::springboot::read_jar_version_info,
             commands::springboot::read_jar_port,
+            commands::springboot::read_springboot_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
