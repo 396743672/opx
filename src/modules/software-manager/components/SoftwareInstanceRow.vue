@@ -104,8 +104,8 @@ const categoryIcon = computed(() => {
   }
 })
 
-// JRE 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
-const isRuntime = computed(() => props.software.key === 'jre')
+// JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
+const isRuntime = computed(() => props.software.key === 'jre' || props.software.key === 'jdk')
 
 const canStart = computed(
   () =>

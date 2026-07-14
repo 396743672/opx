@@ -99,10 +99,12 @@ pub fn check_jre_in_use(jre_installed_id: &str) -> Result<JreUsageReport> {
         }
     }
 
-    // 2. 查询 springboot-manager（当前未实现，返回空）
+    // ponytail: 查询 Spring Boot 应用是否引用了此 JDK/JRE
     if let Some(apps) = try_load_springboot_apps() {
         for app in apps {
-            if app.jre_id == jre_installed_id && app.status == "running" {
+            if app.jdk_installed_id == jre_installed_id
+                && matches!(app.status, crate::models::springboot::AppStatus::Running | crate::models::springboot::AppStatus::Starting)
+            {
                 report.dependents.push(JreDependent {
                     kind: "springboot-app".to_string(),
                     id: app.id,
@@ -128,19 +130,9 @@ fn load_jre_default_id() -> Result<Option<String>> {
     Ok(settings.jre_default_id)
 }
 
-/// springboot-manager 应用条目（待该模块实现后填充）
-struct SpringbootApp {
-    #[allow(dead_code)]
-    id: String,
-    #[allow(dead_code)]
-    name: String,
-    #[allow(dead_code)]
-    jre_id: String,
-    #[allow(dead_code)]
-    status: String,
-}
-
-fn try_load_springboot_apps() -> Option<Vec<SpringbootApp>> {
-    // 当前 springboot-manager 是空文件，返回 None 表示未实现
-    None
+fn try_load_springboot_apps() -> Option<Vec<crate::models::springboot::SpringBootApp>> {
+    let path = crate::utils::paths::data_dir().join("springboot").join("apps.json");
+    if !path.exists() { return None; }
+    let store: crate::models::springboot::SpringBootStore = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    Some(store.applications)
 }
