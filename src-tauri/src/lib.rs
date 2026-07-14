@@ -56,6 +56,9 @@ pub fn run() {
             app.manage(std::sync::Arc::new(
                 crate::services::website_manager::WebsiteManager::new(),
             ));
+            app.manage(std::sync::Arc::new(
+                crate::services::springboot_manager::SpringBootManager::new(),
+            ));
 
             // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
             // guard 必须用 Mutex 包装后 manage 到 Tauri State，
@@ -183,6 +186,20 @@ pub fn run() {
             commands::website::get_site_conf,
             commands::website::set_site_conf,
             commands::website::unlock_site_conf,
+            commands::springboot::list_springboot_apps,
+            commands::springboot::create_springboot_app,
+            commands::springboot::update_springboot_app,
+            commands::springboot::delete_springboot_app,
+            commands::springboot::start_springboot_app,
+            commands::springboot::stop_springboot_app,
+            commands::springboot::restart_springboot_app,
+            commands::springboot::replace_springboot_jar,
+            commands::springboot::get_springboot_jvm_metrics,
+            commands::springboot::list_springboot_groups,
+            commands::springboot::save_springboot_groups,
+            commands::springboot::get_recommended_jvm_opts,
+            commands::springboot::list_springboot_dependency_candidates,
+            commands::springboot::read_jar_version_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
