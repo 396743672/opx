@@ -50,7 +50,13 @@ watch(lines, () => nextTick(() => {
   if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
 }))
 
-onMounted(() => { loadTail(); timer = setInterval(loadTail, 2000) })
+async function firstLoad() {
+  await loadTail()
+  await nextTick()
+  if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
+  timer = setInterval(loadTail, 2000)
+}
+onMounted(firstLoad)
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 

@@ -138,11 +138,14 @@ pub async fn replace_springboot_jar(
 #[tauri::command]
 pub async fn get_springboot_jvm_metrics(
     manager: State<'_, Arc<SpringBootManager>>,
+    software_mgr: State<'_, Arc<SoftwareManager>>,
     id: String,
 ) -> Result<Option<JvmInfo>, String> {
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     if let Some(pid) = app.pid {
-        Ok(crate::services::springboot_manager::monitor::collect_jvm_metrics(pid))
+        // ponytail: 从 JDK 目录找 jcmd，不用 PATH
+        let jdk_path = software_mgr.find_installed(&app.jdk_installed_id).map(|j| j.install_path.clone());
+        Ok(crate::services::springboot_manager::monitor::collect_jvm_metrics(pid, jdk_path))
     } else {
         Ok(None)
     }

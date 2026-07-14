@@ -1,12 +1,13 @@
 use crate::models::springboot::JvmInfo;
 
 /// 通过 jcmd 采集 JVM 指标
-pub fn collect_jvm_metrics(pid: u32) -> Option<JvmInfo> {
-    let heap_output = run_jcmd(pid, "GC.heap_info")?;
+/// `jdk_path: Some(path)` 时从 JDK 目录找 jcmd，否则走 PATH
+pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Option<JvmInfo> {
+    let heap_output = run_jcmd(pid, "GC.heap_info", jdk_path.as_deref())?;
     let (heap_used, heap_max, non_heap_used) = parse_heap_info(&heap_output);
 
     // ponytail: jcmd Thread.print 输出中统计线程数
-    let thread_output = run_jcmd(pid, "Thread.print").unwrap_or_default();
+    let thread_output = run_jcmd(pid, "Thread.print", jdk_path.as_deref()).unwrap_or_default();
     let thread_count = thread_output.lines().count().max(1) - 1; // 粗略估算，减去首行
 
     Some(JvmInfo {
@@ -19,8 +20,14 @@ pub fn collect_jvm_metrics(pid: u32) -> Option<JvmInfo> {
     })
 }
 
-fn run_jcmd(pid: u32, command: &str) -> Option<String> {
-    let jcmd = if cfg!(windows) { "jcmd.exe" } else { "jcmd" };
+fn run_jcmd(pid: u32, command: &str, jdk_path: Option<&str>) -> Option<String> {
+    // ponytail: 优先从 JDK 目录找 jcmd，PATH 上没有 jcmd 也能用
+    let jcmd = jdk_path
+        .map(|p| std::path::Path::new(p).join("bin").join(if cfg!(windows) { "jcmd.exe" } else { "jcmd" }))
+        .filter(|p| p.exists());
+    let jcmd = jcmd.as_deref().unwrap_or(std::path::Path::new(
+        if cfg!(windows) { "jcmd.exe" } else { "jcmd" }
+    ));
     let output = std::process::Command::new(jcmd)
         .args([&pid.to_string(), command])
         .output()
