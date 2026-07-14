@@ -5,6 +5,7 @@ use crate::models::software::{CatalogEntry, CatalogVersion, ConfigSchema, Custom
 
 pub mod mysql;
 pub mod jre;
+pub mod jdk;
 pub mod redis;
 pub mod nginx;
 pub mod minio;
@@ -199,6 +200,7 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
     vec![
         Box::new(mysql::MySqlProvider::new()),
         Box::new(jre::JreProvider::new()),
+        Box::new(jdk::JdkProvider::new()),
         Box::new(redis::RedisProvider::new()),
         Box::new(nginx::NginxProvider::new()),
         Box::new(minio::MinioProvider::new()),

@@ -80,7 +80,7 @@ async function refresh() {
   try {
     const m = await store.fetchJvmMetrics(props.appId)
     if (m) { metrics.value = m; errMsg.value = ''; attempt = 0 }
-    else { attempt++; if (attempt > 3) errMsg.value = 'JVM 指标不可用（jcmd 未找到或进程不存在）' }
+    else { attempt++; if (attempt > 3) errMsg.value = 'JVM 监控需要完整 JDK（不含 jcmd，JRE 不可用）' }
   } catch (e: any) { errMsg.value = typeof e === 'string' ? e : '采集失败' }
 }
 

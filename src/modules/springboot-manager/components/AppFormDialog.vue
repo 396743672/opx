@@ -33,8 +33,8 @@
             <div class="field-label">{{ $t('jdk') }}</div>
             <select class="input" v-model="form.jdk_installed_id" @change="onJdkChange">
               <option value="" disabled>{{ $t('selectJdk') }}</option>
-              <option v-for="jdk in jdkList" :key="jdk.id" :value="jdk.id">
-                {{ jdk.name }} ({{ jdk.version }})
+              <option v-for="j in jdkList" :key="j.id" :value="j.id">
+                {{ j.name }} ({{ j.version }}) {{ j.key === 'jdk' ? '[JDK]' : '[JRE]' }}
               </option>
             </select>
           </div>
@@ -197,9 +197,9 @@ const store = useSpringBootStore()
 const saving = ref(false)
 const saveError = ref('')
 
-// 仅展示 JDK/JRE，过滤掉 MySQL/Redis 等其他已安装软件
+// ponytail: 展示 JDK 和 JRE，过滤掉 MySQL/Redis 等其他软件，标注类型
 const jdkList = computed(() =>
-  store.jdkList.filter(j => j.key === 'jre')
+  store.jdkList.filter(j => j.key === 'jre' || j.key === 'jdk')
 )
 
 // JVM structured state
