@@ -235,26 +235,38 @@ pub fn read_port_from_jar(jar_path: &str) -> Option<u16> {
 }
 
 fn extract_port_from_config(content: &str) -> Option<u16> {
+    fn parse_port_val(s: &str) -> Option<u16> {
+        let s = s.trim();
+        // ${VAR:4033} → 4033
+        if let Some(inner) = s.strip_prefix("${") {
+            if let Some(default) = inner.split(':').nth(1) {
+                if let Some(end) = default.find('}') {
+                    return default[..end].parse::<u16>().ok();
+                }
+            }
+        }
+        s.parse::<u16>().ok()
+    }
     // properties: server.port=8080 or server.port: 8080
     for line in content.lines() {
         let t = line.trim();
         if let Some(val) = t.strip_prefix("server.port") {
             let after = val.trim_start_matches(&['=', ':', ' '][..]);
-            if let Ok(p) = after.parse::<u16>() { return Some(p); }
+            if let Some(p) = parse_port_val(after) { return Some(p); }
         }
     }
-    // YAML: server:\n  port: 8080
+    // YAML: server:\n  port: 8080 or port: ${VAR:4033}
     let lines: Vec<&str> = content.lines().collect();
     for i in 0..lines.len() {
         if lines[i].trim() == "server:" {
             for j in i + 1..lines.len().min(i + 5) {
                 let t = lines[j].trim();
                 if let Some(val) = t.strip_prefix("port:") {
-                    if let Ok(p) = val.trim().parse::<u16>() { return Some(p); }
+                    if let Some(p) = parse_port_val(val) { return Some(p); }
                 } else if !t.is_empty() && !t.starts_with('#')
                     && !lines[j].starts_with(' ') && !lines[j].starts_with('\t')
                 {
-                    break; // 离开 server: 作用域
+                    break;
                 }
             }
         }

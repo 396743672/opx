@@ -125,6 +125,15 @@ const statusLabel = computed(() => {
 </script>
 
 <style scoped>
-.btn.danger { color: #dc2626; border-color: #fecaca; }
-.btn.danger:hover { background: #fef2f2; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); white-space: nowrap;
+}
+.btn:hover { background: var(--color-muted); }
+.btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
+.btn.primary:hover { background: color-mix(in oklch, var(--color-primary) 88%, var(--color-background)); }
+.btn.danger { background: var(--color-destructive); color: white; border-color: var(--color-destructive); }
+.btn.danger:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

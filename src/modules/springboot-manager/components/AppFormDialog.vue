@@ -202,13 +202,13 @@ const jvm = reactive<JvmOptsTemplate>({
   xmx_mb: 512,
   metaspace_mb: 128,
   gc_type: 'G1GC',
-  extra_flags: ['-Dfile.encoding=UTF-8'],
+  extra_flags: ['-XX:+ExitOnOutOfMemoryError', '-XX:+HeapDumpOnOutOfMemoryError', '-Dfile.encoding=UTF-8'],
 })
 
 const extraFlagsText = ref('')
 
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
-  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: ['-Dfile.encoding=UTF-8'] }
+  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: ['-XX:+ExitOnOutOfMemoryError', '-XX:+HeapDumpOnOutOfMemoryError', '-Dfile.encoding=UTF-8'] }
   const knownGc = ['G1GC', 'ZGC', 'ParallelGC', 'ShenandoahGC', 'SerialGC']
   for (const opt of opts) {
     if (opt.startsWith('-Xms')) {
