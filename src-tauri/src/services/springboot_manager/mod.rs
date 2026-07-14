@@ -1,0 +1,194 @@
+use std::sync::RwLock;
+
+use anyhow::Result;
+use uuid::Uuid;
+
+use crate::models::springboot::{AppGroup, AppStatus, CreateAppParams, SpringBootApp, SpringBootStore, UpdateAppParams};
+use crate::utils::paths;
+
+pub struct SpringBootManager {
+    store: RwLock<SpringBootStore>,
+}
+
+impl SpringBootManager {
+    pub fn new() -> Self {
+        let store = Self::load_store().unwrap_or_default();
+        // 启动时对账：将 Running/Starting/Stopping 重置为 Stopped
+        let mut store = store;
+        for app in &mut store.applications {
+            if matches!(app.status, AppStatus::Running | AppStatus::Starting | AppStatus::Stopping) {
+                app.status = AppStatus::Stopped;
+                app.pid = None;
+            }
+        }
+        Self { store: RwLock::new(store) }
+    }
+
+    pub fn list_apps(&self) -> Vec<SpringBootApp> {
+        self.store.read().unwrap().applications.clone()
+    }
+
+    pub fn find_app(&self, id: &str) -> Result<SpringBootApp> {
+        self.store.read().unwrap().applications.iter()
+            .find(|a| a.id == id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))
+    }
+
+    pub fn create_app(&self, params: CreateAppParams) -> Result<SpringBootApp> {
+        let jar_path = std::path::Path::new(&params.jar_path);
+        if !jar_path.exists() {
+            anyhow::bail!("JAR 文件不存在: {}", params.jar_path);
+        }
+        let version = read_jar_version(&params.jar_path).unwrap_or_else(|| "unknown".to_string());
+        let log_path = if params.log_path.is_empty() {
+            paths::data_dir().join("logs").join(&params.name).to_str().unwrap().to_string()
+        } else {
+            params.log_path.clone()
+        };
+        let app = SpringBootApp {
+            id: Uuid::new_v4().to_string(),
+            name: params.name,
+            jar_path: params.jar_path,
+            version,
+            jdk_installed_id: params.jdk_installed_id,
+            jvm_opts: params.jvm_opts,
+            program_args: params.program_args,
+            profile: params.profile,
+            env_vars: params.env_vars,
+            status: AppStatus::Stopped,
+            pid: None,
+            port: params.port,
+            log_path,
+            start_time: None,
+            last_error: None,
+            dependencies: params.dependencies,
+            auto_start: params.auto_start,
+            startup_order: params.startup_order,
+            auto_restart: params.auto_restart,
+            group: params.group,
+        };
+        let app_clone = app.clone();
+        {
+            let mut store = self.store.write().unwrap();
+            store.applications.push(app);
+            Self::save_store(&store)?;
+        }
+        Ok(app_clone)
+    }
+
+    pub fn update_app(&self, id: &str, params: UpdateAppParams) -> Result<SpringBootApp> {
+        let mut store = self.store.write().unwrap();
+        let app = store.applications.iter_mut()
+            .find(|a| a.id == id)
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        if matches!(app.status, AppStatus::Running | AppStatus::Starting) {
+            anyhow::bail!("运行中的应用不可修改配置");
+        }
+        if let Some(v) = params.name { app.name = v; }
+        if let Some(v) = params.jdk_installed_id { app.jdk_installed_id = v; }
+        if let Some(v) = params.jvm_opts { app.jvm_opts = v; }
+        if let Some(v) = params.program_args { app.program_args = v; }
+        if let Some(v) = params.profile { app.profile = v; }
+        if let Some(v) = params.env_vars { app.env_vars = v; }
+        if let Some(v) = params.port { app.port = v; }
+        if let Some(v) = params.log_path { app.log_path = v; }
+        if let Some(v) = params.dependencies { app.dependencies = v; }
+        if let Some(v) = params.auto_start { app.auto_start = v; }
+        if let Some(v) = params.startup_order { app.startup_order = v; }
+        if let Some(v) = params.auto_restart { app.auto_restart = v; }
+        if let Some(v) = params.group { app.group = v; }
+        let cloned = app.clone();
+        Self::save_store(&store)?;
+        Ok(cloned)
+    }
+
+    pub fn delete_app(&self, id: &str) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        let pos = store.applications.iter().position(|a| a.id == id)
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        let app = &store.applications[pos];
+        if matches!(app.status, AppStatus::Running | AppStatus::Starting) {
+            anyhow::bail!("运行中的应用不可删除");
+        }
+        store.applications.remove(pos);
+        Self::save_store(&store)?;
+        Ok(())
+    }
+
+    pub fn update_status(&self, id: &str, status: AppStatus, pid: Option<u32>, error: Option<String>) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        let app = store.applications.iter_mut().find(|a| a.id == id)
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        app.status = status;
+        app.pid = pid;
+        if let Some(e) = error { app.last_error = Some(e); }
+        if status == AppStatus::Running { app.start_time = Some(chrono::Local::now().naive_local()); }
+        Self::save_store(&store)?;
+        Ok(())
+    }
+
+    pub fn update_version(&self, id: &str, version: String) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        let app = store.applications.iter_mut().find(|a| a.id == id)
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        app.version = version;
+        Self::save_store(&store)?;
+        Ok(())
+    }
+
+    // Groups
+    pub fn list_groups(&self) -> Vec<AppGroup> {
+        self.store.read().unwrap().groups.clone()
+    }
+
+    pub fn save_groups(&self, groups: Vec<AppGroup>) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        store.groups = groups;
+        Self::save_store(&store)?;
+        Ok(())
+    }
+
+    fn store_path() -> std::path::PathBuf {
+        paths::data_dir().join("springboot").join("apps.json")
+    }
+
+    fn load_store() -> Result<SpringBootStore> {
+        let path = Self::store_path();
+        if !path.exists() { return Ok(SpringBootStore::default()); }
+        let content = std::fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    fn save_store(store: &SpringBootStore) -> Result<()> {
+        let path = Self::store_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = serde_json::to_string_pretty(store)?;
+        std::fs::write(&path, content)?;
+        Ok(())
+    }
+}
+
+impl Default for SpringBootManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 从 JAR 文件的 MANIFEST.MF 中读取版本号
+pub fn read_jar_version(jar_path: &str) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(jar_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name("META-INF/MANIFEST.MF").ok()?;
+    let mut content = String::new();
+    entry.read_to_string(&mut content).ok()?;
+    for line in content.lines() {
+        if let Some(val) = line.strip_prefix("Implementation-Version:") {
+            return Some(val.trim().to_string());
+        }
+    }
+    None
+}
