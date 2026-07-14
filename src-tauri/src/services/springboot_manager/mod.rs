@@ -125,10 +125,10 @@ impl SpringBootManager {
         let mut store = self.store.write().unwrap();
         let app = store.applications.iter_mut().find(|a| a.id == id)
             .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        if status == AppStatus::Running { app.start_time = Some(chrono::Local::now().naive_local()); }
         app.status = status;
         app.pid = pid;
         if let Some(e) = error { app.last_error = Some(e); }
-        if status == AppStatus::Running { app.start_time = Some(chrono::Local::now().naive_local()); }
         Self::save_store(&store)?;
         Ok(())
     }

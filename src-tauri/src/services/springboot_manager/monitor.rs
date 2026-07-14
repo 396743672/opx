@@ -36,12 +36,12 @@ fn parse_heap_info(output: &str) -> (Option<u64>, Option<u64>) {
         if line.contains("used") && (line.contains("total") || line.contains("capacity")) {
             let parts: Vec<&str> = line.split_whitespace().collect();
             for (i, part) in parts.iter().enumerate() {
-                if **part == "used" && i + 1 < parts.len() {
+                if *part == "used" && i + 1 < parts.len() {
                     let val = parse_memory_value(parts[i + 1]);
                     if val > 0 {
                         if let Some(pos) = parts.iter().position(|&p| p == "total") {
                             if pos + 1 < parts.len() {
-                                heap_max = parse_memory_value(parts[pos + 1]);
+                                heap_max = Some(parse_memory_value(parts[pos + 1]));
                             }
                         }
                         heap_used = Some(val);
