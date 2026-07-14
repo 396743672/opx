@@ -77,6 +77,10 @@ pub async fn start_app(
     for opt in &app.jvm_opts {
         cmd.arg(opt);
     }
+    // ponytail: 设工作目录 = JAR 所在目录，Spring Boot 相对路径日志写到正确位置
+    if let Some(parent) = std::path::Path::new(&app.jar_path).parent() {
+        cmd.current_dir(parent);
+    }
     cmd.arg("-jar").arg(&app.jar_path);
     if let Some(p) = app.port { cmd.arg(format!("--server.port={}", p)); }
     if !app.profile.is_empty() { cmd.arg(format!("--spring.profiles.active={}", app.profile)); }
