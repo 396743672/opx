@@ -1,4 +1,5 @@
 pub mod jvm_opts;
+pub mod lifecycle;
 
 use std::sync::RwLock;
 
