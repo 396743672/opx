@@ -103,7 +103,6 @@ pub fn check_jre_in_use(jre_installed_id: &str) -> Result<JreUsageReport> {
     if let Some(apps) = try_load_springboot_apps() {
         for app in apps {
             if app.jdk_installed_id == jre_installed_id
-                && matches!(app.status, crate::models::springboot::AppStatus::Running | crate::models::springboot::AppStatus::Starting)
             {
                 report.dependents.push(JreDependent {
                     kind: "springboot-app".to_string(),
