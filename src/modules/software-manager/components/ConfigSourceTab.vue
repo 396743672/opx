@@ -9,9 +9,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import * as monaco from 'monaco-editor'
 import { invoke } from '@tauri-apps/api/core'
 import type { InstalledSoftware } from '@/models/software'
+// ponytail: monaco-editor ~3MB, 动态 import 避免打包进主 chunk
 
 const props = defineProps<{ software: InstalledSoftware }>()
 const emit = defineEmits<{
@@ -20,7 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLElement>()
-let editor: monaco.editor.IStandaloneCodeEditor | null = null
+let editor: any = null
 let originalContent = ''
 
 onMounted(async () => {
@@ -34,6 +34,8 @@ onMounted(async () => {
     console.error('read source failed:', e)
   }
   originalContent = content
+  // ponytail: monaco-editor ~3MB，动态 import 避免打包进主 chunk
+  const monaco = await import('monaco-editor')
   editor = monaco.editor.create(containerRef.value, {
     value: content,
     language: detectLanguage(props.software.key),
