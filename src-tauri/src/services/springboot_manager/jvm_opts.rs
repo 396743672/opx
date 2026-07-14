@@ -58,11 +58,16 @@ fn total_ram_mb() -> u64 {
 }
 
 /// 根据 JDK 版本和本机内存生成默认优化参数
+///
+/// 为 Spring Boot 应用设计的保守默认值：
+/// - Xmx = 本机 RAM 的 25%，上限 2GB，下限 256MB（Spring Boot 典型场景不需要更大）
+/// - Xms = Xmx（相等防止 GC 调整堆大小导致停顿）
+/// - Metaspace = 128MB（JDK17+ 类元数据更多，给 256MB）
 pub fn generate_opts(jdk_version: u32) -> JvmOptsTemplate {
     let total_mb = total_ram_mb();
-    let xmx_mb = (total_mb / 2).min(8192).max(256);
-    let xms_mb = xmx_mb / 2;
-    let metaspace_mb = 256u64;
+    let xmx_mb = (total_mb / 4).min(2048).max(256);
+    let xms_mb = xmx_mb; // 相等避免 GC resize 停顿
+    let metaspace_mb = if jdk_version >= 17 { 256 } else { 128 };
 
     let (gc_type, mut extra_flags) = match jdk_version {
         8 => ("G1GC".to_string(), vec![]),

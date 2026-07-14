@@ -198,8 +198,8 @@ const jdkList = computed(() =>
 
 // JVM structured state
 const jvm = reactive<JvmOptsTemplate>({
-  xms_mb: 256,
-  xmx_mb: 1024,
+  xms_mb: 512,
+  xmx_mb: 512,
   metaspace_mb: 128,
   gc_type: 'G1GC',
   extra_flags: [],
@@ -208,7 +208,7 @@ const jvm = reactive<JvmOptsTemplate>({
 const extraFlagsText = ref('')
 
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
-  const result: JvmOptsTemplate = { xms_mb: 256, xmx_mb: 1024, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: [] }
+  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: [] }
   for (const opt of opts) {
     if (opt.startsWith('-Xms')) {
       result.xms_mb = parseInt(opt.slice(4).replace(/[gm]/g, '')) || 256
