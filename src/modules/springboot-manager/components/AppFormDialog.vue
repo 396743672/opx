@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="overlay" @click.self="$emit('cancel')">
+    <div class="overlay">
       <div class="dialog">
         <div class="dialog-head">
           <div class="dialog-title">
@@ -33,7 +33,7 @@
             <div class="field-label">{{ $t('jdk') }}</div>
             <select class="input" v-model="form.jdk_installed_id" @change="onJdkChange">
               <option value="" disabled>{{ $t('selectJdk') }}</option>
-              <option v-for="jdk in store.jdkList" :key="jdk.id" :value="jdk.id">
+              <option v-for="jdk in jdkList" :key="jdk.id" :value="jdk.id">
                 {{ jdk.name }} ({{ jdk.version }})
               </option>
             </select>
@@ -57,7 +57,7 @@
           </div>
           <div class="grid-2">
             <div class="field">
-              <div class="field-label">GC {{ $t('type') }}</div>
+              <div class="field-label">{{ $t('gcType') }}</div>
               <select class="input" v-model="jvm.gc_type">
                 <option value="G1GC">G1GC</option>
                 <option value="ParallelGC">ParallelGC</option>
@@ -154,10 +154,11 @@
           </details>
         </div>
 
+        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="dialog-footer">
           <button class="btn" @click="$emit('cancel')">{{ $t('cancel') }}</button>
           <button class="btn primary" @click="save" :disabled="!valid || saving">
-            {{ $t('save') }}
+            {{ saving ? $t('saving') : $t('save') }}
           </button>
         </div>
       </div>
@@ -173,7 +174,7 @@ import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp, JvmOptsTemplate } from '@/models/springboot'
 
-useI18n()
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   app?: SpringBootApp | null
@@ -188,6 +189,12 @@ const emit = defineEmits<{
 
 const store = useSpringBootStore()
 const saving = ref(false)
+const saveError = ref('')
+
+// 仅展示 JDK/JRE，过滤掉 MySQL/Redis 等其他已安装软件
+const jdkList = computed(() =>
+  store.jdkList.filter(j => j.key === 'jre')
+)
 
 // JVM structured state
 const jvm = reactive<JvmOptsTemplate>({
@@ -322,6 +329,7 @@ function removeEnv(index: number) {
 async function save() {
   if (!valid.value || saving.value) return
   saving.value = true
+  saveError.value = ''
   try {
     const jvmOpts = buildJvmOpts()
     const programArgs = programArgsText.value
@@ -364,8 +372,8 @@ async function save() {
       })
       emit('saved', created)
     }
-  } catch (e) {
-    console.error('Failed to save app:', e)
+  } catch (e: any) {
+    saveError.value = typeof e === 'string' ? e : (e?.message || t('saveFailed'))
   } finally {
     saving.value = false
   }
@@ -622,5 +630,13 @@ async function save() {
 }
 select.input {
   appearance: auto;
+}
+.error-banner {
+  margin: 0 20px;
+  padding: 8px 12px;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 6px;
+  font-size: 12px;
 }
 </style>
