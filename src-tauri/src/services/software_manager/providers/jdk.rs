@@ -1,10 +1,8 @@
 use anyhow::Result;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, MirrorSource,
-    SoftwareCategory,
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource, SoftwareCategory,
 };
-use crate::services::software_manager::providers::builtin_manifest;
 
 use super::{InstallContext, SoftwareProvider};
 
@@ -21,32 +19,14 @@ impl SoftwareProvider for JdkProvider {
 
         #[cfg(windows)]
         {
-            // ponytail: JDK 8 内置 + 清华镜像
+            // ponytail: JDK 8 仅清华镜像，无内置
             versions.push(CatalogVersion {
                 version: "1.8".to_string(),
-                mirrors: {
-                    let mut m = vec![];
-                    let sha = builtin_manifest()
-                        .get_builtin("jdk", "1.8")
-                        .map(|e| e.sha256.clone())
-                        .unwrap_or_default();
-                    let size = builtin_manifest()
-                        .get_builtin("jdk", "1.8")
-                        .map(|e| e.size)
-                        .unwrap_or(0);
-                    m.push(MirrorSource {
-                        name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/jdk/1.8.zip".to_string(),
-                        builtin: Some(BuiltinInfo { version: "1.8".to_string(), sha256: sha, size }),
-                    });
-                    m.push(MirrorSource {
-                        name: "i18n:adoptiumTsinghua".to_string(),
-                        // ponytail: JDK 8 清华，文件名为 jdk 而非 jre
-                        url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jdk/x64/windows/OpenJDK8U-jdk_x64_windows_hotspot_8u492b09.zip".to_string(),
-                        builtin: None,
-                    });
-                    m
-                },
+                mirrors: vec![MirrorSource {
+                    name: "i18n:adoptiumTsinghua".to_string(),
+                    url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jdk/x64/windows/OpenJDK8U-jdk_x64_windows_hotspot_8u492b09.zip".to_string(),
+                    builtin: None,
+                }],
                 archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
             });
         }

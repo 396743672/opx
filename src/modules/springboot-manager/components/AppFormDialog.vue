@@ -262,6 +262,7 @@ const form = reactive({
   auto_restart: false,
   group: null as string | null,
   health_check_timeout_secs: 180,
+  jdk_type: '',
 })
 
 const programArgsText = ref('')
@@ -289,6 +290,7 @@ onMounted(() => {
     form.auto_restart = props.app.auto_restart
     form.group = props.app.group
     form.health_check_timeout_secs = props.app.health_check_timeout_secs
+    form.jdk_type = props.app.jdk_type
     programArgsText.value = props.app.program_args.join('\n')
 
     const parsed = parseJvmOpts(props.app.jvm_opts)
@@ -325,6 +327,8 @@ async function onJdkChange() {
     jvm.metaspace_mb = recommended.metaspace_mb
     jvm.gc_type = recommended.gc_type
     extraFlagsText.value = recommended.extra_flags.join(' ')
+    const selected = store.jdkList.find(j => j.id === form.jdk_installed_id)
+    form.jdk_type = selected?.key === 'jdk' ? 'jdk' : 'jre'
   } catch (e) {
     console.error('Failed to get recommended JVM opts:', e)
   }
@@ -366,6 +370,7 @@ async function save() {
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
         health_check_timeout_secs: form.health_check_timeout_secs,
+        jdk_type: form.jdk_type,
         group: form.group,
       })
       emit('saved', updated)
@@ -385,6 +390,7 @@ async function save() {
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
         health_check_timeout_secs: form.health_check_timeout_secs,
+        jdk_type: form.jdk_type,
         group: form.group,
       })
       emit('saved', created)
