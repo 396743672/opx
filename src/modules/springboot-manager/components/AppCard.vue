@@ -61,7 +61,7 @@
         <Icon icon="mdi:package-up" /> {{ $t('replaceJar') }}
       </button>
       <button
-        v-if="app.status === AppStatus.Running"
+        v-if="app.status === AppStatus.Running || app.status === AppStatus.Error"
         class="btn"
         @click="$emit('monitor', app.id)"
       >

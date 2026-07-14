@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -29,6 +29,7 @@ defineEmits<{ close: [] }>()
 
 const lines = ref<string[]>([])
 const error = ref('')
+let timer: ReturnType<typeof setInterval> | null = null
 const logBox = ref<HTMLElement | null>(null)
 
 async function loadTail() {
@@ -45,7 +46,8 @@ watch(lines, () => nextTick(() => {
   if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
 }))
 
-onMounted(loadTail)
+onMounted(() => { loadTail(); timer = setInterval(loadTail, 2000) })
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>
