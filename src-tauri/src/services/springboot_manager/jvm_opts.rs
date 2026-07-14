@@ -98,14 +98,3 @@ pub fn generate_opts(jdk_version: u32) -> JvmOptsTemplate {
     }
 }
 
-/// 将模板转换为 JVM 参数字符串列表
-pub fn template_to_opts(t: &JvmOptsTemplate) -> Vec<String> {
-    let mut opts = vec![
-        format!("-Xms{}m", t.xms_mb),
-        format!("-Xmx{}m", t.xmx_mb),
-        format!("-XX:MetaspaceSize={}m", t.metaspace_mb),
-        format!("-XX:MaxMetaspaceSize={}m", t.metaspace_mb),
-    ];
-    opts.extend(t.extra_flags.clone());
-    opts
-}

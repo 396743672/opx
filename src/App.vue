@@ -28,15 +28,12 @@ import CloseDialog from '@/components/CloseDialog.vue'
 import StopProgressDialog from '@/components/StopProgressDialog.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
-import { useAppStore } from '@/stores/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
-const appStore = useAppStore()
-void appStore
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)

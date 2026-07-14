@@ -104,15 +104,6 @@ export interface CustomInstallParams {
   archive_path: string
 }
 
-// 兼容性保留
-export interface SoftwareMeta {
-  key: string
-  name: string
-  description: string
-  available_versions: string[]
-  default_version: string
-}
-
 // ===== 任务 12：软件管理模块扩展类型 =====
 // 注意：Rust 端用 #[serde(tag = "kind", content = "spec")] 序列化枚举，
 // 序列化格式为 { kind: "Variant", spec: {...} | null }，
@@ -135,12 +126,6 @@ export type CustomHealthSpec =
   | { kind: 'Tcp'; spec: { port: number } }
   | { kind: 'Http'; spec: { url: string; expected_status: number } }
 
-/// 标准软件健康检查规格
-/// serde tag=kind, content=spec
-export type HealthCheckSpec =
-  | { kind: 'ProcessOnly'; spec: null }
-  | { kind: 'Tcp'; spec: { port: number; timeout_ms: number } }
-  | { kind: 'Http'; spec: { url: string; expected_status: number; timeout_ms: number } }
 
 /// 配置表单 schema
 export interface ConfigSchema {
