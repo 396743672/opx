@@ -28,7 +28,7 @@
           >
             <span>{{ v.version }}</span>
             <span v-if="isBuiltinVersion(v)" class="builtin-tag">{{ $t('offline') }}</span>
-            <span v-else-if="v.version === entry.default_version && entry.key !== 'jre'" class="v-badge">{{ $t('latestVersion') }}</span>
+            <span v-else-if="v.version === entry.default_version && entry.key !== 'jre' && entry.key !== 'jdk'" class="v-badge">{{ $t('latestVersion') }}</span>
           </div>
         </div>
         <div v-if="fetchingVersions" class="fetching-hint">
