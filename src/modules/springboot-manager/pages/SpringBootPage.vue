@@ -71,6 +71,7 @@
         @replace="handleReplace"
         @monitor="handleMonitor"
         @logs="handleLogs"
+        @delete="handleDelete"
       />
     </div>
 
@@ -99,6 +100,20 @@
       :groups="store.groups"
       @close="closeGroupManager"
     />
+
+    <!-- Delete confirm -->
+    <Teleport to="body">
+      <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
+        <div class="confirm-box">
+          <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> {{ $t('confirmDelete') }}</div>
+          <p class="confirm-msg">{{ $t('confirmDeleteMsg') }}「{{ deleteTarget.name }}」？</p>
+          <div class="confirm-actions">
+            <button class="btn" @click="deleteTarget = null">{{ $t('cancel') }}</button>
+            <button class="btn danger" @click="doDelete">{{ $t('delete') }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -140,6 +155,9 @@ const logViewingAppLogPath = ref('')
 
 // Group manager
 const showGroupManager = ref(false)
+
+// Delete confirm
+const deleteTarget = ref<SpringBootApp | null>(null)
 
 // Event listener cleanup
 let unlisten: UnlistenFn | null = null
@@ -223,6 +241,18 @@ function handleMonitor(id: string) {
     monitoringAppName.value = app.name
     showJvmDialog.value = true
   }
+}
+
+function handleDelete(id: string) {
+  const app = store.apps.find(a => a.id === id)
+  if (app) deleteTarget.value = app
+}
+
+async function doDelete() {
+  if (!deleteTarget.value) return
+  await store.deleteApp(deleteTarget.value.id)
+  deleteTarget.value = null
+  store.fetchApps()
 }
 
 function handleLogs(id: string) {
@@ -309,4 +339,21 @@ onBeforeUnmount(() => {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+.btn.danger { color: #dc2626; border-color: #fecaca; }
+.btn.danger:hover { background: #fef2f2; }
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: oklch(0 0 0 / 0.5);
+}
+.confirm-box {
+  background: var(--color-card); border-radius: 10px;
+  border: 1px solid var(--color-border); padding: 24px; width: 380px;
+  box-shadow: var(--shadow-popover);
+}
+.confirm-title {
+  font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; line-height: 1.5; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

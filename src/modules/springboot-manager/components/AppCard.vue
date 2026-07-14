@@ -70,6 +70,13 @@
       <button class="btn" @click="$emit('logs', app.id)">
         <Icon icon="mdi:file-document-outline" /> {{ $t('viewLogs') }}
       </button>
+      <button
+        class="btn danger"
+        :disabled="app.status === AppStatus.Running || app.status === AppStatus.Starting"
+        @click="$emit('delete', app.id)"
+      >
+        <Icon icon="mdi:delete" /> {{ $t('delete') }}
+      </button>
     </div>
   </div>
 </template>
@@ -91,6 +98,7 @@ defineEmits<{
   replace: [id: string]
   monitor: [id: string]
   logs: [id: string]
+  delete: [id: string]
 }>()
 
 const statusClass = computed(() => {
@@ -115,3 +123,8 @@ const statusLabel = computed(() => {
   }
 })
 </script>
+
+<style scoped>
+.btn.danger { color: #dc2626; border-color: #fecaca; }
+.btn.danger:hover { background: #fef2f2; }
+</style>
