@@ -336,6 +336,9 @@ async function save() {
       ? programArgsText.value.split('\n').map(s => s.trim()).filter(Boolean)
       : []
 
+    // ponytail: port 为空时回退默认值，避免 serde 反序列化 u16 失败
+    const safePort = typeof form.port === 'number' && form.port > 0 ? form.port : 8080
+
     if (props.app) {
       const updated = await store.updateApp(props.app.id, {
         name: form.name,
@@ -344,7 +347,7 @@ async function save() {
         program_args: programArgs,
         profile: form.profile,
         env_vars: form.env_vars,
-        port: form.port,
+        port: safePort,
         log_path: form.log_path,
         dependencies: form.dependencies,
         auto_start: form.auto_start,
@@ -362,7 +365,7 @@ async function save() {
         program_args: programArgs,
         profile: form.profile,
         env_vars: form.env_vars,
-        port: form.port,
+        port: safePort,
         log_path: form.log_path,
         dependencies: form.dependencies,
         auto_start: form.auto_start,
