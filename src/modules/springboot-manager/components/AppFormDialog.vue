@@ -125,6 +125,12 @@
             </div>
           </div>
 
+          <!-- Health check timeout -->
+          <div class="field">
+            <div class="field-label">{{ $t('healthCheckTimeout') }} (s)</div>
+            <input class="input" type="number" v-model.number="form.health_check_timeout_secs" min="5" />
+          </div>
+
           <!-- Advanced settings -->
           <details class="advanced">
             <summary class="advanced-summary">{{ $t('advancedSettings') }}</summary>
@@ -223,6 +229,8 @@ function parseJvmOpts(opts: string[]): JvmOptsTemplate {
       result.extra_flags.push(opt)
     }
   }
+  // ponytail: gc_type 为空时回退默认值
+  if (!result.gc_type) result.gc_type = 'G1GC'
   return result
 }
 
@@ -287,7 +295,8 @@ onMounted(() => {
     jvm.xms_mb = parsed.xms_mb
     jvm.xmx_mb = parsed.xmx_mb
     jvm.metaspace_mb = parsed.metaspace_mb
-    jvm.gc_type = parsed.gc_type
+    jvm.gc_type = parsed.gc_type || 'G1GC'
+    jvm.extra_flags = parsed.extra_flags
     extraFlagsText.value = parsed.extra_flags.join(' ')
   }
 })

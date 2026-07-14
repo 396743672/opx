@@ -128,7 +128,11 @@ impl SpringBootManager {
         if matches!(app.status, AppStatus::Running | AppStatus::Starting) {
             anyhow::bail!("运行中的应用不可删除");
         }
+        let app_name = app.name.clone();
         store.applications.remove(pos);
+        // ponytail: 删除应用目录（jar/logs/config等）
+        let app_dir = paths::data_dir().join("springboot").join(&app_name);
+        let _ = std::fs::remove_dir_all(&app_dir);
         Self::save_store(&store)?;
         Ok(())
     }

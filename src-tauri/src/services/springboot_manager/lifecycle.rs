@@ -177,6 +177,11 @@ pub async fn stop_app(
 
     if let Some(pid) = app.pid {
         if cfg!(windows) {
+            // ponytail: 优雅停止——先 /PID 不加 /F 等 30s，再强杀
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string()])
+                .output();
+            tokio::time::sleep(Duration::from_secs(30)).await;
             let _ = std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
                 .output();
