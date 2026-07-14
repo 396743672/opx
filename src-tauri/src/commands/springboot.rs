@@ -209,28 +209,16 @@ pub struct LogChunk { pub lines: Vec<String>, pub offset: u64 }
 pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, String> {
     use std::io::{Read, Seek, SeekFrom};
     let p = std::path::Path::new(&path);
-    // ponytail: 精确文件不存在时，在父目录找最新 .log 文件（Spring Boot 日志文件名不定）
-    let p = if p.exists() { p.to_path_buf() } else if let Some(dir) = p.parent() {
-        if dir.exists() {
-            let mut best: Option<std::path::PathBuf> = None;
-            let mut best_mtime = 0u64;
-            if let Ok(rd) = std::fs::read_dir(dir) {
-                for entry in rd.flatten() {
-                    let e = entry.path();
-                    if e.extension().and_then(|x| x.to_str()) == Some("log") {
-                        if let Ok(m) = e.metadata() {
-                            if let Ok(t) = m.modified().map(|t| t.elapsed().map(|d| d.as_secs()).unwrap_or(0)) {
-                                let age = t;
-                                if best.is_none() || age < best_mtime {
-                                    best_mtime = age; best = Some(e);
-                                }
-                            }
-                        }
-                    }
-                }
+    // ponytail: 精确文件不存在时递归找最新 .log（Spring Boot 可能在子目录）
+    let p = if p.exists() { p.to_path_buf() } else if let Some(dir) = p.parent().filter(|d| d.exists()) {
+        let mut best: Option<(std::path::PathBuf, u64)> = None;
+        for entry in walkdir::WalkDir::new(dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
+            if entry.path().extension().and_then(|x| x.to_str()) == Some("log") {
+                let age = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
+                if best.as_ref().map_or(true, |&(_, a)| age < a) { best = Some((entry.path().to_path_buf(), age)); }
             }
-            best.unwrap_or_else(|| p.to_path_buf())
-        } else { p.to_path_buf() }
+        }
+        best.map(|(p, _)| p).unwrap_or_else(|| p.to_path_buf())
     } else { p.to_path_buf() };
     if !p.exists() { return Ok(LogChunk { lines: vec!["日志文件尚未生成".to_string()], offset: 0 }); }
     let mut f = std::fs::File::open(&path).map_err(|e| format!("打开失败: {}", e))?;
