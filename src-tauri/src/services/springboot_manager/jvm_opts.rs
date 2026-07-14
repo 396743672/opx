@@ -87,6 +87,7 @@ pub fn generate_opts(jdk_version: u32) -> JvmOptsTemplate {
 
     extra_flags.push("-XX:+ExitOnOutOfMemoryError".to_string());
     extra_flags.push("-XX:+HeapDumpOnOutOfMemoryError".to_string());
+    extra_flags.push("-Dfile.encoding=UTF-8".to_string());
 
     JvmOptsTemplate {
         xms_mb,

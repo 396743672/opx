@@ -202,13 +202,14 @@ const jvm = reactive<JvmOptsTemplate>({
   xmx_mb: 512,
   metaspace_mb: 128,
   gc_type: 'G1GC',
-  extra_flags: [],
+  extra_flags: ['-Dfile.encoding=UTF-8'],
 })
 
 const extraFlagsText = ref('')
 
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
-  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: [] }
+  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: ['-Dfile.encoding=UTF-8'] }
+  const knownGc = ['G1GC', 'ZGC', 'ParallelGC', 'ShenandoahGC', 'SerialGC']
   for (const opt of opts) {
     if (opt.startsWith('-Xms')) {
       result.xms_mb = parseInt(opt.slice(4).replace(/[gm]/g, '')) || 256
@@ -216,7 +217,7 @@ function parseJvmOpts(opts: string[]): JvmOptsTemplate {
       result.xmx_mb = parseInt(opt.slice(4).replace(/[gm]/g, '')) || 1024
     } else if (opt.startsWith('-XX:MetaspaceSize=')) {
       result.metaspace_mb = parseInt(opt.slice(18).replace('m', '')) || 128
-    } else if (opt.startsWith('-XX:+Use')) {
+    } else if (knownGc.some(gc => opt === `-XX:+Use${gc}`)) {
       result.gc_type = opt.slice(7)
     } else {
       result.extra_flags.push(opt)
@@ -228,7 +229,7 @@ function parseJvmOpts(opts: string[]): JvmOptsTemplate {
 function buildJvmOpts(): string[] {
   const extraFlags = extraFlagsText.value
     ? extraFlagsText.value.split(/\s+/).filter(Boolean)
-    : []
+    : [...jvm.extra_flags]
   return [
     `-Xms${jvm.xms_mb}m`,
     `-Xmx${jvm.xmx_mb}m`,
