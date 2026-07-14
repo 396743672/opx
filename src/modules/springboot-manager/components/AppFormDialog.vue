@@ -253,7 +253,7 @@ const form = reactive({
   startup_order: 0,
   auto_restart: false,
   group: null as string | null,
-  health_check_timeout_secs: 30,
+  health_check_timeout_secs: 180,
 })
 
 const programArgsText = ref('')

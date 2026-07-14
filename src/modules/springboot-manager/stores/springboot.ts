@@ -90,6 +90,9 @@ export const useSpringBootStore = defineStore('springboot', () => {
   async function readJarVersion(jarPath: string): Promise<string> {
     return await invoke<string>('read_jar_version_info', { jarPath })
   }
+  async function readJarPort(jarPath: string): Promise<number | null> {
+    return await invoke<number | null>('read_jar_port', { jarPath })
+  }
 
   async function saveGroups(newGroups: AppGroup[]) {
     await invoke('save_springboot_groups', { groups: newGroups })
@@ -101,6 +104,6 @@ export const useSpringBootStore = defineStore('springboot', () => {
     fetchApps, fetchGroups, createApp, updateApp, deleteApp,
     startApp, stopApp, restartApp, replaceJar,
     fetchJvmMetrics, fetchJdkList, fetchDependencyCandidates,
-    getRecommendedOpts, readJarVersion, saveGroups,
+    getRecommendedOpts, readJarVersion, readJarPort, saveGroups,
   }
 })

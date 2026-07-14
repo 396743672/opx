@@ -190,3 +190,10 @@ pub async fn read_jar_version_info(
     Ok(crate::services::springboot_manager::read_jar_version(&jar_path)
         .unwrap_or_else(|| "unknown".to_string()))
 }
+
+#[tauri::command]
+pub async fn read_jar_port(
+    jar_path: String,
+) -> Result<Option<u16>, String> {
+    Ok(crate::services::springboot_manager::read_port_from_jar(&jar_path))
+}
