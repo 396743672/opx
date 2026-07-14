@@ -31,3 +31,4 @@ design-mockup.html
 /.vscode/
 /.workbuddy/
 /.claude/
+src-tauri/data/
