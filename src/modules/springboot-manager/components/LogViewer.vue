@@ -30,13 +30,17 @@ defineEmits<{ close: [] }>()
 const lines = ref<string[]>([])
 const error = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
+let offset = 0
 const logBox = ref<HTMLElement | null>(null)
 
 async function loadTail() {
   error.value = ''
   if (!props.logPath) { error.value = '日志路径未配置'; return }
   try {
-    lines.value = await invoke<string[]>('read_springboot_log', { path: props.logPath })
+    const chunk = await invoke<{ lines: string[], offset: number }>('read_springboot_log', { path: props.logPath, offset })
+    if (offset === 0) lines.value = chunk.lines
+    else lines.value.push(...chunk.lines)
+    offset = chunk.offset
   } catch (e: any) {
     error.value = '无法读取日志: ' + (typeof e === 'string' ? e : (e?.message || ''))
   }

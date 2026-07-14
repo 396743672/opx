@@ -198,22 +198,35 @@ pub async fn read_jar_port(
     Ok(crate::services::springboot_manager::read_port_from_jar(&jar_path))
 }
 
-/// ponytail: 后端读日志尾部（最多 64KB），绕过 fs 插件路径限制
+/// ponytail: tail -f 风格，前端传 offset 增量读取，首次传 0 读尾部 64KB
+#[derive(serde::Serialize)]
+pub struct LogChunk { pub lines: Vec<String>, pub offset: u64 }
+
 #[tauri::command]
-pub async fn read_springboot_log(path: String) -> Result<Vec<String>, String> {
+pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, String> {
     use std::io::{Read, Seek, SeekFrom};
     let p = std::path::Path::new(&path);
-    if !p.exists() { return Ok(vec!["日志文件尚未生成，请先启动应用".to_string()]); }
-    let mut f = std::fs::File::open(&path).map_err(|e| format!("打开日志失败: {}", e))?;
+    if !p.exists() { return Ok(LogChunk { lines: vec!["日志文件尚未生成".to_string()], offset: 0 }); }
+    let mut f = std::fs::File::open(&path).map_err(|e| format!("打开失败: {}", e))?;
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    // ponytail: 只读尾部 64KB，100MB 日志不卡
-    let skip = len.saturating_sub(65536);
-    let mut buf = vec![0u8; (len - skip) as usize];
-    f.seek(SeekFrom::Start(skip)).map_err(|e| format!("seek 失败: {}", e))?;
-    f.read_exact(&mut buf).map_err(|e| format!("读取失败: {}", e))?;
-    let content = String::from_utf8_lossy(&buf);
-    let all: Vec<&str> = content.lines().collect();
-    let tail = all.len().saturating_sub(500);
-    let lines: Vec<String> = all[tail..].iter().map(|s| s.to_string()).collect();
-    Ok(lines)
+    if offset >= len { return Ok(LogChunk { lines: vec![], offset }); }
+    if offset == 0 {
+        // 首次：读尾部 64KB
+        let skip = len.saturating_sub(65536);
+        let mut buf = vec![0u8; (len - skip) as usize];
+        f.seek(SeekFrom::Start(skip)).map_err(|e| format!("seek: {}", e))?;
+        f.read_exact(&mut buf).map_err(|e| format!("read: {}", e))?;
+        let content = String::from_utf8_lossy(&buf);
+        let ls: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        Ok(LogChunk { lines: ls, offset: len })
+    } else {
+        // ponytail: 增量读取 ── 真正的 tail -f
+        f.seek(SeekFrom::Start(offset)).map_err(|e| format!("seek: {}", e))?;
+        let size = len - offset;
+        let mut buf = vec![0u8; size.min(65536) as usize];
+        f.read_exact(&mut buf).map_err(|e| format!("read: {}", e))?;
+        let content = String::from_utf8_lossy(&buf);
+        let ls: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        Ok(LogChunk { lines: ls, offset: len })
+    }
 }
