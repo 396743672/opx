@@ -45,8 +45,8 @@ pub fn check_uninstall_safety(software: &InstalledSoftware) -> Result<UninstallS
         });
     }
 
-    // C. JRE 依赖校验（仅 key=="jre"）
-    if software.key == "jre" {
+    // ponytail: JRE/JDK 依赖校验
+    if software.key == "jre" || software.key == "jdk" {
         let jre_report = check_jre_in_use(&software.id)?;
         if jre_report.in_use {
             if jre_report.is_default {
