@@ -1,17 +1,17 @@
 <template>
   <Teleport to="body">
-    <div class="dialog-overlay" @click.self="$emit('close')">
+    <div class="dialog-overlay">
       <div class="dialog-panel">
-        <div class="dialog-header">
+        <div class="dialog-hd">
           <h2>{{ $t('viewLogs') }} - {{ appName }}</h2>
           <div class="flex items-center gap-2">
-            <button class="btn" @click="loadTail">{{ $t('refresh') }}</button>
+            <button class="btn" @click="loadTail"><Icon icon="mdi:refresh" /> {{ $t('refresh') }}</button>
             <button class="btn" @click="$emit('close')"><Icon icon="mdi:close" /></button>
           </div>
         </div>
-        <div class="log-box" ref="logContainer">
-          <div v-if="error" class="text-red-400 p-4">{{ error }}</div>
-          <div v-else-if="lines.length === 0" class="text-gray-500 p-4">{{ $t('noLogs') }}</div>
+        <div class="log-box" ref="logBox">
+          <div v-if="error" class="p-4 text-red-400 font-sans">{{ error }}</div>
+          <div v-else-if="lines.length === 0" class="p-4 text-gray-500 font-sans">{{ $t('noLogs') }}</div>
           <div v-for="(line, i) in lines" :key="i" class="log-line">{{ line }}</div>
         </div>
       </div>
@@ -22,29 +22,30 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { Icon } from '@iconify/vue'
-import { readTextFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, exists } from '@tauri-apps/plugin-fs'
 
 const props = defineProps<{ appId: string; appName: string; logPath: string }>()
 defineEmits<{ close: [] }>()
 
 const lines = ref<string[]>([])
 const error = ref('')
-const logContainer = ref<HTMLElement | null>(null)
+const logBox = ref<HTMLElement | null>(null)
 
 async function loadTail() {
   error.value = ''
   if (!props.logPath) { error.value = '日志路径未配置'; return }
   try {
+    const fileExists = await exists(props.logPath)
+    if (!fileExists) { error.value = '日志文件尚未生成，请先启动应用'; return }
     const content = await readTextFile(props.logPath)
     lines.value = content ? content.split('\n').slice(-500) : []
-  } catch {
-    error.value = '无法读取日志文件: ' + props.logPath
-    lines.value = []
+  } catch (e: any) {
+    error.value = '无法读取日志: ' + (typeof e === 'string' ? e : props.logPath)
   }
 }
 
 watch(lines, () => nextTick(() => {
-  if (logContainer.value) logContainer.value.scrollTop = logContainer.value.scrollHeight
+  if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
 }))
 
 onMounted(loadTail)
@@ -62,11 +63,11 @@ onMounted(loadTail)
   background: var(--color-card); box-shadow: var(--shadow-popover);
   display: flex; flex-direction: column; overflow: hidden;
 }
-.dialog-header {
+.dialog-hd {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--color-border);
+  padding: 14px 20px; border-bottom: 1px solid var(--color-border);
 }
-.dialog-header h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.dialog-hd h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .log-box {
   background: #0d1117; color: #58a6ff;
   font-family: ui-monospace, monospace; font-size: 12px;
