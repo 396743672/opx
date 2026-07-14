@@ -6,7 +6,10 @@
           <h2>{{ $t('jvmMonitor') }} - {{ appName }}</h2>
         </div>
         <div class="panel-body">
-          <div v-if="!metrics" class="text-center py-8" style="color:var(--color-muted-foreground)">
+          <div v-if="errMsg" class="text-center py-8" style="color:#ef4444">
+            {{ errMsg }}
+          </div>
+          <div v-else-if="!metrics || !metrics.heap_max" class="text-center py-8" style="color:var(--color-muted-foreground)">
             {{ $t('loading') }}
           </div>
           <div v-else>
@@ -55,7 +58,9 @@ defineEmits<{ close: [] }>()
 
 const store = useSpringBootStore()
 const metrics = ref<JvmInfo | null>(null)
+const errMsg = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
+let attempt = 0
 
 const heapPct = computed(() => {
   if (!metrics.value || metrics.value.heap_max === 0) return 0
@@ -71,7 +76,13 @@ function formatSize(bytes: number): string {
   return bytes + ' B'
 }
 
-async function refresh() { metrics.value = await store.fetchJvmMetrics(props.appId) }
+async function refresh() {
+  try {
+    const m = await store.fetchJvmMetrics(props.appId)
+    if (m) { metrics.value = m; errMsg.value = ''; attempt = 0 }
+    else { attempt++; if (attempt > 3) errMsg.value = 'JVM 指标不可用（jcmd 未找到或进程不存在）' }
+  } catch (e: any) { errMsg.value = typeof e === 'string' ? e : '采集失败' }
+}
 
 onMounted(async () => { await refresh(); timer = setInterval(refresh, 5000) })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
