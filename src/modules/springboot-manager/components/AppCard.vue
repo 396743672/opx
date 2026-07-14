@@ -15,7 +15,7 @@
 
     <div class="text-xs text-muted-foreground space-y-0.5 mb-3 font-mono">
       <div class="flex items-center gap-2">
-        <span>{{ $t('port') }}: {{ app.port }}</span>
+        <span v-if="app.port">{{ $t('port') }}: {{ app.port }}</span>
         <span>{{ $t('version') }}: {{ app.version }}</span>
       </div>
       <div v-if="app.pid">PID: {{ app.pid }}</div>

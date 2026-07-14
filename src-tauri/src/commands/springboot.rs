@@ -22,10 +22,12 @@ pub async fn create_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     params: CreateAppParams,
 ) -> Result<SpringBootApp, String> {
-    // 验证端口不重复
-    let apps = manager.list_apps();
-    if apps.iter().any(|a| a.port == params.port) {
-        return Err(format!("端口 {} 已被其他应用占用", params.port));
+    // ponytail: 有指定端口才查重，None 表示动态端口不校验
+    if let Some(port) = params.port {
+        let apps = manager.list_apps();
+        if apps.iter().any(|a| a.port == Some(port)) {
+            return Err(format!("端口 {} 已被其他应用占用", port));
+        }
     }
     manager.create_app(params).map_err(|e| e.to_string())
 }

@@ -79,7 +79,9 @@ pub async fn start_app(
         cmd.arg(opt);
     }
     cmd.arg("-jar").arg(&app.jar_path);
-    cmd.arg(format!("--server.port={}", app.port));
+    if let Some(p) = app.port {
+        cmd.arg(format!("--server.port={}", p));
+    }
     if !app.profile.is_empty() {
         cmd.arg(format!("--spring.profiles.active={}", app.profile));
     }
@@ -106,16 +108,18 @@ pub async fn start_app(
     let reg_id = process_registry::register(pid, app.name.clone(), "springboot".to_string());
     APP_REG_IDS.lock().unwrap().insert(app_id.to_string(), reg_id);
 
-    // 健康检查：TCP 探活端口，30 次 × 1s
+    // 健康检查：有端口则 TCP 探活，无端口则等 5s 直接标记运行
     let max_attempts = 30u32;
-    let mut healthy = false;
+    let mut healthy = app.port.is_none(); // 无端口时直接认为健康
     for _ in 0..max_attempts {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", app.port))
-            .await
-            .is_ok()
-        {
-            healthy = true;
-            break;
+        if let Some(port) = app.port {
+            if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                .await
+                .is_ok()
+            {
+                healthy = true;
+                break;
+            }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

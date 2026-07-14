@@ -96,7 +96,7 @@ impl SpringBootManager {
         if let Some(v) = params.program_args { app.program_args = v; }
         if let Some(v) = params.profile { app.profile = v; }
         if let Some(v) = params.env_vars { app.env_vars = v; }
-        if let Some(v) = params.port { app.port = v; }
+        if let Some(v) = params.port { app.port = Some(v); }
         if let Some(v) = params.log_path { app.log_path = v; }
         if let Some(v) = params.dependencies { app.dependencies = v; }
         if let Some(v) = params.auto_start { app.auto_start = v; }

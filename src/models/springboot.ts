@@ -18,7 +18,7 @@ export interface SpringBootApp {
   env_vars: [string, string][]
   status: AppStatus
   pid: number | null
-  port: number
+  port: number | null
   log_path: string
   start_time: string | null
   last_error: string | null
@@ -59,7 +59,7 @@ export interface CreateAppParams {
   program_args: string[]
   profile: string
   env_vars: [string, string][]
-  port: number
+  port?: number | null
   log_path: string
   dependencies: string[]
   auto_start: boolean
@@ -75,7 +75,7 @@ export interface UpdateAppParams {
   program_args?: string[]
   profile?: string
   env_vars?: [string, string][]
-  port?: number
+  port?: number | null
   log_path?: string
   dependencies?: string[]
   auto_start?: boolean

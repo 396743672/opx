@@ -244,7 +244,7 @@ const form = reactive({
   jar_path: '',
   name: '',
   jdk_installed_id: '',
-  port: 8080,
+  port: null as number | null,
   profile: '',
   env_vars: [] as [string, string][],
   log_path: '',
@@ -337,8 +337,8 @@ async function save() {
       ? programArgsText.value.split('\n').map(s => s.trim()).filter(Boolean)
       : []
 
-    // ponytail: port 为空时回退默认值，避免 serde 反序列化 u16 失败
-    const safePort = typeof form.port === 'number' && form.port > 0 ? form.port : 8080
+    // ponytail: port 可为 null，向后端传 None
+    const safePort = typeof form.port === 'number' && form.port > 0 ? form.port : null
 
     if (props.app) {
       const updated = await store.updateApp(props.app.id, {
