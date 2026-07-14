@@ -66,11 +66,6 @@
         <div class="input readonly input-mono">{{ installPath }}</div>
       </div>
 
-      <label class="checkbox">
-        <input type="checkbox" v-model="setAsDefault" />
-        <span>{{ $t('setAsDefaultJre') }}</span>
-      </label>
-
       <div class="dialog-footer">
         <button class="btn" @click="$emit('cancel')">{{ $t('cancel') }}</button>
         <button class="btn primary" @click="install" :disabled="installing">
@@ -113,7 +108,6 @@ const selectedVersionIdx = ref(0)
 const selectedMirrorIdx = ref(0)
 const showMirrorDropdown = ref(false)
 const installing = ref(false)
-const setAsDefault = ref(true)
 const showVersionDropdown = ref(false)
 const fetchingVersions = ref(false)
 const fetchError = ref<string | null>(null)
@@ -200,7 +194,6 @@ async function install() {
         key: 'jre',
         version: selectedVersion.value.version,
         mirror_index: selectedMirrorIdx.value,
-        set_as_default_jre: setAsDefault.value,
       },
     }) as string
     useInstallStore().createTask(

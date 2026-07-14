@@ -127,7 +127,7 @@ const grouped = computed<Group[]>(() => {
   for (const sw of list) {
     let g: keyof typeof groups
     if (sw.is_custom) g = 'custom'
-    else if (sw.key === 'jre') g = 'runtime'
+    else if (sw.key === 'jre' || sw.key === 'jdk') g = 'runtime'
     else if (sw.key === 'mysql') g = 'database'
     else if (sw.key === 'redis') g = 'cache'
     else if (sw.key === 'nginx') g = 'webserver'
