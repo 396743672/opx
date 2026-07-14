@@ -41,16 +41,25 @@ impl SpringBootManager {
     }
 
     pub fn create_app(&self, params: CreateAppParams) -> Result<SpringBootApp> {
-        let jar_path = std::path::Path::new(&params.jar_path);
-        if !jar_path.exists() {
+        let src = std::path::Path::new(&params.jar_path);
+        if !src.exists() {
             anyhow::bail!("JAR 文件不存在: {}", params.jar_path);
         }
-        let version = read_jar_version(&params.jar_path).unwrap_or_else(|| "unknown".to_string());
+        // ponytail: 复制 JAR 到数据目录，不原地运行
+        let app_dir = paths::data_dir().join("springboot").join(&params.name);
+        std::fs::create_dir_all(&app_dir)?;
+        let target_jar = app_dir.join("app.jar");
+        std::fs::copy(src, &target_jar)?;
+        let jar_path = target_jar.to_str().unwrap().to_string();
+
+        let version = read_jar_version(&jar_path).unwrap_or_else(|| "unknown".to_string());
         let log_path = if params.log_path.is_empty() {
             paths::data_dir().join("logs").join(&params.name).to_str().unwrap().to_string()
         } else {
             params.log_path.clone()
         };
+        // ponytail: 如果前端未传端口，尝试从 JAR 内部 config 自动读取
+        let port = params.port.or_else(|| read_port_from_jar(&jar_path));
         let app = SpringBootApp {
             id: Uuid::new_v4().to_string(),
             name: params.name,
@@ -63,7 +72,7 @@ impl SpringBootManager {
             env_vars: params.env_vars,
             status: AppStatus::Stopped,
             pid: None,
-            port: params.port,
+            port,
             log_path,
             start_time: None,
             last_error: None,
@@ -193,6 +202,61 @@ pub fn read_jar_version(jar_path: &str) -> Option<String> {
     for line in content.lines() {
         if let Some(val) = line.strip_prefix("Implementation-Version:") {
             return Some(val.trim().to_string());
+        }
+    }
+    None
+}
+
+/// ponytail: 从 JAR 内部配置文件读取 server.port
+/// 按优先级扫描 BOOT-INF/classes/ 和根目录下的 application.yml/properties/bootstrap.yml/properties
+pub fn read_port_from_jar(jar_path: &str) -> Option<u16> {
+    use std::io::Read;
+    let file = std::fs::File::open(jar_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let candidates = [
+        "BOOT-INF/classes/application.yml",
+        "BOOT-INF/classes/application.properties",
+        "BOOT-INF/classes/bootstrap.yml",
+        "application.yml",
+        "application.properties",
+        "bootstrap.yml",
+    ];
+    for name in &candidates {
+        if let Ok(mut entry) = archive.by_name(name) {
+            let mut content = String::new();
+            if entry.read_to_string(&mut content).is_ok() {
+                if let Some(port) = extract_port_from_config(&content) {
+                    return Some(port);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_port_from_config(content: &str) -> Option<u16> {
+    // properties: server.port=8080 or server.port: 8080
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(val) = t.strip_prefix("server.port") {
+            let after = val.trim_start_matches(&['=', ':', ' '][..]);
+            if let Ok(p) = after.parse::<u16>() { return Some(p); }
+        }
+    }
+    // YAML: server:\n  port: 8080
+    let lines: Vec<&str> = content.lines().collect();
+    for i in 0..lines.len() {
+        if lines[i].trim() == "server:" {
+            for j in i + 1..lines.len().min(i + 5) {
+                let t = lines[j].trim();
+                if let Some(val) = t.strip_prefix("port:") {
+                    if let Ok(p) = val.trim().parse::<u16>() { return Some(p); }
+                } else if !t.is_empty() && !t.starts_with('#')
+                    && !lines[j].starts_with(' ') && !lines[j].starts_with('\t')
+                {
+                    break; // 离开 server: 作用域
+                }
+            }
         }
     }
     None
