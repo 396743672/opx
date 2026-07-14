@@ -1,3 +1,5 @@
+pub mod jvm_opts;
+
 use std::sync::RwLock;
 
 use anyhow::Result;
