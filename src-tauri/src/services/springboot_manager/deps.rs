@@ -1,4 +1,3 @@
-use crate::models::software::SoftwareStatus;
 use crate::services::software_manager::SoftwareManager;
 
 /// 验证前置依赖，返回所有未运行的依赖名称列表
