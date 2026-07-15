@@ -203,6 +203,7 @@ export default {
   extraJvmFlags: 'Extra JVM Flags',
   addEnvVar: 'Add Env Var',
   logPath: 'Log Path',
+  runningJarPath: 'JAR Path',
   all: 'All',
   noGroup: 'No Group',
   autoRestart: 'Auto Restart',
@@ -221,6 +222,7 @@ export default {
   gcCount: 'GC Count',
   gcTime: 'GC Time',
   gcType: 'GC Type',
+  selectGcType: 'Select GC Type',
 
   // ===== Website Management =====
   websiteList: 'Sites',

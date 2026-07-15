@@ -13,7 +13,7 @@
         </div>
 
         <div class="dialog-body">
-          <!-- JAR file -->
+          <!-- JAR file - 仅用于上传/替换包，始终为空 -->
           <div class="field">
             <div class="field-label">{{ $t('jarFile') }}</div>
             <div class="file-row">
@@ -25,7 +25,9 @@
           <!-- App name -->
           <div class="field">
             <div class="field-label">{{ $t('appName') }}</div>
-            <input class="input" v-model="form.name" />
+            <input class="input" :value="form.name" :readonly="!!app" @input="onNameInput" :class="{ 'border-destructive': nameError }" />
+            <div v-if="nameError" class="text-xs text-destructive mt-1">{{ nameError }}</div>
+            <div v-else class="text-xs hint mt-1">{{ $t('siteNameHint') }}</div>
           </div>
 
           <!-- JDK select -->
@@ -59,6 +61,7 @@
             <div class="field">
               <div class="field-label">{{ $t('gcType') }}</div>
               <select class="input" v-model="jvm.gc_type">
+                <option value="" disabled>{{ $t('selectGcType') }}</option>
                 <option value="G1GC">G1GC</option>
                 <option value="ParallelGC">ParallelGC</option>
                 <option value="ZGC">ZGC</option>
@@ -105,10 +108,16 @@
             </button>
           </div>
 
-          <!-- Log path -->
+          <!-- 运行包路径（只读） -->
+          <div class="field" v-if="app">
+            <div class="field-label">{{ $t('runningJarPath') }}</div>
+            <input class="input input-mono" :value="displayRelPath(app.jar_path)" readonly />
+          </div>
+
+          <!-- Log path（只读，编辑模式下不允许修改） -->
           <div class="field">
             <div class="field-label">{{ $t('logPath') }}</div>
-            <input class="input input-mono" v-model="form.log_path" placeholder="logs/app.log" />
+            <input class="input input-mono" :value="displayRelPath(form.log_path)" readonly placeholder="logs/app.log" />
           </div>
 
           <!-- Dependencies -->
@@ -196,6 +205,18 @@ const emit = defineEmits<{
 const store = useSpringBootStore()
 const saving = ref(false)
 const saveError = ref('')
+const nameError = ref('')
+
+/** 名称输入：禁止中文，编辑模式只读由 :readonly 控制 */
+function onNameInput(e: Event) {
+  const v = (e.target as HTMLInputElement).value
+  if (/[\u4e00-\u9fff\u3400-\u4dbf]/.test(v)) {
+    nameError.value = '名称不能包含中文'
+    return
+  }
+  nameError.value = ''
+  form.name = v
+}
 
 // ponytail: 展示 JDK 和 JRE，过滤掉 MySQL/Redis 等其他软件，标注类型
 const jdkList = computed(() =>
@@ -213,6 +234,20 @@ const jvm = reactive<JvmOptsTemplate>({
 
 const extraFlagsText = ref('')
 
+/** apps.json 中存的是相对 data_dir 的路径（如 springboot/{name}/app.jar），
+ *  jar_path 已解析为绝对路径，需要剥离 data_dir 前缀显示相对路径 */
+function displayRelPath(p: string): string {
+  if (!p) return p
+  // 统一正斜杠便于匹配
+  const normalized = p.replace(/\\/g, '/')
+  // 找最后一个 /data/ 后的部分作为相对路径
+  const idx = normalized.lastIndexOf('/data/')
+  if (idx >= 0) return normalized.slice(idx + 1)
+  // 已经是相对路径则直接返回（统一正斜杠）
+  if (!/^[A-Za-z]:\//.test(normalized) && !normalized.startsWith('/')) return normalized
+  return normalized
+}
+
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
   const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: ['-XX:+ExitOnOutOfMemoryError', '-XX:+HeapDumpOnOutOfMemoryError', '-Dfile.encoding=UTF-8'] }
   const knownGc = ['G1GC', 'ZGC', 'ParallelGC', 'ShenandoahGC', 'SerialGC']
@@ -224,7 +259,7 @@ function parseJvmOpts(opts: string[]): JvmOptsTemplate {
     } else if (opt.startsWith('-XX:MetaspaceSize=')) {
       result.metaspace_mb = parseInt(opt.slice(18).replace('m', '')) || 128
     } else if (knownGc.some(gc => opt === `-XX:+Use${gc}`)) {
-      result.gc_type = opt.slice(7)
+      result.gc_type = opt.slice(8) // -XX:+Use 为 8 字符，slice(8) 取出 GC 名
     } else {
       result.extra_flags.push(opt)
     }
@@ -268,8 +303,15 @@ const form = reactive({
 const programArgsText = ref('')
 
 const valid = computed(() => {
+  if (nameError.value) return false
+  if (props.app) return form.name.trim() !== '' && form.jdk_installed_id !== ''
   return form.jar_path.trim() !== '' && form.name.trim() !== '' && form.jdk_installed_id !== ''
 })
+
+/** 检查名称是否已被其他应用使用 */
+function isNameDuplicate(name: string, excludeId?: string): boolean {
+  return store.apps.some(a => a.name === name.trim() && a.id !== excludeId)
+}
 
 onMounted(() => {
   store.fetchJdkList()
@@ -277,7 +319,7 @@ onMounted(() => {
   store.fetchGroups()
 
   if (props.app) {
-    form.jar_path = props.app.jar_path
+    // ponytail: 编辑模式下 jar_path 留空（上传框干净），当前 jar 路径通过 app.jar_path 显示
     form.name = props.app.name
     form.jdk_installed_id = props.app.jdk_installed_id
     form.port = props.app.port
@@ -315,6 +357,13 @@ async function selectJar() {
       const filename = parts[parts.length - 1] || ''
       form.name = filename.replace(/\.jar$/i, '')
     }
+    // ponytail: 自动从 JAR 内 application.yml/properties 读取端口
+    try {
+      const port = await store.readJarPort(selected)
+      if (port !== null && port > 0) form.port = port
+    } catch (e) {
+      console.error('读取 JAR 端口失败:', e)
+    }
   }
 }
 
@@ -344,6 +393,13 @@ function removeEnv(index: number) {
 
 async function save() {
   if (!valid.value || saving.value) return
+  // 名称重复校验
+  const dupId = props.app ? props.app.id : undefined
+  if (isNameDuplicate(form.name, dupId)) {
+    saveError.value = '应用名称"' + form.name.trim() + '"已存在，请更换名称'
+    saving.value = false
+    return
+  }
   saving.value = true
   saveError.value = ''
   try {
@@ -662,4 +718,9 @@ select.input {
   border-radius: 6px;
   font-size: 12px;
 }
+.mt-1 { margin-top: 4px; }
+.text-xs { font-size: 12px; }
+.text-destructive { color: #b91c1c; }
+.border-destructive { border-color: #b91c1c !important; }
+.hint { font-size: 11px; color: var(--color-muted-foreground); }
 </style>

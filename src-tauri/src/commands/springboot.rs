@@ -64,11 +64,12 @@ pub async fn start_springboot_app(
 #[tauri::command]
 pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
+    software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
     crate::services::springboot_manager::lifecycle::stop_app(
-        &id, &manager, &app_handle,
+        &id, &manager, &software_mgr, &app_handle,
     ).await
 }
 

@@ -30,7 +30,25 @@ impl SpringBootManager {
     }
 
     pub fn list_apps(&self) -> Vec<SpringBootApp> {
-        let mut apps = self.store.read().unwrap().applications.clone();
+        // ponytail: 兜底校验 — 进程已死但状态卡在 Running/Starting/Stopping 时自动纠正为 Stopped
+        let mut store = self.store.write().unwrap();
+        let mut changed = false;
+        for app in &mut store.applications {
+            if let Some(pid) = app.pid {
+                if matches!(app.status, AppStatus::Running | AppStatus::Starting | AppStatus::Stopping)
+                    && !lifecycle::is_pid_alive(pid)
+                {
+                    app.status = AppStatus::Stopped;
+                    app.pid = None;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let _ = Self::save_store(&store);
+        }
+        let mut apps = store.applications.clone();
+        drop(store);
         for app in &mut apps {
             Self::resolve_app_paths(app);
         }
