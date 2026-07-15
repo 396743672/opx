@@ -50,7 +50,7 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
     let sites_dir = conf_dir.join("sites");
     std::fs::create_dir_all(&sites_dir).map_err(|e| e.to_string())?;
 
-    sync_site_files(&sites_dir, &wm.list()).map_err(|e| e.to_string())?;
+    sync_site_files(&sites_dir, &nginx.install_path, &wm.list()).map_err(|e| e.to_string())?;
 
     // 确保主配置 include（幂等）
     let main_conf = conf_dir.join("nginx.conf");
@@ -87,7 +87,7 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
 /// - **停用** → `.conf` 改名为 `.conf.disabled`（内容保留，nginx 不加载）
 /// - **已删除** → 清理阶段删掉不再属于任何站点的 `.conf` / `.conf.disabled`
 /// - **手写站点** 的 `.conf` 通过源码视图写入，此处仅改名不覆盖
-fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
+fn sync_site_files(sites_dir: &Path, install_path: &str, sites: &[Site]) -> std::io::Result<()> {
     // 所有站点的文件名（启用态 .conf 与停用态 .conf.disabled）都要保护，清理阶段不得删除
     let protected: std::collections::HashSet<String> = sites
         .iter()
@@ -121,9 +121,13 @@ fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
                 std::fs::rename(&disabled_path, &conf_path)?;
             } else if !conf_path.exists() && !disabled_path.exists() {
                 // 全新启用：从数据生成
-                let block = nginx_conf::generate_server_block(site);
+                let block = nginx_conf::generate_server_block(site, install_path);
                 std::fs::write(&conf_path, block)?;
-            } // else .conf 已存在 → 跳过（手写站点或已生成）
+            } else if !site.custom_conf {
+                // ponytail: 表单模式 → 每次保存都从表单数据重建 .conf，确保路由更改生效
+                let block = nginx_conf::generate_server_block(site, install_path);
+                std::fs::write(&conf_path, block)?;
+            } // 手写模式（custom_conf=true）→ 跳过，保留源码视图写入的内容
         } else if conf_path.exists() {
             // 停用态：改为 .disabled（保留内容，nginx 不加载）
             std::fs::rename(&conf_path, &disabled_path)?;
@@ -164,7 +168,8 @@ fn resolve_pending_zips(site: &mut Site, install_path: &Path) -> anyhow::Result<
         std::fs::create_dir_all(&dest)?;
         archive::extract_zip_flatten(&staged, &dest, |_, _| {})?;
         let _ = std::fs::remove_file(&staged);
-        loc.root = Some(dest.to_string_lossy().replace('\\', "/"));
+        // ponytail: 存相对路径 sites-data/{name}/{path}，nginx 配置生成时再解析为绝对路径
+        loc.root = Some(format!("sites-data/{}/{}", name_seg, path_seg));
     }
     Ok(())
 }
@@ -264,11 +269,7 @@ pub fn get_site_conf(
     website_manager: State<'_, Arc<WebsiteManager>>,
     id: String,
 ) -> Result<String, String> {
-    let nginx = manager
-        .get_installed()
-        .into_iter()
-        .find(|s| s.key == "nginx")
-        .ok_or_else(|| "未找到 nginx 安装".to_string())?;
+    let nginx = resolve_nginx(&manager)?;
 
     let site = website_manager.get(&id);
 
@@ -334,11 +335,7 @@ pub fn set_site_conf(
     id: String,
     content: String,
 ) -> Result<(), String> {
-    let nginx = manager
-        .get_installed()
-        .into_iter()
-        .find(|s| s.key == "nginx")
-        .ok_or_else(|| "未找到 nginx 安装".to_string())?;
+    let nginx = resolve_nginx(&manager)?;
 
     let site = website_manager
         .get(&id)
