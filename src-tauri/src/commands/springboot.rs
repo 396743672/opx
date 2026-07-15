@@ -221,7 +221,7 @@ pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, 
         best.map(|(p, _)| p).unwrap_or_else(|| p.to_path_buf())
     } else { p.to_path_buf() };
     if !p.exists() { return Ok(LogChunk { lines: vec!["日志文件尚未生成".to_string()], offset: 0 }); }
-    let mut f = std::fs::File::open(&path).map_err(|e| format!("打开失败: {}", e))?;
+    let mut f = std::fs::File::open(&p).map_err(|e| format!("打开失败: {}", e))?;
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if offset >= len { return Ok(LogChunk { lines: vec![], offset }); }
     if offset == 0 {
