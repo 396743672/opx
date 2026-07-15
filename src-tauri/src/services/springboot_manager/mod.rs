@@ -30,14 +30,31 @@ impl SpringBootManager {
     }
 
     pub fn list_apps(&self) -> Vec<SpringBootApp> {
-        self.store.read().unwrap().applications.clone()
+        let mut apps = self.store.read().unwrap().applications.clone();
+        for app in &mut apps {
+            Self::resolve_app_paths(app);
+        }
+        apps
     }
 
     pub fn find_app(&self, id: &str) -> Result<SpringBootApp> {
-        self.store.read().unwrap().applications.iter()
+        let mut app = self.store.read().unwrap().applications.iter()
             .find(|a| a.id == id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))
+            .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
+        Self::resolve_app_paths(&mut app);
+        Ok(app)
+    }
+
+    /// 把 apps.json 中的相对路径解析为绝对路径
+    fn resolve_app_paths(app: &mut SpringBootApp) {
+        app.jar_path = paths::resolve_data_path(&app.jar_path)
+            .to_string_lossy().to_string();
+        // log_path 可能是用户指定的绝对路径，只有是相对路径时才解析
+        if !std::path::Path::new(&app.log_path).is_absolute() {
+            app.log_path = paths::resolve_data_path(&app.log_path)
+                .to_string_lossy().to_string();
+        }
     }
 
     pub fn create_app(&self, params: CreateAppParams) -> Result<SpringBootApp> {
@@ -50,17 +67,22 @@ impl SpringBootManager {
         std::fs::create_dir_all(&app_dir)?;
         let target_jar = app_dir.join("app.jar");
         std::fs::copy(src, &target_jar)?;
-        let jar_path = target_jar.to_str().unwrap().to_string();
+        // ponytail: 存相对路径 springboot/{name}/app.jar，避免 data_dir 绝对路径写死
+        let jar_path = format!("springboot/{}/app.jar", params.name);
 
-        let version = read_jar_version(&jar_path).unwrap_or_else(|| "unknown".to_string());
+        let version = read_jar_version(
+            &paths::data_dir().join(&jar_path).to_string_lossy().to_string()
+        ).unwrap_or_else(|| "unknown".to_string());
         // ponytail: 日志在 JAR 同级的 logs/ 目录下
         let log_path = if params.log_path.is_empty() {
-            app_dir.join("logs").join("console.log").to_str().unwrap().to_string()
+            format!("springboot/{}/logs/console.log", params.name)
         } else {
             params.log_path.clone()
         };
         // ponytail: 如果前端未传端口，尝试从 JAR 内部 config 自动读取
-        let port = params.port.or_else(|| read_port_from_jar(&jar_path));
+        let port = params.port.or_else(|| read_port_from_jar(
+            &paths::data_dir().join(&jar_path).to_string_lossy().to_string()
+        ));
         let app = SpringBootApp {
             id: Uuid::new_v4().to_string(),
             name: params.name,

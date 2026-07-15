@@ -107,3 +107,14 @@ pub fn resolve_install_path(rel_or_abs: &str) -> PathBuf {
         apps_dir().join(p)
     }
 }
+
+/// 解析应用数据路径：若为相对路径则拼接 data_dir()，否则直接返回。
+/// 用于 SpringBoot 的 jar_path/log_path 等数据目录下的路径。
+pub fn resolve_data_path(rel_or_abs: &str) -> PathBuf {
+    let p = Path::new(rel_or_abs);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        data_dir().join(p)
+    }
+}
