@@ -82,6 +82,7 @@ impl SoftwareManager {
         }
     }
 
+    /// 获取已安装软件列表（返回 install_path 为相对路径，供前端显示）
     pub fn get_installed(&self) -> Vec<InstalledSoftware> {
         self.installed.read().unwrap().software.clone()
     }
@@ -141,9 +142,9 @@ impl SoftwareManager {
         } // 写锁在此释放
 
         // 删除安装目录（锁已释放）
-        let install_path = std::path::Path::new(&removed.install_path);
+        let install_path = paths::resolve_install_path(&removed.install_path);
         if install_path.exists() {
-            if let Err(e) = std::fs::remove_dir_all(install_path) {
+            if let Err(e) = std::fs::remove_dir_all(&install_path) {
                 eprintln!("[software] 清理安装目录失败 {}: {}", install_path.display(), e);
                 // 不阻断卸载流程——记录已从 installed.json 移除，目录残留可手动清理
             }
@@ -208,14 +209,18 @@ impl SoftwareManager {
         settings.jre_default_id
     }
 
-    /// 按 installed_id 查找单条记录
+    /// 按 installed_id 查找单条记录（返回时解析 install_path 为绝对路径）
     pub fn find_installed(&self, installed_id: &str) -> Option<InstalledSoftware> {
         let installed = self.installed.read().unwrap();
-        installed
+        let mut sw = installed
             .software
             .iter()
             .find(|s| s.id == installed_id)
-            .cloned()
+            .cloned()?;
+        sw.install_path = paths::resolve_install_path(&sw.install_path)
+            .to_string_lossy()
+            .to_string();
+        Some(sw)
     }
 
     /// 更新单条记录的运行时字段（status / pid / last_started_at 等）
@@ -299,7 +304,7 @@ impl SoftwareManager {
         Ok(())
     }
 
-    /// 获取所有 auto_start=true 的实例（按 startup_order 升序排序）
+    /// 获取所有 auto_start=true 的实例（按 startup_order 升序排序，返回时解析路径）
     pub fn list_auto_start(&self) -> Vec<InstalledSoftware> {
         let installed = self.installed.read().unwrap();
         let mut v: Vec<_> = installed
@@ -308,6 +313,11 @@ impl SoftwareManager {
             .filter(|s| s.auto_start_on_app_start)
             .cloned()
             .collect();
+        for s in &mut v {
+            s.install_path = paths::resolve_install_path(&s.install_path)
+                .to_string_lossy()
+                .to_string();
+        }
         v.sort_by_key(|s| s.startup_order);
         v
     }

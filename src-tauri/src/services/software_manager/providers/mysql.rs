@@ -114,9 +114,6 @@ impl SoftwareProvider for MySqlProvider {
         // extract_zip_flatten 已剥掉 mysql-{version}-winx64 顶层目录，
         // install_dir 即 MySQL 程序目录根，my.ini 直接放 install_dir
         let my_ini_path = ctx.install_dir().join("my.ini");
-        let basedir = ctx.install_dir().to_path_buf();
-
-        let basedir_forward = basedir.to_string_lossy().replace('\\', "/");
 
         // 根据系统内存/CPU 动态生成配置
         let (total_mem_mb, cpu_count) = get_system_info();
@@ -132,9 +129,6 @@ impl SoftwareProvider for MySqlProvider {
             "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\n\
 port=3306\n\
 bind-address=127.0.0.1\n\
-basedir=\"{basedir}\"\n\
-datadir=\"{basedir}/data\"\n\
-socket=\"{basedir}/mysql.sock\"\n\
 character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
 default-storage-engine=INNODB\n\
 sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
@@ -150,7 +144,6 @@ innodb_write_io_threads={io_threads}\n\
 innodb_flush_method=normal\n\
 innodb_doublewrite=1\n\
 lower_case_table_names=1\n",
-            basedir = basedir_forward,
             thread_cache = thread_cache,
             buffer_pool = buffer_pool_mb,
             io_threads = io_threads,
@@ -163,9 +156,7 @@ lower_case_table_names=1\n",
         // extract_zip_flatten 已剥掉 zip 顶层目录，install_path 即 MySQL 程序目录根
         // bin/mysqld.exe 直接在 install_path/bin/ 下
         let working_dir = PathBuf::from(&ctx.install_path);
-        // 绝对路径化：避免依赖子进程 CWD 解析相对路径（曾导致 .\data\mysql-init.err
-        // 创建时被拒 "Permission denied"）。F2 的 --log-error 诊断落盘路径改为绝对路径。
-        let data_dir = PathBuf::from(&ctx.install_path).join("data");
+        let data_dir = working_dir.join("data");
 
         let init_command = StartCommand {
             program: "bin/mysqld.exe".to_string(),
@@ -197,6 +188,8 @@ lower_case_table_names=1\n",
             .unwrap_or(false);
         let mut main_args = vec![
             "--defaults-file=my.ini".to_string(),
+            "--basedir=".to_string() + &ctx.install_path,
+            "--datadir=".to_string() + &working_dir.join("data").to_string_lossy(),
             "--console".to_string(),
         ];
 
@@ -217,6 +210,7 @@ lower_case_table_names=1\n",
                     escaped
                 );
                 std::fs::write(&init_sql_path, sql)?;
+                // init-file 用绝对路径（清理代码在 OPX 进程侧执行，非 MySQL 子进程 CWD）
                 main_args.push(format!("--init-file={}", init_sql_path.to_string_lossy()));
             }
         }

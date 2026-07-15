@@ -12,10 +12,15 @@ use crate::utils::archive;
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
 fn resolve_nginx(sm: &SoftwareManager) -> Result<crate::models::software::InstalledSoftware, String> {
-    sm.get_installed()
+    let mut nginx = sm
+        .get_installed()
         .into_iter()
         .find(|s| s.key == "nginx")
-        .ok_or_else(|| "请先在软件管理中安装 nginx".to_string())
+        .ok_or_else(|| "请先在软件管理中安装 nginx".to_string())?;
+    nginx.install_path = crate::utils::paths::resolve_install_path(&nginx.install_path)
+        .to_string_lossy()
+        .to_string();
+    Ok(nginx)
 }
 
 #[cfg(windows)]

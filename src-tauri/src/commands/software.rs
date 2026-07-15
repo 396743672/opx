@@ -993,10 +993,15 @@ fn load_software_for_id(
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let list: crate::models::software::InstalledSoftwareList =
         serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    list.software
+    let mut sw = list
+        .software
         .into_iter()
         .find(|s| s.id == installed_id)
-        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    sw.install_path = crate::utils::paths::resolve_install_path(&sw.install_path)
+        .to_string_lossy()
+        .to_string();
+    Ok(sw)
 }
 
 // ===== 卸载校验 + 自定义启动命令 + 启动设置命令（任务 10.3）=====

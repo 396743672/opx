@@ -96,3 +96,14 @@ pub fn resolve_under(root: &Path, name: &str) -> PathBuf {
         root.join(name)
     }
 }
+
+/// 解析软件安装路径：若为相对路径则拼接 apps_dir()，否则直接返回（兼容旧版绝对路径）。
+/// 存储时存 `{key}/{version}` 或 `custom/{name}`，运行时解析为完整路径。
+pub fn resolve_install_path(rel_or_abs: &str) -> PathBuf {
+    let p = Path::new(rel_or_abs);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        apps_dir().join(p)
+    }
+}
