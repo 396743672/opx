@@ -203,6 +203,7 @@ export default {
   extraJvmFlags: '额外 JVM 标志',
   addEnvVar: '添加环境变量',
   logPath: '日志路径',
+  runningJarPath: '运行包路径',
   all: '全部',
   noGroup: '无分组',
   autoRestart: '自动重启',
@@ -221,6 +222,7 @@ export default {
   gcCount: 'GC 次数',
   gcTime: 'GC 耗时',
   gcType: 'GC 类型',
+  selectGcType: '选择 GC 类型',
 
   // ===== 网站管理 =====
   websiteList: '站点列表',

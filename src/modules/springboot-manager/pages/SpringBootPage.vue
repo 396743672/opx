@@ -16,7 +16,7 @@
         <button class="btn primary" @click="openAddDialog">
           <Icon icon="mdi:plus" /> {{ $t('addApplication') }}
         </button>
-        <button v-if="store.groups.length > 0" class="btn" @click="showGroupManager = true">
+        <button class="btn" @click="showGroupManager = true">
           <Icon icon="mdi:cog" /> {{ $t('groupConfig') }}
         </button>
       </template>
@@ -36,6 +36,24 @@
         :class="{ active: activeGroup === g.name }"
         @click="activeGroup = g.name"
       >{{ g.name }}</button>
+      <button
+        v-if="activeGroup && groupApps.length > 0"
+        class="btn primary"
+        :disabled="startingGroup"
+        @click="startGroup"
+      >
+        <Icon :icon="startingGroup ? 'mdi:loading' : 'mdi:play'" :class="{ spinning: startingGroup }" />
+        {{ $t('startAll') }}
+      </button>
+      <button
+        v-if="activeGroup && groupApps.some(a => a.status === AppStatus.Running)"
+        class="btn"
+        :disabled="stoppingGroup"
+        @click="stopGroup"
+      >
+        <Icon :icon="stoppingGroup ? 'mdi:loading' : 'mdi:stop'" :class="{ spinning: stoppingGroup }" />
+        {{ $t('stopAll') }}
+      </button>
     </div>
 
     <!-- Loading state -->
@@ -132,6 +150,7 @@ import LogViewer from '../components/LogViewer.vue'
 import GroupManager from '../components/GroupManager.vue'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp } from '@/models/springboot'
+import { AppStatus } from '@/models/springboot'
 
 useI18n()
 
@@ -155,6 +174,45 @@ const logViewingAppLogPath = ref('')
 
 // Group manager
 const showGroupManager = ref(false)
+
+// 一键启动分组
+const startingGroup = ref(false)
+const stoppingGroup = ref(false)
+const groupApps = computed(() => {
+  if (!activeGroup.value) return []
+  return store.apps
+    .filter(a => a.group === activeGroup.value)
+    .sort((a, b) => a.startup_order - b.startup_order)
+})
+async function startGroup() {
+  if (startingGroup.value) return
+  startingGroup.value = true
+  try {
+    for (const app of groupApps.value) {
+      if (app.status === AppStatus.Running) continue
+      await store.startApp(app.id)
+      await new Promise(r => setTimeout(r, 1000))
+    }
+  } finally {
+    startingGroup.value = false
+    store.fetchApps()
+  }
+}
+async function stopGroup() {
+  if (stoppingGroup.value) return
+  stoppingGroup.value = true
+  try {
+    // 逆序停止：先停 order 大的
+    const sorted = [...groupApps.value].sort((a, b) => b.startup_order - a.startup_order)
+    for (const app of sorted) {
+      if (app.status !== AppStatus.Running) continue
+      await store.stopApp(app.id)
+    }
+  } finally {
+    stoppingGroup.value = false
+    store.fetchApps()
+  }
+}
 
 // Delete confirm
 const deleteTarget = ref<SpringBootApp | null>(null)
