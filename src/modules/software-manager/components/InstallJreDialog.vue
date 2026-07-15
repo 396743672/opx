@@ -194,6 +194,7 @@ async function install() {
         key: 'jre',
         version: selectedVersion.value.version,
         mirror_index: selectedMirrorIdx.value,
+        set_as_default_jre: false,
       },
     }) as string
     useInstallStore().createTask(
