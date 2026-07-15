@@ -16,8 +16,7 @@ pub fn site_conf_filename(site: &Site) -> String {
 }
 
 /// 生成单个站点的 nginx server 块（保存到 conf/sites/<name_port_id>.conf）
-/// install_path 用于解析相对 root 路径为绝对路径（nginx 不支持配置中的相对路径）
-pub fn generate_server_block(site: &Site, install_path: &str) -> String {
+pub fn generate_server_block(site: &Site) -> String {
     let server_name = site
         .server_name
         .as_deref()
@@ -30,24 +29,20 @@ pub fn generate_server_block(site: &Site, install_path: &str) -> String {
     out.push_str(&format!("    listen {};\n", site.listen));
     out.push_str(&format!("    server_name {};\n", server_name));
     for loc in &site.locations {
-        out.push_str(&generate_location(loc, install_path));
+        out.push_str(&generate_location(loc));
     }
     out.push_str("}\n");
     out
 }
 
-fn generate_location(loc: &Location, install_path: &str) -> String {
+fn generate_location(loc: &Location) -> String {
     let mut s = format!("    location {} {{\n", loc.path);
     match loc.kind {
         LocationKind::Static => {
             if let Some(root) = &loc.root {
-                // 相对路径 → 拼接 install_path 为绝对路径（nginx 不支持配置中的相对路径）
-                let abs_root = if std::path::Path::new(root).is_relative() {
-                    std::path::PathBuf::from(install_path).join(root).to_string_lossy().replace('\\', "/")
-                } else {
-                    root.replace('\\', "/")
-                };
-                s.push_str(&format!("        root \"{}\";\n", abs_root));
+                // nginx 用正斜杠；含空格加引号，避免 Windows 路径转义问题
+                // ponytail: 存相对路径（sites-data/{name}/{path}），nginx 按安装目录解析
+                s.push_str(&format!("        root \"{}\";\n", root.replace('\\', "/")));
             }
             s.push_str("        index index.html;\n");
             if loc.spa_fallback {

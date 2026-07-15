@@ -50,7 +50,7 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
     let sites_dir = conf_dir.join("sites");
     std::fs::create_dir_all(&sites_dir).map_err(|e| e.to_string())?;
 
-    sync_site_files(&sites_dir, &nginx.install_path, &wm.list()).map_err(|e| e.to_string())?;
+    sync_site_files(&sites_dir, &wm.list()).map_err(|e| e.to_string())?;
 
     // 确保主配置 include（幂等）
     let main_conf = conf_dir.join("nginx.conf");
@@ -87,7 +87,7 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
 /// - **停用** → `.conf` 改名为 `.conf.disabled`（内容保留，nginx 不加载）
 /// - **已删除** → 清理阶段删掉不再属于任何站点的 `.conf` / `.conf.disabled`
 /// - **手写站点** 的 `.conf` 通过源码视图写入，此处仅改名不覆盖
-fn sync_site_files(sites_dir: &Path, install_path: &str, sites: &[Site]) -> std::io::Result<()> {
+fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
     // 所有站点的文件名（启用态 .conf 与停用态 .conf.disabled）都要保护，清理阶段不得删除
     let protected: std::collections::HashSet<String> = sites
         .iter()
@@ -121,11 +121,11 @@ fn sync_site_files(sites_dir: &Path, install_path: &str, sites: &[Site]) -> std:
                 std::fs::rename(&disabled_path, &conf_path)?;
             } else if !conf_path.exists() && !disabled_path.exists() {
                 // 全新启用：从数据生成
-                let block = nginx_conf::generate_server_block(site, install_path);
+                let block = nginx_conf::generate_server_block(site);
                 std::fs::write(&conf_path, block)?;
             } else if !site.custom_conf {
                 // ponytail: 表单模式 → 每次保存都从表单数据重建 .conf，确保路由更改生效
-                let block = nginx_conf::generate_server_block(site, install_path);
+                let block = nginx_conf::generate_server_block(site);
                 std::fs::write(&conf_path, block)?;
             } // 手写模式（custom_conf=true）→ 跳过，保留源码视图写入的内容
         } else if conf_path.exists() {
