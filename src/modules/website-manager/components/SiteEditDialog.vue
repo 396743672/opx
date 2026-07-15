@@ -85,7 +85,6 @@ const saving = ref(false)
 const tab = ref<'form' | 'source'>('form')
 const sourceText = ref<HTMLTextAreaElement | null>(null)
 const sourceDirty = ref(false)
-const sourceLoaded = ref(false)
 const nameError = ref('')
 
 function validateName(): boolean {
@@ -177,11 +176,12 @@ function genLocForPreview(loc: SiteLocation): string {
   return block
 }
 
-// 切换到源码视图时首次拉取当前配置；已编辑（dirty）则不覆盖
+// 切换到源码视图时拉取当前配置；切回表单时重置标记，下次切 source 重新加载
 watch(tab, async (t) => {
-  if (t === 'source' && !sourceDirty.value && !sourceLoaded.value) {
+  if (t === 'source') {
+    if (sourceDirty.value) return // 已有编辑不覆盖
     if (props.isNew) {
-      // 新建态：从表单数据生成预览（站点未落库，后端 get_site_conf 只能返回默认模板）
+      // 新建态：从表单数据生成预览
       if (sourceText.value) {
         sourceText.value.value = generateNginxPreview(form.value)
       }
@@ -196,7 +196,9 @@ watch(tab, async (t) => {
         console.error(e)
       }
     }
-    sourceLoaded.value = true
+  } else {
+    // 切回表单时重置，下次切 source 重新加载
+    sourceDirty.value = false
   }
 })
 </script>
