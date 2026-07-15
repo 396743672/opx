@@ -208,7 +208,9 @@ pub struct LogChunk { pub lines: Vec<String>, pub offset: u64 }
 #[tauri::command]
 pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, String> {
     use std::io::{Read, Seek, SeekFrom};
-    let p = std::path::Path::new(&path);
+    // ponytail: 相对路径解析为绝对路径（log_path 在 apps.json 中存的是相对 data_dir 的路径）
+    let abs_path = crate::utils::paths::resolve_data_path(&path);
+    let p = abs_path.as_path();
     // ponytail: 精确文件不存在时递归找最新 .log（Spring Boot 可能在子目录）
     let p = if p.exists() { p.to_path_buf() } else if let Some(dir) = p.parent().filter(|d| d.exists()) {
         let mut best: Option<(std::path::PathBuf, u64)> = None;

@@ -50,10 +50,17 @@ impl SpringBootManager {
     fn resolve_app_paths(app: &mut SpringBootApp) {
         app.jar_path = paths::resolve_data_path(&app.jar_path)
             .to_string_lossy().to_string();
-        // log_path 可能是用户指定的绝对路径，只有是相对路径时才解析
-        if !std::path::Path::new(&app.log_path).is_absolute() {
-            app.log_path = paths::resolve_data_path(&app.log_path)
-                .to_string_lossy().to_string();
+        // log_path 保持相对路径，前端显示和 read_springboot_log 中按需解析
+    }
+
+    /// 若路径在 data_dir 下则转为相对路径，否则保持原样
+    fn relativize_data_path(abs_or_rel: &str) -> String {
+        let data = paths::data_dir();
+        let p = std::path::Path::new(abs_or_rel);
+        if let Ok(rel) = p.strip_prefix(&data) {
+            rel.to_string_lossy().replace('\\', "/")
+        } else {
+            abs_or_rel.to_string()
         }
     }
 
@@ -77,7 +84,7 @@ impl SpringBootManager {
         let log_path = if params.log_path.is_empty() {
             format!("springboot/{}/logs/console.log", params.name)
         } else {
-            params.log_path.clone()
+            Self::relativize_data_path(&params.log_path)
         };
         // ponytail: 如果前端未传端口，尝试从 JAR 内部 config 自动读取
         let port = params.port.or_else(|| read_port_from_jar(
@@ -131,7 +138,10 @@ impl SpringBootManager {
         if let Some(v) = params.profile { app.profile = v; }
         if let Some(v) = params.env_vars { app.env_vars = v; }
         if let Some(v) = params.port { app.port = Some(v); }
-        if let Some(v) = params.log_path { app.log_path = v; }
+        if let Some(v) = params.log_path {
+            // ponytail: 若 log_path 在 data_dir 下则存相对路径，避免绝对路径写死
+            app.log_path = Self::relativize_data_path(&v);
+        }
         if let Some(v) = params.dependencies { app.dependencies = v; }
         if let Some(v) = params.auto_start { app.auto_start = v; }
         if let Some(v) = params.startup_order { app.startup_order = v; }
