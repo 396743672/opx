@@ -1,51 +1,103 @@
 <template>
   <aside
+    @mouseenter="hovering = true"
+    @mouseleave="hovering = false"
     :class="[
-      'border-r border-border bg-card flex flex-col transition-all duration-300 overflow-hidden flex-shrink-0',
-      collapsed ? 'w-14' : 'w-56',
+      'absolute left-0 top-0 bottom-0 z-20 flex flex-col overflow-hidden transition-all duration-300 ease-out',
+      'glass-sidebar',
+      (hovering || props.pinned) ? 'w-52' : 'w-14',
     ]"
   >
-    <nav class="flex-1 overflow-y-auto overflow-x-hidden py-3">
-      <div v-for="group in groups" :key="group.label" :class="collapsed ? 'mb-3' : 'mb-4'">
-        <!-- 分组标题（展开态） -->
+    <!-- 侧边栏头部 -->
+    <div class="flex items-center justify-center h-13 flex-shrink-0">
+      <div
+        class="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 text-primary flex-shrink-0"
+      >
+        <Icon icon="mdi:monitor" class="text-lg" />
+      </div>
+    </div>
+
+    <!-- 导航 -->
+    <nav class="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-3">
+      <div v-for="group in groups" :key="group.label">
+        <!-- 分组标题（仅展开态显示） -->
         <div
-          v-if="!collapsed"
-          class="px-4 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+          v-if="hovering || props.pinned"
+          class="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60"
         >
           {{ $t(group.label) }}
         </div>
 
-        <!-- 导航项 -->
-        <div
-          v-for="item in group.items"
-          :key="item.path"
-          :title="collapsed ? $t(item.titleKey) : undefined"
-          @click="navigate(item.path)"
-          :class="[
-            'relative flex items-center gap-3 mx-2 px-3 py-2 rounded-md cursor-pointer transition-colors mb-0.5',
-            collapsed && 'justify-center px-0',
-            currentPath === item.path
-              ? 'text-primary bg-primary/10 font-medium'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-          ]"
-        >
-          <!-- 激活指示条 -->
-          <span
-            v-if="currentPath === item.path"
-            class="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary"
-          ></span>
-          <Icon :icon="item.icon" class="text-xl flex-shrink-0" />
-          <span v-show="!collapsed" class="text-sm whitespace-nowrap">{{
-            $t(item.titleKey)
-          }}</span>
+        <div class="space-y-0.5">
+          <div
+            v-for="item in group.items"
+            :key="item.path"
+            :title="(!hovering && !props.pinned) ? $t(item.titleKey) : undefined"
+            @click="navigate(item.path)"
+            :class="[
+              'relative flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150',
+              'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+              currentPath === item.path && 'text-primary bg-primary/8 font-medium',
+            ]"
+          >
+            <!-- 激活指示条 -->
+            <span
+              v-if="currentPath === item.path"
+              class="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-primary"
+            ></span>
+            <Icon :icon="item.icon" class="text-xl flex-shrink-0" />
+            <span
+              class="text-sm whitespace-nowrap transition-opacity duration-200"
+              :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+            >
+              {{ $t(item.titleKey) }}
+            </span>
+          </div>
         </div>
       </div>
     </nav>
+
+    <!-- 底部固定区域 -->
+    <div class="px-2 pb-3 pt-1 border-t border-border/40">
+      <div
+        @click="navigate('/settings')"
+        :class="[
+          'relative flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150',
+          'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+          currentPath === '/settings' && 'text-primary bg-primary/8 font-medium',
+        ]"
+      >
+        <Icon icon="mdi:cog" class="text-xl flex-shrink-0" />
+        <span
+          class="text-sm whitespace-nowrap transition-opacity duration-200"
+          :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+        >
+          {{ $t('settings') }}
+        </span>
+      </div>
+      <!-- Pin 按钮 -->
+      <button
+        @click="emit('update:pinned', !props.pinned)"
+        class="flex items-center gap-3 w-full px-2.5 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 cursor-pointer"
+        :title="props.pinned ? $t('unpinSidebar') : $t('pinSidebar')"
+      >
+        <Icon
+          :icon="props.pinned ? 'mdi:pin' : 'mdi:pin-outline'"
+          class="text-xl flex-shrink-0"
+        />
+        <span
+          class="text-sm whitespace-nowrap transition-opacity duration-200"
+          :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+        >
+          {{ props.pinned ? $t('unpinSidebar') : $t('pinSidebar') }}
+        </span>
+      </button>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
@@ -54,12 +106,11 @@ useI18n()
 const router = useRouter()
 const route = useRoute()
 
-interface Props {
-  collapsed: boolean
-}
-defineProps<Props>()
+const props = defineProps<{ pinned: boolean }>()
+const emit = defineEmits<{ 'update:pinned': [value: boolean] }>()
 
 const currentPath = computed(() => route.path)
+const hovering = ref(false)
 
 interface NavItem {
   path: string
@@ -84,10 +135,6 @@ const groups: NavGroup[] = [
       { path: '/websites', titleKey: 'websiteManagement', icon: 'mdi:web-box' },
       { path: '/springboot', titleKey: 'springBoot', icon: 'mdi:leaf' },
     ],
-  },
-  {
-    label: 'system',
-    items: [{ path: '/settings', titleKey: 'settings', icon: 'mdi:cog' }],
   },
 ]
 

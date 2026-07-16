@@ -3,21 +3,21 @@
     <div class="flex items-center gap-2.5 min-w-0">
       <slot name="icon" />
       <div class="min-w-0">
-        <h2 class="text-base font-semibold truncate">{{ title }}</h2>
-        <p v-if="subtitle" class="text-xs text-muted-foreground truncate">
+        <h2 class="text-sm font-semibold tracking-tight">{{ title }}</h2>
+        <p v-if="subtitle" class="text-xs text-muted-foreground/60 truncate mt-0.5">
           {{ subtitle }}
         </p>
       </div>
     </div>
-    <div v-if="!hideRefresh || $slots.actions" class="flex items-center gap-1.5">
+    <div v-if="!hideRefresh || $slots.actions" class="flex items-center gap-1">
       <slot name="actions" />
       <button
         v-if="!hideRefresh"
-        class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+        class="p-1.5 rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted/60 transition-all duration-150 cursor-pointer"
         :aria-label="$t('refresh')"
         @click="$emit('refresh')"
       >
-        <Icon icon="mdi:refresh" class="text-lg" />
+        <Icon icon="mdi:refresh" class="text-base" />
       </button>
     </div>
   </div>

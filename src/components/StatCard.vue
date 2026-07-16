@@ -1,6 +1,6 @@
 <template>
   <div
-    class="relative rounded-lg border border-border bg-card p-4 shadow-card overflow-hidden transition-colors hover:border-primary/40"
+    class="relative rounded-xl border border-border/60 bg-card p-5 shadow-card overflow-hidden transition-all duration-200 hover:border-primary/25 hover:shadow-elevated"
   >
     <!-- 顶部色带 -->
     <div
@@ -10,15 +10,15 @@
 
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <div class="flex items-center gap-1.5 text-muted-foreground">
-          <Icon :icon="icon" class="text-base" />
-          <span class="text-xs">{{ label }}</span>
+        <div class="flex items-center gap-1.5 text-muted-foreground/70">
+          <Icon :icon="icon" class="text-sm" />
+          <span class="text-xs font-medium">{{ label }}</span>
         </div>
         <div class="mt-2 flex items-baseline gap-1">
-          <span class="text-2xl font-semibold tnum">{{ value }}</span>
-          <span v-if="unit" class="text-xs text-muted-foreground">{{ unit }}</span>
+          <span class="text-3xl font-semibold tracking-tight tnum">{{ value }}</span>
+          <span v-if="unit" class="text-sm text-muted-foreground">{{ unit }}</span>
         </div>
-        <div v-if="sub" class="mt-1 text-xs text-muted-foreground tnum truncate">
+        <div v-if="sub" class="mt-1.5 text-xs text-muted-foreground/60 tnum truncate leading-relaxed">
           {{ sub }}
         </div>
       </div>

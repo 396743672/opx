@@ -323,24 +323,4 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, 1fr);
   }
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  color: var(--color-foreground);
-}
-.btn:hover {
-  background: var(--color-muted);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

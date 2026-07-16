@@ -290,42 +290,4 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   padding-top: 8px;
   border-top: 1px solid var(--color-muted);
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  color: var(--color-foreground);
-}
-.btn:hover {
-  background: var(--color-muted);
-}
-.btn.primary {
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
-  border-color: var(--color-primary);
-}
-.btn.danger {
-  background: var(--color-destructive);
-  color: white;
-  border-color: var(--color-destructive);
-}
-.btn.ghost {
-  background: transparent;
-  border-color: transparent;
-}
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.btn svg {
-  width: 16px;
-  height: 16px;
-}
 </style>

@@ -291,6 +291,8 @@ export default {
   management: 'Management',
   system: 'System',
   toggleSidebar: 'Toggle Sidebar',
+  pinSidebar: 'Pin Sidebar',
+  unpinSidebar: 'Unpin Sidebar',
 
   // Dashboard
   dashboardSubtitle: 'Real-time system resource monitoring',

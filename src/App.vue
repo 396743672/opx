@@ -1,14 +1,17 @@
 <template>
-  <!-- 启动加载遮罩：设置与首次系统数据就绪前显示 -->
+  <!-- 启动加载遮罩 -->
   <div
     v-if="booting"
     class="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-background text-foreground"
   >
-    <div class="flex items-center justify-center w-14 h-14 rounded-xl bg-primary text-primary-foreground mb-4 animate-pulse">
+    <div class="flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-5">
       <Icon icon="mdi:monitor" class="text-3xl" />
     </div>
-    <div class="text-base font-semibold mb-1">OPX</div>
-    <div class="text-xs text-muted-foreground">{{ $t('loading') }}</div>
+    <div class="text-lg font-semibold tracking-tight mb-1">OPX</div>
+    <div class="flex items-center gap-3">
+      <span class="inline-block w-1.5 h-1.5 rounded-full bg-primary/40 animate-pulse"></span>
+      <span class="text-sm text-muted-foreground/60">{{ $t('loading') }}</span>
+    </div>
   </div>
   <MainLayout v-show="!booting" />
   <CloseDialog

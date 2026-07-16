@@ -291,6 +291,8 @@ export default {
   management: '管理',
   system: '系统',
   toggleSidebar: '切换侧边栏',
+  pinSidebar: '固定侧边栏',
+  unpinSidebar: '取消固定',
 
   // Dashboard
   dashboardSubtitle: '实时系统资源监控',
