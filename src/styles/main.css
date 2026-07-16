@@ -101,6 +101,48 @@
 }
 
 /* ============================================================
+   经典暖色主题 — 暖白纸张基底 + 琥珀强调
+   ============================================================ */
+.warm {
+  --color-background: oklch(0.85 0.065 72);
+  --color-foreground: oklch(0.18 0.02 50);
+  --color-card: oklch(0.88 0.05 72);
+  --color-card-elevated: oklch(0.86 0.055 72);
+  --color-popover: oklch(0.87 0.055 72);
+  --color-border: oklch(0.72 0.045 65);
+  --color-input: oklch(0.80 0.045 68);
+  --color-ring: oklch(0.55 0.15 45);
+  --color-muted: oklch(0.83 0.05 70);
+  --color-muted-foreground: oklch(0.50 0.03 55);
+  --color-primary: oklch(0.62 0.17 55);
+  --color-primary-foreground: oklch(0.98 0.005 70);
+  --color-secondary: oklch(0.80 0.05 68);
+  --color-secondary-foreground: oklch(0.25 0.03 50);
+  --color-accent: oklch(0.78 0.07 60);
+  --color-accent-foreground: oklch(0.25 0.04 50);
+  --color-destructive: oklch(0.55 0.2 30);
+  --color-destructive-foreground: oklch(0.98 0.005 60);
+  --color-success: oklch(0.52 0.15 135);
+  --color-success-foreground: oklch(0.98 0.005 110);
+  --color-warning: oklch(0.65 0.14 80);
+  --color-warning-foreground: oklch(0.2 0.04 70);
+  --color-info: oklch(0.52 0.13 220);
+  --color-info-foreground: oklch(0.98 0.005 240);
+
+  --color-chart-1: oklch(0.62 0.17 55);
+  --color-chart-2: oklch(0.55 0.2 30);
+  --color-chart-3: oklch(0.65 0.14 80);
+  --color-chart-4: oklch(0.52 0.15 135);
+  --color-chart-5: oklch(0.52 0.13 220);
+  --color-chart-6: oklch(0.55 0.18 300);
+
+  --shadow-card: 0 1px 3px oklch(0.3 0.05 60 / 0.1), 0 1px 1px oklch(0.3 0.05 60 / 0.06);
+  --shadow-elevated: 0 4px 16px oklch(0.3 0.05 60 / 0.12), 0 2px 4px oklch(0.3 0.05 60 / 0.08);
+  --shadow-popover: 0 8px 30px oklch(0.3 0.05 60 / 0.18), 0 4px 8px oklch(0.3 0.05 60 / 0.1);
+  --shadow-glass: 0 2px 20px oklch(0.3 0.05 60 / 0.1);
+}
+
+/* ============================================================
    玻璃质感工具类
    ============================================================ */
 .glass-panel {
@@ -111,8 +153,12 @@
   box-shadow: var(--shadow-glass);
 }
 .dark .glass-panel {
-  background: oklch(0.17 0.005 260 / 0.78);
-  border: 1px solid oklch(1 1 0 / 0.06);
+  background: oklch(0.18 0.006 60 / 0.78);
+  border: 1px solid oklch(0.3 0.008 60 / 0.2);
+}
+.warm .glass-panel {
+  background: oklch(0.87 0.05 70 / 0.78);
+  border: 1px solid oklch(0.4 0.04 65 / 0.2);
 }
 
 .glass-sidebar {
@@ -123,9 +169,13 @@
   box-shadow: 2px 0 20px oklch(0 0 0 / 0.04);
 }
 .dark .glass-sidebar {
-  background: oklch(0.14 0.004 260 / 0.82);
-  border-right: 1px solid oklch(1 1 0 / 0.05);
-  box-shadow: 2px 0 24px oklch(0 0 0 / 0.2);
+  background: oklch(0.145 0.005 60 / 0.85);
+  border-right: 1px solid oklch(0.30 0.01 60 / 0.6);
+  box-shadow: 3px 0 12px oklch(0 0 0 / 0.3);
+}
+.warm .glass-sidebar {
+  background: oklch(0.83 0.05 70 / 0.82);
+  border-right: 1px solid oklch(0.4 0.04 65 / 0.3);
 }
 
 /* ============================================================
@@ -149,6 +199,17 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-feature-settings: 'cv11', 'ss01';
+}
+
+/* 暗色侧边栏菜单：选中的文字/图标提亮为暖色，hover 背景可见 */
+.dark .glass-sidebar .text-primary:where(.text-primary) {
+  color: oklch(0.85 0.14 50);
+}
+.dark .glass-sidebar [class*="bg-primary/"] {
+  background-color: oklch(0.85 0.14 50 / 0.18);
+}
+.dark .glass-sidebar .hover\:bg-muted\/60:hover {
+  background-color: oklch(0.28 0.008 60) !important;
 }
 
 /* 等宽数字 */

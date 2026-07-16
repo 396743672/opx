@@ -31,7 +31,11 @@ export const useSettingsStore = defineStore('settings', () => {
   )
 
   function applyTheme() {
-    document.documentElement.classList.toggle('dark', isDark.value)
+    const isDark = theme.value === 'dark' ||
+      (theme.value === 'auto' && systemPrefersDark.value)
+    const isWarm = theme.value === 'warm'
+    document.documentElement.classList.toggle('dark', isDark)
+    document.documentElement.classList.toggle('warm', isWarm)
   }
 
   function applyLanguage() {

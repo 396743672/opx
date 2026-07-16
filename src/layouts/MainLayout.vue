@@ -2,7 +2,9 @@
   <div class="flex flex-col h-screen w-screen overflow-hidden bg-background">
     <!-- 顶部导航栏 — 简洁 -->
     <header
-      class="h-12 flex-shrink-0 flex items-center px-4 justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40"
+      @mousedown="onTitlebarMouseDown"
+      class="h-12 flex-shrink-0 flex items-center px-4 justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40 transition-all duration-300"
+      :class="sidebarPinned ? 'pl-52' : 'pl-14'"
     >
       <div class="flex items-center gap-3">
         <div class="flex items-center gap-2">
@@ -17,9 +19,9 @@
         <span class="text-sm text-muted-foreground/80">{{ $t(currentTitle) }}</span>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1">
         <!-- 系统状态指示 — 紧凑 -->
-        <div class="hidden md:flex items-center gap-3 mr-1">
+        <div class="hidden md:flex items-center gap-3 mr-2">
           <div class="flex items-center gap-1.5">
             <span class="inline-block w-1.5 h-1.5 rounded-full" :class="systemStore.cpuUsage > 80 ? 'bg-destructive' : 'bg-success'"></span>
             <span class="text-xs text-muted-foreground tnum">{{ systemStore.cpuUsage.toFixed(0) }}%</span>
@@ -44,6 +46,19 @@
         >
           <Icon icon="mdi:cog" class="text-lg" />
         </button>
+
+        <!-- 窗口控制 -->
+        <div class="flex items-center ml-2 gap-0.5">
+          <button @mousedown.stop.prevent="minimize" class="win-btn" title="最小化">
+            <Icon icon="mdi:window-minimize" class="text-sm" />
+          </button>
+          <button @mousedown.stop.prevent="toggleMaximize" class="win-btn" :title="maximized ? '还原' : '最大化'">
+            <Icon :icon="maximized ? 'mdi:window-restore' : 'mdi:window-maximize'" class="text-sm" />
+          </button>
+          <button @mousedown.stop.prevent="closeWindow" class="win-btn win-btn-close" title="关闭">
+            <Icon icon="mdi:window-close" class="text-sm" />
+          </button>
+        </div>
       </div>
     </header>
 
@@ -52,7 +67,7 @@
       <Sidebar v-model:pinned="sidebarPinned" />
       <!-- pl-14 为收缩态侧边栏预留空间，pl-52 为固定展开态 -->
       <main class="flex-1 overflow-auto" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
-        <div class="p-8 max-w-[1600px]">
+        <div class="p-6 xl:p-8">
           <router-view />
         </div>
       </main>
@@ -69,6 +84,7 @@ import Sidebar from './Sidebar.vue'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const { t } = useI18n()
 void t
@@ -80,11 +96,12 @@ const sidebarPinned = ref(false)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
 
-/* —— 主题切换（auto → light → dark 循环）—— */
-const themeOrder: ThemeMode[] = ['auto', 'light', 'dark']
+/* —— 主题切换（auto → light → warm → dark 循环）—— */
+const themeOrder: ThemeMode[] = ['auto', 'light', 'warm', 'dark']
 const themeIconMap: Record<ThemeMode, string> = {
   auto: 'mdi:theme-light-dark',
   light: 'mdi:weather-sunny',
+  warm: 'mdi:weather-partly-cloudy',
   dark: 'mdi:moon-waning-crescent',
 }
 const themeIcon = computed(() => themeIconMap[settingsStore.theme])
@@ -95,7 +112,40 @@ function cycleTheme() {
 
 const goToSettings = () => router.push('/settings')
 
-onMounted(() => {
+const maximized = ref(false)
+
+function win() { return getCurrentWindow() }
+
+function onTitlebarMouseDown(e: MouseEvent) {
+  // 左键且非交互元素 → 拖拽窗口
+  if (e.buttons === 1 && !(e.target as HTMLElement).closest('button')) {
+    if (e.detail === 2) {
+      // 双击最大化/还原
+      win().toggleMaximize()
+    } else {
+      // 单次拖拽
+      win().startDragging()
+    }
+  }
+}
+
+async function minimize() {
+  try { await win().minimize() } catch (err) { console.error('minimize:', err) }
+}
+async function toggleMaximize() {
+  try {
+    await win().toggleMaximize()
+    maximized.value = await win().isMaximized()
+  } catch (err) { console.error('toggleMaximize:', err) }
+}
+async function closeWindow() {
+  try { await win().close() } catch (err) { console.error('close:', err) }
+}
+
+onMounted(async () => {
+  const w = win()
+  try { maximized.value = await w.isMaximized() } catch {}
+  try { await w.onResized(() => { w.isMaximized().then(v => maximized.value = v) }) } catch {}
   systemStore.startPolling()
 })
 
@@ -103,3 +153,27 @@ onUnmounted(() => {
   systemStore.stopPolling()
 })
 </script>
+
+<style scoped>
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.win-btn:hover {
+  background: var(--color-muted);
+  color: var(--color-foreground);
+}
+.win-btn-close:hover {
+  background: oklch(0.55 0.2 25);
+  color: white;
+}
+</style>

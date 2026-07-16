@@ -3,7 +3,7 @@ export enum CloseWindowAction {
   Exit = 'Exit',
 }
 
-export type ThemeMode = 'auto' | 'light' | 'dark'
+export type ThemeMode = 'auto' | 'light' | 'dark' | 'warm'
 export type Language = 'zh-CN' | 'en-US'
 
 export interface AppSettings {

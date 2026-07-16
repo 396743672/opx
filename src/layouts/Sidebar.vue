@@ -8,17 +8,15 @@
       (hovering || props.pinned) ? 'w-52' : 'w-14',
     ]"
   >
-    <!-- 侧边栏头部 -->
-    <div class="flex items-center justify-center h-13 flex-shrink-0">
-      <div
-        class="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 text-primary flex-shrink-0"
-      >
-        <Icon icon="mdi:monitor" class="text-lg" />
-      </div>
-    </div>
+    <!-- 侧边栏头部 — 仅留间距，品牌在顶部导航栏 -->
+    <div class="h-3 flex-shrink-0"></div>
 
     <!-- 导航 -->
-    <nav class="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-3">
+    <nav class="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-3">
+      <div
+        class="h-px bg-border/60 mx-2 mb-2 transition-opacity duration-200"
+        :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+      ></div>
       <div v-for="group in groups" :key="group.label">
         <!-- 分组标题（仅展开态显示） -->
         <div
