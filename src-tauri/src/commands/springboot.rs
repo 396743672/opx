@@ -168,6 +168,21 @@ pub async fn save_springboot_groups(
 }
 
 #[tauri::command]
+pub async fn get_springboot_global_env_vars(
+    manager: State<'_, Arc<SpringBootManager>>,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(manager.get_global_env_vars())
+}
+
+#[tauri::command]
+pub async fn set_springboot_global_env_vars(
+    manager: State<'_, Arc<SpringBootManager>>,
+    env_vars: Vec<(String, String)>,
+) -> Result<(), String> {
+    manager.set_global_env_vars(env_vars).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_recommended_jvm_opts(
     jdk_installed_id: String,
     software_mgr: State<'_, Arc<SoftwareManager>>,

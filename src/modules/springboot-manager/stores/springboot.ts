@@ -99,11 +99,20 @@ export const useSpringBootStore = defineStore('springboot', () => {
     groups.value = newGroups
   }
 
+  async function getGlobalEnvVars(): Promise<[string, string][]> {
+    return await invoke<[string, string][]>('get_springboot_global_env_vars')
+  }
+
+  async function setGlobalEnvVars(envVars: [string, string][]) {
+    await invoke('set_springboot_global_env_vars', { envVars })
+  }
+
   return {
     apps, groups, loading, jdkList, dependencyCandidates, jvmMetrics, appsByGroup,
     fetchApps, fetchGroups, createApp, updateApp, deleteApp,
     startApp, stopApp, restartApp, replaceJar,
     fetchJvmMetrics, fetchJdkList, fetchDependencyCandidates,
     getRecommendedOpts, readJarVersion, readJarPort, saveGroups,
+    getGlobalEnvVars, setGlobalEnvVars,
   }
 })

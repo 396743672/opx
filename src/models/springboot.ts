@@ -36,6 +36,7 @@ export interface AppGroup {
   name: string
   order: number
   depends_on: string[]
+  env_vars: [string, string][]
 }
 
 export interface JvmInfo {

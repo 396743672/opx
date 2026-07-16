@@ -222,6 +222,25 @@ impl SpringBootManager {
         Ok(())
     }
 
+    pub fn get_global_env_vars(&self) -> Vec<(String, String)> {
+        self.store.read().unwrap().global_env_vars.clone()
+    }
+
+    pub fn set_global_env_vars(&self, env_vars: Vec<(String, String)>) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        store.global_env_vars = env_vars;
+        Self::save_store(&store)?;
+        Ok(())
+    }
+
+    pub fn get_group_env_vars(&self, group_name: &str) -> Vec<(String, String)> {
+        let store = self.store.read().unwrap();
+        store.groups.iter()
+            .find(|g| g.name == group_name)
+            .map(|g| g.env_vars.clone())
+            .unwrap_or_default()
+    }
+
     fn store_path() -> std::path::PathBuf {
         paths::data_dir().join("springboot").join("apps.json")
     }

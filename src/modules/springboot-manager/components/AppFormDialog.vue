@@ -50,11 +50,11 @@
             </div>
             <div class="field">
               <div class="field-label">本服务 Xms (MB)</div>
-              <input class="input" type="number" v-model.number="tuning.xmsMb" min="64" @input="tuning.xmsMb = Math.max(64, tuning.xmsMb || 64); jvm.xms_mb = tuning.xmsMb" />
+              <input class="input" type="number" v-model.number="tuning.xmsMb" min="64" @input="jvm.xms_mb = tuning.xmsMb" />
             </div>
             <div class="field">
               <div class="field-label">本服务 Xmx (MB)</div>
-              <input class="input" type="number" v-model.number="tuning.xmxMb" min="64" @input="tuning.xmxMb = Math.max(64, tuning.xmxMb || 64); jvm.xmx_mb = tuning.xmxMb" />
+              <input class="input" type="number" v-model.number="tuning.xmxMb" min="64" @input="jvm.xmx_mb = tuning.xmxMb" />
             </div>
           </div>
           <!-- 按钮移到额外 JVM 参数上方 -->

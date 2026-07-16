@@ -50,6 +50,8 @@ pub struct AppGroup {
     pub name: String,
     pub order: u32,
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +68,8 @@ pub struct JvmInfo {
 pub struct SpringBootStore {
     pub applications: Vec<SpringBootApp>,
     pub groups: Vec<AppGroup>,
+    #[serde(default)]
+    pub global_env_vars: Vec<(String, String)>,
 }
 
 impl Default for SpringBootStore {
@@ -73,6 +77,7 @@ impl Default for SpringBootStore {
         Self {
             applications: Vec::new(),
             groups: Vec::new(),
+            global_env_vars: Vec::new(),
         }
     }
 }

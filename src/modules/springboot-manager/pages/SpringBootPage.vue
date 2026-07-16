@@ -19,6 +19,9 @@
         <button class="btn" @click="showGroupManager = true">
           <Icon icon="mdi:cog" /> {{ $t('groupConfig') }}
         </button>
+        <button class="btn" @click="showGlobalEnv = true">
+          <Icon icon="mdi:earth" /> 全局变量
+        </button>
       </template>
     </PageHeader>
 
@@ -118,6 +121,10 @@
       :groups="store.groups"
       @close="closeGroupManager"
     />
+    <GlobalEnvDialog
+      v-if="showGlobalEnv"
+      @close="showGlobalEnv = false"
+    />
 
     <!-- Delete confirm -->
     <Teleport to="body">
@@ -148,6 +155,7 @@ import AppFormDialog from '../components/AppFormDialog.vue'
 import JvmMetricsDialog from '../components/JvmMetricsDialog.vue'
 import LogViewer from '../components/LogViewer.vue'
 import GroupManager from '../components/GroupManager.vue'
+import GlobalEnvDialog from '../components/GlobalEnvDialog.vue'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
@@ -174,6 +182,9 @@ const logViewingAppLogPath = ref('')
 
 // Group manager
 const showGroupManager = ref(false)
+
+// Global env dialog
+const showGlobalEnv = ref(false)
 
 // 一键启动分组
 const startingGroup = ref(false)

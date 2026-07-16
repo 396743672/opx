@@ -93,6 +93,11 @@ pub async fn start_app(
     if let Some(p) = app.port { cmd.arg(format!("--server.port={}", p)); }
     if !app.profile.is_empty() { cmd.arg(format!("--spring.profiles.active={}", app.profile)); }
     for arg in &app.program_args { cmd.arg(arg); }
+    // 注入环境变量：全局 → 分组 → 应用（同名覆盖）
+    for (k, v) in springboot_mgr.get_global_env_vars() { cmd.env(k, v); }
+    if let Some(ref group) = app.group {
+        for (k, v) in springboot_mgr.get_group_env_vars(group) { cmd.env(k, v); }
+    }
     for (k, v) in &app.env_vars { cmd.env(k, v); }
 
     // ponytail: stdout/stderr → console.log，Spring Boot 自己的日志（info.log 等）不受影响

@@ -198,6 +198,8 @@ pub fn run() {
             commands::springboot::get_springboot_jvm_metrics,
             commands::springboot::list_springboot_groups,
             commands::springboot::save_springboot_groups,
+            commands::springboot::get_springboot_global_env_vars,
+            commands::springboot::set_springboot_global_env_vars,
             commands::springboot::get_recommended_jvm_opts,
             commands::springboot::list_springboot_dependency_candidates,
             commands::springboot::read_jar_version_info,
