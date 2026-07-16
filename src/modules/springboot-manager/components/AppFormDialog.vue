@@ -41,6 +41,24 @@
             </select>
           </div>
 
+          <!-- Resource planning -->
+          <div class="section-title">资源规划</div>
+          <div class="grid-3">
+            <div class="field">
+              <div class="field-label">部署服务总数</div>
+              <input class="input" type="number" v-model.number="tuning.totalServices" min="1" />
+            </div>
+            <div class="field">
+              <div class="field-label">本服务 Xms (MB)</div>
+              <input class="input" type="number" v-model.number="tuning.xmsMb" min="64" @input="tuning.xmsMb = Math.max(64, tuning.xmsMb || 64); jvm.xms_mb = tuning.xmsMb" />
+            </div>
+            <div class="field">
+              <div class="field-label">本服务 Xmx (MB)</div>
+              <input class="input" type="number" v-model.number="tuning.xmxMb" min="64" @input="tuning.xmxMb = Math.max(64, tuning.xmxMb || 64); jvm.xmx_mb = tuning.xmxMb" />
+            </div>
+          </div>
+          <!-- 按钮移到额外 JVM 参数上方 -->
+
           <!-- JVM parameters -->
           <div class="section-title">{{ $t('jvmParameters') }}</div>
           <div class="grid-3">
@@ -57,24 +75,17 @@
               <input class="input" type="number" v-model.number="jvm.metaspace_mb" min="16" />
             </div>
           </div>
-          <div class="grid-2">
-            <div class="field">
-              <div class="field-label">{{ $t('gcType') }}</div>
-              <select class="input" v-model="jvm.gc_type">
-                <option value="" disabled>{{ $t('selectGcType') }}</option>
-                <option value="G1GC">G1GC</option>
-                <option value="ParallelGC">ParallelGC</option>
-                <option value="ZGC">ZGC</option>
-                <option value="ShenandoahGC">ShenandoahGC</option>
-                <option value="SerialGC">SerialGC</option>
-              </select>
-            </div>
-            <div class="field">
-              <div class="field-label">{{ $t('extraFlags') }}</div>
-              <input class="input input-mono" v-model="extraFlagsText" placeholder="-XX:+HeapDumpOnOOMError ..." />
-            </div>
+          <div class="field">
+            <div class="field-label">{{ $t('gcType') }}</div>
+            <select class="input" v-model="jvm.gc_type">
+              <option value="" disabled>{{ $t('selectGcType') }}</option>
+              <option value="G1GC">G1GC</option>
+              <option value="ParallelGC">ParallelGC</option>
+              <option value="ZGC">ZGC</option>
+              <option value="ShenandoahGC">ShenandoahGC</option>
+              <option value="SerialGC">SerialGC</option>
+            </select>
           </div>
-
           <!-- Port + Profile -->
           <div class="grid-2">
             <div class="field">
@@ -87,10 +98,21 @@
             </div>
           </div>
 
+          <!-- JVM extra flags -->
+          <div class="field">
+            <div class="field-label" style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+              <span>{{ $t('extraFlags') }}</span>
+              <button class="btn primary" style="height:26px;font-size:11px;padding:0 8px" @click="generateOptimalParams">
+                <Icon icon="mdi:auto-fix" style="font-size:13px" /> 生成推荐参数
+              </button>
+            </div>
+            <textarea class="textarea input-mono" v-model="extraFlagsText" rows="4" placeholder="-XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8" />
+          </div>
+
           <!-- Program args -->
           <div class="field">
             <div class="field-label">{{ $t('programArgs') }}</div>
-            <textarea class="textarea input-mono" v-model="programArgsText" rows="2" placeholder="--server.port=8080" />
+            <textarea class="textarea input-mono" v-model="programArgsText" rows="4" placeholder="--server.port=8080" />
           </div>
 
           <!-- Environment variables -->
@@ -249,7 +271,7 @@ function displayRelPath(p: string): string {
 }
 
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
-  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: ['-XX:+ExitOnOutOfMemoryError', '-XX:+HeapDumpOnOutOfMemoryError', '-Dfile.encoding=UTF-8'] }
+  const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: [] }
   const knownGc = ['G1GC', 'ZGC', 'ParallelGC', 'ShenandoahGC', 'SerialGC']
   for (const opt of opts) {
     if (opt.startsWith('-Xms')) {
@@ -282,6 +304,49 @@ function buildJvmOpts(): string[] {
   ]
 }
 
+	// Resource planning state
+const tuning = reactive({
+  totalServices: 1,
+  xmsMb: 512,
+  xmxMb: 512,
+})
+const recommendedClicked = ref(false)
+
+function computeRegionSize(xmxMb: number): number {
+  // G1 默认分 ~2048 个 region，结果取 2 的幂，限制在 1~32m
+  const ideal = xmxMb / 2048
+  const pow2 = Math.round(Math.log2(ideal))
+  return Math.max(1, Math.min(32, Math.pow(2, pow2)))
+}
+
+function generateOptimalParams() {
+  const xmx = Math.max(64, tuning.xmxMb)
+  tuning.xmsMb = Math.max(64, tuning.xmsMb)
+  jvm.xms_mb = tuning.xmsMb
+  jvm.xmx_mb = xmx
+
+  const regionSize = computeRegionSize(xmx)
+  // ParallelGCThreads: 按堆大小递增
+  const gcThreads = xmx <= 1024 ? 2 : xmx <= 4096 ? 4 : 6
+  const concThreads = Math.max(1, Math.round(gcThreads / 4))
+  const directMem = Math.max(64, Math.round(xmx * 0.1))
+
+  const flags = [
+    '-XX:MaxGCPauseMillis=300',
+    `-XX:G1HeapRegionSize=${regionSize}m`,
+    `-XX:ParallelGCThreads=${gcThreads}`,
+    `-XX:ConcGCThreads=${concThreads}`,
+    '-XX:MetaspaceSize=128m',
+    '-XX:MaxMetaspaceSize=256m',
+    '-Xss256k',
+    `-XX:MaxDirectMemorySize=${directMem}m`,
+    '-XX:+HeapDumpOnOutOfMemoryError',
+    '-XX:HeapDumpPath=logs/heapdump.hprof',
+  ]
+  extraFlagsText.value = flags.join('\n')
+  recommendedClicked.value = true
+}
+
 // Form state
 const form = reactive({
   jar_path: '',
@@ -305,7 +370,7 @@ const programArgsText = ref('')
 const valid = computed(() => {
   if (nameError.value) return false
   if (props.app) return form.name.trim() !== '' && form.jdk_installed_id !== ''
-  return form.jar_path.trim() !== '' && form.name.trim() !== '' && form.jdk_installed_id !== ''
+  return form.jar_path.trim() !== '' && form.name.trim() !== '' && form.jdk_installed_id !== '' && recommendedClicked.value
 })
 
 /** 检查名称是否已被其他应用使用 */
@@ -338,10 +403,13 @@ onMounted(() => {
     const parsed = parseJvmOpts(props.app.jvm_opts)
     jvm.xms_mb = parsed.xms_mb
     jvm.xmx_mb = parsed.xmx_mb
+    tuning.xmsMb = parsed.xms_mb
+    tuning.xmxMb = parsed.xmx_mb
     jvm.metaspace_mb = parsed.metaspace_mb
     jvm.gc_type = parsed.gc_type || 'G1GC'
     jvm.extra_flags = parsed.extra_flags
     extraFlagsText.value = parsed.extra_flags.join(' ')
+    recommendedClicked.value = true
   }
 })
 
@@ -373,6 +441,8 @@ async function onJdkChange() {
     const recommended = await store.getRecommendedOpts(form.jdk_installed_id)
     jvm.xms_mb = recommended.xms_mb
     jvm.xmx_mb = recommended.xmx_mb
+    tuning.xmsMb = recommended.xms_mb
+    tuning.xmxMb = recommended.xmx_mb
     jvm.metaspace_mb = recommended.metaspace_mb
     jvm.gc_type = recommended.gc_type
     extraFlagsText.value = recommended.extra_flags.join(' ')
@@ -575,6 +645,8 @@ async function save() {
   resize: vertical;
   box-sizing: border-box;
   line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .textarea:focus {
   border-color: var(--color-primary);

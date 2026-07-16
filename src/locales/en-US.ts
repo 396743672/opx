@@ -193,7 +193,7 @@ export default {
   selectJdk: 'Select JDK',
   selectJarFile: 'Select JAR file',
   jvmParameters: 'JVM Parameters',
-  extraFlags: 'Extra Flags',
+  extraFlags: 'Extra JVM Args',
   environmentVariables: 'Environment Variables',
   saving: 'Saving…',
   saveFailed: 'Save failed',

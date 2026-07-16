@@ -193,7 +193,7 @@ export default {
   selectJdk: '选择 JDK',
   selectJarFile: '请选择 JAR 文件',
   jvmParameters: 'JVM 参数',
-  extraFlags: '额外标志',
+  extraFlags: '额外 JVM 参数',
   environmentVariables: '环境变量',
   saving: '保存中…',
   saveFailed: '保存失败',
