@@ -62,7 +62,10 @@
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <span class="text-sm">GitHub 加速代理</span>
-          <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="https://ghfast.top" />
+          <div class="flex gap-2 items-center">
+            <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="默认: https://ghfast.top" />
+            <button class="btn text-xs h-7 px-2" @click="githubProxyValue = 'https://ghfast.top'" title="还原默认">↺</button>
+          </div>
         </div>
         <div class="flex items-center justify-between">
           <span class="text-sm">全局代理</span>
