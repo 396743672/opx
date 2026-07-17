@@ -42,10 +42,6 @@ function cssVar(name: string): string {
     .trim()
 }
 
-function prefersReduced(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 /** 青蓝主色 fallback，避免 CSS 变量读取时机问题导致黑色 */
 const COLOR_FALLBACK = '#3b82f6'
 
@@ -89,7 +85,7 @@ function buildConfig(): ChartConfiguration {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: prefersReduced() ? 0 : 300 },
+      animation: { duration: 0 },
       interaction: { intersect: false, mode: 'index' },
       plugins: {
         legend: { display: false },
@@ -133,7 +129,7 @@ function update() {
   if (!chart) return
   chart.data.labels = labels()
   chart.data.datasets[0].data = values()
-  chart.update(prefersReduced() ? 'none' : undefined)
+  chart.update('none')
 }
 
 onMounted(async () => {

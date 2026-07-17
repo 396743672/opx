@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { SystemInfo, HistoryPoint } from '@/models/system'
 
-const POLL_INTERVAL = 2000
+const POLL_INTERVAL = 1000
 /** 趋势图最多保留的点数，超出后丢弃最旧的 */
 const MAX_HISTORY = 120
 
