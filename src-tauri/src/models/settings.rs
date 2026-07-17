@@ -30,6 +30,10 @@ pub struct AppSettings {
     pub register_as_system_service: bool,
     pub auto_start_managed_services: bool,
     pub jre_default_id: Option<String>,
+    /// GitHub 下载加速代理（如 https://ghfast.top），空=不使用
+    pub github_proxy_url: String,
+    /// 全局下载代理（如 http://127.0.0.1:7890），空=直连
+    pub proxy_url: String,
 }
 
 impl Default for AppSettings {
@@ -47,6 +51,8 @@ impl Default for AppSettings {
             register_as_system_service: false,
             auto_start_managed_services: true,
             jre_default_id: None,
+            github_proxy_url: "https://ghfast.top".to_string(),
+            proxy_url: String::new(),
         }
     }
 }

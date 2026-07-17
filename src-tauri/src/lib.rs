@@ -48,6 +48,15 @@ pub fn run() {
                         let _ = std::fs::write(&sp, json);
                     }
                 }
+                // 初始化下载代理配置
+                if let Ok(content) = std::fs::read_to_string(&sp) {
+                    if let Ok(settings) = serde_json::from_str::<crate::models::settings::AppSettings>(&content) {
+                        crate::utils::download::init_download_config(
+                            settings.github_proxy_url,
+                            settings.proxy_url,
+                        );
+                    }
+                }
             }
 
             // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）

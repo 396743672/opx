@@ -23,5 +23,10 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
         serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化失败: {}", e))?;
     fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
     fs::rename(&tmp, &path).map_err(|e| format!("重命名失败: {}", e))?;
+    // 立即刷新下载代理配置
+    crate::utils::download::init_download_config(
+        settings.github_proxy_url,
+        settings.proxy_url,
+    );
     Ok(())
 }

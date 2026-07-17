@@ -56,6 +56,21 @@
       </div>
     </div>
 
+    <!-- 下载代理 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
+      <CardHeader title="下载代理" hide-refresh />
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <span class="text-sm">GitHub 加速代理</span>
+          <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="https://ghfast.top" />
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-sm">全局代理</span>
+          <input v-model="proxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="http://127.0.0.1:7890（空=直连）" />
+        </div>
+      </div>
+    </div>
+
     <div class="flex justify-end">
       <button
         class="px-4 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
@@ -82,6 +97,8 @@ const themeValue = ref<ThemeMode>('auto')
 const languageValue = ref<Language>('zh-CN')
 const closeActionValue = ref<CloseWindowAction>(CloseWindowAction.CloseToTray)
 const askOnCloseValue = ref(true)
+const githubProxyValue = ref('')
+const proxyValue = ref('')
 
 watch(
   () => settingsStore.settings,
@@ -91,6 +108,8 @@ watch(
       languageValue.value = (s.language as Language) || 'zh-CN'
       closeActionValue.value = s.close_window_action
       askOnCloseValue.value = s.ask_on_close
+      githubProxyValue.value = s.github_proxy_url || ''
+      proxyValue.value = s.proxy_url || ''
     }
   },
   { immediate: true }
@@ -108,6 +127,8 @@ async function save() {
   if (!settingsStore.settings) return
   settingsStore.settings.close_window_action = closeActionValue.value
   settingsStore.settings.ask_on_close = askOnCloseValue.value
+  settingsStore.settings.github_proxy_url = githubProxyValue.value
+  settingsStore.settings.proxy_url = proxyValue.value
   await settingsStore.saveSettings()
 }
 </script>
