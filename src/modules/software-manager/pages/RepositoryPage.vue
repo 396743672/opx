@@ -68,13 +68,7 @@
     </div>
 
     <InstallDialog
-      v-if="showInstallDialog && selectedEntry && selectedEntry.key !== 'jre'"
-      :entry="selectedEntry"
-      @cancel="showInstallDialog = false"
-      @installed="onInstalled"
-    />
-    <InstallJreDialog
-      v-if="showInstallDialog && selectedEntry && selectedEntry.key === 'jre'"
+      v-if="showInstallDialog && selectedEntry"
       :entry="selectedEntry"
       @cancel="showInstallDialog = false"
       @installed="onInstalled"
@@ -103,7 +97,6 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareCard from '../components/SoftwareCard.vue'
 import InstallDialog from '../components/InstallDialog.vue'
-import InstallJreDialog from '../components/InstallJreDialog.vue'
 import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import CustomInstallDialog from '../components/CustomInstallDialog.vue'
 import { useCatalogStore } from '../stores/catalog'
