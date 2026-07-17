@@ -181,7 +181,7 @@ pub fn save_website(
     wm: State<'_, Arc<WebsiteManager>>,
     mut site: Site,
 ) -> Result<(), String> {
-    oplog!("website_save", &site.name);
+    oplog!("website_save", &format!("{} ({})", site.name, site.id));
     // 先解压待处理的 zip（upload 时只暂存 zip，保存时才真正解压）
     if let Ok(nginx) = resolve_nginx(&sm) {
         resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
@@ -197,8 +197,8 @@ pub fn delete_website(
     wm: State<'_, Arc<WebsiteManager>>,
     id: String,
 ) -> Result<(), String> {
-    oplog!("website_delete", &id);
     let site = wm.get(&id);
+    oplog!("website_delete", &site.as_ref().map(|s| &*s.name).unwrap_or(&id));
     if let Some(ref s) = site {
         if s.enabled {
             return Err("请先停用站点后再删除".to_string());
@@ -228,7 +228,8 @@ pub fn set_website_enabled(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    oplog!("website_toggle", &id);
+    let name = wm.get(&id).map(|s| s.name).unwrap_or_default();
+    oplog!("website_toggle", &format!("{} ({})", name, if enabled { "启用" } else { "停用" }));
     wm.set_enabled(&id, enabled).map_err(|e| e.to_string())?;
     regenerate(&sm, &wm, true)
 }

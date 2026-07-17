@@ -40,7 +40,8 @@ pub async fn update_springboot_app(
     id: String,
     params: UpdateAppParams,
 ) -> Result<SpringBootApp, String> {
-    oplog!("springboot_update", &id);
+    let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
+    oplog!("springboot_update", &format!("{} ({})", name, id));
     manager.update_app(&id, params).map_err(|e| e.to_string())
 }
 
@@ -49,7 +50,8 @@ pub async fn delete_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     id: String,
 ) -> Result<(), String> {
-    oplog!("springboot_delete", &id);
+    let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
+    oplog!("springboot_delete", &format!("{} ({})", name, id));
     manager.delete_app(&id).map_err(|e| e.to_string())
 }
 
@@ -60,7 +62,8 @@ pub async fn start_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    oplog!("springboot_start", &id);
+    let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
+    oplog!("springboot_start", &format!("{} ({})", name, id));
     crate::services::springboot_manager::lifecycle::start_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -73,7 +76,8 @@ pub async fn stop_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    oplog!("springboot_stop", &id);
+    let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
+    oplog!("springboot_stop", &format!("{} ({})", name, id));
     crate::services::springboot_manager::lifecycle::stop_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -86,7 +90,8 @@ pub async fn restart_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    oplog!("springboot_restart", &id);
+    let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
+    oplog!("springboot_restart", &format!("{} ({})", name, id));
     crate::services::springboot_manager::lifecycle::restart_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -98,11 +103,11 @@ pub async fn replace_springboot_jar(
     id: String,
     new_jar_path: String,
 ) -> Result<ReplaceResult, String> {
-    oplog!("springboot_replace_jar", &id);
     use chrono::Local;
     use std::path::Path;
 
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
+    oplog!("springboot_replace_jar", &format!("{} ({})", app.name, id));
     if app.status == crate::models::springboot::AppStatus::Running {
         return Err("运行中的应用不可换包".to_string());
     }

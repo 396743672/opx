@@ -157,11 +157,10 @@ pub async fn uninstall_software(
     app: AppHandle,
     installed_id: String,
 ) -> Result<bool, String> {
-    oplog!("uninstall", &installed_id);
-    // 复查卸载安全性
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("uninstall", &software.name);
     let report = uninstall_guard::check_uninstall_safety(&software)
         .map_err(|e| e.to_string())?;
     if !report.safe {
@@ -205,10 +204,10 @@ pub async fn start_software(
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
-    oplog!("start", &installed_id);
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("start", &software.name);
 
     lifecycle::validate_start_transition(software.status).map_err(|e| e.to_string())?;
 
@@ -654,10 +653,10 @@ pub async fn stop_software(
     app: AppHandle,
     installed_id: String,
 ) -> Result<bool, String> {
-    oplog!("stop", &installed_id);
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("stop", &software.name);
 
     lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
 
@@ -750,10 +749,10 @@ pub async fn restart_software(
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
-    oplog!("restart", &installed_id);
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("restart", &software.name);
 
     let should_stop = software.status == SoftwareStatus::Running
         || software.status == SoftwareStatus::Starting;
@@ -883,10 +882,10 @@ pub async fn write_config_form(
     installed_id: String,
     mut data: FormData,
 ) -> Result<(), String> {
-    oplog!("config_form", &installed_id);
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("config_form", &format!("{} ({})", software.name, installed_id));
     if software.is_custom {
         return Err("自定义软件无表单 schema".to_string());
     }
@@ -980,10 +979,10 @@ pub async fn write_config_source(
     installed_id: String,
     content: String,
 ) -> Result<(), String> {
-    oplog!("config_source", &installed_id);
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("config_source", &format!("{} ({})", software.name, installed_id));
     let providers_list = providers::all_providers();
     let provider = providers_list
         .iter()
@@ -1060,7 +1059,8 @@ pub async fn save_custom_start_command(
     installed_id: String,
     cmd: CustomStartCommand,
 ) -> Result<(), String> {
-    oplog!("save_start_command", &installed_id);
+    let name = manager.find_installed(&installed_id).map(|s| s.name).unwrap_or_default();
+    oplog!("save_start_command", &format!("{} ({})", name, installed_id));
     manager
         .set_custom_start_command(&installed_id, cmd)
         .map_err(|e| e.to_string())
@@ -1093,7 +1093,8 @@ pub async fn save_startup_settings(
     auto_start: bool,
     order: u32,
 ) -> Result<(), String> {
-    oplog!("save_startup", &installed_id);
+    let name = manager.find_installed(&installed_id).map(|s| s.name).unwrap_or_default();
+    oplog!("save_startup", &format!("{} ({})", name, installed_id));
     manager
         .update_startup_settings(&installed_id, auto_start, order)
         .map_err(|e| e.to_string())
