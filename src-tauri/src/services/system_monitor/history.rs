@@ -2,13 +2,14 @@ use crate::models::system::HistoryPoint;
 use anyhow::Result;
 use std::path::Path;
 
-const MAX_HISTORY_POINTS: usize = 1440; // 24 hours at 1-minute intervals
+const MAX_HISTORY_POINTS: usize = 1440;
 
 pub fn load_history(path: &Path) -> Result<Vec<HistoryPoint>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let history = crate::utils::file::read_json::<Vec<HistoryPoint>>(path)?;
+    let content = std::fs::read_to_string(path)?;
+    let history: Vec<HistoryPoint> = serde_json::from_str(&content)?;
     Ok(history)
 }
 
@@ -17,7 +18,8 @@ pub fn save_history(path: &Path, history: &[HistoryPoint]) -> Result<()> {
     if history.len() > MAX_HISTORY_POINTS {
         history = history.split_off(history.len() - MAX_HISTORY_POINTS);
     }
-    crate::utils::file::write_json(path, &history)?;
+    let content = serde_json::to_string_pretty(&history)?;
+    std::fs::write(path, content)?;
     Ok(())
 }
 
