@@ -73,6 +73,48 @@
       </div>
     </div>
 
+    <!-- ⚡ 服务与应用概览（示例） -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
+        <CardHeader title="已安装软件" hide-refresh />
+        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
+          <div v-for="s in installedSoftware" :key="s.id" class="flex items-center justify-between text-sm">
+            <span class="flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full" :class="s.status === SoftwareStatus.Running ? 'bg-success' : 'bg-muted-foreground/40'"></span>
+              {{ s.name }}
+            </span>
+            <span class="text-xs text-muted-foreground">{{ s.version }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
+        <CardHeader title="运行中服务" hide-refresh />
+        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
+          <div v-for="s in runningSoftware" :key="s.id" class="flex items-center justify-between text-sm">
+            <span class="flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-success"></span>
+              {{ s.name }}
+            </span>
+            <span class="text-xs text-success">{{ $t('running') }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
+        <CardHeader title="运行应用" hide-refresh />
+        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
+          <div v-for="app in runningApps" :key="app.id" class="flex items-center justify-between text-sm">
+            <span class="flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
+              {{ app.name }}
+            </span>
+            <span class="text-xs text-muted-foreground tnum">:{{ app.port }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 信息行：系统信息 / 磁盘 / 网络 -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
       <!-- 系统信息 -->
@@ -153,7 +195,13 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import { useSystemStore } from '@/stores/system'
+import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
+import type { InstalledSoftware } from '@/models/software'
+import { SoftwareStatus } from '@/models/software'
+import type { SpringBootApp } from '@/models/springboot'
+import { AppStatus } from '@/models/springboot'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
@@ -165,6 +213,14 @@ import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/f
 const { t } = useI18n()
 void t
 const systemStore = useSystemStore()
+const sbStore = useSpringBootStore()
+
+const installedSoftware = ref<InstalledSoftware[]>([])
+const runningApps = ref<SpringBootApp[]>([])
+
+const runningSoftware = computed(() =>
+  installedSoftware.value.filter(s => s.status === SoftwareStatus.Running)
+)
 
 const systemInfo = computed(() => systemStore.systemInfo)
 
@@ -181,7 +237,10 @@ const uptime = computed(() => {
   return formatUptime(Math.floor(nowTick.value / 1000) - boot)
 })
 
-onMounted(() => {
+onMounted(async () => {
+  installedSoftware.value = await invoke<InstalledSoftware[]>('list_installed_software')
+  await sbStore.fetchApps()
+  runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
   }, 1000)
