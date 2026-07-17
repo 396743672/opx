@@ -497,24 +497,31 @@ async fn spawn_start(
     });
 }
 
-/// 应用退出时停止所有运行中的软件
-///
-/// 同步调用，遍历注册表中所有进程，逐个 stop_one（含 5s 优雅等待 + 强杀）。
-/// 应在 quit_app 命令中调用。
-pub fn stop_all_on_exit() {
+/// 应用退出时停止所有运行中的进程（软件 + SpringBoot），逐个 emit 进度并最终 emit stop-complete。
+/// 同步调用，每个进程含 5s 优雅等待 + 强杀。
+pub fn stop_all_on_exit(app: &AppHandle) {
     let procs = drain();
     if procs.is_empty() {
+        let _ = app.emit("stop-complete", ());
         return;
     }
-    tracing::info!(count = procs.len(), "stop_all_on_exit");
-    for p in procs {
+    let total = procs.len();
+    tracing::info!(count = total, "stop_all_on_exit");
+    for (i, p) in procs.iter().enumerate() {
         let (success, status) = stop_one(p.pid);
+        let _ = app.emit(
+            "stop-progress",
+            serde_json::json!({
+                "current": i + 1,
+                "total": total,
+                "name": p.name,
+                "status": status,
+            }),
+        );
         tracing::info!(
-            installed_id = %p.installed_id,
-            pid = p.pid,
-            success = success,
-            status = %status,
-            "stopped on exit"
+            installed_id = %p.installed_id, pid = p.pid,
+            success = success, status = %status, "stopped on exit"
         );
     }
+    let _ = app.emit("stop-complete", ());
 }

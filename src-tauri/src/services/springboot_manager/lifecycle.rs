@@ -1,15 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use once_cell::sync::Lazy;
 use sysinfo::{Pid, System, ProcessesToUpdate};
 use tauri::{AppHandle, Emitter};
 
 use crate::models::software::SoftwareStatus;
 use crate::models::springboot::AppStatus;
-use crate::services::process_registry;
 use crate::services::springboot_manager::SpringBootManager;
+use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
 
 // ponytail: sysinfo 判活，跨平台，不依赖 tasklist 输出编码
@@ -18,9 +15,6 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
     sys.refresh_processes(ProcessesToUpdate::All);
     sys.process(Pid::from_u32(pid)).is_some()
 }
-
-/// app_id -> 进程注册表内部 id
-static APP_REG_IDS: Lazy<Mutex<HashMap<String, i64>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// 启动 Spring Boot 应用
 pub async fn start_app(
@@ -112,8 +106,7 @@ pub async fn start_app(
     let pid = child.id();
 
     // 注册到全局进程注册表
-    let reg_id = process_registry::register(pid, app.name.clone(), "springboot".to_string());
-    APP_REG_IDS.lock().unwrap().insert(app_id.to_string(), reg_id);
+    lifecycle::register(app_id.to_string(), pid, app.name.clone(), "springboot".to_string(), "springboot".to_string());
 
     // ponytail: 健康检查超时由 health_check_timeout_secs 控制；进程已死则提前退出
     let max_attempts = app.health_check_timeout_secs.max(5);
@@ -235,9 +228,7 @@ pub async fn stop_app(
     }
 
     // 从进程注册表中注销
-    if let Some(reg_id) = APP_REG_IDS.lock().unwrap().remove(app_id) {
-        process_registry::unregister(reg_id);
-    }
+    lifecycle::unregister(&app_id);
 
     // ponytail: 无论优雅退出还是强制终止，进程已死就设 Stopped
     springboot_mgr
