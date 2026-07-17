@@ -109,9 +109,9 @@ pub async fn start_app(
     lifecycle::register(app_id.to_string(), pid, app.name.clone(), "springboot".to_string(), "springboot".to_string());
 
     let console_path = log_dir.join("console.log");
-    // ponytail: 日志检测启动完成（Started…），不等固定超时；PID 死则秒报
+    // ponytail: 每 5s 读日志尾部 4KB 检测 "Started "，不等固定超时；PID 死则秒报
     let mut started = app.port.is_none();
-    for _ in 0..300 {
+    for _ in 0..60 {
         if !is_pid_alive(pid) {
             springboot_mgr
                 .update_status(app_id, AppStatus::Error, Some(pid), Some("进程意外退出".to_string()))
@@ -122,11 +122,17 @@ pub async fn start_app(
             );
             return Err("应用启动失败：进程意外退出，请检查 console.log 或 JAR 配置".to_string());
         }
-        // 检测日志中 Spring Boot 启动完成标记
+        // 检测日志尾部 4KB 中 Spring Boot 启动完成标记
         if !started && console_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&console_path) {
-                if content.contains("Started ") {
-                    started = true;
+            if let Ok(mut f) = std::fs::File::open(&console_path) {
+                use std::io::{Read, Seek, SeekFrom};
+                let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+                let skip = len.saturating_sub(4096);
+                let mut tail = vec![0u8; (len - skip) as usize];
+                if f.seek(SeekFrom::Start(skip)).is_ok() && f.read_exact(&mut tail).is_ok() {
+                    if String::from_utf8_lossy(&tail).contains("Started ") {
+                        started = true;
+                    }
                 }
             }
         }
@@ -152,7 +158,7 @@ pub async fn start_app(
             );
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 
     // 300s 兜底
