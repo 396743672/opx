@@ -30,11 +30,7 @@ fn config() -> &'static DownloadConfig {
 
 fn resolve_url(url: &str) -> String {
     let cfg = config();
-    // 全局代理：所有请求走代理（直接在 reqwest Client 层设置，不在 URL 层面处理）
-    if !cfg.global_proxy_url.is_empty() {
-        return url.to_string(); // URL 不变，Client 层面设代理
-    }
-    // GitHub 代理
+    // GitHub 优先：有 GitHub 代理时先前缀，再走全局代理
     if url.contains("github.com") && !cfg.github_proxy_url.is_empty() {
         let proxied = format!("{}/{}", cfg.github_proxy_url.trim_end_matches('/'), url);
         tracing::info!(original = %url, proxied = %proxied, "using github_proxy");
@@ -49,6 +45,7 @@ pub fn download(url: &str, destination: &Path) -> Result<()> {
         .user_agent("OPX");
     let cfg = config();
     if !cfg.global_proxy_url.is_empty() {
+        tracing::info!(proxy = %cfg.global_proxy_url, "using global proxy");
         if let Ok(proxy) = reqwest::Proxy::all(&cfg.global_proxy_url) {
             builder = builder.proxy(proxy);
         }
@@ -74,6 +71,7 @@ where
         .user_agent("OPX");
     let cfg = config();
     if !cfg.global_proxy_url.is_empty() {
+        tracing::info!(proxy = %cfg.global_proxy_url, "using global proxy");
         if let Ok(proxy) = reqwest::Proxy::all(&cfg.global_proxy_url) {
             builder = builder.proxy(proxy);
         }
