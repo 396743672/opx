@@ -6,6 +6,17 @@ use crate::utils::paths;
 /// 默认保留天数（spec 第 1284 行明确 7 天）
 pub const DEFAULT_RETAIN_DAYS: u64 = 7;
 
+/// 操作日志宏 — 结构化 `action target [detail]` 格式
+#[macro_export]
+macro_rules! oplog {
+    ($action:expr, $target:expr) => {
+        tracing::info!(action = $action, target = $target, "");
+    };
+    ($action:expr, $target:expr, $detail:expr) => {
+        tracing::info!(action = $action, target = $target, detail = $detail, "");
+    };
+}
+
 /// 初始化 tracing + 按日 rolling appender + stderr 输出
 /// 应在 Tauri setup hook 中调用一次
 ///

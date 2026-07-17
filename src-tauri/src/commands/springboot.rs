@@ -9,6 +9,7 @@ use crate::models::springboot::{
 use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::jvm_opts;
 use crate::services::springboot_manager::SpringBootManager;
+use crate::oplog;
 
 #[tauri::command]
 pub async fn list_springboot_apps(
@@ -22,6 +23,7 @@ pub async fn create_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     params: CreateAppParams,
 ) -> Result<SpringBootApp, String> {
+    oplog!("springboot_create", &params.name);
     // ponytail: 有指定端口才查重，None 表示动态端口不校验
     if let Some(port) = params.port {
         let apps = manager.list_apps();
@@ -38,6 +40,7 @@ pub async fn update_springboot_app(
     id: String,
     params: UpdateAppParams,
 ) -> Result<SpringBootApp, String> {
+    oplog!("springboot_update", &id);
     manager.update_app(&id, params).map_err(|e| e.to_string())
 }
 
@@ -46,6 +49,7 @@ pub async fn delete_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     id: String,
 ) -> Result<(), String> {
+    oplog!("springboot_delete", &id);
     manager.delete_app(&id).map_err(|e| e.to_string())
 }
 
@@ -56,6 +60,7 @@ pub async fn start_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
+    oplog!("springboot_start", &id);
     crate::services::springboot_manager::lifecycle::start_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -68,6 +73,7 @@ pub async fn stop_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
+    oplog!("springboot_stop", &id);
     crate::services::springboot_manager::lifecycle::stop_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -80,6 +86,7 @@ pub async fn restart_springboot_app(
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
+    oplog!("springboot_restart", &id);
     crate::services::springboot_manager::lifecycle::restart_app(
         &id, &manager, &software_mgr, &app_handle,
     ).await
@@ -91,6 +98,7 @@ pub async fn replace_springboot_jar(
     id: String,
     new_jar_path: String,
 ) -> Result<ReplaceResult, String> {
+    oplog!("springboot_replace_jar", &id);
     use chrono::Local;
     use std::path::Path;
 
@@ -164,6 +172,7 @@ pub async fn save_springboot_groups(
     manager: State<'_, Arc<SpringBootManager>>,
     groups: Vec<AppGroup>,
 ) -> Result<(), String> {
+    oplog!("springboot_save_groups", &format!("{} groups", groups.len()));
     manager.save_groups(groups).map_err(|e| e.to_string())
 }
 
@@ -179,6 +188,7 @@ pub async fn set_springboot_global_env_vars(
     manager: State<'_, Arc<SpringBootManager>>,
     env_vars: Vec<(String, String)>,
 ) -> Result<(), String> {
+    oplog!("springboot_set_global_env", &format!("{} vars", env_vars.len()));
     manager.set_global_env_vars(env_vars).map_err(|e| e.to_string())
 }
 

@@ -8,6 +8,7 @@ use crate::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::website_manager::{nginx_conf, WebsiteManager};
 use crate::utils::archive;
+use crate::oplog;
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
@@ -180,6 +181,7 @@ pub fn save_website(
     wm: State<'_, Arc<WebsiteManager>>,
     mut site: Site,
 ) -> Result<(), String> {
+    oplog!("website_save", &site.name);
     // 先解压待处理的 zip（upload 时只暂存 zip，保存时才真正解压）
     if let Ok(nginx) = resolve_nginx(&sm) {
         resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
@@ -195,6 +197,7 @@ pub fn delete_website(
     wm: State<'_, Arc<WebsiteManager>>,
     id: String,
 ) -> Result<(), String> {
+    oplog!("website_delete", &id);
     let site = wm.get(&id);
     if let Some(ref s) = site {
         if s.enabled {
@@ -225,6 +228,7 @@ pub fn set_website_enabled(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
+    oplog!("website_toggle", &id);
     wm.set_enabled(&id, enabled).map_err(|e| e.to_string())?;
     regenerate(&sm, &wm, true)
 }

@@ -1,8 +1,10 @@
 use tauri::{AppHandle, Manager};
+use crate::oplog;
 
 /// 触发退出流程：级联停止所有已注册子服务（逐个 emit stop-progress，完成后 emit stop-complete）。
 #[tauri::command]
 pub fn quit_app(app: AppHandle) -> Result<(), String> {
+    oplog!("quit_app", "all");
     crate::services::software_manager::lifecycle::stop_all_on_exit(&app);
     Ok(())
 }
@@ -10,6 +12,7 @@ pub fn quit_app(app: AppHandle) -> Result<(), String> {
 /// 真正退出程序（前端在 stop-complete 后调用）
 #[tauri::command]
 pub fn exit_app(app: AppHandle) -> Result<(), String> {
+    oplog!("exit_app", "all");
     app.exit(0);
     Ok(())
 }

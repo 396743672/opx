@@ -2,6 +2,7 @@ use std::fs;
 use tauri::AppHandle;
 use crate::models::settings::AppSettings;
 use crate::utils::paths;
+use crate::oplog;
 
 /// 读取设置；文件缺失或解析失败返回默认值。
 /// 路径相对 exe 所在目录（便携布局），不再使用外部 APPDATA。
@@ -17,6 +18,7 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]
 pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), String> {
+    oplog!("save_settings", "all");
     let path = paths::settings_path();
     let tmp = path.with_extension("json.tmp");
     let content =
