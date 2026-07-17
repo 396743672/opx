@@ -353,4 +353,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: oklch(0 0 0 / 0.5); backdrop-filter: blur(4px);
+}
+.confirm-box {
+  width: 380px; padding: 24px;
+  border-radius: 10px; border: 1px solid var(--color-border);
+  background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
+}
+.confirm-title {
+  font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.confirm-title svg { color: var(--color-destructive); }
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

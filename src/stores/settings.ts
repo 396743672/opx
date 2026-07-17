@@ -98,8 +98,5 @@ export const useSettingsStore = defineStore('settings', () => {
     setTheme,
     setSidebarCollapsed,
     setLanguage,
-    updateSettings: (newSettings: AppSettings) => {
-      settings.value = newSettings
-    },
   }
 })

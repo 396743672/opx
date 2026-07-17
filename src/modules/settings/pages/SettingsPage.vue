@@ -75,8 +75,7 @@ import { CloseWindowAction, type ThemeMode, type Language } from '@/models/setti
 import PageHeader from '@/components/PageHeader.vue'
 import CardHeader from '@/components/CardHeader.vue'
 
-const { t } = useI18n()
-void t
+useI18n()
 const settingsStore = useSettingsStore()
 
 const themeValue = ref<ThemeMode>('auto')

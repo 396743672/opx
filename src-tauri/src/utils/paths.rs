@@ -87,16 +87,6 @@ pub fn resolve_builtin_resource(resource_dir: &Path, rel: &str) -> Option<PathBu
     None
 }
 
-/// 通用辅助：在指定 root 下解析 name。
-/// name 空时返回 root 本身，否则返回 root.join(name)。
-pub fn resolve_under(root: &Path, name: &str) -> PathBuf {
-    if name.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(name)
-    }
-}
-
 /// 解析软件安装路径：若为相对路径则拼接 apps_dir()，否则直接返回（兼容旧版绝对路径）。
 /// 存储时存 `{key}/{version}` 或 `custom/{name}`，运行时解析为完整路径。
 pub fn resolve_install_path(rel_or_abs: &str) -> PathBuf {

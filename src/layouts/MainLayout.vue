@@ -91,8 +91,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
-const { t } = useI18n()
-void t
+useI18n()
 const router = useRouter()
 const route = useRoute()
 const settingsStore = useSettingsStore()

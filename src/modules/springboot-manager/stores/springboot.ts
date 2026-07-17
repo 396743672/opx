@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsTemplate, ReplaceResult, CreateAppParams, UpdateAppParams } from '@/models/springboot'
 import type { InstalledSoftware } from '@/models/software'
 
@@ -10,17 +10,6 @@ export const useSpringBootStore = defineStore('springboot', () => {
   const loading = ref(false)
   const jdkList = ref<InstalledSoftware[]>([])
   const dependencyCandidates = ref<InstalledSoftware[]>([])
-  const jvmMetrics = ref<JvmInfo | null>(null)
-
-  const appsByGroup = computed(() => {
-    const map: Record<string, SpringBootApp[]> = {}
-    for (const app of apps.value) {
-      const key = app.group || '__ungrouped'
-      if (!map[key]) map[key] = []
-      map[key].push(app)
-    }
-    return map
-  })
 
   async function fetchApps() {
     loading.value = true
@@ -70,9 +59,7 @@ export const useSpringBootStore = defineStore('springboot', () => {
   }
 
   async function fetchJvmMetrics(id: string): Promise<JvmInfo | null> {
-    const metrics = await invoke<JvmInfo | null>('get_springboot_jvm_metrics', { id })
-    jvmMetrics.value = metrics
-    return metrics
+    return await invoke<JvmInfo | null>('get_springboot_jvm_metrics', { id })
   }
 
   async function fetchJdkList() {
@@ -87,9 +74,6 @@ export const useSpringBootStore = defineStore('springboot', () => {
     return await invoke<JvmOptsTemplate>('get_recommended_jvm_opts', { jdkInstalledId })
   }
 
-  async function readJarVersion(jarPath: string): Promise<string> {
-    return await invoke<string>('read_jar_version_info', { jarPath })
-  }
   async function readJarPort(jarPath: string): Promise<number | null> {
     return await invoke<number | null>('read_jar_port', { jarPath })
   }
@@ -108,11 +92,11 @@ export const useSpringBootStore = defineStore('springboot', () => {
   }
 
   return {
-    apps, groups, loading, jdkList, dependencyCandidates, jvmMetrics, appsByGroup,
+    apps, groups, loading, jdkList, dependencyCandidates,
     fetchApps, fetchGroups, createApp, updateApp, deleteApp,
     startApp, stopApp, restartApp, replaceJar,
     fetchJvmMetrics, fetchJdkList, fetchDependencyCandidates,
-    getRecommendedOpts, readJarVersion, readJarPort, saveGroups,
+    getRecommendedOpts, readJarPort, saveGroups,
     getGlobalEnvVars, setGlobalEnvVars,
   }
 })

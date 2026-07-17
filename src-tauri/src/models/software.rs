@@ -205,22 +205,6 @@ pub enum HealthCheckSpec {
     },
 }
 
-/// Provider 内部使用的自定义健康检查函数指针（不参与序列化）
-pub type CustomHealthChecker = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
-
-/// 调度器实际执行的 spec（包装 Custom 函数指针，避免序列化边界问题）
-#[derive(Clone)]
-pub enum ResolvedHealthSpec {
-    ProcessOnly,
-    Tcp { port: u16, timeout_ms: u64 },
-    Http {
-        url: String,
-        expected_status: u16,
-        timeout_ms: u64,
-    },
-    Custom { checker: CustomHealthChecker },
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UninstallSafetyReport {
     pub safe: bool,
@@ -264,12 +248,3 @@ pub struct CustomInstallParams {
     pub archive_path: String,
 }
 
-// 保留原设计中的类型（兼容性）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SoftwareMeta {
-    pub key: String,
-    pub name: String,
-    pub description: String,
-    pub available_versions: Vec<String>,
-    pub default_version: String,
-}

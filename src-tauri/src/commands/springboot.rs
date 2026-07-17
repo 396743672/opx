@@ -199,7 +199,12 @@ pub async fn get_recommended_jvm_opts(
 pub async fn list_springboot_dependency_candidates(
     software_mgr: State<'_, Arc<SoftwareManager>>,
 ) -> Result<Vec<crate::models::software::InstalledSoftware>, String> {
-    Ok(crate::services::springboot_manager::deps::list_dependency_candidates(&software_mgr))
+// ponytail: inlined deps::list_dependency_candidates
+    let managed_keys = ["mysql", "redis", "nginx", "minio"];
+    Ok(software_mgr.get_installed()
+        .into_iter()
+        .filter(|s| managed_keys.contains(&s.key.as_str()))
+        .collect())
 }
 
 #[tauri::command]

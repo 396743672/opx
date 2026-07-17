@@ -210,8 +210,7 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
-const { t } = useI18n()
-void t
+useI18n()
 const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
 

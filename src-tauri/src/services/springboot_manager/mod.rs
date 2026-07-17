@@ -1,4 +1,3 @@
-pub mod deps;
 pub mod jvm_opts;
 pub mod lifecycle;
 pub mod monitor;
