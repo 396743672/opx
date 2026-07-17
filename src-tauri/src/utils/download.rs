@@ -30,8 +30,8 @@ fn config() -> &'static DownloadConfig {
 
 fn resolve_url(url: &str) -> String {
     let cfg = config();
-    // GitHub 优先：有 GitHub 代理时先前缀，再走全局代理
-    if url.contains("github.com") && !cfg.github_proxy_url.is_empty() {
+    // 全局代理优先（VPN 类可直连 GitHub）；无全局时走 GitHub 代理
+    if cfg.global_proxy_url.is_empty() && url.contains("github.com") && !cfg.github_proxy_url.is_empty() {
         let proxied = format!("{}/{}", cfg.github_proxy_url.trim_end_matches('/'), url);
         tracing::info!(original = %url, proxied = %proxied, "using github_proxy");
         return proxied;
