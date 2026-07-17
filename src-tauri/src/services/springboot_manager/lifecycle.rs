@@ -115,10 +115,21 @@ pub async fn start_app(
     let reg_id = process_registry::register(pid, app.name.clone(), "springboot".to_string());
     APP_REG_IDS.lock().unwrap().insert(app_id.to_string(), reg_id);
 
-    // ponytail: 健康检查超时由 health_check_timeout_secs 控制
+    // ponytail: 健康检查超时由 health_check_timeout_secs 控制；进程已死则提前退出
     let max_attempts = app.health_check_timeout_secs.max(5);
-    let mut healthy = app.port.is_none(); // 无端口时直接认为健康
+    let mut healthy = app.port.is_none();
     for _ in 0..max_attempts {
+        // 进程意外退出则立即报错，不等超时
+        if !is_pid_alive(pid) {
+            springboot_mgr
+                .update_status(app_id, AppStatus::Error, Some(pid), Some("进程意外退出".to_string()))
+                .ok();
+            let _ = app_handle.emit(
+                "springboot-status-changed",
+                (app_id.to_string(), "Error", Some(pid), Some("进程意外退出".to_string())),
+            );
+            return Err("应用启动失败：进程意外退出，请检查 console.log 或 JAR 配置".to_string());
+        }
         if let Some(port) = app.port {
             if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
                 .await

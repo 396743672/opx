@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
@@ -693,15 +694,22 @@ pub async fn stop_software(
         .map_err(|e| e.to_string())?;
     lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
 
-    // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀）
-    let result = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
-        .await
-        .map_err(|e| format!("停止任务失败: {}", e))?;
+    // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::task::spawn_blocking(move || lifecycle::stop_one(pid)),
+    ).await;
 
-    let (success, _status) = result;
-    let graceful = success; // 简化：成功即视为优雅停止
+    let graceful = match result {
+        Ok(Ok((true, _))) => true,
+        other => {
+            tracing::warn!(installed_id = %installed_id, pid = pid,
+                stop_result = ?other, "stop_one incomplete/unexpected, forcing Stopped");
+            false
+        }
+    };
 
-    // 更新状态为 Stopped
+    // 无论 stop_one 结果如何，确保状态更新为 Stopped
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let app_clone = app.clone();
     let installed_id_clone = installed_id.clone();

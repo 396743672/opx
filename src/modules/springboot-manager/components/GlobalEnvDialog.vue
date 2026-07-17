@@ -24,6 +24,7 @@
             <Icon icon="mdi:plus" /> 添加变量
           </button>
         </div>
+        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="dialog-footer">
           <button class="btn" @click="$emit('close')">取消</button>
           <button class="btn primary" @click="save" :disabled="saving">
@@ -44,6 +45,7 @@ const emit = defineEmits<{ close: [] }>()
 const store = useSpringBootStore()
 
 const saving = ref(false)
+const saveError = ref('')
 const localVars = ref<[string, string][]>([])
 
 onMounted(async () => {
@@ -55,11 +57,12 @@ function remove(i: number) { localVars.value.splice(i, 1) }
 
 async function save() {
   saving.value = true
+  saveError.value = ''
   try {
     await store.setGlobalEnvVars(localVars.value)
     emit('close')
   } catch (e) {
-    window.alert(String(e))
+    saveError.value = String(e)
   } finally {
     saving.value = false
   }

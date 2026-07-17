@@ -8,6 +8,19 @@
       </template>
     </PageHeader>
 
+    <div v-if="pageError" class="error-banner mb-4" style="margin:0 0 16px">{{ pageError }}</div>
+    <Teleport to="body">
+      <div v-if="pageError" class="overlay" @click.self="pageError = ''">
+        <div class="confirm-box">
+          <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+          <p class="confirm-msg">{{ pageError }}</p>
+          <div class="confirm-actions">
+            <button class="btn primary" @click="pageError = ''">确定</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <EmptyState
       v-if="!loading && sites.length === 0"
       icon="mdi:web-box"
@@ -100,6 +113,7 @@ const editing = ref<Site | null>(null)
 const isNew = ref(false)
 const nginxRunning = ref(false)
 const delTarget = ref<Site | null>(null)
+const pageError = ref('')
 
 function addr(s: Site): string {
   return s.server_name && s.server_name.trim() ? `${s.server_name}:${s.listen}` : `:${s.listen}`
@@ -136,14 +150,15 @@ function onSaved() {
 async function toggle(s: Site) {
   // 若启用站点但 nginx 未运行，先提示
   if (!s.enabled && !nginxRunning.value) {
-    window.alert(t('nginxNotRunning'))
+    pageError.value = t('nginxNotRunning')
     return
   }
+  pageError.value = ''
   try {
     await invoke('set_website_enabled', { id: s.id, enabled: !s.enabled })
     load()
   } catch (e) {
-    window.alert(String(e))
+    pageError.value = String(e)
   }
 }
 
@@ -155,11 +170,12 @@ async function doDelete() {
   if (!delTarget.value) return
   const s = delTarget.value
   delTarget.value = null
+  pageError.value = ''
   try {
     await invoke('delete_website', { id: s.id })
     load()
   } catch (e) {
-    window.alert(String(e))
+    pageError.value = String(e)
   }
 }
 

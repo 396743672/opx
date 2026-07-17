@@ -192,7 +192,13 @@ impl SpringBootManager {
         let mut store = self.store.write().unwrap();
         let app = store.applications.iter_mut().find(|a| a.id == id)
             .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
-        if status == AppStatus::Running { app.start_time = Some(chrono::Local::now().naive_local()); }
+        // 进入 Starting/Stopped 时清除旧错误，避免上次失败的红字残留
+        if matches!(status, AppStatus::Starting | AppStatus::Stopped) {
+            app.last_error = None;
+        }
+        if status == AppStatus::Running {
+            app.start_time = Some(chrono::Local::now().naive_local());
+        }
         app.status = status;
         app.pid = pid;
         if let Some(e) = error { app.last_error = Some(e); }

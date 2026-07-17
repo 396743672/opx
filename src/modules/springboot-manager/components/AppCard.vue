@@ -32,7 +32,7 @@
         <Icon icon="mdi:play" /> {{ $t('start') }}
       </button>
       <button
-        v-if="app.status === AppStatus.Running || app.status === AppStatus.Error"
+        v-if="app.status === AppStatus.Running"
         class="btn"
         @click="$emit('stop', app.id)"
       >
@@ -61,10 +61,8 @@
         <Icon icon="mdi:package-up" /> {{ $t('replaceJar') }}
       </button>
       <button
-        v-if="app.status === AppStatus.Running || app.status === AppStatus.Error"
+        v-if="app.status === AppStatus.Running && app.jdk_type !== 'jre'"
         class="btn"
-        :disabled="app.jdk_type === 'jre'"
-        :title="app.jdk_type === 'jre' ? 'JRE 不含 jcmd，请安装 JDK' : ''"
         @click="$emit('monitor', app.id)"
       >
         <Icon icon="mdi:chart-line" /> {{ $t('jvmMonitor') }}

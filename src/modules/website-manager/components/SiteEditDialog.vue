@@ -52,6 +52,7 @@
           <textarea ref="sourceText" spellcheck="false" class="source-input" @input="sourceDirty = true"></textarea>
         </div>
 
+        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="foot">
           <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
@@ -62,6 +63,18 @@
           >
             {{ $t('save') }}
           </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+  <Teleport to="body">
+    <div v-if="confirmUnlock" class="overlay" style="z-index:60">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> 确认操作</div>
+        <p class="confirm-msg">{{ $t('restoreFormConfirm') }}</p>
+        <div class="confirm-actions">
+          <button class="btn" @click="confirmUnlock = false">{{ $t('cancel') }}</button>
+          <button class="btn danger" @click="doUnlock">{{ $t('confirm') }}</button>
         </div>
       </div>
     </div>
@@ -82,10 +95,12 @@ const emit = defineEmits<{ close: []; saved: [] }>()
 
 const form = ref<Site>(props.site)
 const saving = ref(false)
+const saveError = ref('')
 const tab = ref<'form' | 'source'>('form')
 const sourceText = ref<HTMLTextAreaElement | null>(null)
 const sourceDirty = ref(false)
 const nameError = ref('')
+const confirmUnlock = ref(false)
 
 function validateName(): boolean {
   const v = form.value.name.trim()
@@ -116,21 +131,25 @@ async function save() {
     }
     emit('saved')
   } catch (e) {
-    window.alert(String(e))
+    saveError.value = String(e)
   } finally {
     saving.value = false
   }
 }
 
 // 解除手写模式：恢复表单生成
-async function unlock() {
-  if (!window.confirm(t('restoreFormConfirm'))) return
+function unlock() {
+  confirmUnlock.value = true
+}
+async function doUnlock() {
+  confirmUnlock.value = false
   saving.value = true
+  saveError.value = ''
   try {
     await invoke('unlock_site_conf', { id: props.site.id })
     emit('saved')
   } catch (e) {
-    window.alert(String(e))
+    saveError.value = String(e)
   } finally {
     saving.value = false
   }
@@ -205,6 +224,19 @@ watch(tab, async (t) => {
 
 <style scoped>
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: oklch(0 0 0 / 0.5); backdrop-filter: blur(4px); }
+.error-banner {
+  margin: 0 20px; padding: 8px 12px; background: #fef2f2; color: #b91c1c;
+  border-radius: 6px; font-size: 12px;
+}
+.confirm-box {
+  width: 380px; padding: 24px;
+  border-radius: 10px; border: 1px solid var(--color-border);
+  background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
+}
+.confirm-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.confirm-title svg { color: var(--color-destructive); }
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
 .head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }

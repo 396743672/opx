@@ -1,5 +1,6 @@
 <template>
   <div class="space-y-2">
+    <div v-if="uploadError" class="error-banner" style="margin:0 0 8px">{{ uploadError }}</div>
     <div v-for="(l, i) in model" :key="i" class="rounded-md border border-border p-3">
       <div class="flex items-center gap-2 mb-2">
         <input v-model="l.path" class="input flex-1 font-mono" :placeholder="$t('routePath')" />
@@ -46,6 +47,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -56,6 +58,7 @@ const emit = defineEmits<{ 'update:modelValue': [SiteLocation[]] }>()
 
 const model = props.modelValue
 const locked = props.locked ?? false
+const uploadError = ref('')
 
 function add() {
   model.push({ path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null })
@@ -69,6 +72,7 @@ function removeAt(i: number) {
 async function upload(l: SiteLocation) {
   const file = await open({ filters: [{ name: 'zip', extensions: ['zip'] }] })
   if (typeof file !== 'string') return
+  uploadError.value = ''
   try {
     l.root = await invoke<string>('upload_site_bundle', {
       id: props.siteId,
@@ -76,7 +80,7 @@ async function upload(l: SiteLocation) {
       zipPath: file,
     })
   } catch (e) {
-    window.alert(String(e))
+    uploadError.value = String(e)
   }
 }
 </script>

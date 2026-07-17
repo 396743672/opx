@@ -352,6 +352,30 @@ body {
 }
 
 /* reduced-motion 兜底 */
+
+/* 全局错误提示条 */
+.error-banner {
+  margin: 0 20px; padding: 8px 12px;
+  background: oklch(0.95 0.04 25 / 0.12); color: var(--color-destructive);
+  border-radius: 6px; font-size: 12px;
+}
+.dark .error-banner {
+  background: oklch(0.65 0.2 25 / 0.15);
+}
+
+/* 全局确认弹窗（可复用） */
+.confirm-box {
+  width: 380px; padding: 24px;
+  border-radius: 10px; border: 1px solid var(--color-border);
+  background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
+}
+.confirm-title {
+  font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.confirm-title svg { color: var(--color-destructive); }
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

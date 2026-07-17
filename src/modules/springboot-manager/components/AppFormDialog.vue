@@ -107,6 +107,10 @@
               </button>
             </div>
             <textarea class="textarea input-mono" v-model="extraFlagsText" rows="4" placeholder="-XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8" />
+            <label class="checkbox-label mt-2">
+              <input type="checkbox" v-model="utf8Encoding" class="checkbox" />
+              <span class="text-xs">UTF-8 字符集（-Dfile.encoding=UTF-8）</span>
+            </label>
           </div>
 
           <!-- Program args -->
@@ -255,6 +259,7 @@ const jvm = reactive<JvmOptsTemplate>({
 })
 
 const extraFlagsText = ref('')
+const utf8Encoding = ref(true)
 
 /** apps.json 中存的是相对 data_dir 的路径（如 springboot/{name}/app.jar），
  *  jar_path 已解析为绝对路径，需要剥离 data_dir 前缀显示相对路径 */
@@ -295,13 +300,17 @@ function buildJvmOpts(): string[] {
   const extraFlags = extraFlagsText.value
     ? extraFlagsText.value.split(/\s+/).filter(Boolean)
     : [...jvm.extra_flags]
-  return [
+  const opts = [
     `-Xms${jvm.xms_mb}m`,
     `-Xmx${jvm.xmx_mb}m`,
     `-XX:MetaspaceSize=${jvm.metaspace_mb}m`,
     `-XX:+Use${jvm.gc_type}`,
     ...extraFlags,
   ]
+  if (utf8Encoding.value && !opts.includes('-Dfile.encoding=UTF-8')) {
+    opts.push('-Dfile.encoding=UTF-8')
+  }
+  return opts
 }
 
 	// Resource planning state
@@ -409,6 +418,7 @@ onMounted(() => {
     jvm.gc_type = parsed.gc_type || 'G1GC'
     jvm.extra_flags = parsed.extra_flags
     extraFlagsText.value = parsed.extra_flags.join(' ')
+    utf8Encoding.value = props.app.jvm_opts.includes('-Dfile.encoding=UTF-8')
     recommendedClicked.value = true
   }
 })
