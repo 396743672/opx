@@ -48,6 +48,30 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
     let _ = app.emit("install-progress", payload);
 }
 
+// ponytail: 节流 emit，避免大文件每 chunk 刷屏 IPC
+struct ThrottledEmitter {
+    last_emit: std::time::Instant,
+    last_percent: i64,
+}
+
+impl ThrottledEmitter {
+    fn new() -> Self {
+        Self { last_emit: std::time::Instant::now(), last_percent: -1 }
+    }
+
+    fn should_emit(&mut self, percent: i64) -> bool {
+        let changed = percent != self.last_percent;
+        let timeout = self.last_emit.elapsed().as_millis() >= 200;
+        if timeout || changed {
+            self.last_emit = std::time::Instant::now();
+            self.last_percent = percent;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// 校验自定义软件名称：仅允许字母、数字、下划线、连字符
 fn is_valid_custom_name(name: &str) -> bool {
     !name.is_empty()
@@ -274,23 +298,12 @@ pub async fn install_software(
             }),
         );
 
-        // 解压进度上报：复用 install-progress 事件的 extracting 阶段，
-        // 按「已解压字节数 / 总字节数」换算百分比，并节流——
-        // 节流方式与 installer.rs 内「下载进度回调」闭包一致（每 200ms 或百分比变化时 emit 一次，避免大包刷屏 IPC）。
         let app_ep = app.clone();
         let id_ep = install_id.clone();
-        let mut last_emit = std::time::Instant::now();
-        let mut last_percent: i64 = -1;
+        let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 {
-                (extracted as f64 / total as f64 * 100.0) as i64
-            } else {
-                0
-            };
-            let percent_changed = percent != last_percent;
-            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                last_emit = std::time::Instant::now();
-                last_percent = percent;
+            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
                     serde_json::json!({
@@ -518,21 +531,12 @@ pub async fn install_custom(
             }),
         );
 
-        // 解压进度上报：复用 extracting 阶段事件，按字节数节流 emit
         let app_ep = app.clone();
         let id_ep = install_id.clone();
-        let mut last_emit = std::time::Instant::now();
-        let mut last_percent: i64 = -1;
+        let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 {
-                (extracted as f64 / total as f64 * 100.0) as i64
-            } else {
-                0
-            };
-            let percent_changed = percent != last_percent;
-            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                last_emit = std::time::Instant::now();
-                last_percent = percent;
+            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
                     serde_json::json!({
@@ -846,21 +850,12 @@ async fn install_from_builtin(
             }
         }
 
-        // 解压进度上报：复用 extracting 阶段事件，按字节数节流 emit
         let app_ep = app.clone();
         let id_ep = install_id.clone();
-        let mut last_emit = std::time::Instant::now();
-        let mut last_percent: i64 = -1;
+        let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 {
-                (extracted as f64 / total as f64 * 100.0) as i64
-            } else {
-                0
-            };
-            let percent_changed = percent != last_percent;
-            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                last_emit = std::time::Instant::now();
-                last_percent = percent;
+            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
                     serde_json::json!({
