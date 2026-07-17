@@ -13,10 +13,10 @@ pub struct DownloadConfig {
     pub global_proxy_url: String,
 }
 
-/// 启动时由 settings 初始化
+/// 启动时由 settings 初始化；空值用默认值兜底
 pub fn init_download_config(github_proxy: String, global_proxy: String) {
     let _ = DOWNLOAD_CONFIG.set(DownloadConfig {
-        github_proxy_url: github_proxy,
+        github_proxy_url: if github_proxy.is_empty() { "https://ghfast.top".to_string() } else { github_proxy },
         global_proxy_url: global_proxy,
     });
 }
@@ -50,8 +50,12 @@ pub fn download(url: &str, destination: &Path) -> Result<()> {
             builder = builder.proxy(proxy);
         }
     }
-    let response = builder.build()?
-        .get(&url).send()?.error_for_status()?;
+    let response = builder.build()
+        .map_err(|e| anyhow::anyhow!("创建 HTTP 客户端失败: {}", e))?
+        .get(&url).send()
+        .map_err(|e| anyhow::anyhow!("下载失败 (代理={}, url={}): {}", cfg.global_proxy_url, url, e))?
+        .error_for_status()
+        .map_err(|e| anyhow::anyhow!("服务器返回错误 (url={}): {}", url, e))?;
     let content = response.bytes()?;
     std::fs::write(destination, content)?;
     Ok(())
@@ -76,8 +80,12 @@ where
             builder = builder.proxy(proxy);
         }
     }
-    let response = builder.build()?
-        .get(&url).send().await?.error_for_status()?;
+    let response = builder.build()
+        .map_err(|e| anyhow::anyhow!("创建 HTTP 客户端失败: {}", e))?
+        .get(&url).send().await
+        .map_err(|e| anyhow::anyhow!("下载失败 (代理={}, url={}): {}", cfg.global_proxy_url, url, e))?
+        .error_for_status()
+        .map_err(|e| anyhow::anyhow!("服务器返回错误 (url={}): {}", url, e))?;
 
     let total_size = response.content_length();
     let mut file = File::create(destination)?;
