@@ -5,17 +5,20 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-/// ponytail: 时区 +8 且 URL 指向 github.com → ghproxy.net 加速
+/// ponytail: 时区/区域判断国内环境 → ghproxy.net 加速
 fn github_accelerate(url: &str) -> String {
     if !url.contains("github.com") {
         return url.to_string();
     }
-    // 检查系统时区是否为中国（UTC+8）
-    let is_cn = chrono::Local::now().offset().local_minus_utc() == 8 * 3600;
-    // 也检查 Asia/Shanghai
-    let is_shanghai = std::env::var("TZ").map(|tz| tz.contains("Shanghai")).unwrap_or(false);
-    if is_cn || is_shanghai {
-        format!("https://ghproxy.net/{}", url)
+    let is_cn = chrono::Local::now().offset().local_minus_utc() == 8 * 3600
+        || std::env::var("TZ").map(|tz| tz.contains("Shanghai")).unwrap_or(false)
+        // 后备：系统语言（中文 Windows 默认 zh-CN）
+        || std::env::var("LANG").map(|l| l.contains("zh_CN") || l.contains("zh-CN")).unwrap_or(false);
+    let accelerated = is_cn;
+    if accelerated {
+        let proxied = format!("https://ghproxy.net/{}", url);
+        tracing::info!(original = %url, proxied = %proxied, "github_accelerate: CN detected, using ghproxy");
+        proxied
     } else {
         url.to_string()
     }
