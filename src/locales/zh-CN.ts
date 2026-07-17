@@ -4,7 +4,7 @@ export default {
   softwareManagement: '软件管理',
   softwareRepository: '软件仓库',
   websiteManagement: '网站管理',
-  springBoot: 'SpringBoot',
+  springBoot: '应用管理',
   settings: '系统设置',
 
   // 通用
