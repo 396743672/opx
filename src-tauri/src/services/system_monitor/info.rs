@@ -67,8 +67,6 @@ pub fn get_system_info(system: &mut System) -> SystemInfo {
         network: NetworkInfo {
             bytes_sent,
             bytes_recv,
-            packets_sent: 0,
-            packets_recv: 0,
         },
         os_name,
         os_version,

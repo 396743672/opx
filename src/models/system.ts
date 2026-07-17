@@ -21,8 +21,6 @@ export interface DiskInfo {
 export interface NetworkInfo {
   bytes_sent: number
   bytes_recv: number
-  packets_sent: number
-  packets_recv: number
 }
 
 export interface HistoryPoint {
