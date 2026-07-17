@@ -160,12 +160,6 @@
             </div>
           </div>
 
-          <!-- Health check timeout -->
-          <div class="field">
-            <div class="field-label">{{ $t('healthCheckTimeout') }} (s)</div>
-            <input class="input" type="number" v-model.number="form.health_check_timeout_secs" min="5" />
-          </div>
-
           <!-- Advanced settings -->
           <details class="advanced">
             <summary class="advanced-summary">{{ $t('advancedSettings') }}</summary>
@@ -370,7 +364,6 @@ const form = reactive({
   startup_order: 0,
   auto_restart: false,
   group: null as string | null,
-  health_check_timeout_secs: 180,
   jdk_type: '',
 })
 
@@ -405,7 +398,6 @@ onMounted(() => {
     form.startup_order = props.app.startup_order
     form.auto_restart = props.app.auto_restart
     form.group = props.app.group
-    form.health_check_timeout_secs = props.app.health_check_timeout_secs
     form.jdk_type = props.app.jdk_type
     programArgsText.value = props.app.program_args.join('\n')
 
@@ -505,7 +497,6 @@ async function save() {
         auto_start: form.auto_start,
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
-        health_check_timeout_secs: form.health_check_timeout_secs,
         jdk_type: form.jdk_type,
         group: form.group,
       })
@@ -525,7 +516,6 @@ async function save() {
         auto_start: form.auto_start,
         startup_order: form.startup_order,
         auto_restart: form.auto_restart,
-        health_check_timeout_secs: form.health_check_timeout_secs,
         jdk_type: form.jdk_type,
         group: form.group,
       })

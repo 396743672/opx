@@ -108,11 +108,10 @@ pub async fn start_app(
     // 注册到全局进程注册表
     lifecycle::register(app_id.to_string(), pid, app.name.clone(), "springboot".to_string(), "springboot".to_string());
 
-    // ponytail: 健康检查超时由 health_check_timeout_secs 控制；进程已死则提前退出
-    let max_attempts = app.health_check_timeout_secs.max(5);
-    let mut healthy = app.port.is_none();
-    for _ in 0..max_attempts {
-        // 进程意外退出则立即报错，不等超时
+    let console_path = log_dir.join("console.log");
+    // ponytail: 日志检测启动完成（Started…），不等固定超时；PID 死则秒报
+    let mut started = app.port.is_none();
+    for _ in 0..300 {
         if !is_pid_alive(pid) {
             springboot_mgr
                 .update_status(app_id, AppStatus::Error, Some(pid), Some("进程意外退出".to_string()))
@@ -123,47 +122,48 @@ pub async fn start_app(
             );
             return Err("应用启动失败：进程意外退出，请检查 console.log 或 JAR 配置".to_string());
         }
-        if let Some(port) = app.port {
-            if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
-                .await
-                .is_ok()
-            {
-                healthy = true;
-                break;
+        // 检测日志中 Spring Boot 启动完成标记
+        if !started && console_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&console_path) {
+                if content.contains("Started ") {
+                    started = true;
+                }
             }
+        }
+        if let Some(port) = app.port {
+            if started && tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.is_ok() {
+                springboot_mgr
+                    .update_status(app_id, AppStatus::Running, Some(pid), None)
+                    .map_err(|e| e.to_string())?;
+                let _ = app_handle.emit(
+                    "springboot-status-changed",
+                    (app_id.to_string(), "Running", Some(pid), None::<String>),
+                );
+                return Ok(());
+            }
+        } else if started {
+            // 无端口应用：日志显示启动即视为 Running
+            springboot_mgr
+                .update_status(app_id, AppStatus::Running, Some(pid), None)
+                .map_err(|e| e.to_string())?;
+            let _ = app_handle.emit(
+                "springboot-status-changed",
+                (app_id.to_string(), "Running", Some(pid), None::<String>),
+            );
+            return Ok(());
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    if healthy {
-        springboot_mgr
-            .update_status(app_id, AppStatus::Running, Some(pid), None)
-            .map_err(|e| e.to_string())?;
-        let _ = app_handle.emit(
-            "springboot-status-changed",
-            (app_id.to_string(), "Running", Some(pid), None::<String>),
-        );
-        Ok(())
-    } else {
-        springboot_mgr
-            .update_status(
-                app_id,
-                AppStatus::Error,
-                Some(pid),
-                Some("健康检查超时".to_string()),
-            )
-            .map_err(|e| e.to_string())?;
-        let _ = app_handle.emit(
-            "springboot-status-changed",
-            (
-                app_id.to_string(),
-                "Error",
-                Some(pid),
-                Some("健康检查超时".to_string()),
-            ),
-        );
-        Err("应用启动但健康检查超时（30s），请检查日志和端口配置".to_string())
-    }
+    // 300s 兜底
+    springboot_mgr
+        .update_status(app_id, AppStatus::Error, Some(pid), Some("启动超时（5min），请检查日志".to_string()))
+        .map_err(|e| e.to_string())?;
+    let _ = app_handle.emit(
+        "springboot-status-changed",
+        (app_id.to_string(), "Error", Some(pid), Some("启动超时（5min），请检查日志".to_string())),
+    );
+    Err("应用启动超时（5min），PID 仍存活但未就绪，请检查日志和端口配置".to_string())
 }
 
 /// 停止 Spring Boot 应用

@@ -339,7 +339,6 @@ export default {
 
   // 启停错误
   processExited: '进程意外退出',
-  healthCheckTimeout: '健康检查超时',
   startFailed: '启动失败',
   stopFailed: '停止失败',
   restartFailed: '重启失败',

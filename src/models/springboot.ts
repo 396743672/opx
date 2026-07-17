@@ -27,7 +27,6 @@ export interface SpringBootApp {
   startup_order: number
   auto_restart: boolean
   group: string | null
-  health_check_timeout_secs: number
   jdk_type: string
 }
 
@@ -69,7 +68,6 @@ export interface CreateAppParams {
   startup_order: number
   auto_restart: boolean
   group: string | null
-  health_check_timeout_secs: number
   jdk_type: string
 }
 
@@ -87,7 +85,6 @@ export interface UpdateAppParams {
   startup_order?: number
   auto_restart?: boolean
   group?: string | null
-  health_check_timeout_secs?: number
   jdk_type?: string
 }
 

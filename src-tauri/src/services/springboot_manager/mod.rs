@@ -128,7 +128,6 @@ impl SpringBootManager {
             startup_order: params.startup_order,
             auto_restart: params.auto_restart,
             group: params.group,
-            health_check_timeout_secs: params.health_check_timeout_secs,
             jdk_type: params.jdk_type,
         };
         let app_clone = app.clone();
@@ -164,7 +163,6 @@ impl SpringBootManager {
         if let Some(v) = params.startup_order { app.startup_order = v; }
         if let Some(v) = params.auto_restart { app.auto_restart = v; }
         if let Some(v) = params.group { app.group = v; }
-		if let Some(v) = params.health_check_timeout_secs { app.health_check_timeout_secs = v; }
 		if let Some(v) = params.jdk_type { app.jdk_type = v; }
         let cloned = app.clone();
         Self::save_store(&store)?;

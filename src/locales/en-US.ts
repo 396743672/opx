@@ -339,7 +339,6 @@ export default {
 
   // Start/stop errors
   processExited: 'Process exited',
-  healthCheckTimeout: 'Health check timeout',
   startFailed: 'Start failed',
   stopFailed: 'Stop failed',
   restartFailed: 'Restart failed',
