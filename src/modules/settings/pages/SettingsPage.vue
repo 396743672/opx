@@ -18,7 +18,7 @@
           >
             <option value="auto">{{ $t('auto') }}</option>
             <option value="light">{{ $t('light') }}</option>
-            <option value="warm">暖色</option>
+            <option value="warm">{{ $t('warm') }}</option>
             <option value="dark">{{ $t('dark') }}</option>
           </select>
         </div>

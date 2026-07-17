@@ -270,6 +270,7 @@ export default {
   language: '语言',
   light: '浅色',
   dark: '深色',
+  warm: '暖色',
   auto: '跟随系统',
   systemIntegration: '系统集成',
   registerAsService: '注册为系统服务',

@@ -270,6 +270,7 @@ export default {
   language: 'Language',
   light: 'Light',
   dark: 'Dark',
+  warm: 'Warm',
   auto: 'Auto',
   systemIntegration: 'System Integration',
   registerAsService: 'Register as System Service',

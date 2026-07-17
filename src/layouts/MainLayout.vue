@@ -3,20 +3,25 @@
     <!-- 顶部导航栏 — 简洁 -->
     <header
       @mousedown="onTitlebarMouseDown"
-      class="h-12 flex-shrink-0 flex items-center px-4 justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40 transition-all duration-300"
-      :class="sidebarPinned ? 'pl-52' : 'pl-14'"
+      class="h-12 flex-shrink-0 flex items-center justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40"
     >
-      <div class="flex items-center gap-3">
-        <div class="flex items-center gap-2">
-          <div
-            class="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground flex-shrink-0"
-          >
-            <Icon icon="mdi:monitor" class="text-base" />
+      <div class="flex items-center h-full">
+        <!-- 品牌区：宽度随侧边栏同步 -->
+        <div
+          class="flex items-center justify-center flex-shrink-0 h-full transition-all duration-300"
+          :class="sidebarPinned ? 'w-52' : 'w-14'"
+        >
+          <div class="flex items-center gap-2">
+            <div
+              class="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground flex-shrink-0"
+            >
+              <Icon icon="mdi:monitor" class="text-base" />
+            </div>
+            <span v-show="sidebarPinned" class="text-sm font-semibold tracking-tight whitespace-nowrap">OPX</span>
           </div>
-          <span class="text-sm font-semibold tracking-tight">OPX</span>
         </div>
-        <div class="h-4 w-px bg-border/60"></div>
-        <span class="text-sm text-muted-foreground/80">{{ $t(currentTitle) }}</span>
+        <div v-show="sidebarPinned" class="h-4 w-px bg-border/60 flex-shrink-0 transition-all duration-300"></div>
+        <span class="text-sm text-muted-foreground/80 px-3">{{ $t(currentTitle) }}</span>
       </div>
 
       <div class="flex items-center gap-1">
@@ -64,7 +69,7 @@
 
     <!-- 主体内容 -->
     <div class="flex flex-1 overflow-hidden relative">
-      <Sidebar v-model:pinned="sidebarPinned" />
+      <Sidebar :pinned="sidebarPinned" @update:pinned="settingsStore.setSidebarCollapsed(!$event)" />
       <!-- pl-14 为收缩态侧边栏预留空间，pl-52 为固定展开态 -->
       <main class="flex-1 overflow-auto" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
         <div class="p-6 xl:p-8">
@@ -92,7 +97,7 @@ const router = useRouter()
 const route = useRoute()
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
-const sidebarPinned = ref(false)
+const sidebarPinned = computed(() => !settingsStore.sidebarCollapsed)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
 

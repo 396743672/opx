@@ -29,6 +29,7 @@ export const useSettingsStore = defineStore('settings', () => {
       theme.value === 'dark' ||
       (theme.value === 'auto' && systemPrefersDark.value)
   )
+  const sidebarCollapsed = computed(() => settings.value?.sidebar_collapsed ?? false)
 
   function applyTheme() {
     const isDark = theme.value === 'dark' ||
@@ -72,6 +73,12 @@ export const useSettingsStore = defineStore('settings', () => {
     await saveSettings()
   }
 
+  async function setSidebarCollapsed(v: boolean) {
+    if (!settings.value) return
+    settings.value.sidebar_collapsed = v
+    await saveSettings()
+  }
+
   async function setLanguage(lang: Language) {
     if (!settings.value) return
     settings.value.language = lang
@@ -84,10 +91,12 @@ export const useSettingsStore = defineStore('settings', () => {
     theme,
     language,
     isDark,
+    sidebarCollapsed,
     systemPrefersDark,
     loadSettings,
     saveSettings,
     setTheme,
+    setSidebarCollapsed,
     setLanguage,
     updateSettings: (newSettings: AppSettings) => {
       settings.value = newSettings

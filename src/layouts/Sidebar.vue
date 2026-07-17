@@ -1,11 +1,9 @@
 <template>
   <aside
-    @mouseenter="hovering = true"
-    @mouseleave="hovering = false"
     :class="[
       'absolute left-0 top-0 bottom-0 z-20 flex flex-col overflow-hidden transition-all duration-300 ease-out',
       'glass-sidebar',
-      (hovering || props.pinned) ? 'w-52' : 'w-14',
+      props.pinned ? 'w-52' : 'w-14',
     ]"
   >
     <!-- 侧边栏头部 — 仅留间距，品牌在顶部导航栏 -->
@@ -15,12 +13,12 @@
     <nav class="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-3">
       <div
         class="h-px bg-border/60 mx-2 mb-2 transition-opacity duration-200"
-        :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+        :class="props.pinned ? 'opacity-100' : 'opacity-0'"
       ></div>
       <div v-for="group in groups" :key="group.label">
         <!-- 分组标题（仅展开态显示） -->
         <div
-          v-if="hovering || props.pinned"
+          v-if="props.pinned"
           class="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60"
         >
           {{ $t(group.label) }}
@@ -30,7 +28,7 @@
           <div
             v-for="item in group.items"
             :key="item.path"
-            :title="(!hovering && !props.pinned) ? $t(item.titleKey) : undefined"
+            :title="!props.pinned ? $t(item.titleKey) : undefined"
             @click="navigate(item.path)"
             :class="[
               'relative flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150',
@@ -46,7 +44,7 @@
             <Icon :icon="item.icon" class="text-xl flex-shrink-0" />
             <span
               class="text-sm whitespace-nowrap transition-opacity duration-200"
-              :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+              :class="props.pinned ? 'opacity-100' : 'opacity-0'"
             >
               {{ $t(item.titleKey) }}
             </span>
@@ -68,7 +66,7 @@
         <Icon icon="mdi:cog" class="text-xl flex-shrink-0" />
         <span
           class="text-sm whitespace-nowrap transition-opacity duration-200"
-          :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+          :class="props.pinned ? 'opacity-100' : 'opacity-0'"
         >
           {{ $t('settings') }}
         </span>
@@ -85,7 +83,7 @@
         />
         <span
           class="text-sm whitespace-nowrap transition-opacity duration-200"
-          :class="(hovering || props.pinned) ? 'opacity-100' : 'opacity-0'"
+          :class="props.pinned ? 'opacity-100' : 'opacity-0'"
         >
           {{ props.pinned ? $t('unpinSidebar') : $t('pinSidebar') }}
         </span>
@@ -95,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
@@ -108,7 +106,6 @@ const props = defineProps<{ pinned: boolean }>()
 const emit = defineEmits<{ 'update:pinned': [value: boolean] }>()
 
 const currentPath = computed(() => route.path)
-const hovering = ref(false)
 
 interface NavItem {
   path: string
