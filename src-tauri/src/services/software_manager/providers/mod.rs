@@ -27,11 +27,6 @@ pub trait SoftwareProvider: Send + Sync {
     /// 启动命令（含可执行文件路径、参数、env、工作目录、首次初始化钩子）
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand>;
 
-    /// 停止命令（None 表示用通用 kill 流程）
-    fn stop_command(&self, _ctx: &StopContext) -> Result<Option<StopCommand>> {
-        Ok(None)
-    }
-
     /// 健康检查 spec（默认 ProcessOnly）
     fn health_check(&self, _ctx: &HealthContext) -> HealthCheckSpec {
         HealthCheckSpec::ProcessOnly
@@ -85,13 +80,6 @@ pub struct StartContext {
     pub init_password: Option<String>,
 }
 
-/// 停止上下文
-pub struct StopContext {
-    pub installed_id: String,
-    pub install_path: String,
-    pub pid: u32,
-}
-
 /// 健康检查上下文
 pub struct HealthContext {
     pub installed_id: String,
@@ -133,16 +121,6 @@ pub struct FirstRunInit {
 pub enum TempSecretSpec {
     FromStdoutRegex(String),
     FromLogFile { path: PathBuf, regex: String },
-}
-
-/// 停止命令（provider 可选返回；None 表示走通用 kill 流程）
-pub struct StopCommand {
-    pub program: String,
-    pub args: Vec<String>,
-    pub working_dir: PathBuf,
-    pub env_vars: std::collections::BTreeMap<String, String>,
-    pub creation_flags: u32,
-    pub wait_timeout_secs: u64,
 }
 
 use std::collections::HashMap;
