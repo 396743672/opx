@@ -76,7 +76,7 @@
     <!-- ⚡ 服务与应用概览（示例） -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader title="已安装软件" hide-refresh />
+        <CardHeader :title="$t('installedSoftware')" hide-refresh />
         <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
           <div v-for="s in installedSoftware" :key="s.id" class="flex items-center justify-between text-sm">
             <span class="flex items-center gap-2">
@@ -89,7 +89,7 @@
       </div>
 
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader title="运行中服务" hide-refresh />
+        <CardHeader :title="$t('runningServices')" hide-refresh />
         <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
           <div v-for="s in runningSoftware" :key="s.id" class="flex items-center justify-between text-sm">
             <span class="flex items-center gap-2">
@@ -102,7 +102,7 @@
       </div>
 
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader title="运行应用" hide-refresh />
+        <CardHeader :title="$t('runningApps')" hide-refresh />
         <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
           <div v-for="app in runningApps" :key="app.id" class="flex items-center justify-between text-sm">
             <span class="flex items-center gap-2">

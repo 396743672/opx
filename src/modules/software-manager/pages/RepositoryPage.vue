@@ -13,11 +13,6 @@
       </template>
     </PageHeader>
 
-    <div v-if="catalogStore.error" class="refresh-error">
-      <Icon icon="mdi:alert-circle" />
-      {{ $t('refreshCatalogFailed') }}
-    </div>
-
     <div v-if="catalogStore.loading && catalogStore.entries.length === 0">
       <EmptyState
         icon="mdi:loading"
@@ -79,12 +74,35 @@
       @installed="onInstalled"
     />
 
-    <InstallProgressDialog
-      v-for="task in installStore.activeTasks"
-      :key="task.id"
-      :task="task"
-    />
+    <!-- 右下角浮动进度通知容器（Teleport 到 body 确保 fixed 相对窗口） -->
+    <Teleport to="body">
+    <div v-if="installStore.activeTasks.length" class="progress-panel">
+      <div class="progress-panel-header" @click="allCollapsed = !allCollapsed">
+        <Icon icon="mdi:download" class="text-primary" />
+        <span>{{ $t('downloading') }} ({{ installStore.activeTasks.length }})</span>
+        <Icon :icon="allCollapsed ? 'mdi:chevron-up' : 'mdi:chevron-down'" class="text-muted-foreground ml-auto" />
+      </div>
+      <div v-show="!allCollapsed" class="progress-panel-body">
+        <InstallProgressDialog
+          v-for="task in installStore.activeTasks"
+          :key="task.id"
+          :task="task"
+        />
+      </div>
+    </div>
+    </Teleport>
   </div>
+  <Teleport to="body">
+    <div v-if="catalogStore.error" class="overlay" @click.self="catalogStore.error = null">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ $t('refreshCatalogFailed') }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="catalogStore.error = null">{{ $t('confirm') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -112,6 +130,7 @@ const installStore = useInstallStore()
 const showInstallDialog = ref(false)
 const showCustomDialog = ref(false)
 const selectedEntry = ref<CatalogEntry | null>(null)
+const allCollapsed = ref(false)
 const installedList = ref<InstalledSoftware[]>([])
 const defaultJreId = ref<string | null>(null)
 
@@ -327,5 +346,45 @@ onUnmounted(() => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* 右下角浮动进度面板 */
+.progress-panel {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  width: 360px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.progress-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-muted);
+}
+.progress-panel-header svg {
+  width: 16px;
+  height: 16px;
+}
+.ml-auto {
+  margin-left: auto;
+}
+.progress-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  max-height: 360px;
+  overflow-y: auto;
 }
 </style>

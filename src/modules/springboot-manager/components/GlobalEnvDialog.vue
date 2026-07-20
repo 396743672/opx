@@ -5,14 +5,14 @@
         <div class="dialog-head">
           <div class="dialog-title">
             <Icon icon="mdi:earth" />
-            全局环境变量
+            {{ $t('globalEnvVars') }}
           </div>
           <button class="dialog-close" @click="$emit('close')">
             <Icon icon="mdi:close" />
           </button>
         </div>
         <div class="dialog-body">
-          <div class="hint">所有 SpringBoot 应用启动时注入，分组和应用级可同名覆盖</div>
+          <div class="hint">{{ $t('globalEnvHint') }}</div>
           <div v-for="(env, i) in localVars" :key="i" class="env-row">
             <input class="input input-mono env-key" v-model="env[0]" placeholder="KEY" />
             <input class="input input-mono env-val" v-model="env[1]" placeholder="VALUE" />
@@ -21,15 +21,25 @@
             </button>
           </div>
           <button class="btn add-btn" @click="add">
-            <Icon icon="mdi:plus" /> 添加变量
+            <Icon icon="mdi:plus" /> {{ $t('addVariable') }}
           </button>
         </div>
-        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="dialog-footer">
-          <button class="btn" @click="$emit('close')">取消</button>
+          <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button class="btn primary" @click="save" :disabled="saving">
-            {{ saving ? '保存中…' : '保存' }}
+            {{ saving ? $t('saving') : $t('save') }}
           </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+  <Teleport to="body">
+    <div v-if="saveError" class="overlay" style="z-index:70" @click.self="saveError = ''">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ saveError }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="saveError = ''">{{ $t('confirm') }}</button>
         </div>
       </div>
     </div>

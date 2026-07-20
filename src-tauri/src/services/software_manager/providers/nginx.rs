@@ -89,6 +89,7 @@ impl SoftwareProvider for NginxProvider {
             key: "nginx".to_string(),
             name: "Nginx".to_string(),
             description: "高性能 HTTP 服务器与反向代理".to_string(),
+            description_i18n: Some("catalogDesc.nginx".to_string()),
             category: SoftwareCategory::WebServer,
             icon: "mdi:web".to_string(),
             versions,

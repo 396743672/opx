@@ -73,6 +73,12 @@ export default {
   uploadCustom: '上传自定义安装包',
   dragFileHere: '拖拽压缩包到这里，或点击选择',
   supportedFormats: '支持 zip、tar.gz 格式',
+  stopAllSoftware: '全部停止',
+  exportConfig: '导出',
+  importConfig: '导入',
+  importConfigConfirm: '将替换所有软件配置，当前配置将自动备份。确定继续？',
+  exportSuccess: '配置已导出',
+  importSuccess: '配置已导入',
 
   // 软件分类（SoftwareListPage 分组标题）
   database: '数据库',
@@ -162,6 +168,17 @@ export default {
   categoryCache: '缓存',
   categoryWebServer: 'Web 服务器',
 
+  // 软件仓库描述
+  catalogDesc: {
+    jdk: 'Java 开发工具包（Eclipse Temurin，含 jcmd 等工具）',
+    jre: 'Java 运行时环境（Eclipse Temurin）',
+    mysql: '关系型数据库',
+    redis: '内存键值存储',
+    nginx: '高性能 HTTP 服务器与反向代理',
+    minio: 'S3 兼容对象存储',
+    rustfs: 'Rust 实现的 S3 兼容对象存储',
+  },
+
   // SpringBoot
   applicationList: '应用列表',
   addApplication: '添加应用',
@@ -224,6 +241,26 @@ export default {
   gcType: 'GC 类型',
   selectGcType: '选择 GC 类型',
 
+  // SpringBoot 补充
+  globalEnvVars: '全局环境变量',
+  globalEnvHint: '所有 SpringBoot 应用启动时注入，分组和应用级可同名覆盖',
+  addVariable: '添加变量',
+  resourcePlanning: '资源规划',
+  totalDeployServices: '部署服务总数',
+  xms: '本服务 Xms (MB)',
+  xmx: '本服务 Xmx (MB)',
+  generateRecommendedParams: '生成推荐参数',
+  utf8Charset: 'UTF-8 字符集（-Dfile.encoding=UTF-8）',
+  nameCannotContainChinese: '名称不能包含中文',
+  appNameAlreadyExists: '应用名称"{name}"已存在，请更换名称',
+  stopFirstBeforeUninstall: '请先停止再卸载',
+  confirmDeleteMsgFormatted: '将删除应用配置与数据目录，此操作不可撤销。确定要删除"{name}"？',
+  unknownError: '未知错误',
+  fetchJarPortFailed: '读取 JAR 端口失败',
+  logPathNotConfigured: '日志路径未配置',
+  cannotReadLog: '无法读取日志',
+  jvmMonitorNeedsJdk: 'JVM 监控需要完整 JDK（不含 jcmd，JRE 不可用）',
+
   // ===== 网站管理 =====
   websiteList: '站点列表',
   newSite: '新建站点',
@@ -263,6 +300,7 @@ export default {
   nginxNotRunning: 'Web 服务器（nginx）未启动，请先启动 nginx',
   uninstallBlockedNginxSites: '请先删除所有站点后再卸载 nginx',
   runningSiteConfigDisabled: '站点运行中，请先停用后再修改配置',
+  confirmDeleteSite: '删除站点「{name}」？\n此操作将删除配置文件及上传文件，不可恢复。',
 
   // 设置
   appearance: '外观',
@@ -281,8 +319,23 @@ export default {
   backgroundService: '后台服务模式',
   about: '关于',
   checkUpdate: '检查更新',
+  proxySettings: '下载代理',
+  githubProxy: 'GitHub 加速代理',
+  globalProxy: '全局代理',
+  resetDefault: '还原默认',
+  proxyDefaultHint: '默认: https://ghfast.top',
+  proxyEmptyDirect: 'http://127.0.0.1:7890（空=直连）',
 
-  // 状态栏
+  // 配置备份
+  configBackups: '配置备份',
+  restoreBackup: '还原',
+  restoreBackupConfirm: '确认还原此备份？当前配置将自动备份。',
+  noBackups: '暂无备份',
+  backupHint: '每次保存配置前自动备份，最多保留 5 份。',
+
+  // 仪表盘卡片
+  runningServices: '运行中服务',
+  runningApps: '运行应用',
   cpu: 'CPU',
   memory: '内存',
   softwareDir: '软件目录',
@@ -351,6 +404,7 @@ export default {
   configSaved: '配置已保存',
   configSaveFailed: '配置保存失败',
   expectedStatus: '期望状态码',
+  confirmRestoreBackup: '确认还原此备份？当前配置将自动备份。',
 
   // 卸载阻止
   uninstallBlocked: '卸载被阻止',

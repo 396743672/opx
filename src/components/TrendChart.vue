@@ -129,6 +129,10 @@ function update() {
   if (!chart) return
   chart.data.labels = labels()
   chart.data.datasets[0].data = values()
+  const color = cssVar(props.colorVar) || COLOR_FALLBACK
+  ;(chart.data.datasets[0] as any).borderColor = color
+  ;(chart.data.datasets[0] as any).backgroundColor = color
+  ;(chart.data.datasets[0] as any).pointHoverBackgroundColor = color
   chart.update('none')
 }
 

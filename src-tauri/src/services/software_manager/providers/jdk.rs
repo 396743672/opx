@@ -35,6 +35,7 @@ impl SoftwareProvider for JdkProvider {
             key: "jdk".to_string(),
             name: "JDK".to_string(),
             description: "Java 开发工具包（Eclipse Temurin，含 jcmd 等工具）".to_string(),
+            description_i18n: Some("catalogDesc.jdk".to_string()),
             category: SoftwareCategory::Runtime,
             icon: "mdi:language-java".to_string(),
             versions,

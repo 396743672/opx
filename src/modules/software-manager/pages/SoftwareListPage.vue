@@ -6,6 +6,9 @@
       :subtitle="$t('installedSoftware')"
     >
       <template #actions>
+        <button class="btn" @click="onStopAll" :disabled="Object.keys(actingStates).length > 0">
+          <Icon icon="mdi:stop-circle-outline" /> {{ $t('stopAllSoftware') }}
+        </button>
         <button class="btn" @click="loadInstalled" :disabled="loading">
           <Icon icon="mdi:refresh" /> {{ $t('refresh') }}
         </button>
@@ -83,6 +86,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareInstanceRow from '../components/SoftwareInstanceRow.vue'
@@ -94,6 +98,7 @@ import { useLifecycleStore } from '../stores/lifecycle'
 import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
+useI18n()
 
 const installed = ref<InstalledSoftware[]>([])
 const loading = ref(false)
@@ -174,6 +179,20 @@ async function loadInstalled() {
     console.error('Failed to load installed:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function onStopAll() {
+  const running = installed.value.filter(
+    (s) => s.status === SoftwareStatus.Running || s.status === SoftwareStatus.Starting
+  )
+  for (const s of running) {
+    if (!actingStates.value[s.id]) {
+      actingStates.value[s.id] = 'stop'
+      invoke('stop_software', { installedId: s.id }).catch(() => {
+        delete actingStates.value[s.id]
+      })
+    }
   }
 }
 

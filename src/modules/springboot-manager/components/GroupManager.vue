@@ -14,7 +14,7 @@
               <Icon icon="mdi:drag" class="drag-icon" />
               <input v-model="g.name" class="input flex-1" :placeholder="$t('group')" />
               <input v-model.number="g.order" type="number" class="input order-input" min="0" />
-              <button class="btn icon-btn" :class="{ active: g._showEnv }" @click="g._showEnv = !g._showEnv" title="环境变量">
+              <button class="btn icon-btn" :class="{ active: g._showEnv }" @click="g._showEnv = !g._showEnv" :title="$t('envVars')">
                 <Icon icon="mdi:code-braces" />
               </button>
               <button class="btn icon-btn" @click="removeGroup(g.id)">
@@ -30,7 +30,7 @@
                 </button>
               </div>
               <button class="btn add-env-btn" @click="g.env_vars.push(['', ''])">
-                <Icon icon="mdi:plus" /> 添加变量
+                <Icon icon="mdi:plus" /> {{ $t('addVariable') }}
               </button>
             </div>
           </div>

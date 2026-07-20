@@ -73,6 +73,12 @@ export default {
   uploadCustom: 'Upload Custom Package',
   dragFileHere: 'Drag file here, or click to select',
   supportedFormats: 'Supported formats: zip, tar.gz',
+  stopAllSoftware: 'Stop All',
+  exportConfig: 'Export',
+  importConfig: 'Import',
+  importConfigConfirm: 'This will replace all software configs. Current config will be backed up. Continue?',
+  exportSuccess: 'Config exported',
+  importSuccess: 'Config imported',
 
   // Software categories (SoftwareListPage group titles)
   database: 'Database',
@@ -162,6 +168,17 @@ export default {
   categoryCache: 'Cache',
   categoryWebServer: 'Web Server',
 
+  // catalog descriptions
+  catalogDesc: {
+    jdk: 'Java DevKit (Eclipse Temurin, includes jcmd)',
+    jre: 'Java Runtime (Eclipse Temurin)',
+    mysql: 'Relational Database',
+    redis: 'In-Memory Key-Value Store',
+    nginx: 'High-perf HTTP Server & Reverse Proxy',
+    minio: 'S3-Compatible Object Storage',
+    rustfs: 'Rust-based S3-Compatible Object Storage',
+  },
+
   // SpringBoot
   applicationList: 'Applications',
   addApplication: 'Add Application',
@@ -224,6 +241,26 @@ export default {
   gcType: 'GC Type',
   selectGcType: 'Select GC Type',
 
+  // SpringBoot extras
+  globalEnvVars: 'Global Env Vars',
+  globalEnvHint: 'Injected on all SpringBoot app start. Can be overridden by group and app-level vars.',
+  addVariable: 'Add Variable',
+  resourcePlanning: 'Resource Planning',
+  totalDeployServices: 'Total Deploy Services',
+  xms: 'This Service Xms (MB)',
+  xmx: 'This Service Xmx (MB)',
+  generateRecommendedParams: 'Generate Recommended Params',
+  utf8Charset: 'UTF-8 charset (-Dfile.encoding=UTF-8)',
+  nameCannotContainChinese: 'Name cannot contain Chinese characters',
+  appNameAlreadyExists: 'App name "{name}" already exists',
+  stopFirstBeforeUninstall: 'Stop the software first before uninstalling',
+  confirmDeleteMsgFormatted: 'This will delete the app config and data directory. This cannot be undone. Are you sure you want to delete "{name}"?',
+  unknownError: 'Unknown error',
+  fetchJarPortFailed: 'Failed to read JAR port',
+  logPathNotConfigured: 'Log path not configured',
+  cannotReadLog: 'Cannot read log',
+  jvmMonitorNeedsJdk: 'JVM monitoring requires full JDK (jcmd not available in JRE)',
+
   // ===== Website Management =====
   websiteList: 'Sites',
   newSite: 'New Site',
@@ -263,6 +300,7 @@ export default {
   nginxNotRunning: 'Nginx is not running. Please start it first.',
   uninstallBlockedNginxSites: 'Delete all sites before uninstalling nginx',
   runningSiteConfigDisabled: 'Site is running. Stop it first to edit config.',
+  confirmDeleteSite: 'Delete site "{name}"? This will delete config and uploaded files, cannot be recovered.',
 
   // settings
   appearance: 'Appearance',
@@ -281,8 +319,23 @@ export default {
   backgroundService: 'Background service mode',
   about: 'About',
   checkUpdate: 'Check Update',
+  proxySettings: 'Download Proxy',
+  githubProxy: 'GitHub Accelerator',
+  globalProxy: 'Global Proxy',
+  resetDefault: 'Reset to Default',
+  proxyDefaultHint: 'Default: https://ghfast.top',
+  proxyEmptyDirect: 'http://127.0.0.1:7890 (empty = direct)',
 
-  // status bar
+  // config backups
+  configBackups: 'Config Backups',
+  restoreBackup: 'Restore',
+  restoreBackupConfirm: 'Restore this backup? Current config will be auto-backed up first.',
+  noBackups: 'No backups available',
+  backupHint: 'A backup is created before each config save. Max 5 kept.',
+
+  // dashboard cards
+  runningServices: 'Running Services',
+  runningApps: 'Running Applications',
   cpu: 'CPU',
   memory: 'Memory',
   softwareDir: 'Software Dir',
@@ -351,6 +404,7 @@ export default {
   configSaved: 'Configuration saved',
   configSaveFailed: 'Configuration save failed',
   expectedStatus: 'Expected Status',
+  confirmRestoreBackup: 'Restore this backup? The current config will be auto-backed up first.',
 
   // Uninstall blocked
   uninstallBlocked: 'Uninstall Blocked',

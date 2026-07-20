@@ -103,6 +103,7 @@ impl SoftwareProvider for MySqlProvider {
             key: "mysql".to_string(),
             name: "MySQL".to_string(),
             description: "关系型数据库".to_string(),
+            description_i18n: Some("catalogDesc.mysql".to_string()),
             category: SoftwareCategory::Database,
             icon: "mdi:database".to_string(),
             versions,

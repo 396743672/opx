@@ -14,7 +14,7 @@
         </p>
       </div>
     </div>
-    <div class="flex items-center gap-2 flex-shrink-0">
+    <div class="flex items-center gap-1.5 flex-wrap justify-end" style="max-width:65%">
       <slot name="actions" />
     </div>
   </div>
