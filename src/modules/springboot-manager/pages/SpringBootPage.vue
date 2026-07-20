@@ -20,7 +20,13 @@
           <Icon icon="mdi:cog" /> {{ $t('groupConfig') }}
         </button>
         <button class="btn" @click="showGlobalEnv = true">
-          <Icon icon="mdi:earth" /> 全局变量
+          <Icon icon="mdi:earth" /> {{ $t('globalEnvVars') }}
+        </button>
+        <button class="btn" @click="onExport">
+          <Icon icon="mdi:export-variant" /> {{ $t('exportConfig') }}
+        </button>
+        <button class="btn" @click="onImport">
+          <Icon icon="mdi:import" /> {{ $t('importConfig') }}
         </button>
       </template>
     </PageHeader>
@@ -139,15 +145,48 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- Export group picker -->
+    <Teleport to="body">
+      <div v-if="showExportDialog" class="overlay" @click.self="showExportDialog = false">
+        <div class="confirm-box">
+          <div class="confirm-title"><Icon icon="mdi:export-variant" /> 选择导出分组</div>
+          <p class="confirm-msg">勾选要导出的分组，不选则导出全部。</p>
+          <div class="space-y-1 mb-4">
+            <label v-for="g in store.groups" :key="g.id" class="flex items-center gap-2 text-sm cursor-pointer px-2 py-1 rounded hover:bg-muted">
+              <input type="checkbox" :value="g.name" v-model="exportGroups" class="accent-primary" />
+              {{ g.name }}
+            </label>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn" @click="showExportDialog = false">{{ $t('cancel') }}</button>
+            <button class="btn primary" @click="doExport">{{ $t('exportConfig') }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Progress overlay -->
+    <Teleport to="body">
+      <div v-if="progress" class="overlay" style="z-index:80">
+        <div class="confirm-box">
+          <div class="confirm-title">
+            <Icon icon="mdi:loading" class="spinning" />
+            {{ progress }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AppCard from '../components/AppCard.vue'
@@ -160,7 +199,7 @@ import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
 
-useI18n()
+const { t } = useI18n()
 
 const store = useSpringBootStore()
 const activeGroup = ref<string | null>(null)
@@ -185,6 +224,47 @@ const showGroupManager = ref(false)
 
 // Global env dialog
 const showGlobalEnv = ref(false)
+
+// Export
+const showExportDialog = ref(false)
+const exportGroups = ref<string[]>([])
+const progress = ref('')
+
+async function onExport() {
+  if (store.groups.length > 0) {
+    exportGroups.value = []
+    showExportDialog.value = true
+    return
+  }
+  await doExport()
+}
+
+async function doExport() {
+  showExportDialog.value = false
+  progress.value = '准备导出…'
+  try {
+    const filePath = await save({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], defaultPath: 'opx-springboot-export.zip' })
+    if (!filePath) { progress.value = ''; return }
+    await invoke('export_springboot_config', { filePath, groupNames: exportGroups.value.length > 0 ? exportGroups.value : null })
+  } catch (e) {
+    console.error('export failed:', e)
+  }
+  progress.value = ''
+}
+
+async function onImport() {
+  if (!confirm(t('importConfigConfirm'))) return
+  progress.value = '正在导入…'
+  try {
+    const filePath = await open({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], multiple: false })
+    if (!filePath) { progress.value = ''; return }
+    await invoke('import_springboot_config', { filePath })
+    await refreshAll()
+  } catch (e) {
+    console.error('import failed:', e)
+  }
+  progress.value = ''
+}
 
 // 一键启动分组
 const startingGroup = ref(false)

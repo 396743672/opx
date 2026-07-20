@@ -27,6 +27,13 @@
         >
           {{ $t('sourceView') }}
         </button>
+        <button
+          class="tab"
+          :class="{ active: tab === 'backups' }"
+          @click="switchTab('backups')"
+        >
+          {{ $t('configBackups') }}
+        </button>
       </div>
 
       <ConfigFormTab
@@ -37,12 +44,31 @@
         @update:dirty="onDirty"
       />
       <ConfigSourceTab
-        v-else
+        v-else-if="tab === 'source'"
         ref="sourceTabRef"
         :software="software"
         @update:dirty="onDirty"
         @update:content="onSourceContent"
       />
+      <div v-else-if="tab === 'backups'" class="backups-tab">
+        <p class="backup-hint">
+          <Icon icon="mdi:information-outline" /> {{ $t('backupHint') }}
+        </p>
+        <div v-if="loadingBackups" class="text-sm text-muted-foreground py-4 text-center">{{ $t('loading') }}</div>
+        <div v-else-if="backups.length === 0" class="text-sm text-muted-foreground py-4 text-center">{{ $t('noBackups') }}</div>
+        <div v-else class="backup-list">
+          <div v-for="b in backups" :key="b.name" class="backup-row">
+            <div class="backup-info">
+              <Icon icon="mdi:file-document-outline" class="text-muted-foreground" />
+              <span class="backup-name">{{ b.name }}</span>
+              <span class="backup-size">{{ formatBytes(b.size) }}</span>
+            </div>
+            <button class="btn btn-sm" @click="onRestore(b.name)">
+              {{ $t('restoreBackup') }}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div class="hint-bar">
         <Icon icon="mdi:information-outline" /> {{ $t('configEditRestartHint') }}
@@ -64,22 +90,27 @@
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import ConfigFormTab from './ConfigFormTab.vue'
 import ConfigSourceTab from './ConfigSourceTab.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
 import type { ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
+import { formatBytes } from '@/utils/format'
 
+	const { t } = useI18n()
 const lifecycleStore = useLifecycleStore()
 
 const props = defineProps<{ software: InstalledSoftware }>()
 const emit = defineEmits<{ close: [] }>()
 
-const tab = ref<'form' | 'source'>('form')
+const tab = ref<'form' | 'source' | 'backups'>('form')
 const dirty = ref(false)
 const saving = ref(false)
 const schema = ref<ConfigSchema | null>(null)
 const formTabRef = ref<InstanceType<typeof ConfigFormTab>>()
 const sourceTabRef = ref<InstanceType<typeof ConfigSourceTab>>()
+const backups = ref<{ name: string; size: number; modified: number }[]>([])
+const loadingBackups = ref(false)
 let sourceContent = ''
 
 onMounted(async () => {
@@ -92,13 +123,14 @@ onMounted(async () => {
   }
 })
 
-function switchTab(t: 'form' | 'source') {
-  if (tab.value === t) return
+function switchTab(tabName: 'form' | 'source' | 'backups') {
+  if (tab.value === tabName) return
   if (dirty.value) {
-    if (!confirm('当前改动未保存，切换 tab 会丢失，确定吗？')) return
+    if (!confirm(t('configDirtyConfirm'))) return
   }
-  tab.value = t
+  tab.value = tabName
   dirty.value = false
+  if (tabName === 'backups') loadBackups()
 }
 
 function onDirty(d: boolean) {
@@ -149,6 +181,34 @@ function syncInitPassword(data: FormData) {
     // 仅在有值时暂存；空值不清除，避免用户仅修改其它字段（未动密码框）保存时误清已暂存的密码。
     // 已暂存的密码会在 server 起来（Running）后由 lifecycle store 自动清除。
     if (s) lifecycleStore.setInitPassword(props.software.id, s)
+  }
+}
+
+async function loadBackups() {
+  loadingBackups.value = true
+  try {
+    backups.value = await invoke('list_config_backups', {
+      installedId: props.software.id,
+    })
+  } catch (e) {
+    console.error('load backups failed:', e)
+  } finally {
+    loadingBackups.value = false
+  }
+}
+
+async function onRestore(backupName: string) {
+  if (!confirm(t('confirmRestoreBackup'))) return
+  try {
+    await invoke('restore_config_backup', {
+      installedId: props.software.id,
+      backupName,
+    })
+    tab.value = 'form'
+    dirty.value = false
+    schema.value = await invoke('get_config_schema', { installedId: props.software.id })
+  } catch (e) {
+    console.error('restore failed:', e)
   }
 }
 
@@ -313,5 +373,64 @@ async function onSaveAndRestart() {
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.btn-sm {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 备份 tab */
+.backups-tab {
+  min-height: 100px;
+}
+.backup-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  margin-bottom: 12px;
+}
+.backup-hint svg {
+  width: 14px;
+  height: 14px;
+}
+.backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-muted);
+}
+.backup-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.backup-info svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.backup-name {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backup-size {
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+  flex-shrink: 0;
 }
 </style>

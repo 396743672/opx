@@ -114,6 +114,7 @@ impl SoftwareProvider for RedisProvider {
             key: "redis".to_string(),
             name: "Redis".to_string(),
             description: "内存键值存储".to_string(),
+            description_i18n: Some("catalogDesc.redis".to_string()),
             category: SoftwareCategory::Cache,
             icon: "mdi:database".to_string(),
             versions,

@@ -188,6 +188,8 @@ pub fn run() {
             commands::software::save_custom_start_command,
             commands::software::list_custom_templates,
             commands::software::save_startup_settings,
+            commands::software::list_config_backups,
+            commands::software::restore_config_backup,
             commands::website::list_websites,
             commands::website::save_website,
             commands::website::delete_website,
@@ -214,6 +216,8 @@ pub fn run() {
             commands::springboot::read_jar_version_info,
             commands::springboot::read_jar_port,
             commands::springboot::read_springboot_log,
+            commands::springboot::export_springboot_config,
+            commands::springboot::import_springboot_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");

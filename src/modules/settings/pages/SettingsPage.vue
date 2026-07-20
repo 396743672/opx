@@ -58,18 +58,18 @@
 
     <!-- 下载代理 -->
     <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader title="下载代理" hide-refresh />
+      <CardHeader :title="$t('proxySettings')" hide-refresh />
       <div class="space-y-4">
         <div class="flex items-center justify-between">
-          <span class="text-sm">GitHub 加速代理</span>
+          <span class="text-sm">{{ $t('githubProxy') }}</span>
           <div class="flex gap-2 items-center">
-            <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="默认: https://ghfast.top" />
-            <button class="btn text-xs h-7 px-2" @click="githubProxyValue = 'https://ghfast.top'" title="还原默认">↺</button>
+            <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" :placeholder="$t('proxyDefaultHint')" />
+            <button class="btn text-xs h-7 px-2" @click="githubProxyValue = 'https://ghfast.top'" :title="$t('resetDefault')">↺</button>
           </div>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-sm">全局代理</span>
-          <input v-model="proxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" placeholder="http://127.0.0.1:7890（空=直连）" />
+          <span class="text-sm">{{ $t('globalProxy') }}</span>
+          <input v-model="proxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" :placeholder="$t('proxyEmptyDirect')" />
         </div>
       </div>
     </div>

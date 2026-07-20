@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::io::{Read, Write};
+use std::path::Path;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::models::springboot::{
     AppGroup, CreateAppParams, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
@@ -281,4 +283,244 @@ pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, 
         let ls: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         Ok(LogChunk { lines: ls, offset: len })
     }
+}
+
+/// 导出应用（按分组过滤）到 zip 文件，不含日志目录
+#[tauri::command]
+pub async fn export_springboot_config(
+    app_handle: AppHandle,
+    manager: State<'_, Arc<SpringBootManager>>,
+    file_path: String,
+    group_names: Option<Vec<String>>,
+) -> Result<(), String> {
+    let all_apps = manager.export_apps();
+    let groups = manager.list_groups();
+    let env_vars = manager.get_global_env_vars();
+
+    // 按分组过滤
+    let apps: Vec<&SpringBootApp> = if let Some(ref names) = group_names {
+        all_apps.iter().filter(|a| a.group.as_deref().map_or(false, |g| names.iter().any(|n| n == g))).collect()
+    } else {
+        all_apps.iter().collect()
+    };
+
+    let manifest = serde_json::json!({
+        "apps": apps,
+        "groups": groups,
+        "global_env_vars": env_vars,
+    });
+    let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+
+    let f = std::fs::File::create(&file_path).map_err(|e| format!("ERR_WRITE:创建文件失败: {}", e))?;
+    let mut zip = zip::ZipWriter::new(f);
+    let opts = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    zip.start_file("manifest.json", opts).map_err(|e| format!("ERR_ZIP:{}", e))?;
+    zip.write_all(manifest_json.as_bytes()).map_err(|e| format!("ERR_ZIP:{}", e))?;
+
+    let total = apps.len();
+    for (i, app) in apps.iter().enumerate() {
+        let _ = app_handle.emit("export-progress", serde_json::json!({ "current": i + 1, "total": total, "name": app.name }));
+
+        // ponytail: jar_path 是相对 data_dir 的相对路径，需转绝对路径
+        let jar = std::path::PathBuf::from(crate::utils::paths::data_dir()).join(&app.jar_path);
+        if !jar.exists() { continue; }
+        let app_home = jar.parent().unwrap_or(&jar);
+        let app_dir_name = format!("apps/{}", sanitize_name(&app.name));
+        let log_canonical = {
+            let lp = Path::new(&app.log_path);
+            if lp.exists() { lp.canonicalize().ok() } else { None }
+        };
+        add_dir_to_zip(&mut zip, app_home, &app_dir_name, log_canonical.as_deref(), opts)
+            .map_err(|e| format!("ERR_ZIP:{}({}):{}", app.name, app.id, e))?;
+    }
+
+    let mut f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
+    f.sync_all().map_err(|e| format!("ERR_ZIP:{}", e))?;
+    let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
+    Ok(())
+}
+
+/// 从 zip 文件导入应用配置和数据
+#[tauri::command]
+pub async fn import_springboot_config(
+    app_handle: AppHandle,
+    manager: State<'_, Arc<SpringBootManager>>,
+    file_path: String,
+) -> Result<(), String> {
+    let _ = app_handle.emit("import-progress", serde_json::json!({ "phase": "extracting" }));
+    let tmp_dir = std::env::temp_dir().join(format!("opx_import_{}", std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos()));
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("ERR_TMP:{}", e))?;
+
+    let f = std::fs::File::open(&file_path).map_err(|e| format!("ERR_READ:读取文件失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(f).map_err(|e| format!("ERR_ZIP_PARSE:文件格式错误: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| format!("ERR_ZIP:{}", e))?;
+        let out_path = tmp_dir.join(sanitize_zip_path(entry.name()));
+        if entry.name().ends_with('/') {
+            std::fs::create_dir_all(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            }
+            let mut outfile = std::fs::File::create(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+        }
+    }
+
+    let _ = app_handle.emit("import-progress", serde_json::json!({ "phase": "config" }));
+    let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json"))
+        .map_err(|e| format!("ERR_IMPORT:manifest.json 不存在或无法读取: {}", e))?;
+    let data: serde_json::Value = serde_json::from_str(&manifest_content)
+        .map_err(|e| format!("ERR_IMPORT:manifest.json 格式错误: {}", e))?;
+
+    use serde_json::Value;
+    if let Some(apps) = data.get("apps").and_then(|v| v.as_array()) {
+        let existing = manager.list_apps();
+        for app_val in apps {
+            let imported: SpringBootApp = serde_json::from_value(app_val.clone())
+                .map_err(|e| format!("ERR_IMPORT:应用数据错误: {}", e))?;
+
+            // 复制应用数据
+            let app_data_dir = tmp_dir.join("apps").join(sanitize_name(&imported.name));
+            if app_data_dir.exists() {
+                let jar = Path::new(&imported.jar_path);
+                if let Some(target) = jar.parent() {
+                    copy_dir_all(&app_data_dir, target)
+                        .map_err(|e| format!("ERR_COPY:复制应用数据失败: {}", e))?;
+                }
+            }
+
+            // ponytail: 按名称匹配（应用名称唯一），id 随机器不同
+            let existing_app = existing.iter().find(|a| a.name == imported.name);
+            if let Some(existing) = existing_app {
+                manager.update_app(&existing.id, UpdateAppParams {
+                    name: Some(imported.name),
+                    jdk_installed_id: Some(imported.jdk_installed_id),
+                    jvm_opts: Some(imported.jvm_opts),
+                    program_args: Some(imported.program_args),
+                    profile: Some(imported.profile),
+                    env_vars: Some(imported.env_vars),
+                    port: imported.port,
+                    log_path: Some(imported.log_path),
+                    dependencies: Some(imported.dependencies),
+                    auto_start: Some(imported.auto_start),
+                    startup_order: Some(imported.startup_order),
+                    auto_restart: Some(imported.auto_restart),
+                    group: Some(imported.group),
+                    jdk_type: Some(imported.jdk_type),
+                }).map_err(|e| e.to_string())?;
+            } else {
+                manager.create_app(CreateAppParams {
+                    name: imported.name,
+                    jar_path: imported.jar_path,
+                    jdk_installed_id: imported.jdk_installed_id,
+                    jvm_opts: imported.jvm_opts,
+                    program_args: imported.program_args,
+                    profile: imported.profile,
+                    env_vars: imported.env_vars,
+                    port: imported.port,
+                    log_path: imported.log_path,
+                    dependencies: imported.dependencies,
+                    auto_start: imported.auto_start,
+                    startup_order: imported.startup_order,
+                    auto_restart: imported.auto_restart,
+                    group: imported.group,
+                    jdk_type: imported.jdk_type,
+                }).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    if let Some(groups) = data.get("groups").and_then(|v| v.as_array()) {
+        let parsed: Vec<AppGroup> = serde_json::from_value(Value::Array(groups.clone())).map_err(|e| format!("ERR_IMPORT:分组错误: {}", e))?;
+        manager.save_groups(parsed).map_err(|e| e.to_string())?;
+    }
+    if let Some(env_vars) = data.get("global_env_vars") {
+        let parsed: Vec<(String, String)> = serde_json::from_value(env_vars.clone()).map_err(|e| format!("ERR_IMPORT:环境变量错误: {}", e))?;
+        manager.set_global_env_vars(parsed).map_err(|e| e.to_string())?;
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = app_handle.emit("import-progress", serde_json::json!({ "done": true }));
+    Ok(())
+}
+
+/// 将目录递归添加到 zip，跳过 excluded_dir
+fn add_dir_to_zip(
+    zip: &mut zip::ZipWriter<std::fs::File>,
+    src: &Path,
+    prefix: &str,
+    exclude: Option<&Path>,
+    opts: zip::write::FileOptions,
+) -> Result<(), String> {
+    if !src.is_dir() {
+        if exclude.map_or(true, |e| !is_parent_or_self(e, src)) {
+            let name = format!("{}/{}", prefix, src.file_name().unwrap_or_default().to_string_lossy());
+            zip.start_file(&name, opts).map_err(|e| e.to_string())?;
+            let mut buf = Vec::new();
+            std::fs::File::open(src).map_err(|e| e.to_string())?.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+            zip.write_all(&buf).map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if let Some(ex) = exclude {
+            if is_parent_or_self(ex, &path) { continue; }
+        }
+        let rel_name = entry.file_name().to_string_lossy().to_string();
+        let zip_name = format!("{}/{}", prefix, rel_name);
+
+        if path.is_dir() {
+            zip.add_directory(&format!("{}/", &zip_name), opts).map_err(|e| e.to_string())?;
+            add_dir_to_zip(zip, &path, &zip_name, exclude, opts)?;
+        } else {
+            zip.start_file(&zip_name, opts).map_err(|e| e.to_string())?;
+            let mut buf = Vec::new();
+            std::fs::File::open(&path).map_err(|e| e.to_string())?.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+            zip.write_all(&buf).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// 判断 parent 是否是 path 的父目录或自身
+fn is_parent_or_self(parent: &Path, path: &Path) -> bool {
+    if let Ok(canon_parent) = parent.canonicalize() {
+        if let Ok(canon_path) = path.canonicalize() {
+            return canon_path.starts_with(&canon_parent);
+        }
+    }
+    path.starts_with(parent)
+}
+
+/// 安全文件名（去除非字母数字字符）
+fn sanitize_name(name: &str) -> String {
+    name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+}
+
+/// 安全路径（防止 zip slip）
+fn sanitize_zip_path(name: &str) -> String {
+    name.replace('\\', "/").trim_start_matches('/').to_string()
+}
+
+/// 递归复制目录
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if !dst.exists() {
+        std::fs::create_dir_all(dst)?;
+    }
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(&entry.path(), &dst_path)?;
+        }
+    }
+    Ok(())
 }

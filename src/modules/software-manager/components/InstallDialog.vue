@@ -35,7 +35,6 @@
           <Icon icon="mdi:loading" class="spinning" />
           <span>{{ $t('fetchingVersions') }}</span>
         </div>
-        <div v-if="fetchError" class="fetch-error">{{ fetchError }}</div>
       </div>
 
       <div class="field">
@@ -74,6 +73,17 @@
       </div>
     </div>
   </div>
+  </Teleport>
+  <Teleport to="body">
+    <div v-if="fetchError" class="overlay" style="z-index:70" @click.self="fetchError = ''">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ fetchError }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="fetchError = ''">{{ $t('confirm') }}</button>
+        </div>
+      </div>
+    </div>
   </Teleport>
 </template>
 

@@ -1099,3 +1099,90 @@ pub async fn save_startup_settings(
         .update_startup_settings(&installed_id, auto_start, order)
         .map_err(|e| e.to_string())
 }
+
+/// 列出配置文件的备份列表
+#[tauri::command]
+pub async fn list_config_backups(
+    installed_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let software = load_software_for_id(&installed_id)?;
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    let backup_dir = full_path.parent().unwrap().join("backups");
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let filename = full_path.file_name().and_then(|n| n.to_str()).unwrap_or("config");
+    let suffix = format!("_{}", filename);
+    let mut entries: Vec<_> = std::fs::read_dir(&backup_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|n| n.ends_with(&suffix))
+                .unwrap_or(false)
+        })
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    let backups: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            let meta = e.metadata().ok();
+            serde_json::json!({
+                "name": e.file_name().to_string_lossy(),
+                "size": meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                "modified": meta.and_then(|m| m.modified().ok())
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                    .unwrap_or(0),
+            })
+        })
+        .collect();
+    Ok(backups)
+}
+
+/// 从备份还原配置文件（覆盖当前配置，原始文件另存为新备份）
+#[tauri::command]
+pub async fn restore_config_backup(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    backup_name: String,
+) -> Result<(), String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("restore_backup", &format!("{} ({})", software.name, installed_id));
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+    let cctx = ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    };
+    let file_path = provider
+        .config_file_path(&cctx)
+        .ok_or_else(|| "该软件无配置文件".to_string())?;
+    let full_path = std::path::Path::new(&software.install_path).join(file_path);
+    let backup_dir = full_path.parent().unwrap().join("backups");
+    let backup_path = backup_dir.join(&backup_name);
+
+    // 当前配置先备份，再还原
+    config_editor::backup_config(&full_path).map_err(|e| e.to_string())?;
+    std::fs::copy(&backup_path, &full_path).map_err(|e| e.to_string())?;
+    Ok(())
+}

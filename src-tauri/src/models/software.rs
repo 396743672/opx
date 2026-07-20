@@ -50,6 +50,8 @@ pub struct CatalogEntry {
     pub key: String,
     pub name: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_i18n: Option<String>,
     pub category: SoftwareCategory,
     pub icon: String,
     pub versions: Vec<CatalogVersion>,

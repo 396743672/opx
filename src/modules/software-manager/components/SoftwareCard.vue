@@ -9,7 +9,7 @@
           {{ entry.name }}
           <span v-if="entry.key === 'jre' || entry.key === 'mysql'" class="sw-tag">LTS</span>
         </div>
-        <div class="sw-desc">{{ entry.description }}</div>
+        <div class="sw-desc">{{ entry.description_i18n ? $t(entry.description_i18n) : entry.description }}</div>
       </div>
     </div>
     <div class="sw-installed">

@@ -42,18 +42,18 @@
           </div>
 
           <!-- Resource planning -->
-          <div class="section-title">资源规划</div>
+          <div class="section-title">{{ $t('resourcePlanning') }}</div>
           <div class="grid-3">
             <div class="field">
-              <div class="field-label">部署服务总数</div>
+              <div class="field-label">{{ $t('totalDeployServices') }}</div>
               <input class="input" type="number" v-model.number="tuning.totalServices" min="1" />
             </div>
             <div class="field">
-              <div class="field-label">本服务 Xms (MB)</div>
+              <div class="field-label">{{ $t('xms') }}</div>
               <input class="input" type="number" v-model.number="tuning.xmsMb" min="64" @input="jvm.xms_mb = tuning.xmsMb" />
             </div>
             <div class="field">
-              <div class="field-label">本服务 Xmx (MB)</div>
+              <div class="field-label">{{ $t('xmx') }}</div>
               <input class="input" type="number" v-model.number="tuning.xmxMb" min="64" @input="jvm.xmx_mb = tuning.xmxMb" />
             </div>
           </div>
@@ -103,13 +103,13 @@
             <div class="field-label" style="display:flex;align-items:center;gap:8px;justify-content:space-between">
               <span>{{ $t('extraFlags') }}</span>
               <button class="btn primary" style="height:26px;font-size:11px;padding:0 8px" @click="generateOptimalParams">
-                <Icon icon="mdi:auto-fix" style="font-size:13px" /> 生成推荐参数
+                <Icon icon="mdi:auto-fix" style="font-size:13px" /> {{ $t('generateRecommendedParams') }}
               </button>
             </div>
             <textarea class="textarea input-mono" v-model="extraFlagsText" rows="4" placeholder="-XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8" />
             <label class="checkbox-label mt-2">
               <input type="checkbox" v-model="utf8Encoding" class="checkbox" />
-              <span class="text-xs">UTF-8 字符集（-Dfile.encoding=UTF-8）</span>
+              <span class="text-xs">{{ $t('utf8Charset') }}</span>
             </label>
           </div>
 
@@ -189,12 +189,22 @@
           </details>
         </div>
 
-        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="dialog-footer">
           <button class="btn" @click="$emit('cancel')">{{ $t('cancel') }}</button>
           <button class="btn primary" @click="save" :disabled="!valid || saving">
             {{ saving ? $t('saving') : $t('save') }}
           </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+  <Teleport to="body">
+    <div v-if="saveError" class="overlay" style="z-index:70" @click.self="saveError = ''">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ saveError }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="saveError = ''">{{ $t('confirm') }}</button>
         </div>
       </div>
     </div>
@@ -231,7 +241,7 @@ const nameError = ref('')
 function onNameInput(e: Event) {
   const v = (e.target as HTMLInputElement).value
   if (/[\u4e00-\u9fff\u3400-\u4dbf]/.test(v)) {
-    nameError.value = '名称不能包含中文'
+    nameError.value = t('nameCannotContainChinese')
     return
   }
   nameError.value = ''
@@ -468,7 +478,7 @@ async function save() {
   // 名称重复校验
   const dupId = props.app ? props.app.id : undefined
   if (isNameDuplicate(form.name, dupId)) {
-    saveError.value = '应用名称"' + form.name.trim() + '"已存在，请更换名称'
+    saveError.value = t('appNameAlreadyExists', { name: form.name.trim() })
     saving.value = false
     return
   }

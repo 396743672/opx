@@ -39,6 +39,7 @@ export interface CatalogEntry {
   key: string
   name: string
   description: string
+  description_i18n?: string
   category: SoftwareCategory
   icon: string
   versions: CatalogVersion[]

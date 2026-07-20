@@ -28,6 +28,11 @@ impl SpringBootManager {
         Self { store: RwLock::new(store) }
     }
 
+    /// 导出用：返回原始存储数据（不做路径解析，保持相对路径）
+    pub fn export_apps(&self) -> Vec<SpringBootApp> {
+        self.store.read().unwrap().applications.clone()
+    }
+
     pub fn list_apps(&self) -> Vec<SpringBootApp> {
         // ponytail: 兜底校验 — 进程已死但状态卡在 Running/Starting/Stopping 时自动纠正为 Stopped
         let mut store = self.store.write().unwrap();

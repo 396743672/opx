@@ -66,14 +66,14 @@ fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result
         let test = run_nginx(&base, &["-t"]).map_err(|e| e.to_string())?;
         if !test.status.success() {
             return Err(format!(
-                "nginx 配置校验失败：{}",
+                "ERR_NGINX_CONF_FAILED:nginx 配置校验失败：{}",
                 String::from_utf8_lossy(&test.stderr)
             ));
         }
         let rl = run_nginx(&base, &["-s", "reload"]).map_err(|e| e.to_string())?;
         if !rl.status.success() {
             return Err(format!(
-                "nginx reload 失败：{}",
+                "ERR_NGINX_RELOAD_FAILED:nginx reload 失败：{}",
                 String::from_utf8_lossy(&rl.stderr)
             ));
         }
@@ -182,13 +182,13 @@ pub fn save_website(
     mut site: Site,
 ) -> Result<(), String> {
     oplog!("website_save", &format!("{} ({})", site.name, site.id));
-    // 先解压待处理的 zip（upload 时只暂存 zip，保存时才真正解压）
-    if let Ok(nginx) = resolve_nginx(&sm) {
-        resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
-    }
-    wm.upsert(site).map_err(|e| e.to_string())?;
-    // 保存即生效：nginx 运行中时 regenerate 内部会自动校验并 reload
-    regenerate(&sm, &wm, true)
+    // 先验证 nginx 可用（失败则立即返回，不碰内存和磁盘）
+    let nginx = resolve_nginx(&sm)?;
+    resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
+    // 写入内存（不持久化），regenerate 验证后再持久化
+    wm.upsert_mem(site).map_err(|e| e.to_string())?;
+    regenerate(&sm, &wm, true)?;
+    wm.persist().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -201,7 +201,7 @@ pub fn delete_website(
     oplog!("website_delete", &site.as_ref().map(|s| &*s.name).unwrap_or(&id));
     if let Some(ref s) = site {
         if s.enabled {
-            return Err("请先停用站点后再删除".to_string());
+            return Err("ERR_SITE_RUNNING_DELETE:请先停用站点后再删除".to_string());
         }
     }
     // 记录名称用于清理上传文件（必须在 wm.remove 之前获取）
@@ -209,8 +209,9 @@ pub fn delete_website(
         let n = sanitize_seg(&s.name);
         if n.is_empty() || n == "root" { None } else { Some(n) }
     });
-    wm.remove(&id).map_err(|e| e.to_string())?;
+    wm.remove_mem(&id).map_err(|e| e.to_string())?;
     regenerate(&sm, &wm, true)?;
+    wm.persist().map_err(|e| e.to_string())?;
     // 删除站点对应的上传文件（sites-data/<name>/），避免下次同名站点文件残留
     if let Some(seg) = name_seg {
         if let Ok(nginx) = resolve_nginx(&sm) {
@@ -229,9 +230,11 @@ pub fn set_website_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     let name = wm.get(&id).map(|s| s.name).unwrap_or_default();
-    oplog!("website_toggle", &format!("{} ({})", name, if enabled { "启用" } else { "停用" }));
-    wm.set_enabled(&id, enabled).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)
+    let action = if enabled { "enable" } else { "disable" };
+    oplog!("website_toggle", &format!("{} ({})", name, action));
+    wm.set_enabled_mem(&id, enabled).map_err(|e| e.to_string())?;
+    regenerate(&sm, &wm, true)?;
+    wm.persist().map_err(|e| e.to_string())
 }
 
 /// 上传静态包：将 zip 暂存到 <nginx>/sites-data/.pending/，返回标记路径供保存时解压

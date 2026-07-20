@@ -52,7 +52,6 @@
           <textarea ref="sourceText" spellcheck="false" class="source-input" @input="sourceDirty = true"></textarea>
         </div>
 
-        <div v-if="saveError" class="error-banner">{{ saveError }}</div>
         <div class="foot">
           <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
@@ -70,11 +69,22 @@
   <Teleport to="body">
     <div v-if="confirmUnlock" class="overlay" style="z-index:60">
       <div class="confirm-box">
-        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> 确认操作</div>
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> {{ $t('confirm') }}</div>
         <p class="confirm-msg">{{ $t('restoreFormConfirm') }}</p>
         <div class="confirm-actions">
           <button class="btn" @click="confirmUnlock = false">{{ $t('cancel') }}</button>
           <button class="btn danger" @click="doUnlock">{{ $t('confirm') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+  <Teleport to="body">
+    <div v-if="saveError" class="overlay" style="z-index:70" @click.self="saveError = ''">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ saveError }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="saveError = ''">{{ $t('confirm') }}</button>
         </div>
       </div>
     </div>

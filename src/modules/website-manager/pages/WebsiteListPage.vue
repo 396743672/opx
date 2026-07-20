@@ -8,14 +8,13 @@
       </template>
     </PageHeader>
 
-    <div v-if="pageError" class="error-banner mb-4" style="margin:0 0 16px">{{ pageError }}</div>
     <Teleport to="body">
       <div v-if="pageError" class="overlay" @click.self="pageError = ''">
         <div class="confirm-box">
           <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
           <p class="confirm-msg">{{ pageError }}</p>
           <div class="confirm-actions">
-            <button class="btn primary" @click="pageError = ''">确定</button>
+            <button class="btn primary" @click="pageError = ''">{{ $t('confirm') }}</button>
           </div>
         </div>
       </div>
@@ -84,11 +83,11 @@
     <Teleport to="body">
       <div v-if="delTarget" class="overlay" @click.self="delTarget = null">
         <div class="confirm-box">
-          <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> 确认删除</div>
-          <p class="confirm-msg">删除站点「{{ delTarget.name }}」？<br>此操作将删除配置文件及上传文件，不可恢复。</p>
+          <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /> {{ $t('confirmDelete') }}</div>
+          <p class="confirm-msg">{{ $t('confirmDeleteSite', { name: delTarget.name }) }}</p>
           <div class="confirm-actions">
-            <button class="btn" @click="delTarget = null">取消</button>
-            <button class="btn danger" @click="doDelete">删除</button>
+            <button class="btn" @click="delTarget = null">{{ $t('cancel') }}</button>
+            <button class="btn danger" @click="doDelete">{{ $t('delete') }}</button>
           </div>
         </div>
       </div>

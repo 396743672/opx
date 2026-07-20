@@ -1,6 +1,5 @@
 <template>
   <div class="space-y-2">
-    <div v-if="uploadError" class="error-banner" style="margin:0 0 8px">{{ uploadError }}</div>
     <div v-for="(l, i) in model" :key="i" class="rounded-md border border-border p-3">
       <div class="flex items-center gap-2 mb-2">
         <input v-model="l.path" class="input flex-1 font-mono" :placeholder="$t('routePath')" />
@@ -44,6 +43,17 @@
 
     <button class="btn w-full" @click="add"><Icon icon="mdi:plus" /> {{ $t('addRoute') }}</button>
   </div>
+  <Teleport to="body">
+    <div v-if="uploadError" class="overlay" style="z-index:75" @click.self="uploadError = ''">
+      <div class="confirm-box">
+        <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
+        <p class="confirm-msg">{{ uploadError }}</p>
+        <div class="confirm-actions">
+          <button class="btn primary" @click="uploadError = ''">{{ $t('confirm') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
