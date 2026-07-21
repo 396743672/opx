@@ -97,6 +97,18 @@ async function onChoose(choice: 'tray' | 'exit', remember: boolean) {
 }
 
 onMounted(async () => {
+  // 禁用右键菜单和 F12 等开发者工具快捷键
+  document.addEventListener('contextmenu', (e) => e.preventDefault())
+  document.addEventListener('keydown', (e) => {
+    if (
+      e.key === 'F12' ||
+      (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key.toUpperCase())) ||
+      (e.ctrlKey && e.key.toUpperCase() === 'U')
+    ) {
+      e.preventDefault()
+    }
+  })
+
   // 监听首次系统数据就绪，解除启动遮罩
   const stopBootWatch = watch(
     () => systemStore.systemInfo,
