@@ -335,7 +335,7 @@ pub async fn export_springboot_config(
             .map_err(|e| format!("ERR_ZIP:{}({}):{}", app.name, app.id, e))?;
     }
 
-    let mut f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
+    let f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
     f.sync_all().map_err(|e| format!("ERR_ZIP:{}", e))?;
     let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
     Ok(())
