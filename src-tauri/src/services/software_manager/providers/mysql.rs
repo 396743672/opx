@@ -137,7 +137,6 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
 max_connections=151\n\
 thread_cache_size={thread_cache}\n\
 innodb_buffer_pool_size={buffer_pool}M\n\
-innodb_log_file_size=256M\n\
 innodb_log_buffer_size=64M\n\
 innodb_flush_log_at_trx_commit=1\n\
 innodb_lock_wait_timeout=50\n\
