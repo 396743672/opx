@@ -62,12 +62,6 @@ pub fn logs_dir() -> PathBuf {
     ensure_dir(&app_root(), "logs", "logs")
 }
 
-/// 内置 zip 的相对路径（相对于 resource_dir）
-/// 返回 "software/{key}/{version}.zip"
-pub fn builtin_zip_relative(key: &str, version: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(format!("software/{}/{}.zip", key, version))
-}
-
 /// 解析内置资源文件路径，跨平台兼容。
 /// Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下；
 /// macOS 上 resource_dir() 返回 .app/Contents/Resources/，资源直接在其下；

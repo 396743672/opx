@@ -44,12 +44,6 @@ impl WebsiteManager {
         self.websites.read().unwrap().websites.iter().find(|s| s.id == id).cloned()
     }
 
-    /// 按 id 更新，无则追加（内存 + 持久化）
-    pub fn upsert(&self, site: Site) -> Result<()> {
-        self.upsert_mem(site)?;
-        Self::save_list(&self.websites.read().unwrap())
-    }
-
     /// 仅更新内存，不持久化（用于先验证再保存的场景）
     pub fn upsert_mem(&self, site: Site) -> Result<()> {
         let mut l = self.websites.write().unwrap();
@@ -65,24 +59,10 @@ impl WebsiteManager {
         Self::save_list(&self.websites.read().unwrap())
     }
 
-    pub fn remove(&self, id: &str) -> Result<()> {
-        let mut l = self.websites.write().unwrap();
-        l.websites.retain(|s| s.id != id);
-        Self::save_list(&l)
-    }
-
     pub fn remove_mem(&self, id: &str) -> Result<()> {
         let mut l = self.websites.write().unwrap();
         l.websites.retain(|s| s.id != id);
         Ok(())
-    }
-
-    pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        let mut l = self.websites.write().unwrap();
-        if let Some(s) = l.websites.iter_mut().find(|s| s.id == id) {
-            s.enabled = enabled;
-        }
-        Self::save_list(&l)
     }
 
     pub fn set_enabled_mem(&self, id: &str, enabled: bool) -> Result<()> {

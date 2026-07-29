@@ -46,28 +46,6 @@ fn resolve_url(url: &str, cfg: &DownloadConfig) -> String {
     url.to_string()
 }
 
-pub fn download(url: &str, destination: &Path) -> Result<()> {
-    let cfg = get_config();
-    let url = resolve_url(url, &cfg);
-    let mut builder = reqwest::blocking::Client::builder()
-        .user_agent("OPX");
-    if !cfg.global_proxy_url.is_empty() {
-        tracing::info!(proxy = %cfg.global_proxy_url, "using global proxy");
-        if let Ok(proxy) = reqwest::Proxy::all(&cfg.global_proxy_url) {
-            builder = builder.proxy(proxy);
-        }
-    }
-    let response = builder.build()
-        .map_err(|e| anyhow::anyhow!("创建 HTTP 客户端失败: {}", e))?
-        .get(&url).send()
-        .map_err(|e| anyhow::anyhow!("下载失败 (代理={}, url={}): {}", cfg.global_proxy_url, url, e))?
-        .error_for_status()
-        .map_err(|e| anyhow::anyhow!("服务器返回错误 (url={}): {}", url, e))?;
-    let content = response.bytes()?;
-    std::fs::write(destination, content)?;
-    Ok(())
-}
-
 pub async fn download_with_progress<F>(
     url: &str,
     destination: &Path,
