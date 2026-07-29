@@ -58,11 +58,11 @@ impl SoftwareProvider for MySqlProvider {
         #[cfg(windows)]
         {
             versions.push(CatalogVersion {
-                version: "8.4.10".to_string(),
+                version: "8.4.11".to_string(),
                 mirrors: vec![
                     MirrorSource {
                         name: "i18n:official".to_string(),
-                        url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-winx64.zip".to_string(),
+                        url: "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-winx64.zip".to_string(),
                         builtin: None,
                     },
                 ],
@@ -101,13 +101,8 @@ impl SoftwareProvider for MySqlProvider {
         });
         let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok()?
             .iter().map(|ver| {
-                let major = ver.split('.').next().unwrap_or("8");
                 let major_minor = ver.split('.').take(2).collect::<Vec<_>>().join(".");
-                // ponytail: 9.x 与 8.x 的 CDN 路径格式不同
-                let dl = match major {
-                    "9" => format!("https://cdn.mysql.com/Downloads/MySQL-{}/mysql-{}-winx64.zip", major_minor, ver),
-                    _ => format!("https://cdn.mysql.com/archives/mysql-{}/mysql-{}-winx64.zip", major_minor, ver),
-                };
+                let dl = format!("https://cdn.mysql.com/Downloads/MySQL-{}/mysql-{}-winx64.zip", major_minor, ver);
                 CatalogVersion {
                     version: ver.clone(),
                     mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
