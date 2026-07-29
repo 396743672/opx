@@ -23,6 +23,9 @@ use crate::services::software_manager::providers::{ConfigContext, HealthContext,
 pub async fn list_available_software(
     manager: State<'_, Arc<SoftwareManager>>,
 ) -> Result<Vec<CatalogEntry>, String> {
+    // ponytail: 优先用缓存，缓存不存在时用内置
+    let catalog = catalog::load_catalog_cache().unwrap_or_else(|| catalog::build_builtin_catalog());
+    manager.set_catalog(catalog);
     Ok(manager.get_catalog().entries)
 }
 
@@ -52,6 +55,7 @@ pub async fn refresh_catalog(
 
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
+    catalog::save_catalog_cache(&merged); // ponytail: 缓存到文件
     let _ = app.emit("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
 }
@@ -79,9 +83,9 @@ pub async fn fetch_remote_versions_for(
 
     match result {
         Ok(Some(versions)) => {
-            // 关键：把远程版本合并进 manager 的 catalog，
-            // 否则安装时 install_software 从 catalog 查不到网络版本，报"不支持版本"
             manager.merge_entry_versions(&key, versions.clone());
+            // ponytail: 更新缓存
+            catalog::save_catalog_cache(&manager.get_catalog());
 
             // 包装成单条 CatalogEntry 返回（前端合并展示）
             let providers = providers::all_providers();

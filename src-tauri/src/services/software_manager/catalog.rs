@@ -1,8 +1,28 @@
 use std::collections::HashMap;
 
 use crate::models::software::{Catalog, CatalogVersion};
+use crate::utils::paths;
 
 use super::providers::all_providers;
+
+/// 缓存文件的路径
+fn cache_path() -> std::path::PathBuf {
+    paths::config_dir().join("catalog-cache.json")
+}
+
+/// ponytail: 加载缓存的目录
+pub fn load_catalog_cache() -> Option<Catalog> {
+    let p = cache_path();
+    if !p.exists() { return None; }
+    std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// ponytail: 保存目录到缓存
+pub fn save_catalog_cache(catalog: &Catalog) {
+    if let Ok(json) = serde_json::to_string_pretty(catalog) {
+        let _ = std::fs::write(cache_path(), json);
+    }
+}
 
 /// 构建内置 catalog：聚合所有 provider 的 catalog_entry()
 pub fn build_builtin_catalog() -> Catalog {

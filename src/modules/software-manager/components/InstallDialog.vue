@@ -192,8 +192,7 @@ async function fetchRemoteVersions() {
 }
 
 onMounted(() => {
-  // ponytail: 所有软件条目都尝试拉取远程版本
-  fetchRemoteVersions()
+  // ponytail: 缓存优先，不自动拉取，用户点刷新按钮时拉取
 })
 
 async function refreshVersions() {
