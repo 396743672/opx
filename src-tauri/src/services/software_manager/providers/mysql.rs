@@ -92,35 +92,32 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        // ponytail: 两步抓取 — 先拿 minor 列表，再逐页拿完整版本号
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(15)).build().ok()?;
 
-        // 1. 主页提取 major.minor（如 9.7, 8.4, 8.0）
-        let html = client.get("https://dev.mysql.com/downloads/mysql/")
-            .header("User-Agent", "OPX").send().ok()?.text().ok()?;
-        let minor_re = match regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#) {
-            Ok(r) => r,
-            Err(_) => return None,
+        let html = match client.get("https://dev.mysql.com/downloads/mysql/")
+            .header("User-Agent", "OPX").send() {
+            Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] read body: {}", e); return None; } },
+            Err(e) => { eprintln!("[mysql] fetch page: {}", e); return None; }
         };
+        let minor_re = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?;
         let minors: Vec<String> = minor_re.captures_iter(&html)
             .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
-            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7") // ponytail: 只取 MySQL Server 的 LTS
+            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7")
             .collect();
+        eprintln!("[mysql] minors: {:?}", minors);
 
-        // 2. 逐页取完整版本号
         let mut seen = std::collections::HashSet::new();
         let mut versions = vec![];
         for minor in &minors {
             let url = format!("https://dev.mysql.com/downloads/mysql/{}.html", minor);
-            if let Ok(resp) = client.get(&url).header("User-Agent", "OPX").send() {
-                if let Ok(h) = resp.text() {
-                    let ver_re = match regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)) {
-                        Ok(r) => r,
-                        Err(_) => continue, // ponytail: 单页失败不影响其他
-                    };
-                    for cap in ver_re.captures_iter(&h) {
-                        let ver = cap.get(1)?.as_str().to_string();
+            let h = match client.get(&url).header("User-Agent", "OPX").send() {
+                Ok(r) => match r.text() { Ok(t) => t, Err(_) => continue },
+                Err(_) => continue,
+            };
+            let ver_re = regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)).ok()?;
+            for cap in ver_re.captures_iter(&h) {
+                let ver = cap.get(1)?.as_str().to_string();
                         if !seen.contains(&ver) {
                             seen.insert(ver.clone());
                             let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
@@ -134,7 +131,7 @@ impl SoftwareProvider for MySqlProvider {
                 }
             }
         }
-        if versions.is_empty() { None } else { Some(versions) }
+        if versions.is_empty() { eprintln!("[mysql] no versions found"); None } else { eprintln!("[mysql] found {} versions", versions.len()); Some(versions) }
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
