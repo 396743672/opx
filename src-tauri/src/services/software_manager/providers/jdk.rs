@@ -52,7 +52,7 @@ impl SoftwareProvider for JdkProvider {
         let arch = if cfg!(target_arch = "aarch64") { "aarch64" } else { "x64" };
 
         let mut versions = vec![];
-        for major in [17, 21, 25] {
+        for major in [8, 17, 21, 25] {
             let api_url = format!("https://api.adoptium.net/v3/assets/version/{}/latest?image_type=jdk&os={}&arch={}", major, os, arch);
             if let Ok(r) = client.get(&api_url).header("User-Agent", "OPX").send() {
                 if let Ok(body) = r.text() {
