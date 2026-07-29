@@ -61,7 +61,7 @@ impl SoftwareProvider for MySqlProvider {
                 version: "8.4.10".to_string(),
                 mirrors: vec![
                     MirrorSource {
-                        name: "i18n:mysqlOfficialCdn".to_string(),
+                        name: "i18n:official".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-winx64.zip".to_string(),
                         builtin: None,
                     },
@@ -101,7 +101,8 @@ impl SoftwareProvider for MySqlProvider {
         });
         let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok()?
             .iter().map(|ver| {
-                let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+                let major_minor = ver.split('.').take(2).collect::<Vec<_>>().join(".");
+                let dl = format!("https://cdn.mysql.com/archives/mysql-{}/mysql-{}-winx64.zip", major_minor, ver);
                 CatalogVersion {
                     version: ver.clone(),
                     mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
