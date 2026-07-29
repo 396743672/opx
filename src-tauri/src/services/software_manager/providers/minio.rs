@@ -97,9 +97,18 @@ impl SoftwareProvider for MinioProvider {
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        // 预创建 data_dir，避免 MinIO 启动时因目录不存在而崩溃
         let data_dir = ctx.install_dir().join("data");
         std::fs::create_dir_all(&data_dir)?;
+        // ponytail: 下载的 exe 文件名带版本后缀，重命名为 minio.exe
+        if let Ok(mut entries) = std::fs::read_dir(ctx.install_dir()) {
+            if let Some(entry) = entries.find_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "exe") && path.file_stem().map_or(true, |n| n != "minio") {
+                    let target = ctx.install_dir().join("minio.exe");
+                    let _ = std::fs::rename(&path, &target);
+                }
+            }
+        }
         Ok(())
     }
 

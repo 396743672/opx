@@ -87,7 +87,7 @@ impl SoftwareProvider for MySqlProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:database".to_string(),
             versions,
-            default_version: "8.4.10".to_string(),
+            default_version: "8.4.11".to_string(),
         }
     }
 
