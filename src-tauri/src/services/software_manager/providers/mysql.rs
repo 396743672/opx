@@ -92,27 +92,39 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        // ponytail: 抓取 MySQL 下载页面的 LTS 版本列表
+        // ponytail: 两步抓取 — 先拿 minor 列表，再逐页拿完整版本号
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .build().ok()?;
+            .timeout(std::time::Duration::from_secs(15)).build().ok()?;
+
+        // 1. 主页提取 major.minor（如 9.7, 8.4, 8.0）
         let html = client.get("https://dev.mysql.com/downloads/mysql/")
             .header("User-Agent", "OPX").send().ok()?.text().ok()?;
+        let minor_re = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?;
+        let minors: Vec<String> = minor_re.captures_iter(&html)
+            .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .collect();
 
-        let re = regex::Regex::new(r#"<option value="(\d+\.\d+\.\d+)"[^>]*>"#).ok()?;
+        // 2. 逐页取完整版本号
         let mut seen = std::collections::HashSet::new();
         let mut versions = vec![];
-        for cap in re.captures_iter(&html) {
-            let ver = cap.get(1)?.as_str();
-            // ponytail: 不加过滤，页面上有什么版本就列什么
-            if !seen.contains(ver) {
-                seen.insert(ver.to_string());
-                let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
-                versions.push(CatalogVersion {
-                    version: ver.to_string(),
-                    mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
-                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-                });
+        for minor in &minors {
+            let url = format!("https://dev.mysql.com/downloads/mysql/{}.html", minor);
+            if let Ok(resp) = client.get(&url).header("User-Agent", "OPX").send() {
+                if let Ok(h) = resp.text() {
+                    let ver_re = regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)).ok()?;
+                    for cap in ver_re.captures_iter(&h) {
+                        let ver = cap.get(1)?.as_str().to_string();
+                        if !seen.contains(&ver) {
+                            seen.insert(ver.clone());
+                            let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+                            versions.push(CatalogVersion {
+                                version: ver,
+                                mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
+                                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                            });
+                        }
+                    }
+                }
             }
         }
         if versions.is_empty() { None } else { Some(versions) }
