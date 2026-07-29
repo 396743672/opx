@@ -83,9 +83,6 @@ impl SoftwareProvider for JreProvider {
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        // 从清华 TUNA 镜像爬取 JRE 21 和 25 的实际版本
-        // 清华目录：Adoptium/{major}/jre/x64/windows/
-        // 每个 major 只镜像 1 个最新版本
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
@@ -94,93 +91,75 @@ impl SoftwareProvider for JreProvider {
         let mut versions = vec![];
 
         for major in [21, 25] {
-            let dir_url = format!(
-                "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{}/jre/x64/windows/",
-                major
-            );
-            let response = match client
-                .get(&dir_url)
-                .header("User-Agent", "OPX")
-                .send()
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("[jre] 清华目录 {} 请求失败: {}", major, e);
-                    continue;
-                }
-            };
+            let mut found: Option<CatalogVersion> = None;
 
-            if !response.status().is_success() {
-                eprintln!("[jre] 清华目录 {} 返回 {}", major, response.status());
-                continue;
+            // ponytail: 清华镜像优先
+            let dir_url = format!("https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{}/jre/x64/windows/", major);
+            if let Ok(r) = client.get(&dir_url).header("User-Agent", "OPX").send() {
+                if r.status().is_success() {
+                    if let Ok(html) = r.text() {
+                        if let Ok(re) = regex::Regex::new(
+                            r"OpenJDK(\d+)U-jre_x64_windows_hotspot_(\d+\.\d+[._]\d+)_?(\d+)?\.zip",
+                        ) {
+                            if let Some(cap) = re.captures(&html) {
+                                let raw_version = cap.get(2)?.as_str().to_string();
+                                let version = if raw_version.contains('_') {
+                                    raw_version.replace('_', "+")
+                                } else if let Some(patch) = cap.get(3) {
+                                    format!("{}+{}", raw_version, patch.as_str())
+                                } else {
+                                    raw_version
+                                };
+                                let filename = if let Some(patch) = cap.get(3) {
+                                    format!("OpenJDK{}U-jre_x64_windows_hotspot_{}_{}.zip", major, cap.get(2)?.as_str(), patch.as_str())
+                                } else {
+                                    format!("OpenJDK{}U-jre_x64_windows_hotspot_{}.zip", major, cap.get(2)?.as_str())
+                                };
+                                found = Some(CatalogVersion {
+                                    version,
+                                    mirrors: vec![MirrorSource {
+                                        name: "i18n:adoptiumTsinghua".to_string(),
+                                        url: format!("{}{}", dir_url, filename),
+                                        builtin: None,
+                                    }],
+                                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                                });
+                            }
+                        }
+                    }
+                }
             }
 
-            let html = match response.text() {
-                Ok(h) => h,
-                Err(e) => {
-                    eprintln!("[jre] 清华目录 {} 读取失败: {}", major, e);
-                    continue;
+            // 清华失败时尝试 Adoptium 官方 API
+            if found.is_none() {
+                let api_url = format!("https://api.adoptium.net/v3/assets/version/{}/latest?image_type=jre&os=windows&arch=x64", major);
+                if let Ok(r) = client.get(&api_url).header("User-Agent", "OPX").send() {
+                    if let Ok(body) = r.text() {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                            if let Some(bin) = json.get(0) {
+                                let default_ver = format!("{}", major);
+                                let ver = bin["version_data"]["semver"].as_str().or(
+                                    bin["version_data"]["openjdk_version"].as_str()
+                                ).unwrap_or(&default_ver);
+                                let link = bin["binary"]["package"]["link"].as_str();
+                                if let Some(url) = link {
+                                    found = Some(CatalogVersion {
+                                        version: ver.to_string(),
+                                        mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: url.to_string(), builtin: None }],
+                                        archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
-            };
+            }
 
-            // 正则提取 .zip 文件名，如 OpenJDK21U-jre_x64_windows_hotspot_21.0.11_10.zip
-            // 版本部分格式：21.0.11_10 / 25.0.3_9 / 8u492b09
-            let re = match regex::Regex::new(
-                r"OpenJDK(\d+)U-jre_x64_windows_hotspot_(\d+\.\d+[._]\d+)_?(\d+)?\.zip",
-            ) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-
-            if let Some(cap) = re.captures(&html) {
-                // raw_version 形如 "21.0.11_10"，转换为 "21.0.11+10"
-                let raw_version = cap.get(2)?.as_str().to_string();
-                let version = if raw_version.contains('_') {
-                    raw_version.replace('_', "+")
-                } else if let Some(patch) = cap.get(3) {
-                    format!("{}+{}", raw_version, patch.as_str())
-                } else {
-                    raw_version
-                };
-
-                // 文件名重建：包含 patch 段时拼回
-                let filename = if let Some(patch) = cap.get(3) {
-                    format!(
-                        "OpenJDK{}U-jre_x64_windows_hotspot_{}_{}.zip",
-                        major,
-                        cap.get(2)?.as_str(),
-                        patch.as_str()
-                    )
-                } else {
-                    format!(
-                        "OpenJDK{}U-jre_x64_windows_hotspot_{}.zip",
-                        major,
-                        cap.get(2)?.as_str()
-                    )
-                };
-                let asset_url = format!("{}{}", dir_url, filename);
-
-                versions.push(CatalogVersion {
-                    version: version,
-                    mirrors: vec![MirrorSource {
-                        name: "i18n:adoptiumTsinghua".to_string(),
-                        url: asset_url,
-                        builtin: None,
-                    }],
-                    archive: ArchiveInfo {
-                        format: ArchiveFormat::Zip,
-                        size: None,
-                        sha256: None,
-                    },
-                });
+            if let Some(cv) = found {
+                versions.push(cv);
             }
         }
-
-        if versions.is_empty() {
-            None
-        } else {
-            Some(versions)
-        }
+        if versions.is_empty() { None } else { Some(versions) }
     }
 
     fn start_command(&self, _ctx: &super::StartContext) -> Result<super::StartCommand> {
