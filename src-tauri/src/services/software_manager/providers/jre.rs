@@ -27,6 +27,7 @@ impl SoftwareProvider for JreProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
+        #[allow(unused_mut)] // ponytail: unix 分支 push 了数据，windows 无
         let mut versions = vec![];
 
         #[cfg(unix)]

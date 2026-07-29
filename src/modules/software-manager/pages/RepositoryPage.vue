@@ -6,10 +6,6 @@
       :subtitle="$t('installNewSoftware')"
     >
       <template #actions>
-        <button class="btn" @click="refreshCatalog" :disabled="catalogStore.loading">
-          <Icon :icon="catalogStore.loading ? 'mdi:loading' : 'mdi:refresh'" :class="{ spinning: catalogStore.loading }" />
-          {{ catalogStore.loading ? $t('fetchingVersions') : $t('refreshCatalog') }}
-        </button>
       </template>
     </PageHeader>
 
@@ -171,10 +167,6 @@ function onInstalled(_id: string) {
   showCustomDialog.value = false
   // 刷新已安装列表
   loadInstalled()
-}
-
-async function refreshCatalog() {
-  await catalogStore.refreshCatalog()
 }
 
 async function loadInstalled() {

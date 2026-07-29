@@ -13,7 +13,12 @@
       </div>
 
       <div class="field">
-        <div class="field-label">{{ $t('selectVersion') }}</div>
+        <div class="field-label" style="display:flex;align-items:center;gap:8px">
+          <span>{{ $t('selectVersion') }}</span>
+          <button class="refresh-btn" :disabled="fetchingVersions" @click="refreshVersions" :title="$t('refresh')">
+            <Icon :icon="fetchingVersions ? 'mdi:loading' : 'mdi:refresh'" :class="{ spinning: fetchingVersions }" style="font-size:14px" />
+          </button>
+        </div>
         <div class="select" @click="showVersionDropdown = !showVersionDropdown">
           <span>{{ selectedVersion?.version }}</span>
           <Icon icon="mdi:chevron-down" class="caret" />
@@ -187,14 +192,13 @@ async function fetchRemoteVersions() {
 }
 
 onMounted(() => {
-  // 纯内置软件条目跳过网络拉取版本（如所有 mirrors 都是 builtin，没有动态远程版本）
-  const hasNonBuiltinMirror = props.entry.versions.some(v =>
-    v.mirrors.some(m => !m.builtin)
-  )
-  if (hasNonBuiltinMirror) {
-    fetchRemoteVersions()
-  }
+  // ponytail: 所有软件条目都尝试拉取远程版本
+  fetchRemoteVersions()
 })
+
+async function refreshVersions() {
+  await fetchRemoteVersions()
+}
 
 async function install() {
   installing.value = true
@@ -456,4 +460,15 @@ async function install() {
   background: color-mix(in oklch, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
 }
+.refresh-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.refresh-btn:hover { color: var(--color-primary); background: var(--color-muted); }
 </style>
