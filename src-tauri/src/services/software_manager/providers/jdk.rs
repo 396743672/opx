@@ -51,8 +51,12 @@ impl SoftwareProvider for JdkProvider {
             .build().ok()?;
         let mut versions = vec![];
         for major in [21, 25] {
+            // ponytail: 单个版本失败不影响其他版本（如镜像暂无 25 时 21 仍可用）
             let dir_url = format!("https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{}/jdk/x64/windows/", major);
-            let html = client.get(&dir_url).header("User-Agent", "OPX").send().ok()?.text().ok()?;
+            let html = match client.get(&dir_url).header("User-Agent", "OPX").send() {
+                Ok(r) => match r.text() { Ok(t) => t, _ => continue },
+                _ => continue,
+            };
             let re = regex::Regex::new(
                 r"OpenJDK(\d+)U-jdk_x64_windows_hotspot_(\d+\.\d+[._]\d+)_?(\d+)?\.zip",
             ).ok()?;
