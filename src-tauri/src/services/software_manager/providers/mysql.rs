@@ -104,8 +104,8 @@ impl SoftwareProvider for MySqlProvider {
         let mut versions = vec![];
         for cap in re.captures_iter(&html) {
             let ver = cap.get(1)?.as_str();
-            // ponytail: 只取 LTS：8.0.x 或 8.4.x
-            if !seen.contains(ver) && (ver.starts_with("8.0.") || ver.starts_with("8.4.")) {
+            // ponytail: 不加过滤，页面上有什么版本就列什么
+            if !seen.contains(ver) {
                 seen.insert(ver.to_string());
                 let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
                 versions.push(CatalogVersion {
