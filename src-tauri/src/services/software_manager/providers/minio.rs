@@ -51,6 +51,20 @@ impl SoftwareProvider for MinioProvider {
 
         #[cfg(windows)]
         {
+            // RELEASE.2025-04-22（GitHub 发布页）
+            versions.push(CatalogVersion {
+                version: "RELEASE.2025-04-22".to_string(),
+                mirrors: vec![MirrorSource {
+                    name: "i18n:minioOfficial".to_string(),
+                    url: "https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe".to_string(),
+                    builtin: None,
+                }],
+                archive: ArchiveInfo {
+                    format: ArchiveFormat::Executable,
+                    size: None,
+                    sha256: None,
+                },
+            });
             // latest（网络 exe）
             versions.push(CatalogVersion {
                 version: "latest".to_string(),
@@ -78,7 +92,7 @@ impl SoftwareProvider for MinioProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "latest".to_string(),
+            default_version: "RELEASE.2025-04-22".to_string(),
         }
     }
 
