@@ -37,8 +37,8 @@ impl SoftwareProvider for JreProvider {
                 mirrors: {
                     let mut m = vec![];
                     m.push(MirrorSource {
-                        name: "i18n:adoptiumTsinghua".to_string(),
-                        url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jre/x64/windows/OpenJDK8U-jre_x64_windows_hotspot_8u492b09.zip".to_string(),
+                        name: "i18n:official".to_string(),
+                        url: "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u492b09/OpenJDK8U-jre_x64_windows_hotspot_8u492b09.zip".to_string(),
                         builtin: None,
                     });
                     m

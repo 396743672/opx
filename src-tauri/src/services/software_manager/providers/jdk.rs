@@ -22,8 +22,8 @@ impl SoftwareProvider for JdkProvider {
             versions.push(CatalogVersion {
                 version: "1.8".to_string(),
                 mirrors: vec![MirrorSource {
-                    name: "i18n:adoptiumTsinghua".to_string(),
-                    url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jdk/x64/windows/OpenJDK8U-jdk_x64_windows_hotspot_8u492b09.zip".to_string(),
+                    name: "i18n:official".to_string(),
+                    url: "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u492b09/OpenJDK8U-jdk_x64_windows_hotspot_8u492b09.zip".to_string(),
                     builtin: None,
                 }],
                 archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
