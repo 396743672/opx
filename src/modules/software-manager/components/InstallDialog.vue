@@ -98,6 +98,7 @@ import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { useInstallStore } from '../stores/install'
+import { useCatalogStore } from '../stores/catalog'
 import type { CatalogEntry, CatalogVersion } from '@/models/software'
 
 const props = defineProps<{
@@ -183,6 +184,8 @@ async function fetchRemoteVersions() {
     if (result.length > 0) {
       remoteVersions.value = result[0].versions
     }
+    // ponytail: 回写 catalog store，关闭再打开版本不丢失
+    useCatalogStore().loadCatalog()
   } catch (e) {
     fetchError.value = String(e)
     console.error('Failed to fetch remote versions:', e)
