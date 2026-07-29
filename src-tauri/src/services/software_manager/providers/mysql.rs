@@ -99,7 +99,8 @@ impl SoftwareProvider for MySqlProvider {
             let _ = std::fs::write(&path, defaults);
             defaults.to_string()
         });
-        let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok()?
+        // ponytail: 从配置文件读版本列表
+        let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok().unwrap_or_default()
             .iter().map(|ver| {
                 let major_minor = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                 let dl = format!("https://cdn.mysql.com/Downloads/MySQL-{}/mysql-{}-winx64.zip", major_minor, ver);
@@ -109,7 +110,7 @@ impl SoftwareProvider for MySqlProvider {
                     archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
                 }
             }).collect();
-        if versions.is_empty() { None } else { Some(versions) }
+        Some(versions)
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
