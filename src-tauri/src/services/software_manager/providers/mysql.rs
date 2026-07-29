@@ -92,21 +92,23 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        // ponytail: MySQL 官网有反爬，固定 LTS 版本列表
-        let known: &[&str] = &[
-            "8.0.41", "8.0.40", "8.4.11", "8.4.10", "8.4.9",
-            "9.7.2",
-        ];
-        let mut versions = vec![];
-        for ver in known {
-            let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
-            versions.push(CatalogVersion {
-                version: ver.to_string(),
-                mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
-                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-            });
-        }
-        Some(versions)
+        // ponytail: 从 config/mysql-versions.json 读取 LTS 版本列表
+        let path = crate::utils::paths::config_dir().join("mysql-versions.json");
+        let defaults = r#"["8.0.41","8.4.11","9.7.2"]"#;
+        let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+            let _ = std::fs::write(&path, defaults);
+            defaults.to_string()
+        });
+        let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok()?
+            .iter().map(|ver| {
+                let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+                CatalogVersion {
+                    version: ver.clone(),
+                    mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
+                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                }
+            }).collect();
+        if versions.is_empty() { None } else { Some(versions) }
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
