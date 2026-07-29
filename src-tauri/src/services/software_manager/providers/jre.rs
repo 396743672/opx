@@ -29,30 +29,6 @@ impl SoftwareProvider for JreProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         let mut versions = vec![];
 
-        #[cfg(windows)]
-        {
-            // 1.8 内置版本（离线 + 清华镜像）
-            versions.push(CatalogVersion {
-                version: "1.8".to_string(),
-                mirrors: {
-                    let mut m = vec![];
-                    m.push(MirrorSource {
-                        name: "i18n:official".to_string(),
-                        url: "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u492b09/OpenJDK8U-jre_x64_windows_hotspot_8u492b09.zip".to_string(),
-                        builtin: None,
-                    });
-                    m
-                },
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            // 21/25 实际版本由 fetch_remote_versions 从清华镜像运行时拉取追加，
-            // catalog 不放 latest 占位项，避免与拉取的实际版本重复显示。
-        }
-
         #[cfg(unix)]
         {
             versions.push(CatalogVersion {

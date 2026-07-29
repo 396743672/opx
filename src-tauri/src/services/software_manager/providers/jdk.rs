@@ -15,21 +15,8 @@ impl SoftwareProvider for JdkProvider {
     fn key(&self) -> &str { "jdk" }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-
-        #[cfg(windows)]
-        {
-            versions.push(CatalogVersion {
-                version: "1.8".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:official".to_string(),
-                    url: "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u492b09/OpenJDK8U-jdk_x64_windows_hotspot_8u492b09.zip".to_string(),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-            });
-        }
-
+        // ponytail: 版本从 fetch_remote_versions 获取，catalog 不写死
+        let versions = vec![];
         CatalogEntry {
             key: "jdk".to_string(),
             name: "JDK".to_string(),
