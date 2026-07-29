@@ -92,39 +92,21 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(15)).build().ok()?;
-
-        // ponytail: 固定 LTS minor，逐页抓完整版本号
-        let minors = vec!["8.0".to_string(), "8.4".to_string(), "9.7".to_string()];
-
-        let mut seen = std::collections::HashSet::new();
+        // ponytail: MySQL 官网有反爬，固定 LTS 版本列表
+        let known: &[&str] = &[
+            "8.0.41", "8.0.40", "8.4.11", "8.4.10", "8.4.9",
+            "9.7.2",
+        ];
         let mut versions = vec![];
-        for minor in &minors {
-            let url = format!("https://dev.mysql.com/downloads/mysql/{}.html", minor);
-            let h = match client.get(&url).header("User-Agent", "OPX").send() {
-                Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] {} text: {}", minor, e); continue } },
-                Err(e) => { eprintln!("[mysql] {} req: {}", minor, e); continue }
-            };
-            let len = h.len();
-            eprintln!("[mysql] {} page {} bytes: {}", minor, len, &h[..len.min(200)]);
-            let ver_re = match regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)) {
-                Ok(r) => r, Err(_) => continue,
-            };
-            for cap in ver_re.captures_iter(&h) {
-                let ver = cap.get(1)?.as_str().to_string();
-                if !seen.contains(&ver) {
-                    seen.insert(ver.clone());
-                    let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
-                    versions.push(CatalogVersion {
-                        version: ver,
-                        mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
-                        archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-                    });
-                }
-            }
+        for ver in known {
+            let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+            versions.push(CatalogVersion {
+                version: ver.to_string(),
+                mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
+                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+            });
         }
-        if versions.is_empty() { eprintln!("[mysql] empty"); None } else { eprintln!("[mysql] {} versions", versions.len()); Some(versions) }
+        Some(versions)
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
