@@ -300,39 +300,42 @@ pub async fn install_software(
 
         let app_ep = app.clone();
         let id_ep = install_id.clone();
-        let mut throttle = ThrottledEmitter::new();
-        let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
-            if throttle.should_emit(percent) {
-                emit_event(
-                    &app_ep,
-                    serde_json::json!({
-                        "install_id": id_ep.clone(),
-                        "phase": "extracting",
-                        "percent": percent
-                    }),
-                );
-            }
-        };
+        let cache_path2 = cache_path.clone();
+        let install_path2 = install_path.clone();
+        let fmt = version_info.archive.format.clone();
+        let blocking_result = tokio::task::spawn_blocking(move || {
+            let mut throttle = ThrottledEmitter::new();
+            let on_progress = move |extracted: u64, total: u64| {
+                let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+                if throttle.should_emit(percent) {
+                    emit_event(
+                        &app_ep,
+                        serde_json::json!({
+                            "install_id": id_ep.clone(),
+                            "phase": "extracting",
+                            "percent": percent
+                        }),
+                    );
+                }
+            };
 
-        match version_info.archive.format {
-            // 剥掉 zip 内单一顶层目录，避免 install_path 下多一层冗余目录
-            ArchiveFormat::Zip => {
-                archive::extract_zip_flatten(&cache_path, &install_path, on_progress)?
+            match fmt {
+                ArchiveFormat::Zip => {
+                    archive::extract_zip_flatten(&cache_path2, &install_path2, on_progress)
+                }
+                ArchiveFormat::TarGz => {
+                    archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
+                }
+                ArchiveFormat::Executable => {
+                    let dest_file = install_path2.join(
+                        cache_path2.file_name().unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
+                    );
+                    fs::copy(&cache_path2, &dest_file).map(|_| ()).map_err(Into::into)
+                }
             }
-            ArchiveFormat::TarGz => {
-                archive::extract_tar_gz(&cache_path, &install_path, on_progress)?
-            }
-            ArchiveFormat::Executable => {
-                // 单个可执行文件：直接复制到 install_path 下，文件名用 cache_path 的文件名
-                let dest_file = install_path.join(
-                    cache_path
-                        .file_name()
-                        .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
-                );
-                fs::copy(&cache_path, &dest_file)?;
-            }
-        }
+        }).await;
+        let inner = blocking_result.map_err(|e| anyhow::anyhow!("解压线程异常: {}", e))?;
+        inner?;
 
         emit_event(
             &app,
