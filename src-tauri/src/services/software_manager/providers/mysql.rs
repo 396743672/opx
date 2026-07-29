@@ -95,15 +95,8 @@ impl SoftwareProvider for MySqlProvider {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(15)).build().ok()?;
 
-        let html = match client.get("https://dev.mysql.com/downloads/mysql/")
-            .header("User-Agent", "OPX").send() {
-            Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] read: {}", e); return None; } },
-            Err(e) => { eprintln!("[mysql] fetch: {}", e); return None; }
-        };
-        let minors: Vec<String> = regex::Regex::new(r#"<option\s+value="(\d+\.\d+)"\s*>"#).ok()?
-            .captures_iter(&html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
-            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7").collect();
-        eprintln!("[mysql] minors: {:?}", minors);
+        // ponytail: 固定 LTS minor，逐页抓完整版本号
+        let minors = vec!["8.0".to_string(), "8.4".to_string(), "9.7".to_string()];
 
         let mut seen = std::collections::HashSet::new();
         let mut versions = vec![];
