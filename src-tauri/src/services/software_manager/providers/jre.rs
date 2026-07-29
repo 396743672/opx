@@ -92,15 +92,13 @@ impl SoftwareProvider for JreProvider {
 
         let mut versions = vec![];
         for major in [8, 17, 21, 25] {
-            let api_url = format!("https://api.adoptium.net/v3/assets/version/{}/latest?image_type=jre&os={}&arch={}", major, os, arch);
+            let api_url = format!("https://api.adoptium.net/v3/assets/latest/{}/hotspot?image_type=jre&os={}&arch={}", major, os, arch);
             if let Ok(r) = client.get(&api_url).header("User-Agent", "OPX").send() {
                 if let Ok(body) = r.text() {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(bin) = json.get(0) {
                             let default_ver = format!("{}", major);
-                            let ver = bin["version_data"]["semver"].as_str().or(
-                                bin["version_data"]["openjdk_version"].as_str()
-                            ).unwrap_or(&default_ver);
+                            let ver = bin["version"]["semver"].as_str().unwrap_or(&default_ver);
                             let link = bin["binary"]["package"]["link"].as_str();
                             if let Some(url) = link {
                                 versions.push(CatalogVersion {
