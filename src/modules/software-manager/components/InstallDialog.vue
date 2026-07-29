@@ -143,16 +143,18 @@ function compareVersion(a: string, b: string): number {
   return 0
 }
 
-// 合并版本列表：内置（entry.versions）+ 远程拉取的版本（去重 + 降序）
+// 合并版本列表：全部去重 + 降序排序
 const mergedVersions = computed(() => {
-  const existing = new Set(props.entry.versions.map(v => v.version))
-  // 内置版本在前（保持原顺序）
-  const builtin = [...props.entry.versions]
-  // 网络版本去重 + 降序排序
-  const remote = remoteVersions.value
-    .filter(v => !existing.has(v.version))
-    .sort((a, b) => compareVersion(a.version, b.version))
-  return [...builtin, ...remote]
+  const existing = new Set<string>()
+  const all: CatalogVersion[] = []
+  for (const v of [...props.entry.versions, ...remoteVersions.value]) {
+    if (!existing.has(v.version)) {
+      existing.add(v.version)
+      all.push(v)
+    }
+  }
+  all.sort((a, b) => compareVersion(a.version, b.version))
+  return all
 })
 
 function isBuiltinVersion(v: CatalogVersion): boolean {
@@ -186,6 +188,11 @@ async function fetchRemoteVersions() {
     }
     // ponytail: 回写 catalog store，关闭再打开版本不丢失
     useCatalogStore().loadCatalog()
+    // ponytail: JDK/JRE 共享版本源，刷新一个自动拉另一个
+    const sibling = props.entry.key === 'jdk' ? 'jre' : props.entry.key === 'jre' ? 'jdk' : null
+    if (sibling) {
+      invoke('fetch_remote_versions_for', { key: sibling }).catch(() => {})
+    }
   } catch (e) {
     fetchError.value = String(e)
     console.error('Failed to fetch remote versions:', e)
