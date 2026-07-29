@@ -97,14 +97,12 @@ impl SoftwareProvider for MySqlProvider {
 
         let html = match client.get("https://dev.mysql.com/downloads/mysql/")
             .header("User-Agent", "OPX").send() {
-            Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] read body: {}", e); return None; } },
-            Err(e) => { eprintln!("[mysql] fetch page: {}", e); return None; }
+            Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] read: {}", e); return None; } },
+            Err(e) => { eprintln!("[mysql] fetch: {}", e); return None; }
         };
-        let minor_re = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?;
-        let minors: Vec<String> = minor_re.captures_iter(&html)
-            .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
-            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7")
-            .collect();
+        let minors: Vec<String> = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?
+            .captures_iter(&html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7").collect();
         eprintln!("[mysql] minors: {:?}", minors);
 
         let mut seen = std::collections::HashSet::new();
@@ -115,23 +113,23 @@ impl SoftwareProvider for MySqlProvider {
                 Ok(r) => match r.text() { Ok(t) => t, Err(_) => continue },
                 Err(_) => continue,
             };
-            let ver_re = regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)).ok()?;
+            let ver_re = match regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)) {
+                Ok(r) => r, Err(_) => continue,
+            };
             for cap in ver_re.captures_iter(&h) {
                 let ver = cap.get(1)?.as_str().to_string();
-                        if !seen.contains(&ver) {
-                            seen.insert(ver.clone());
-                            let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
-                            versions.push(CatalogVersion {
-                                version: ver,
-                                mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
-                                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-                            });
-                        }
-                    }
+                if !seen.contains(&ver) {
+                    seen.insert(ver.clone());
+                    let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+                    versions.push(CatalogVersion {
+                        version: ver,
+                        mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
+                        archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                    });
                 }
             }
         }
-        if versions.is_empty() { eprintln!("[mysql] no versions found"); None } else { eprintln!("[mysql] found {} versions", versions.len()); Some(versions) }
+        if versions.is_empty() { eprintln!("[mysql] empty"); None } else { eprintln!("[mysql] {} versions", versions.len()); Some(versions) }
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
