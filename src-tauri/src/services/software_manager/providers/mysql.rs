@@ -103,9 +103,11 @@ impl SoftwareProvider for MySqlProvider {
         for minor in &minors {
             let url = format!("https://dev.mysql.com/downloads/mysql/{}.html", minor);
             let h = match client.get(&url).header("User-Agent", "OPX").send() {
-                Ok(r) => match r.text() { Ok(t) => t, Err(_) => continue },
-                Err(_) => continue,
+                Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] {} text: {}", minor, e); continue } },
+                Err(e) => { eprintln!("[mysql] {} req: {}", minor, e); continue }
             };
+            let len = h.len();
+            eprintln!("[mysql] {} page {} bytes: {}", minor, len, &h[..len.min(200)]);
             let ver_re = match regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)) {
                 Ok(r) => r, Err(_) => continue,
             };
