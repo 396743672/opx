@@ -100,7 +100,7 @@ impl SoftwareProvider for MySqlProvider {
             Ok(r) => match r.text() { Ok(t) => t, Err(e) => { eprintln!("[mysql] read: {}", e); return None; } },
             Err(e) => { eprintln!("[mysql] fetch: {}", e); return None; }
         };
-        let minors: Vec<String> = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?
+        let minors: Vec<String> = regex::Regex::new(r#"<option\s+value="(\d+\.\d+)"\s*>"#).ok()?
             .captures_iter(&html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
             .filter(|v| v == "8.0" || v == "8.4" || v == "9.7").collect();
         eprintln!("[mysql] minors: {:?}", minors);
