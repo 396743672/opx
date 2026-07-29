@@ -4,10 +4,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, ConfigField,
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
-use crate::services::software_manager::providers::builtin_manifest;
 
 use super::{
     ConfigContext, FirstRunInit, HealthContext, InstallContext, SoftwareProvider, StartCommand,
@@ -60,32 +59,13 @@ impl SoftwareProvider for MySqlProvider {
         {
             versions.push(CatalogVersion {
                 version: "8.4.10".to_string(),
-                mirrors: {
-                    let mut m = vec![];
-                    let sha = builtin_manifest()
-                        .get_builtin("mysql", "8.4.10")
-                        .map(|e| e.sha256.clone())
-                        .unwrap_or_default();
-                    let size = builtin_manifest()
-                        .get_builtin("mysql", "8.4.10")
-                        .map(|e| e.size)
-                        .unwrap_or(0);
-                    m.push(MirrorSource {
-                        name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/mysql/8.4.10.zip".to_string(),
-                        builtin: Some(BuiltinInfo {
-                            version: "8.4.10".to_string(),
-                            sha256: sha,
-                            size: size,
-                        }),
-                    });
-                    m.push(MirrorSource {
+                mirrors: vec![
+                    MirrorSource {
                         name: "i18n:mysqlOfficialCdn".to_string(),
                         url: "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.10-winx64.zip".to_string(),
                         builtin: None,
-                    });
-                    m
-                },
+                    },
+                ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     size: None,

@@ -2,10 +2,9 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, ConfigField,
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
-use crate::services::software_manager::providers::builtin_manifest;
 
 use super::{
     ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
@@ -52,37 +51,7 @@ impl SoftwareProvider for RustfsProvider {
 
         #[cfg(windows)]
         {
-            // 版本 1：1.0.0-beta.8（内置 zip，离线）
-            versions.push(CatalogVersion {
-                version: "1.0.0-beta.8".to_string(),
-                mirrors: {
-                    let mut m = vec![];
-                    let sha = builtin_manifest()
-                        .get_builtin("rustfs", "1.0.0-beta.8")
-                        .map(|e| e.sha256.clone())
-                        .unwrap_or_default();
-                    let size = builtin_manifest()
-                        .get_builtin("rustfs", "1.0.0-beta.8")
-                        .map(|e| e.size)
-                        .unwrap_or(0);
-                    m.push(MirrorSource {
-                        name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/rustfs/1.0.0-beta.8.zip".to_string(),
-                        builtin: Some(BuiltinInfo {
-                            version: "1.0.0-beta.8".to_string(),
-                            sha256: sha,
-                            size: size,
-                        }),
-                    });
-                    m
-                },
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            // 版本 2：latest（网络 zip）
+            // latest（网络 zip）
             versions.push(CatalogVersion {
                 version: "latest".to_string(),
                 mirrors: vec![MirrorSource {
@@ -109,7 +78,7 @@ impl SoftwareProvider for RustfsProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "1.0.0-beta.8".to_string(),
+            default_version: "latest".to_string(),
         }
     }
 

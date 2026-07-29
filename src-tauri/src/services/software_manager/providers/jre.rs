@@ -1,10 +1,9 @@
 use anyhow::Result;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, MirrorSource,
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource,
     SoftwareCategory,
 };
-use crate::services::software_manager::providers::builtin_manifest;
 
 use super::{InstallContext, SoftwareProvider};
 
@@ -37,23 +36,6 @@ impl SoftwareProvider for JreProvider {
                 version: "1.8".to_string(),
                 mirrors: {
                     let mut m = vec![];
-                    let sha = builtin_manifest()
-                        .get_builtin("jre", "1.8")
-                        .map(|e| e.sha256.clone())
-                        .unwrap_or_default();
-                    let size = builtin_manifest()
-                        .get_builtin("jre", "1.8")
-                        .map(|e| e.size)
-                        .unwrap_or(0);
-                    m.push(MirrorSource {
-                        name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/jre/1.8.zip".to_string(),
-                        builtin: Some(BuiltinInfo {
-                            version: "1.8".to_string(),
-                            sha256: sha,
-                            size: size,
-                        }),
-                    });
                     m.push(MirrorSource {
                         name: "i18n:adoptiumTsinghua".to_string(),
                         url: "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/8/jre/x64/windows/OpenJDK8U-jre_x64_windows_hotspot_8u492b09.zip".to_string(),

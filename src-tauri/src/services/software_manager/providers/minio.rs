@@ -2,10 +2,9 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, BuiltinInfo, CatalogEntry, CatalogVersion, ConfigField,
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
-use crate::services::software_manager::providers::builtin_manifest;
 
 use super::{
     ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
@@ -52,37 +51,7 @@ impl SoftwareProvider for MinioProvider {
 
         #[cfg(windows)]
         {
-            // 版本 1：RELEASE.2025-04-22（内置 zip，离线）
-            versions.push(CatalogVersion {
-                version: "RELEASE.2025-04-22".to_string(),
-                mirrors: {
-                    let mut m = vec![];
-                    let sha = builtin_manifest()
-                        .get_builtin("minio", "RELEASE.2025-04-22")
-                        .map(|e| e.sha256.clone())
-                        .unwrap_or_default();
-                    let size = builtin_manifest()
-                        .get_builtin("minio", "RELEASE.2025-04-22")
-                        .map(|e| e.size)
-                        .unwrap_or(0);
-                    m.push(MirrorSource {
-                        name: "i18n:builtinVersion".to_string(),
-                        url: "builtin://software/minio/RELEASE.2025-04-22.zip".to_string(),
-                        builtin: Some(BuiltinInfo {
-                            version: "RELEASE.2025-04-22".to_string(),
-                            sha256: sha,
-                            size: size,
-                        }),
-                    });
-                    m
-                },
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            // 版本 2：latest（网络 exe）
+            // latest（网络 exe）
             versions.push(CatalogVersion {
                 version: "latest".to_string(),
                 mirrors: vec![MirrorSource {
@@ -109,7 +78,7 @@ impl SoftwareProvider for MinioProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "RELEASE.2025-04-22".to_string(),
+            default_version: "latest".to_string(),
         }
     }
 
