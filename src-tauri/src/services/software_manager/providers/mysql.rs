@@ -99,9 +99,13 @@ impl SoftwareProvider for MySqlProvider {
         // 1. 主页提取 major.minor（如 9.7, 8.4, 8.0）
         let html = client.get("https://dev.mysql.com/downloads/mysql/")
             .header("User-Agent", "OPX").send().ok()?.text().ok()?;
-        let minor_re = regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#).ok()?;
+        let minor_re = match regex::Regex::new(r#"<option value="(\d+\.\d+)"[^>]*>"#) {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
         let minors: Vec<String> = minor_re.captures_iter(&html)
             .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .filter(|v| v == "8.0" || v == "8.4" || v == "9.7") // ponytail: 只取 MySQL Server 的 LTS
             .collect();
 
         // 2. 逐页取完整版本号
@@ -111,7 +115,10 @@ impl SoftwareProvider for MySqlProvider {
             let url = format!("https://dev.mysql.com/downloads/mysql/{}.html", minor);
             if let Ok(resp) = client.get(&url).header("User-Agent", "OPX").send() {
                 if let Ok(h) = resp.text() {
-                    let ver_re = regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)).ok()?;
+                    let ver_re = match regex::Regex::new(&format!(r#"mysql-(\d+\.\d+\.\d+)-winx64"#)) {
+                        Ok(r) => r,
+                        Err(_) => continue, // ponytail: 单页失败不影响其他
+                    };
                     for cap in ver_re.captures_iter(&h) {
                         let ver = cap.get(1)?.as_str().to_string();
                         if !seen.contains(&ver) {
