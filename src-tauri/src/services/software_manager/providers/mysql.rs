@@ -101,8 +101,13 @@ impl SoftwareProvider for MySqlProvider {
         });
         let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok()?
             .iter().map(|ver| {
+                let major = ver.split('.').next().unwrap_or("8");
                 let major_minor = ver.split('.').take(2).collect::<Vec<_>>().join(".");
-                let dl = format!("https://cdn.mysql.com/archives/mysql-{}/mysql-{}-winx64.zip", major_minor, ver);
+                // ponytail: 9.x 与 8.x 的 CDN 路径格式不同
+                let dl = match major {
+                    "9" => format!("https://cdn.mysql.com/Downloads/MySQL-{}/mysql-{}-winx64.zip", major_minor, ver),
+                    _ => format!("https://cdn.mysql.com/archives/mysql-{}/mysql-{}-winx64.zip", major_minor, ver),
+                };
                 CatalogVersion {
                     version: ver.clone(),
                     mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
