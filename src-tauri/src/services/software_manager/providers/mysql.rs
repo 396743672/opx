@@ -91,6 +91,33 @@ impl SoftwareProvider for MySqlProvider {
         }
     }
 
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // ponytail: 抓取 MySQL 下载页面的 LTS 版本列表
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build().ok()?;
+        let html = client.get("https://dev.mysql.com/downloads/mysql/")
+            .header("User-Agent", "OPX").send().ok()?.text().ok()?;
+
+        let re = regex::Regex::new(r#"<option value="(\d+\.\d+\.\d+)"[^>]*>"#).ok()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut versions = vec![];
+        for cap in re.captures_iter(&html) {
+            let ver = cap.get(1)?.as_str();
+            // ponytail: 只取 LTS：8.0.x 或 8.4.x
+            if !seen.contains(ver) && (ver.starts_with("8.0.") || ver.starts_with("8.4.")) {
+                seen.insert(ver.to_string());
+                let dl = format!("https://dev.mysql.com/get/Downloads/MySQL-{}/mysql-{}-winx64.zip", ver, ver);
+                versions.push(CatalogVersion {
+                    version: ver.to_string(),
+                    mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
+                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                });
+            }
+        }
+        if versions.is_empty() { None } else { Some(versions) }
+    }
+
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
         // extract_zip_flatten 已剥掉 mysql-{version}-winx64 顶层目录，
         // install_dir 即 MySQL 程序目录根，my.ini 直接放 install_dir
