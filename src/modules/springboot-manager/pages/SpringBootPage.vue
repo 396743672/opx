@@ -73,7 +73,7 @@
     <!-- Empty state -->
     <div v-else-if="filteredApps.length === 0">
       <EmptyState
-        icon="mdi:spring"
+        icon="mdi:leaf"
         :title="$t('comingSoon')"
         :description="$t('comingSoonDesc')"
       >

@@ -2,7 +2,7 @@
   <div class="rounded-lg border border-border bg-card p-4 shadow-card">
     <div class="flex items-center justify-between mb-2">
       <div class="font-semibold flex items-center gap-2">
-        <Icon icon="mdi:spring" class="text-green-500" />
+        <Icon icon="mdi:leaf" class="text-green-500" />
         {{ app.name }}
       </div>
       <span
