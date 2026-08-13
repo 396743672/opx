@@ -33,22 +33,21 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
     Ok(())
 }
 
-const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "OPX";
 
-/// 读取当前程序是否已注册开机自启（注册表 Run 项）
+/// 开机自启注册表 Run 键（与 cc-switch 等便携应用一致）
+fn run_key() -> String {
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run".to_string()
+}
+
+/// 读取当前程序是否已开机自启（注册表 Run 项含 OPX）
 #[tauri::command]
 pub fn get_autostart() -> bool {
-    let exe = std::env::current_exe().unwrap_or_default();
-    let exe_path = exe.to_string_lossy().replace('/', "\\");
     let out = std::process::Command::new("reg")
-        .args(["query", &format!("HKCU\\{}", RUN_KEY), "/v", RUN_VALUE])
+        .args(["query", &run_key(), "/v", RUN_VALUE])
         .output();
     match out {
-        Ok(o) => {
-            let text = String::from_utf8_lossy(&o.stdout).to_string();
-            text.contains(&exe_path)
-        }
+        Ok(o) => o.status.success(),
         Err(_) => false,
     }
 }
@@ -61,12 +60,11 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
     let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
     let exe_path = exe.to_string_lossy().replace('/', "\\");
-    let run_key = format!("HKCU\\{}", RUN_KEY);
 
     if enabled {
         let quoted = format!("\"{}\"", exe_path);
         let status = std::process::Command::new("reg")
-            .args(["add", &run_key, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f"])
+            .args(["add", &run_key(), "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f"])
             .status()
             .map_err(|e| format!("执行 reg add 失败: {}", e))?;
         if !status.success() {
@@ -74,7 +72,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         }
     } else {
         let _ = std::process::Command::new("reg")
-            .args(["delete", &run_key, "/v", RUN_VALUE, "/f"])
+            .args(["delete", &run_key(), "/v", RUN_VALUE, "/f"])
             .status();
     }
     Ok(())
