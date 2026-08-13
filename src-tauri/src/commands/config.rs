@@ -32,3 +32,50 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
     );
     Ok(())
 }
+
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "OPX";
+
+/// 读取当前程序是否已注册开机自启（注册表 Run 项）
+#[tauri::command]
+pub fn get_autostart() -> bool {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let exe_path = exe.to_string_lossy().replace('/', "\\");
+    let out = std::process::Command::new("reg")
+        .args(["query", &format!("HKCU\\{}", RUN_KEY), "/v", RUN_VALUE])
+        .output();
+    match out {
+        Ok(o) => {
+            let text = String::from_utf8_lossy(&o.stdout).to_string();
+            text.contains(&exe_path)
+        }
+        Err(_) => false,
+    }
+}
+
+/// 设置开机自启（写/删注册表 Run 项）
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+    let exe_path = exe.to_string_lossy().replace('/', "\\");
+    let run_key = format!("HKCU\\{}", RUN_KEY);
+
+    if enabled {
+        let quoted = format!("\"{}\"", exe_path);
+        let status = std::process::Command::new("reg")
+            .args(["add", &run_key, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f"])
+            .status()
+            .map_err(|e| format!("执行 reg add 失败: {}", e))?;
+        if !status.success() {
+            return Err("设置开机自启失败".to_string());
+        }
+    } else {
+        let _ = std::process::Command::new("reg")
+            .args(["delete", &run_key, "/v", RUN_VALUE, "/f"])
+            .status();
+    }
+    Ok(())
+}

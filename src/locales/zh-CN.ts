@@ -311,6 +311,8 @@ export default {
   warm: '暖色',
   auto: '跟随系统',
   closeWindowAction: '关闭窗口行为',
+  autoStartOnBoot: '开机自启',
+  autoStartOnBootDesc: 'Windows 启动时自动运行 OPX',
   minimizeToTray: '最小化到系统托盘',
   exitDirectly: '直接退出程序',
   about: '关于',

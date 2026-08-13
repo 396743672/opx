@@ -56,6 +56,17 @@
       </div>
     </div>
 
+    <!-- 开机自启 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
+      <CardHeader :title="$t('autoStartOnBoot')" hide-refresh />
+      <div class="space-y-4">
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="text-sm">{{ $t('autoStartOnBootDesc') }}</span>
+          <input v-model="autostartValue" type="checkbox" class="accent-primary w-4 h-4" @change="onToggleAutostart" />
+        </label>
+      </div>
+    </div>
+
     <!-- 下载代理 -->
     <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
       <CardHeader :title="$t('proxySettings')" hide-refresh />
@@ -86,8 +97,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from '@/stores/settings'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
@@ -102,6 +114,24 @@ const closeActionValue = ref<CloseWindowAction>(CloseWindowAction.CloseToTray)
 const askOnCloseValue = ref(true)
 const githubProxyValue = ref('')
 const proxyValue = ref('')
+const autostartValue = ref(false)
+
+onMounted(async () => {
+  try {
+    autostartValue.value = await invoke<boolean>('get_autostart')
+  } catch {
+    autostartValue.value = false
+  }
+})
+
+async function onToggleAutostart() {
+  try {
+    await invoke('set_autostart', { enabled: autostartValue.value })
+  } catch (e) {
+    console.error('set autostart failed:', e)
+    autostartValue.value = !autostartValue.value
+  }
+}
 
 watch(
   () => settingsStore.settings,

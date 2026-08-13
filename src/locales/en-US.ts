@@ -311,6 +311,8 @@ export default {
   warm: 'Warm',
   auto: 'Auto',
   closeWindowAction: 'Close Window Action',
+  autoStartOnBoot: 'Start on Boot',
+  autoStartOnBootDesc: 'Launch OPX automatically when Windows starts',
   minimizeToTray: 'Minimize to system tray',
   exitDirectly: 'Exit directly',
   about: 'About',
