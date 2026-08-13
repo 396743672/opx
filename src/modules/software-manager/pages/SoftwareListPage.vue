@@ -66,7 +66,7 @@
     <StartupSettingsDialog
       v-if="startupTarget"
       :software="startupTarget"
-      @close="startupTarget = null"
+      @close="onStartupSettingsClose"
     />
     <CustomStartCommandDialog
       v-if="customTarget"
@@ -251,6 +251,11 @@ function onConfig(item: InstalledSoftware) {
 
 function onStartupSettings(item: InstalledSoftware) {
   startupTarget.value = item
+}
+
+function onStartupSettingsClose() {
+  startupTarget.value = null
+  loadInstalled()
 }
 
 function onUninstall(item: InstalledSoftware) {

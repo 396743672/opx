@@ -163,6 +163,8 @@ pub fn run() {
             commands::system::system_history,
             commands::config::get_settings,
             commands::config::save_settings,
+            commands::config::get_autostart,
+            commands::config::set_autostart,
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,

@@ -22,7 +22,7 @@
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
         <span v-if="software.port" class="kv">
-          <Icon icon="mdi:ethernet-port" /> {{ $t('port') }} <b class="tnum">{{ software.port }}</b>
+          <Icon icon="mdi:lan" /> {{ $t('port') }} <b class="tnum">{{ software.port }}</b>
         </span>
       </div>
       <div v-if="software.last_error" class="error-text">

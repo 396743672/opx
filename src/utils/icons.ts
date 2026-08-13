@@ -3,4 +3,4 @@
 import { addCollection } from '@iconify/vue'
 import mdiIcons from '@/assets/mdi-icons.json'
 
-addCollection(mdiIcons as Parameters<typeof addCollection>[0])
+addCollection(mdiIcons as unknown as Parameters<typeof addCollection>[0])

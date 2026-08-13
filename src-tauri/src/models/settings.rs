@@ -27,8 +27,6 @@ pub struct AppSettings {
     pub close_window_action: CloseWindowAction,
     /// 关闭窗口时是否每次弹窗询问
     pub ask_on_close: bool,
-    pub register_as_system_service: bool,
-    pub auto_start_managed_services: bool,
     pub jre_default_id: Option<String>,
     /// GitHub 下载加速代理（如 https://ghfast.top），空=不使用
     pub github_proxy_url: String,
@@ -48,8 +46,6 @@ impl Default for AppSettings {
             auto_check_update: true,
             close_window_action: CloseWindowAction::default(),
             ask_on_close: true,
-            register_as_system_service: false,
-            auto_start_managed_services: true,
             jre_default_id: None,
             github_proxy_url: "https://ghfast.top".to_string(),
             proxy_url: String::new(),

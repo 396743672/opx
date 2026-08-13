@@ -38,15 +38,15 @@ OPX 是一个 Windows 桌面应用，用于管理本地开发环境中的基础�
 
 ## 支持管理的软件
 
-| 软件 | 版本管理 | 配置编辑 | 健康检查 | 离线包 |
-|------|---------|---------|---------|-------|
-| MySQL 8.x | ✅ 在线/离线 | ✅ 表单+源码 | ✅ TCP | ✅ |
-| Redis 7.x | ✅ 在线/离线 | ✅ 源码 | ✅ TCP | ✅ |
-| Nginx 1.x | ✅ 内置 | ✅ 源码 | ✅ HTTP | ❌ |
-| MinIO | ✅ 离线 | ❌ 无表单 | ✅ HTTP | ✅ |
-| JDK/JRE | ✅ 内置 | ❌ | ✅ Process | ✅ |
-| RustFS | ✅ 在线 | ❌ | ✅ TCP | ❌ |
-| 自定义软件 | ✅ 用户上传 | ✅ 自定义 | ✅ 自定义 | ❌ |
+| 软件 | 版本管理 | 配置编辑 | 健康检查 |
+|------|---------|---------|---------|
+| MySQL 8.x | ✅ 在线 | ✅ 表单+源码 | ✅ TCP |
+| Redis 7.x | ✅ 在线 | ✅ 源码 | ✅ TCP |
+| Nginx 1.x | ✅ 内置 | ✅ 源码 | ✅ HTTP |
+| MinIO | ✅ 在线 | ❌ 无表单 | ✅ HTTP |
+| JDK/JRE | ✅ 在线 | ❌ | ✅ Process |
+| RustFS | ✅ 在线 | ❌ | ✅ TCP |
+| 自定义软件 | ✅ 用户上传 | ✅ 自定义 | ✅ 自定义 |
 
 ## 技术栈
 
@@ -74,7 +74,6 @@ npm run tauri:build
 
 ### 软件管理
 - 内置软件仓库，支持在线获取版本列表和镜像切换
-- 离线内置包（MySQL、Redis、MinIO、JDK/JRE）无需网络即可安装
 - 启动/停止/重启，支持首次初始化（如 MySQL 自动执行 --initialize-insecure）
 - 配置编辑（表单模式 + 源码模式），保存后自动生效并 reload
 - 健康检查（TCP 端口探测 / HTTP 状态码 / 进程存活）
@@ -147,7 +146,7 @@ ___
 
 ## 打包步骤
 
-本项目用 Tauri v2 打包，`package.json` 已配置 `"tauri": "tauri"` 脚本，`tauri.conf.json` 中 `build.beforeBuildCommand = "npm run build"` 会在打包前自动执行前端构建（vue-tsc 类型检查 + vite 构建），`bundle.targets = "all"` 在 Windows 上生成 `.msi` 与 `-setup.exe` 安装包。
+本项目用 Tauri v2 打包，`package.json` 已配置 `"tauri": "tauri"` 脚本，`tauri.conf.json` 中 `build.beforeBuildCommand = "npm run build"` 会在打包前自动执行前端构建（vue-tsc 类型检查 + vite 构建），`bundle.targets = ["nsis"]` 在 Windows 上生成 `.exe` 安装包。
 
 ### 环境前置条件（Windows）
 - **Rust 工具链**：`rustup` 安装（https://rustup.rs/），`cargo --version` 可用

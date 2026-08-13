@@ -198,6 +198,8 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useSystemStore } from '@/stores/system'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
+import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { InstalledSoftware } from '@/models/software'
 import { SoftwareStatus } from '@/models/software'
 import type { SpringBootApp } from '@/models/springboot'
@@ -213,12 +215,18 @@ import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/f
 useI18n()
 const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
+const lifecycleStore = useLifecycleStore()
 
 const installedSoftware = ref<InstalledSoftware[]>([])
 const runningApps = ref<SpringBootApp[]>([])
+let unlistenSb: UnlistenFn | null = null
 
 const runningSoftware = computed(() =>
-  installedSoftware.value.filter(s => s.status === SoftwareStatus.Running)
+  installedSoftware.value.filter(s => {
+    const st = lifecycleStore.getStatus(s.id)
+    const status = st !== SoftwareStatus.Unknown ? st : s.status
+    return status === SoftwareStatus.Running
+  })
 )
 
 const systemInfo = computed(() => systemStore.systemInfo)
@@ -243,9 +251,17 @@ onMounted(async () => {
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
   }, 1000)
+  // ponytail: 监听启动/停止事件，运行列表实时刷新
+  await lifecycleStore.initListener()
+  unlistenSb = await listen('springboot-status-changed', async () => {
+    await sbStore.fetchApps()
+    runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
+  })
 })
 
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
+  lifecycleStore.destroyListener()
+  unlistenSb?.()
 })
 </script>

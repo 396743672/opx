@@ -32,3 +32,43 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
     );
     Ok(())
 }
+
+const RUN_VALUE: &str = "OPX";
+
+fn run_key() -> winreg::RegKey {
+    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
+        )
+        .expect("打开注册表 Run 键失败")
+}
+
+/// 读取当前程序是否已开机自启（注册表 Run 项含 OPX）
+#[tauri::command]
+pub fn get_autostart() -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
+    run_key().get_value::<String, _>(RUN_VALUE).is_ok()
+}
+
+/// 设置开机自启（写/删注册表 Run 项，直连 WinAPI 无子进程）
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+    let exe_path = exe.to_string_lossy().replace('/', "\\");
+    let key = run_key();
+
+    if enabled {
+        let quoted = format!("\"{}\"", exe_path);
+        key.set_value(RUN_VALUE, &quoted)
+            .map_err(|e| format!("写入注册表失败: {}", e))?;
+    } else {
+        let _ = key.delete_value(RUN_VALUE);
+    }
+    Ok(())
+}
