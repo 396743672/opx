@@ -16,8 +16,6 @@ export interface AppSettings {
   auto_check_update: boolean
   close_window_action: CloseWindowAction
   ask_on_close: boolean
-  register_as_system_service: boolean
-  auto_start_managed_services: boolean
   jre_default_id: string | null
   github_proxy_url: string
   proxy_url: string
