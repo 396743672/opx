@@ -10,6 +10,9 @@ pub mod redis;
 pub mod nginx;
 pub mod minio;
 pub mod rustfs;
+pub mod postgresql;
+pub mod mongodb;
+pub mod consul;
 pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
@@ -183,5 +186,8 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(nginx::NginxProvider::new()),
         Box::new(minio::MinioProvider::new()),
         Box::new(rustfs::RustfsProvider::new()),
+        Box::new(postgresql::PostgreSqlProvider::new()),
+        Box::new(mongodb::MongoDbProvider::new()),
+        Box::new(consul::ConsulProvider::new()),
     ]
 }

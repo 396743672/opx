@@ -18,6 +18,9 @@ pub fn detect_format(file_path: &Path) -> ConfigFormat {
     let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.ends_with(".ini") || name == "my.cnf" {
         ConfigFormat::Ini
+    } else if name == "postgresql.conf" {
+        // PostgreSQL 配置是 `key = value`（等号分隔、无 section），本质即 INI 语法
+        ConfigFormat::Ini
     } else if name == "redis.conf" {
         ConfigFormat::KeyValue
     } else if name.ends_with(".conf") {
@@ -395,5 +398,37 @@ fn value_to_string(v: &serde_json::Value) -> String {
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_postgresql_conf_as_ini() {
+        // 无论传入相对文件名还是拼接 install_path 后的完整路径，都应路由到 Ini
+        assert_eq!(detect_format(Path::new("postgresql.conf")), ConfigFormat::Ini);
+        assert_eq!(detect_format(Path::new("D:/pg/data/postgresql.conf")), ConfigFormat::Ini);
+    }
+
+    #[test]
+    fn detect_redis_conf_remains_keyvalue() {
+        assert_eq!(detect_format(Path::new("redis.conf")), ConfigFormat::KeyValue);
+    }
+
+    #[test]
+    fn ini_reads_pg_equals_style_and_writes_compatible() {
+        // PG 配置 `key = value`（等号两侧带空格）能被 Ini 读器正确解析
+        let content = "# Connection Settings\nport = 5432\nlisten_addresses = 'localhost'\n";
+        assert_eq!(ini_lookup(content, None, "port"), serde_json::json!(5432));
+        assert_eq!(
+            ini_lookup(content, None, "listen_addresses"),
+            serde_json::json!("'localhost'")
+        );
+        // 写回产出 `port=15432`（无空格），PG 的解析器同时接受两种写法
+        let out = ini_upsert(content, None, "port", &serde_json::json!(15432)).unwrap();
+        assert!(out.contains("port=15432"), "写入后应含 port=15432, got:\n{}", out);
+        assert_eq!(ini_lookup(&out, None, "port"), serde_json::json!(15432));
     }
 }
