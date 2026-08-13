@@ -142,6 +142,7 @@ function categoryName(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Runtime) return t('categoryRuntime')
   if (cat === SoftwareCategory.Cache) return t('categoryCache')
   if (cat === SoftwareCategory.WebServer) return t('categoryWebServer')
+  if (cat === SoftwareCategory.Registry) return t('categoryRegistry')
   return cat
 }
 
@@ -150,6 +151,7 @@ function categoryIcon(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Runtime) return 'mdi:play-circle'
   if (cat === SoftwareCategory.Cache) return 'mdi:database'
   if (cat === SoftwareCategory.WebServer) return 'mdi:web'
+  if (cat === SoftwareCategory.Registry) return 'mdi:hexagon-multiple'
   return 'mdi:package-variant-closed'
 }
 
