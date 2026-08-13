@@ -1,5 +1,5 @@
 // 从完整 MDI 图标集提取应用实际使用的图标，生成精简离线子集。
-// 自动扫描 src/ 下所有 .vue/.ts 文件中的 "mdi:xxx" 用法，无需手动维护列表。
+// 自动扫描 src/ 和 src-tauri/src/（后端 catalog 图标）中的 "mdi:xxx" 用法。
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -7,21 +7,21 @@ import { dirname, resolve } from 'node:path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
 
-// 递归收集 src/ 下所有 .vue/.ts 文件
+// 递归收集目录下 .vue/.ts/.rs 文件
 function walk(dir) {
   let files = []
   for (const name of readdirSync(dir)) {
     const p = resolve(dir, name)
     if (statSync(p).isDirectory()) files = files.concat(walk(p))
-    else if (name.endsWith('.vue') || name.endsWith('.ts')) files.push(p)
+    else if (name.endsWith('.vue') || name.endsWith('.ts') || name.endsWith('.rs')) files.push(p)
   }
   return files
 }
 
-// 扫描源码里的 icon 用法：icon="mdi:xxx"、:icon="'mdi:xxx'"、:icon="mdi:xxx"、icon: "mdi:xxx"
+// 扫描源码里的 icon 用法：icon="mdi:xxx"、:icon="'mdi:xxx'"、icon: "mdi:xxx"、catalog 里的 icon 字段
 const iconRe = /mdi:([\w-]+)/g
 const USED_ICONS = [...new Set(
-  walk(resolve(root, 'src')).flatMap((f) => {
+  walk(resolve(root, 'src')).concat(walk(resolve(root, 'src-tauri/src'))).flatMap((f) => {
     const text = readFileSync(f, 'utf8')
     const found = []
     let m
