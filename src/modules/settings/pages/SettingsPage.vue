@@ -6,11 +6,13 @@
       :subtitle="$t('appearance')"
     />
 
-    <!-- 外观 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader :title="$t('appearance')" hide-refresh />
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
+    <div class="rounded-xl border border-border bg-card shadow-card overflow-hidden">
+      <!-- 外观 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('appearance') }}</h3>
+      </div>
+      <div class="px-5 pb-1 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('themeLabel') }}</span>
           <select
             v-model="themeValue"
@@ -22,7 +24,7 @@
             <option value="dark">{{ $t('dark') }}</option>
           </select>
         </div>
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('languageLabel') }}</span>
           <select
             v-model="languageValue"
@@ -33,13 +35,15 @@
           </select>
         </div>
       </div>
-    </div>
 
-    <!-- 关闭行为 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader :title="$t('closeBehavior')" hide-refresh />
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
+      <div class="border-t border-border" />
+
+      <!-- 关闭行为 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('closeWindowAction') }}</h3>
+      </div>
+      <div class="px-5 pb-1 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('closeBehavior') }}</span>
           <select
             v-model="closeActionValue"
@@ -49,49 +53,56 @@
             <option value="Exit">{{ $t('exitProgram') }}</option>
           </select>
         </div>
-        <label class="flex items-center justify-between cursor-pointer">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('askOnClose') }}</span>
-          <input v-model="askOnCloseValue" type="checkbox" class="accent-primary w-4 h-4" />
-        </label>
+          <SwitchBtn v-model="askOnCloseValue" />
+        </div>
       </div>
-    </div>
 
-    <!-- 开机自启 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader :title="$t('autoStartOnBoot')" hide-refresh />
-      <div class="space-y-4">
-        <label class="flex items-center justify-between cursor-pointer">
+      <div class="border-t border-border" />
+
+      <!-- 开机自启 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('autoStartOnBoot') }}</h3>
+      </div>
+      <div class="px-5 pb-1 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('autoStartOnBootDesc') }}</span>
-          <input v-model="autostartValue" type="checkbox" class="accent-primary w-4 h-4" @change="onToggleAutostart" />
-        </label>
+          <SwitchBtn v-model="autostartValue" @update:modelValue="onToggleAutostart" />
+        </div>
       </div>
-    </div>
 
-    <!-- 下载代理 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader :title="$t('proxySettings')" hide-refresh />
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
+      <div class="border-t border-border" />
+
+      <!-- 下载代理 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('proxySettings') }}</h3>
+      </div>
+      <div class="px-5 pb-4 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('githubProxy') }}</span>
           <div class="flex gap-2 items-center">
-            <input v-model="githubProxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" :placeholder="$t('proxyDefaultHint')" />
-            <button class="btn text-xs h-7 px-2" @click="githubProxyValue = 'https://ghfast.top'" :title="$t('resetDefault')">↺</button>
+            <input
+              v-model="githubProxyValue"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+              :placeholder="$t('proxyDefaultHint')"
+            />
+            <button
+              class="btn text-xs h-7 px-2"
+              @click="githubProxyValue = 'https://ghfast.top'"
+              :title="$t('resetDefault')"
+            >↺</button>
           </div>
         </div>
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-4 py-3">
           <span class="text-sm">{{ $t('globalProxy') }}</span>
-          <input v-model="proxyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" :placeholder="$t('proxyEmptyDirect')" />
+          <input
+            v-model="proxyValue"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            :placeholder="$t('proxyEmptyDirect')"
+          />
         </div>
       </div>
-    </div>
-
-    <div class="flex justify-end">
-      <button
-        class="px-4 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
-        @click="save"
-      >
-        {{ $t('save') }}
-      </button>
     </div>
   </div>
 </template>
@@ -103,7 +114,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from '@/stores/settings'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
-import CardHeader from '@/components/CardHeader.vue'
+import SwitchBtn from '@/components/SwitchBtn.vue'
 
 useI18n()
 const settingsStore = useSettingsStore()
@@ -124,12 +135,12 @@ onMounted(async () => {
   }
 })
 
-async function onToggleAutostart() {
+async function onToggleAutostart(v: boolean) {
   try {
-    await invoke('set_autostart', { enabled: autostartValue.value })
+    await invoke('set_autostart', { enabled: v })
   } catch (e) {
     console.error('set autostart failed:', e)
-    autostartValue.value = !autostartValue.value
+    autostartValue.value = !v
   }
 }
 
@@ -155,6 +166,16 @@ watch(languageValue, (lang) => {
 watch(themeValue, (mode) => {
   settingsStore.setTheme(mode)
 })
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+watch(
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue],
+  () => {
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(save, 400)
+  }
+)
 
 async function save() {
   if (!settingsStore.settings) return
