@@ -33,6 +33,7 @@ export enum SoftwareCategory {
   Runtime = 'Runtime',
   Cache = 'Cache',
   WebServer = 'WebServer',
+  Registry = 'Registry',
 }
 
 export interface CatalogEntry {

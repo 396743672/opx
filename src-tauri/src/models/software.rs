@@ -43,6 +43,7 @@ pub enum SoftwareCategory {
     Runtime,
     Cache,
     WebServer,
+    Registry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
