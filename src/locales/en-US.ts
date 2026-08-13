@@ -160,6 +160,9 @@ export default {
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO Official',
   rustfsOfficial: 'RustFS Official',
+  postgresqlOfficial: 'PostgreSQL Official',
+  mongodbOfficial: 'MongoDB Official',
+  consulOfficial: 'HashiCorp Official',
   builtinMissing: 'Builtin package missing, please reinstall the app',
   builtinCorrupted: 'Builtin package verification failed, file may be corrupted',
   retry: 'Retry',
@@ -167,6 +170,8 @@ export default {
   categoryRuntime: 'Runtime',
   categoryCache: 'Cache',
   categoryWebServer: 'Web Server',
+  categoryRegistry: 'Registry',
+  registry: 'Registry',
 
   // catalog descriptions
   catalogDesc: {
@@ -177,6 +182,9 @@ export default {
     nginx: 'High-perf HTTP Server & Reverse Proxy',
     minio: 'S3-Compatible Object Storage',
     rustfs: 'Rust-based S3-Compatible Object Storage',
+    postgresql: 'Relational database (PostgreSQL)',
+    mongodb: 'Document database',
+    consul: 'Service registry & discovery',
   },
 
   // SpringBoot
@@ -437,5 +445,10 @@ export default {
     secretKey: 'Secret Key',
     initPassword: 'Init Password',
     initPasswordDesc: 'Sets root password on first init only; not saved; disabled after init',
+    listenAddresses: 'Listen Addresses',
+    sharedBuffers: 'Shared Buffers',
+    bindIp: 'Bind IP',
+    httpPort: 'HTTP Port',
+    consulMode: 'Run Mode',
   }
 }

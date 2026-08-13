@@ -160,6 +160,9 @@ export default {
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO 官方',
   rustfsOfficial: 'RustFS 官方',
+  postgresqlOfficial: 'PostgreSQL 官方',
+  mongodbOfficial: 'MongoDB 官方',
+  consulOfficial: 'HashiCorp 官方',
   builtinMissing: '内置安装包缺失，请重新安装应用',
   builtinCorrupted: '内置安装包校验失败，文件可能损坏',
   retry: '重试',
@@ -167,6 +170,8 @@ export default {
   categoryRuntime: '运行时',
   categoryCache: '缓存',
   categoryWebServer: 'Web 服务器',
+  categoryRegistry: '注册中心',
+  registry: '注册中心',
 
   // 软件仓库描述
   catalogDesc: {
@@ -177,6 +182,9 @@ export default {
     nginx: '高性能 HTTP 服务器与反向代理',
     minio: 'S3 兼容对象存储',
     rustfs: 'Rust 实现的 S3 兼容对象存储',
+    postgresql: '关系型数据库（PostgreSQL）',
+    mongodb: '文档数据库',
+    consul: '服务注册与发现',
   },
 
   // SpringBoot
@@ -437,5 +445,10 @@ export default {
     secretKey: 'Secret Key',
     initPassword: '初始化密码',
     initPasswordDesc: '仅首次初始化时设置 root 密码，不保存，初始化后禁用',
+    listenAddresses: '监听地址',
+    sharedBuffers: '共享缓冲区',
+    bindIp: '绑定地址',
+    httpPort: 'HTTP 端口',
+    consulMode: '运行模式',
   }
 }
