@@ -20,11 +20,20 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Icon } from '@iconify/vue'
+import { useI18n } from 'vue-i18n'
 import { useLifecycleStore } from '../modules/software-manager/stores/lifecycle'
 
+const { t } = useI18n()
 const lifecycleStore = useLifecycleStore()
-const message = lifecycleStore.errorMessage
+
+// 后端错误可能带 "i18n:key" 前缀：检测并调 t() 转译（同 InstallDialog 的 mirrorName 惯例）
+const message = computed(() => {
+  const raw = lifecycleStore.errorMessage
+  if (!raw) return ''
+  return raw.startsWith('i18n:') ? t(raw.slice(5)) : raw
+})
 
 function close() {
   lifecycleStore.clearErrorMessage()

@@ -175,10 +175,8 @@ impl SoftwareProvider for NacosProvider {
                     .map(|s| s.success())
                     .unwrap_or(false);
                 if !ok {
-                    return Err(anyhow::anyhow!(
-                        "MySQL 数据库未运行或连接失败（{}:{}），请先启动 MySQL 后再启动 Nacos",
-                        host, mysql_port
-                    ));
+                    // i18n: 前缀由前端 ErrorDialog 检测并调 t() 转译
+                    return Err(anyhow::anyhow!("i18n:nacosMysqlNotRunning"));
                 }
             }
 

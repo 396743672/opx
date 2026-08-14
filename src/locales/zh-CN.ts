@@ -477,5 +477,6 @@ export default {
     nacosMysqlUserDesc: '数据库模式时使用的 MySQL 账号',
     nacosMysqlPassword: 'MySQL 密码',
     nacosMysqlPasswordDesc: '数据库模式时使用的 MySQL 密码',
+    nacosMysqlNotRunning: 'MySQL 数据库未运行或连接失败，请先启动 MySQL 后再启动 Nacos',
   }
 }
