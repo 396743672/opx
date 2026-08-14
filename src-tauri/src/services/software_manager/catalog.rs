@@ -109,3 +109,102 @@ pub fn merge_versions(
     }
     merged
 }
+
+/// 以 builtin 为底，用 cache 补齐 builtin 缺失的 key。
+/// builtin（代码定义的真相）优先：同 key 用 builtin 的 entry，避免旧缓存
+/// 把新增/更新后的软件覆盖回过期版本。cache 中只补充 builtin 没有的额外 key
+/// （典型来自远程 catalog.json 合并历史）。旧缓存漏了 builtin 新增 key 时，
+/// 新 key 由 builtin 补回 —— 修复「新增内置 provider 后旧缓存不失效」的根因。
+pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
+    let cache = match cache {
+        Some(c) => c,
+        None => return builtin,
+    };
+    let mut builtin_map: HashMap<String, _> = builtin
+        .entries
+        .into_iter()
+        .map(|e| (e.key.clone(), e))
+        .collect();
+    for cache_entry in cache.entries {
+        builtin_map
+            .entry(cache_entry.key.clone())
+            .or_insert(cache_entry);
+    }
+    Catalog {
+        entries: builtin_map.into_values().collect(),
+        updated_at: builtin.updated_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::software::{CatalogEntry, SoftwareCategory};
+
+    fn entry(key: &str) -> CatalogEntry {
+        CatalogEntry {
+            key: key.to_string(),
+            name: key.to_string(),
+            description: String::new(),
+            description_i18n: None,
+            category: SoftwareCategory::Database,
+            icon: "mdi:database".to_string(),
+            versions: vec![],
+            default_version: String::new(),
+        }
+    }
+
+    fn catalog(keys: &[&str]) -> Catalog {
+        Catalog {
+            entries: keys.iter().map(|k| entry(k)).collect(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn merge_with_builtin_returns_builtin_when_cache_none() {
+        let builtin = catalog(&["mysql", "redis"]);
+        let merged = merge_with_builtin(builtin.clone(), None);
+        let keys: Vec<String> = merged.entries.iter().map(|e| e.key.clone()).collect();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"mysql".to_string()));
+        assert!(keys.contains(&"redis".to_string()));
+    }
+
+    #[test]
+    fn merge_with_builtin_adds_builtin_new_keys_missing_from_cache() {
+        // builtin 新增了 postgresql/mongodb/consul，旧缓存只有 7 个旧软件
+        let builtin = catalog(&["mysql", "jre", "jdk", "redis", "nginx", "minio", "rustfs", "postgresql", "mongodb", "consul"]);
+        let cache = catalog(&["mysql", "jre", "jdk", "redis", "nginx", "minio", "rustfs"]);
+        let merged = merge_with_builtin(builtin, Some(cache));
+        let keys: Vec<String> = merged.entries.iter().map(|e| e.key.clone()).collect();
+        assert!(keys.contains(&"postgresql".to_string()), "新增 key 必须由 builtin 补回");
+        assert!(keys.contains(&"mongodb".to_string()));
+        assert!(keys.contains(&"consul".to_string()));
+        assert_eq!(keys.len(), 10);
+    }
+
+    #[test]
+    fn merge_with_builtin_builtin_wins_on_same_key() {
+        // builtin 与 cache 同名 key 时用 builtin 的 entry（避免旧缓存覆盖回过期版本）
+        let mut builtin_entry = entry("mysql");
+        builtin_entry.icon = "mdi:new-icon".to_string();
+        let builtin = Catalog { entries: vec![builtin_entry], updated_at: None };
+        let mut cache_entry = entry("mysql");
+        cache_entry.icon = "mdi:old-icon".to_string();
+        let cache = Catalog { entries: vec![cache_entry], updated_at: None };
+        let merged = merge_with_builtin(builtin, Some(cache));
+        assert_eq!(merged.entries[0].icon, "mdi:new-icon", "builtin 应优先于缓存");
+    }
+
+    #[test]
+    fn merge_with_builtin_adds_cache_only_keys() {
+        // cache 中有 builtin 没有的 key（来自远程合并历史）应保留
+        let builtin = catalog(&["mysql"]);
+        let cache = catalog(&["mysql", "custom-remote"]);
+        let merged = merge_with_builtin(builtin, Some(cache));
+        let keys: Vec<String> = merged.entries.iter().map(|e| e.key.clone()).collect();
+        assert!(keys.contains(&"custom-remote".to_string()));
+        assert_eq!(keys.len(), 2);
+    }
+}
