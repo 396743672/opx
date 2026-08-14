@@ -70,7 +70,7 @@ impl SoftwareProvider for MongoDbProvider {
         let _ = std::fs::create_dir_all(log_path.parent().unwrap());
 
         Ok(StartCommand {
-            program: "mongod.exe".to_string(),
+            program: "bin/mongod.exe".to_string(),
             args: vec![
                 "--dbpath".to_string(), abs_dbpath,
                 "--bind_ip".to_string(), bind_ip,
@@ -161,7 +161,7 @@ mod tests {
             custom_start_command: None, init_password: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
-        assert_eq!(cmd.program, "mongod.exe");
+        assert_eq!(cmd.program, "bin/mongod.exe");
         assert!(cmd.args.iter().any(|a| a == "--port"));
         assert!(cmd.args.iter().any(|a| a == "27018"));
         assert!(cmd.args.iter().any(|a| a == "--bind_ip"));
