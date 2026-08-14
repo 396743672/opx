@@ -62,14 +62,32 @@ impl SoftwareProvider for PostgreSqlProvider {
         let working_dir = PathBuf::from(&ctx.install_path);
         let data_dir = working_dir.join("data");
 
+        // 首次初始化：initdb -D data -U postgres --encoding=UTF8
+        // 用户填了初始化密码 → 写临时 pwfile 到 app tmp，用 --pwfile + scram-sha-256；
+        // 没填 → 保持 --auth=trust（本地开发无密码登录）
+        let mut init_args = vec![
+            "-D".to_string(), data_dir.to_string_lossy().to_string(),
+            "-U".to_string(), "postgres".to_string(),
+            "--encoding=UTF8".to_string(),
+        ];
+        let pwfile_path = crate::utils::paths::tmp_dir().join(format!("pgpass-{}.tmp", ctx.installed_id));
+        let _ = std::fs::remove_file(&pwfile_path);
+        if let Some(pw) = &ctx.init_password {
+            if !pw.is_empty() {
+                std::fs::write(&pwfile_path, pw)?;
+                init_args.push(format!("--pwfile={}", pwfile_path.to_string_lossy()));
+                init_args.push("--auth=scram-sha-256".to_string());
+                init_args.push("--auth-host=scram-sha-256".to_string());
+            } else {
+                init_args.push("--auth=trust".to_string());
+            }
+        } else {
+            init_args.push("--auth=trust".to_string());
+        }
+
         let init_command = StartCommand {
             program: "bin/initdb.exe".to_string(),
-            args: vec![
-                "-D".to_string(), data_dir.to_string_lossy().to_string(),
-                "-U".to_string(), "postgres".to_string(),
-                "--auth=trust".to_string(),
-                "--encoding=UTF8".to_string(),
-            ],
+            args: init_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
             creation_flags: CREATE_NO_WINDOW,
@@ -130,8 +148,17 @@ impl SoftwareProvider for PostgreSqlProvider {
                     section: None,
                     description_i18n: None,
                 },
+                ConfigField {
+                    key: "init_password".to_string(),
+                    label_i18n: "configField.initPassword".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.initPasswordDesc".to_string()),
+                },
             ],
-            ephemeral_keys: vec![],
+            // init_password 为一次性敏感字段：仅首次初始化消费，绝不落盘
+            ephemeral_keys: vec!["init_password".to_string()],
         })
     }
 
@@ -213,5 +240,41 @@ mod tests {
         assert!(keys.contains(&"port"));
         assert!(keys.contains(&"shared_buffers"));
         assert!(keys.contains(&"max_connections"));
+    }
+
+    #[test]
+    fn start_command_with_init_password_uses_pwfile_and_scram() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({}), custom_start_command: None,
+            init_password: Some("secret".into()),
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.starts_with("--pwfile=")),
+            "设置密码时 initdb 应带 --pwfile");
+        assert!(init.init_command.args.iter().any(|a| a.contains("scram")),
+            "设置密码时认证应使用 scram-sha-256");
+    }
+
+    #[test]
+    fn start_command_without_password_keeps_trust() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({}), custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.contains("trust")),
+            "未设密码时应保持 --auth=trust");
+    }
+
+    #[test]
+    fn config_schema_has_init_password_ephemeral() {
+        let schema = provider().config_schema().unwrap();
+        // 断言 init_password 字段存在（find 不到则 unwrap panic）
+        schema.fields.iter().find(|f| f.key == "init_password").unwrap();
+        assert!(schema.ephemeral_keys.contains(&"init_password".to_string()),
+            "init_password 必须是 ephemeral（不落盘）");
     }
 }
