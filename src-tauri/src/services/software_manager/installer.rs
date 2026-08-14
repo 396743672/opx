@@ -51,24 +51,52 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
 // ponytail: 节流 emit，避免大文件每 chunk 刷屏 IPC
 struct ThrottledEmitter {
     last_emit: std::time::Instant,
-    last_percent: i64,
 }
 
 impl ThrottledEmitter {
     fn new() -> Self {
-        Self { last_emit: std::time::Instant::now(), last_percent: -1 }
+        Self { last_emit: std::time::Instant::now() }
     }
 
-    fn should_emit(&mut self, percent: i64) -> bool {
-        let changed = percent != self.last_percent;
+    fn should_emit(&mut self, _percent: i64) -> bool {
+        // ponytail: 纯 timeout 节流——最多每 200ms emit 一次。
+        // 不因 percent 变化而额外触发：解压大 zip 时每文件 percent 都变，
+        // 若按变化 emit 会刷屏 IPC 卡死前端（见 BUG2 修复）。
         let timeout = self.last_emit.elapsed().as_millis() >= 200;
-        if timeout || changed {
+        if timeout {
             self.last_emit = std::time::Instant::now();
-            self.last_percent = percent;
             true
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn throttle_limits_emit_rate_not_percent_changes() {
+        let mut t = ThrottledEmitter::new();
+        // 首次调用：timeout 未到（刚 new），应不 emit
+        assert!(!t.should_emit(1), "首次调用不应 emit");
+        // 连续快速变化 percent：不应 emit（未到 200ms）
+        assert!(!t.should_emit(2));
+        assert!(!t.should_emit(3));
+        assert!(!t.should_emit(100));
+        // 等到超过 200ms 后：应 emit
+        std::thread::sleep(std::time::Duration::from_millis(210));
+        assert!(t.should_emit(100), "超过 200ms 应 emit");
+    }
+
+    #[test]
+    fn throttle_emits_after_timeout_even_same_percent() {
+        let mut t = ThrottledEmitter::new();
+        std::thread::sleep(std::time::Duration::from_millis(210));
+        assert!(t.should_emit(50), "超过 200ms 即使 percent 未变也应 emit");
+        // 刚 emit 后立即再调：不应 emit
+        assert!(!t.should_emit(50));
     }
 }
 
