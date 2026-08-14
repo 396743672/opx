@@ -12,6 +12,9 @@ use super::{
 };
 
 #[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
@@ -153,6 +156,32 @@ impl SoftwareProvider for NacosProvider {
                 .ok_or_else(|| anyhow::anyhow!("请先安装 MySQL（数据库模式需要）"))?;
             let mysql = std::path::Path::new(mysql_install)
                 .join("bin").join(if cfg!(windows) { "mysql.exe" } else { "mysql" });
+
+            // 启动前探活：检测 MySQL 是否在运行。连接失败返回明确提示，
+            // 避免用户看到 Nacos 启动失败或建库报错的晦涩信息。
+            // 用 -e "SELECT 1" 只验证连接，不做任何写操作。
+            {
+                let mut probe = std::process::Command::new(&mysql);
+                probe
+                    .args(["-h", &host, "-P", &mysql_port.to_string(), "-u", &user])
+                    .args(["--connect-timeout=3", "-e", "SELECT 1"])
+                    .env("MYSQL_PWD", &password);
+                #[cfg(windows)]
+                probe.creation_flags(CREATE_NO_WINDOW);
+                let ok = probe
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if !ok {
+                    return Err(anyhow::anyhow!(
+                        "MySQL 数据库未运行或连接失败（{}:{}），请先启动 MySQL 后再启动 Nacos",
+                        host, mysql_port
+                    ));
+                }
+            }
+
             let schema_path = working_dir.join("conf").join("mysql-schema.sql");
             if !schema_path.exists() {
                 return Err(anyhow::anyhow!("Nacos 缺少 mysql-schema.sql，请重新安装"));
