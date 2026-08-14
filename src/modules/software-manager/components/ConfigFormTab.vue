@@ -56,6 +56,7 @@
             tabindex="0"
             @click="formData[field.key] = !formData[field.key]"
             @keydown.enter.prevent="formData[field.key] = !formData[field.key]"
+            @keydown.space.prevent="formData[field.key] = !formData[field.key]"
           ></div>
           <span class="switch-label">{{ $t('enabled') }}</span>
         </div>
@@ -247,6 +248,10 @@ defineExpose({ formData })
 }
 .switch-field .toggle.off {
   background: var(--color-border);
+}
+.switch-field .toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 .switch-field .toggle.off::after {
   left: 2px;
