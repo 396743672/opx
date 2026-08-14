@@ -65,14 +65,20 @@ impl SoftwareProvider for PostgreSqlProvider {
         // 首次初始化：initdb -D data -U postgres --encoding=UTF8
         // 用户填了初始化密码 → 写临时 pwfile 到 app tmp，用 --pwfile + scram-sha-256；
         // 没填 → 保持 --auth=trust（本地开发无密码登录）
+        // initialized 门控（对齐 mysql.rs）：仅「未初始化」时消费 init_password；
+        // 已初始化后重传密码不消费（first_run_init 会被跳过），并防御性清理残留 pwfile。
         let mut init_args = vec![
             "-D".to_string(), data_dir.to_string_lossy().to_string(),
             "-U".to_string(), "postgres".to_string(),
             "--encoding=UTF8".to_string(),
         ];
         let pwfile_path = crate::utils::paths::tmp_dir().join(format!("pgpass-{}.tmp", ctx.installed_id));
-        let _ = std::fs::remove_file(&pwfile_path);
-        if let Some(pw) = &ctx.init_password {
+        let initialized = ctx.config.get("initialized").and_then(|v| v.as_bool()).unwrap_or(false);
+        if initialized {
+            // 已初始化不应再有初始化密码临时文件，删除可能残留的明文文件
+            let _ = std::fs::remove_file(&pwfile_path);
+            init_args.push("--auth=trust".to_string());
+        } else if let Some(pw) = &ctx.init_password {
             if !pw.is_empty() {
                 std::fs::write(&pwfile_path, pw)?;
                 init_args.push(format!("--pwfile={}", pwfile_path.to_string_lossy()));
@@ -255,6 +261,7 @@ mod tests {
             "设置密码时 initdb 应带 --pwfile");
         assert!(init.init_command.args.iter().any(|a| a.contains("scram")),
             "设置密码时认证应使用 scram-sha-256");
+        assert!(!init.init_command.args.iter().any(|a| a.contains("trust")), "scram 时不应有 trust");
     }
 
     #[test]
@@ -267,6 +274,35 @@ mod tests {
         let init = cmd.first_run_init.as_ref().unwrap();
         assert!(init.init_command.args.iter().any(|a| a.contains("trust")),
             "未设密码时应保持 --auth=trust");
+        assert!(!init.init_command.args.iter().any(|a| a.starts_with("--pwfile=")), "trust 时不应有 pwfile");
+    }
+
+    #[test]
+    fn start_command_empty_password_keeps_trust() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({}), custom_start_command: None,
+            init_password: Some(String::new()),
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.contains("trust")));
+        assert!(!init.init_command.args.iter().any(|a| a.starts_with("--pwfile=")));
+    }
+
+    #[test]
+    fn start_command_initialized_keeps_trust_and_no_pwfile() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({ "initialized": true }), custom_start_command: None,
+            init_password: Some("secret".into()),
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.contains("trust")),
+            "已初始化后重传密码不应消费，保持 trust");
+        assert!(!init.init_command.args.iter().any(|a| a.starts_with("--pwfile=")),
+            "已初始化后不应再写 pwfile");
     }
 
     #[test]

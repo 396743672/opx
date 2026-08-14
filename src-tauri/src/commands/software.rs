@@ -23,8 +23,11 @@ use crate::services::software_manager::providers::{ConfigContext, HealthContext,
 pub async fn list_available_software(
     manager: State<'_, Arc<SoftwareManager>>,
 ) -> Result<Vec<CatalogEntry>, String> {
-    // ponytail: 优先用缓存，缓存不存在时用内置
-    let catalog = catalog::load_catalog_cache().unwrap_or_else(|| catalog::build_builtin_catalog());
+    // ponytail: 以 builtin 为底，用旧缓存补齐 builtin 没有的额外 key。
+    // builtin（含新增 provider）优先，避免旧缓存把新增内置软件覆盖回过期版本。
+    let builtin = catalog::build_builtin_catalog();
+    let cached = catalog::load_catalog_cache();
+    let catalog = catalog::merge_with_builtin(builtin, cached);
     manager.set_catalog(catalog);
     Ok(manager.get_catalog().entries)
 }
@@ -353,6 +356,25 @@ pub async fn do_start_software(
         .find_map(|a| a.strip_prefix("--init-file="))
         .map(std::path::PathBuf::from);
 
+    // 捕获 PostgreSQL initdb 通过 --pwfile 注入的临时明文密码文件路径。
+    // PG 的 initdb 是短命进程：run_first_run_init 同步阻塞等它退出后 pwfile 必已读取，
+    // 返回后立即删除即可（不复用 MySQL 的延迟删除时机）。
+    let init_pwfile_path: Option<PathBuf> = cmd
+        .first_run_init
+        .as_ref()
+        .and_then(|fri| {
+            fri.init_command
+                .args
+                .iter()
+                .find_map(|a| a.strip_prefix("--pwfile="))
+        })
+        .map(std::path::PathBuf::from);
+    let cleanup_pwfile = || {
+        if let Some(ref p) = init_pwfile_path {
+            let _ = std::fs::remove_file(p);
+        }
+    };
+
     // 首次初始化（如 mysqld --initialize-insecure）
     // 用 take() 取出所有权，避免后续 spawn_process(cmd) 时 cmd 仍被借用
     if let Some(fri) = cmd.first_run_init.take() {
@@ -369,6 +391,8 @@ pub async fn do_start_software(
                 data_dir = %data_dir.display(),
                 "already initialized, skipping first_run_init"
             );
+            // 防御性清理：已初始化不应再有 PG pwfile 明文残留
+            cleanup_pwfile();
         } else {
             // 未初始化：若 data 目录非空（上次 init 超时/kill 残留的半初始化文件，
             // 即 RC3 链式放大），先彻底清空再重新初始化，避免用损坏的 data 目录
@@ -435,6 +459,7 @@ pub async fn do_start_software(
                         None,
                         Some(msg),
                     );
+                    cleanup_pwfile();
                     return Err(e);
                 }
                 Err(e) => {
@@ -447,10 +472,14 @@ pub async fn do_start_software(
                         None,
                         Some(format!("{}", err)),
                     )?;
+                    cleanup_pwfile();
                     return Err(err);
                 }
             };
             let _ = output; // 暂不使用 stderr 输出（如 MySQL 临时密码），保留接口
+
+            // initdb 已退出（pwfile 必已读取），立即删除临时明文密码文件
+            cleanup_pwfile();
 
             // 标记 initialized = true
             let mut new_config = software.config.clone();
