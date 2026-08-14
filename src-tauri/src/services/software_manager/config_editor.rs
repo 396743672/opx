@@ -238,6 +238,9 @@ fn ini_upsert(
     }
 
     if !found {
+        // 空内容（len=0）时 start+1=1 越界，clamp 到 len 避免 panic。
+        // 场景：PG 首次初始化前 postgresql.conf 尚不存在，首次写配置为空内容。
+        let insert_at = insert_at.min(lines.len());
         lines.insert(insert_at, format!("{}={}", key, v_str));
     }
     Ok(lines.join("\n"))
@@ -430,5 +433,43 @@ mod tests {
         let out = ini_upsert(content, None, "port", &serde_json::json!(15432)).unwrap();
         assert!(out.contains("port=15432"), "写入后应含 port=15432, got:\n{}", out);
         assert_eq!(ini_lookup(&out, None, "port"), serde_json::json!(15432));
+    }
+}
+
+#[cfg(test)]
+mod disk_tests {
+    use super::*;
+    use crate::models::software::{ConfigField, ConfigFieldType, ConfigSchema};
+    use std::path::PathBuf;
+
+    #[test]
+    fn write_form_to_config_creates_nested_dir() {
+        // 模拟 PG 首次初始化前：data 目录不存在，postgresql.conf 也不存在
+        let dir = std::env::temp_dir().join(format!("opx-test-{}", uuid::Uuid::new_v4()));
+        let conf_path = dir.join("data").join("postgresql.conf");
+        let schema = ConfigSchema {
+            fields: vec![
+                ConfigField {
+                    key: "port".to_string(),
+                    label_i18n: "configField.port".to_string(),
+                    field_type: ConfigFieldType::Port,
+                    default_value: serde_json::json!(5432),
+                    section: None,
+                    description_i18n: None,
+                },
+            ],
+            ephemeral_keys: vec!["init_password".to_string()],
+        };
+        let mut form = FormData::new();
+        form.insert("port".to_string(), serde_json::json!(5432));
+        form.insert("init_password".to_string(), serde_json::json!("secret"));
+
+        let result = write_form_to_config(&conf_path, &schema, &form);
+        assert!(result.is_ok(), "嵌套目录不存在时应创建成功, got: {:?}", result.err());
+        // ephemeral 不落盘
+        let content = std::fs::read_to_string(&conf_path).unwrap_or_default();
+        assert!(!content.contains("init_password"), "ephemeral 字段不应写入配置文件");
+        assert!(content.contains("port=5432"), "port 应写入, got: {}", content);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
