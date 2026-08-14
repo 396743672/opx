@@ -108,7 +108,9 @@
 | 软件 | 决策 |
 |------|------|
 | PostgreSQL | 复用现有 `init_password` ephemeral 机制 + `scram-sha-256` 认证，**可选密码**：填了用 `initdb --pwfile` 设密码，没填保持 trust |
-| MongoDB | **可选认证**：表单加 `auth_enabled` 开关，开启则启动命令带 `--auth`；`root_user`/`root_password` 存 config（供 mongosh 手动建用户参考，模式同 MinIO access_key/secret_key）。首次建用户由用户在 mongosh 手动执行（mongosh 不随服务器 zip 打包，不自动下载） |
+| MongoDB | **可选认证**：表单加 `auth_enabled` 开关，开启则启动命令带 `--auth`；首次建用户由用户在 mongosh 手动执行（mongosh 不随服务器 zip 打包，不自动下载） |
+
+> **实现修正（2026-08-14 复审）**：`root_user`/`root_password` 字段**已废弃删除**——MongoDB 的 `start_command` 从不消费这两个值，明文落盘 installed.json 是不消费的死凭据，违反 MySQL/PG 的 init_password 不落盘惯例，且用户改密码后旧值永不过期。只保留 `auth_enabled`，凭据由用户在 mongosh 内自行设定。
 
 ## 改动
 
@@ -117,9 +119,9 @@
 - `start_command`：填了密码 → 写临时 `.pgpass` 文件 + initdb 加 `--pwfile` + 认证 `scram-sha-256`；没填 → 保持 `--auth=trust`
 
 ### MongoDB
-- `config_schema` 加 `auth_enabled`（**新增 Boolean 字段类型**）、`root_user`（Text）、`root_password`（Password）
+- `config_schema` 加 `auth_enabled`（**新增 Boolean 字段类型**）
 - `start_command` 读 `auth_enabled`，为 true 时 args 加 `--auth`
 
 ### 跨层改动
 - `ConfigFieldType` 新增 `Boolean` 变体（后端 `models/software.rs` + 前端 `models/software.ts` + `ConfigFormTab.vue` 渲染开关）
-- i18n 加 `configField.authEnabled` / `configField.rootUser` / `configField.rootPassword`
+- i18n 加 `configField.authEnabled` / `configField.authEnabledDesc`（+ 通用 `enabled` 开关标签）
