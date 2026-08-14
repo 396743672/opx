@@ -915,6 +915,17 @@ pub async fn get_config_schema(
     // provider 的 config_schema 是静态的，options 为空，需在此处填充。
     if software.key == "nacos" {
         fill_jdk_options(&mut schema, manager.inner());
+        // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
+        let storage = software
+            .config
+            .get("storage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("embedded");
+        if storage != "mysql" {
+            schema
+                .fields
+                .retain(|f| !f.key.starts_with("mysql_"));
+        }
     }
 
     Ok(Some(schema))

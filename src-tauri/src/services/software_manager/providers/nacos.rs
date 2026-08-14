@@ -274,7 +274,9 @@ impl SoftwareProvider for NacosProvider {
                 ConfigField {
                     key: "mysql_port".to_string(),
                     label_i18n: "configField.nacosMysqlPort".to_string(),
-                    field_type: ConfigFieldType::Port,
+                    // 用 Number 而非 Port：mysql_port 是连接外部 MySQL 的端口，
+                    // 不是 Nacos 自己的监听端口，不应触发 collect_configured_ports 的占用检查。
+                    field_type: ConfigFieldType::Number,
                     default_value: serde_json::json!(3306),
                     section: None,
                     description_i18n: Some("configField.nacosMysqlPortDesc".to_string()),
