@@ -131,22 +131,6 @@ impl SoftwareProvider for MongoDbProvider {
                     section: None,
                     description_i18n: Some("configField.authEnabledDesc".to_string()),
                 },
-                ConfigField {
-                    key: "root_user".to_string(),
-                    label_i18n: "configField.rootUser".to_string(),
-                    field_type: ConfigFieldType::Text,
-                    default_value: serde_json::json!("root"),
-                    section: None,
-                    description_i18n: Some("configField.rootUserDesc".to_string()),
-                },
-                ConfigField {
-                    key: "root_password".to_string(),
-                    label_i18n: "configField.rootPassword".to_string(),
-                    field_type: ConfigFieldType::Password,
-                    default_value: serde_json::json!(""),
-                    section: None,
-                    description_i18n: Some("configField.rootPasswordDesc".to_string()),
-                },
             ],
             ephemeral_keys: vec![],
         })
@@ -239,11 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn config_schema_has_auth_fields() {
+    fn config_schema_has_auth_field() {
         let schema = provider().config_schema().unwrap();
         let keys: Vec<&str> = schema.fields.iter().map(|f| f.key.as_str()).collect();
         assert!(keys.contains(&"auth_enabled"));
-        assert!(keys.contains(&"root_user"));
-        assert!(keys.contains(&"root_password"));
+        assert!(!keys.contains(&"root_user"), "root_user 不应存在（不消费的死凭据）");
+        assert!(!keys.contains(&"root_password"), "root_password 不应存在（不消费的死凭据）");
     }
 }
