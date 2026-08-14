@@ -71,8 +71,8 @@
 3. **i18n**（`zh-CN.ts` / `en-US.ts`）：新增
    - `categoryRegistry`（注册中心）/ `registry`（SoftwareListPage 组标签，复用同一文案）
    - `catalogDesc.postgresql` / `catalogDesc.mongodb` / `catalogDesc.consul`
-   - 各 `configField.*`（port / listenAddresses / sharedBuffers / maxConnections / bindIp / dbpath / consulateMode / consulateBind / httpPort）
-   - 新增 `configField.consulateMode` 为 `Select`（dev / server），后端 Select 字段 options 即 `["dev","server"]`
+   - 各 `configField.*`（port / listenAddresses / sharedBuffers / maxConnections / bindIp / dbpath / consulMode / bind / httpPort / initPassword / authEnabled / rootUser / rootPassword）
+   - 新增 `configField.consulMode` 为 `Select`（dev / server），后端 Select 字段 options 即 `["dev","server"]`
    - mirror 名称（`postgresqlOfficial` / `mongodbOfficial` / `consulOfficial`）
 4. **图标**：在 provider `catalog_entry()` 写 `mdi:xxx`，跑 `npm run icons:gen` 自动扫描收录进 `mdi-icons.json`。图标名以 `gen-icons.mjs` 校验为准（不存在的名字会报错 exit 1）。注意 `mdi:hexagon-multiple` 与 `mdi:leaf` 需确认在 `@iconify-json/mdi` 中存在，否则 `icons:gen` 会失败。
 
@@ -91,3 +91,35 @@
 - `cargo test`（后端单测）
 - `npm run build`（前端类型 + 构建）
 - `npm run icons:gen`（图标子集生成，校验图标名存在）
+
+---
+
+# 追加：初始化与认证配置（2026-08-14）
+
+## 需求
+
+测试中发现三个新软件缺少初始化/认证配置：
+
+- **PostgreSQL**：需设置初始账号密码（现状 `initdb --auth=trust` 无密码）
+- **MongoDB**：需设置验证方式（现状无 `--auth`）
+
+## 决策（已与用户确认）
+
+| 软件 | 决策 |
+|------|------|
+| PostgreSQL | 复用现有 `init_password` ephemeral 机制 + `scram-sha-256` 认证，**可选密码**：填了用 `initdb --pwfile` 设密码，没填保持 trust |
+| MongoDB | **可选认证**：表单加 `auth_enabled` 开关，开启则启动命令带 `--auth`；`root_user`/`root_password` 存 config（供 mongosh 手动建用户参考，模式同 MinIO access_key/secret_key）。首次建用户由用户在 mongosh 手动执行（mongosh 不随服务器 zip 打包，不自动下载） |
+
+## 改动
+
+### PostgreSQL
+- `config_schema` 加 `init_password`（ephemeral，复用现有 `configField.initPassword`/`initPasswordDesc` key，零前端新代码）
+- `start_command`：填了密码 → 写临时 `.pgpass` 文件 + initdb 加 `--pwfile` + 认证 `scram-sha-256`；没填 → 保持 `--auth=trust`
+
+### MongoDB
+- `config_schema` 加 `auth_enabled`（**新增 Boolean 字段类型**）、`root_user`（Text）、`root_password`（Password）
+- `start_command` 读 `auth_enabled`，为 true 时 args 加 `--auth`
+
+### 跨层改动
+- `ConfigFieldType` 新增 `Boolean` 变体（后端 `models/software.rs` + 前端 `models/software.ts` + `ConfigFormTab.vue` 渲染开关）
+- i18n 加 `configField.authEnabled` / `configField.rootUser` / `configField.rootPassword`

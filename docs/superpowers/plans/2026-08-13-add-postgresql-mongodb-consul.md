@@ -1110,4 +1110,381 @@ git commit -m "chore: 重新生成图标子集（含 PG/MongoDB/Consul）"
 
 **2. 占位符扫描：** 版本号/URL 占位（`"16.x"`、`"7.x"`、`"1.x"`）已显式标注「执行时核实」，属环境相关外部依赖，非逻辑占位；每个代码步骤均含完整可编译代码块，无 "TODO/类似任务 N/添加错误处理" 模式。任务 3 末尾说明了合并 commit 的理由，避免中间不可编译提交——这是刻意的工程决定，已在任务 7 commit 覆盖。
 
+---
+
+# 追加：初始化与认证配置（2026-08-14，用户测试反馈）
+
+## 任务 11：ConfigFieldType 新增 Boolean 变体（后端+前端）
+
+**文件：**
+- 修改：`src-tauri/src/models/software.rs`（`ConfigFieldType` 枚举）
+- 修改：`src/models/software.ts`（`ConfigFieldType` 类型）
+- 修改：`src/modules/software-manager/components/ConfigFormTab.vue`（渲染 Boolean 为开关）
+
+- [ ] **步骤 1：后端枚举加 Boolean**
+
+`ConfigFieldType` 枚举（`#[serde(tag = "type")]`）加变体：
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ConfigFieldType {
+    Text,
+    Number,
+    Port,
+    Password,
+    Select { options: Vec<String> },
+    Size { units: Vec<String> },
+    Boolean,
+}
+```
+
+- [ ] **步骤 2：前端类型加 Boolean**
+
+`src/models/software.ts` 的 `ConfigFieldType` union 加：
+
+```typescript
+  | { type: 'Boolean' }
+```
+
+- [ ] **步骤 3：ConfigFormTab 渲染 Boolean 开关**
+
+在 `isSize` 分支后加 Boolean 渲染（模板中，约第 49 行后）：
+
+```html
+        <div v-else-if="isBoolean(field)" class="switch-field">
+          <div
+            class="toggle"
+            :class="{ off: !formData[field.key] }"
+            role="switch"
+            :aria-checked="!!formData[field.key]"
+            tabindex="0"
+            @click="formData[field.key] = !formData[field.key]"
+            @keydown.enter.prevent="formData[field.key] = !formData[field.key]"
+          ></div>
+          <span class="switch-label">{{ $t('enabled') }}</span>
+        </div>
+```
+
+脚本里加判断函数（约第 107 行 `isSelect` 旁）：
+
+```typescript
+function isBoolean(f: ConfigField) {
+  return f.field_type.type === 'Boolean'
+}
+```
+
+样式里加（`<style scoped>` 末尾）：
+
+```css
+.switch-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.switch-field .toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.switch-field .toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 18px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  transition: left 0.2s;
+}
+.switch-field .toggle.off {
+  background: var(--color-border);
+}
+.switch-field .toggle.off::after {
+  left: 2px;
+}
+.switch-label {
+  font-size: 13px;
+}
+```
+
+- [ ] **步骤 4：验证**
+
+运行：`cargo check`（后端）+ `npm run build`（前端）
+预期：均通过
+
+- [ ] **步骤 5：Commit**
+
+```bash
+git add src-tauri/src/models/software.rs src/models/software.ts src/modules/software-manager/components/ConfigFormTab.vue
+git commit -m "feat: ConfigFieldType 新增 Boolean 类型（表单开关）"
+```
+
+---
+
+## 任务 12：PostgreSQL 可选密码 + scram 认证
+
+**文件：**
+- 修改：`src-tauri/src/services/software_manager/providers/postgresql.rs`
+
+- [ ] **步骤 1：编写失败测试（追加到 postgresql.rs 测试模块）**
+
+```rust
+    #[test]
+    fn start_command_with_init_password_uses_pwfile_and_scram() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({}), custom_start_command: None,
+            init_password: Some("secret".into()),
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.starts_with("--pwfile=")),
+            "设置密码时 initdb 应带 --pwfile");
+        assert!(init.init_command.args.iter().any(|a| a.contains("scram")),
+            "设置密码时认证应使用 scram-sha-256");
+    }
+
+    #[test]
+    fn start_command_without_password_keeps_trust() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
+            config: serde_json::json!({}), custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        let init = cmd.first_run_init.as_ref().unwrap();
+        assert!(init.init_command.args.iter().any(|a| a.contains("trust")),
+            "未设密码时应保持 --auth=trust");
+    }
+
+    #[test]
+    fn config_schema_has_init_password_ephemeral() {
+        let schema = provider().config_schema().unwrap();
+        let ip = schema.fields.iter().find(|f| f.key == "init_password").unwrap();
+        assert!(schema.ephemeral_keys.contains(&"init_password".to_string()),
+            "init_password 必须是 ephemeral（不落盘）");
+    }
+```
+
+- [ ] **步骤 2：运行测试验证失败**
+
+运行：`cd src-tauri && cargo test --lib providers::postgresql`
+预期：编译错误（`init_password` 字段尚未被消费）
+
+- [ ] **步骤 3：修改 start_command 支持 init_password**
+
+`start_command` 中 init 命令从固定 `--auth=trust` 改为按 `init_password` 分支。密码文件放系统临时目录，避免 app 目录敏感残留：
+
+```rust
+        let mut init_args = vec![
+            "-D".to_string(), data_dir.to_string_lossy().to_string(),
+            "-U".to_string(), "postgres".to_string(),
+            "--encoding=UTF8".to_string(),
+        ];
+        let pwfile_path = crate::utils::paths::tmp_dir().join(format!("pgpass-{}.tmp", ctx.installed_id));
+        let _ = std::fs::remove_file(&pwfile_path);
+        if let Some(pw) = &ctx.init_password {
+            if !pw.is_empty() {
+                std::fs::write(&pwfile_path, pw)?;
+                init_args.push(format!("--pwfile={}", pwfile_path.to_string_lossy()));
+                init_args.push("--auth=scram-sha-256".to_string());
+                init_args.push("--auth-host=scram-sha-256".to_string());
+            } else {
+                init_args.push("--auth=trust".to_string());
+            }
+        } else {
+            init_args.push("--auth=trust".to_string());
+        }
+        let init_command = StartCommand {
+            program: "bin/initdb.exe".to_string(),
+            args: init_args,
+            env_vars: std::collections::BTreeMap::new(),
+            working_dir: working_dir.clone(),
+            creation_flags: CREATE_NO_WINDOW,
+            first_run_init: None,
+        };
+```
+
+- [ ] **步骤 4：验证**
+
+运行：`cd src-tauri && cargo test --lib providers::postgresql`
+预期：新增 3 测试通过（累计 10）
+
+- [ ] **步骤 5：Commit**
+
+```bash
+git add src-tauri/src/services/software_manager/providers/postgresql.rs
+git commit -m "feat: PostgreSQL 支持可选初始化密码（scram-sha-256）"
+```
+
+---
+
+## 任务 13：MongoDB 可选认证
+
+**文件：**
+- 修改：`src-tauri/src/services/software_manager/providers/mongodb.rs`
+
+- [ ] **步骤 1：编写失败测试**
+
+```rust
+    #[test]
+    fn start_command_enables_auth_when_configured() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/mg".into(), version: "7".into(),
+            config: serde_json::json!({ "auth_enabled": true }),
+            custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(cmd.args.iter().any(|a| a == "--auth"), "auth_enabled=true 应带 --auth");
+    }
+
+    #[test]
+    fn start_command_no_auth_by_default() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/mg".into(), version: "7".into(),
+            config: serde_json::json!({}),
+            custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(!cmd.args.iter().any(|a| a == "--auth"), "默认不带 --auth");
+    }
+
+    #[test]
+    fn config_schema_has_auth_fields() {
+        let schema = provider().config_schema().unwrap();
+        let keys: Vec<&str> = schema.fields.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"auth_enabled"));
+        assert!(keys.contains(&"root_user"));
+        assert!(keys.contains(&"root_password"));
+    }
+```
+
+- [ ] **步骤 2：运行测试验证失败**
+
+运行：`cd src-tauri && cargo test --lib providers::mongodb`
+预期：编译错误（字段未实现）
+
+- [ ] **步骤 3：实现**
+
+`start_command` 中 `args` 末尾（`--logpath` 之后）加：
+
+```rust
+        if ctx.config.get("auth_enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+            args.push("--auth".to_string());
+        }
+```
+
+`config_schema` 加三个字段（`dbpath` 之后）：
+
+```rust
+                ConfigField {
+                    key: "auth_enabled".to_string(),
+                    label_i18n: "configField.authEnabled".to_string(),
+                    field_type: ConfigFieldType::Boolean,
+                    default_value: serde_json::json!(false),
+                    section: None,
+                    description_i18n: Some("configField.authEnabledDesc".to_string()),
+                },
+                ConfigField {
+                    key: "root_user".to_string(),
+                    label_i18n: "configField.rootUser".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("root"),
+                    section: None,
+                    description_i18n: Some("configField.rootUserDesc".to_string()),
+                },
+                ConfigField {
+                    key: "root_password".to_string(),
+                    label_i18n: "configField.rootPassword".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.rootPasswordDesc".to_string()),
+                },
+```
+
+- [ ] **步骤 4：验证**
+
+运行：`cd src-tauri && cargo test --lib providers::mongodb`
+预期：新增 3 测试通过（累计 9）
+
+- [ ] **步骤 5：Commit**
+
+```bash
+git add src-tauri/src/services/software_manager/providers/mongodb.rs
+git commit -m "feat: MongoDB 支持可选认证（--auth）"
+```
+
+---
+
+## 任务 14：i18n 新增认证配置文案
+
+**文件：**
+- 修改：`src/locales/zh-CN.ts`（configField 块 `consulMode` 后）
+- 修改：`src/locales/en-US.ts`（同位置）
+
+- [ ] **步骤 1：zh-CN.ts configField 块加**
+
+```typescript
+    authEnabled: '启用认证',
+    authEnabledDesc: '开启后需认证才能访问；首次需在 mongosh 手动创建 root 用户',
+    rootUser: 'Root 用户名',
+    rootUserDesc: '供 mongosh 手动创建用户时参考，不自动创建',
+    rootPassword: 'Root 密码',
+    rootPasswordDesc: '供 mongosh 手动创建用户时参考，不自动创建',
+```
+
+另在通用块（如 `running: '运行中'` 旁）加 `enabled`（Boolean 开关标签）：
+
+```typescript
+  enabled: '开启',
+```
+
+- [ ] **步骤 2：en-US.ts 对照**
+
+```typescript
+    authEnabled: 'Enable Auth',
+    authEnabledDesc: 'Requires authentication to access; create root user in mongosh on first run',
+    rootUser: 'Root Username',
+    rootUserDesc: 'Reference for manually creating user in mongosh; not auto-created',
+    rootPassword: 'Root Password',
+    rootPasswordDesc: 'Reference for manually creating user in mongosh; not auto-created',
+```
+
+```typescript
+  enabled: 'Enabled',
+```
+
+- [ ] **步骤 3：验证**
+
+运行：`npm run build`
+预期：通过
+
+- [ ] **步骤 4：Commit**
+
+```bash
+git add src/locales/zh-CN.ts src/locales/en-US.ts
+git commit -m "feat: 新增认证配置 i18n 文案"
+```
+
+---
+
+# 追加自检（2026-08-14）
+
+**1. 规格覆盖度：** 追加 spec「初始化与认证配置」每节对应任务：
+- ConfigFieldType 加 Boolean（前后端 + 渲染）→ 任务 11
+- PostgreSQL 可选密码 + scram → 任务 12
+- MongoDB 可选认证 → 任务 13
+- i18n 认证文案 → 任务 14
+**无遗漏。**
+
+**2. 占位符扫描：** 无 TODO/占位；每个步骤含完整代码。任务 12 的敏感 pwfile 放系统 tmp_dir，避免 app 目录残留。
+
+**3. 类型一致性：** `ConfigFieldType::Boolean` 在任务 11 前后端一致；i18n key `configField.authEnabled/authEnabledDesc/rootUser/rootUserDesc/rootPassword/rootPasswordDesc` + 通用 `enabled` 在 provider（任务 13）与 i18n（任务 14）一致。init_password 复用现有 key `configField.initPassword/initPasswordDesc`。
+
 **3. 类型一致性：** Provider 结构体名 `PostgreSqlProvider`/`MongoDbProvider`/`ConsulProvider` 在任务 4/5/6 定义并在任务 7 注册一致；`SoftwareCategory::Registry` 在任务 1（后端）与任务 2（前端）一致；i18n key `catalogDesc.postgresql`/`catalogDesc.mongodb`/`catalogDesc.consul`、`configField.listenAddresses`/`sharedBuffers`/`bindIp`/`httpPort`/`consulateMode`、mirror 名 `postgresqlOfficial`/`mongodbOfficial`/`consulOfficial` 在 provider 实现（任务 4-6）与 i18n（任务 8）中一致；`SoftwareListPage` 的 `registry` 组 label 用 `registry`（任务 9）对应 i18n `registry` key（任务 8）。无命名漂移。
