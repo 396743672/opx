@@ -303,6 +303,17 @@ fn collect_configured_ports(
     ports
 }
 
+/// 找已安装 JDK/JRE 的 install_path（供 Nacos 等 Java 软件启动拼 java 命令）。
+/// 优先 JDK，其次 JRE；找不到返回 None（provider 收到 None 时报错提示先装 JDK）。
+fn find_installed_jdk(manager: &Arc<SoftwareManager>) -> Option<String> {
+    let installed = manager.get_installed();
+    installed
+        .iter()
+        .filter(|s| s.key == "jdk" || s.key == "jre")
+        .min_by_key(|s| if s.key == "jdk" { 0 } else { 1 })
+        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -338,6 +349,8 @@ pub async fn do_start_software(
         config: software.config.clone(),
         custom_start_command: software.custom_start_command.clone(),
         init_password: init_password.clone(),
+        // 需要 JDK 的软件（如 Nacos）：从已装列表找 JDK 的 install_path 供 start_command 拼 java 命令
+        jdk_install_path: find_installed_jdk(manager),
     };
 
     // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）

@@ -12,7 +12,7 @@ pub mod minio;
 pub mod rustfs;
 pub mod postgresql;
 pub mod mongodb;
-pub mod consul;
+pub mod nacos;
 pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
@@ -81,6 +81,8 @@ pub struct StartContext {
     /// 首次初始化密码（如 MySQL 初始化 root 密码）。来自 start_software 命令的可选参数，
     /// 仅在未初始化时由 provider 消费一次，绝不持久化到 installed.json / 配置文件。
     pub init_password: Option<String>,
+    /// 已安装 JDK 的 install_path（如 Nacos 等 Java 软件启动用）。None 表示无 JDK 或软件不需要。
+    pub jdk_install_path: Option<String>,
 }
 
 /// 健康检查上下文
@@ -188,6 +190,6 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(rustfs::RustfsProvider::new()),
         Box::new(postgresql::PostgreSqlProvider::new()),
         Box::new(mongodb::MongoDbProvider::new()),
-        Box::new(consul::ConsulProvider::new()),
+        Box::new(nacos::NacosProvider::new()),
     ]
 }

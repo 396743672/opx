@@ -173,14 +173,14 @@ mod tests {
 
     #[test]
     fn merge_with_builtin_adds_builtin_new_keys_missing_from_cache() {
-        // builtin 新增了 postgresql/mongodb/consul，旧缓存只有 7 个旧软件
-        let builtin = catalog(&["mysql", "jre", "jdk", "redis", "nginx", "minio", "rustfs", "postgresql", "mongodb", "consul"]);
+        // builtin 新增了 postgresql/mongodb/nacos，旧缓存只有 7 个旧软件
+        let builtin = catalog(&["mysql", "jre", "jdk", "redis", "nginx", "minio", "rustfs", "postgresql", "mongodb", "nacos"]);
         let cache = catalog(&["mysql", "jre", "jdk", "redis", "nginx", "minio", "rustfs"]);
         let merged = merge_with_builtin(builtin, Some(cache));
         let keys: Vec<String> = merged.entries.iter().map(|e| e.key.clone()).collect();
         assert!(keys.contains(&"postgresql".to_string()), "新增 key 必须由 builtin 补回");
         assert!(keys.contains(&"mongodb".to_string()));
-        assert!(keys.contains(&"consul".to_string()));
+        assert!(keys.contains(&"nacos".to_string()));
         assert_eq!(keys.len(), 10);
     }
 
