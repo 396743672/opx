@@ -20,6 +20,8 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
   const statuses = ref<Record<string, SoftwareStatus>>({})
   const errors = ref<Record<string, string | null>>({})
   const pids = ref<Record<string, number | null>>({})
+  // 全局错误提示（统一弹窗显示，替代原生 window.alert）
+  const errorMessage = ref<string | null>(null)
   // 运行时暂存的「初始化密码」（如 MySQL 初始化 root 密码）。
   // 仅存在于内存，绝不持久化到磁盘；首次初始化消费一次后（server 起来）清除。
   const initPasswords = ref<Record<string, string>>({})
@@ -67,6 +69,10 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
     return errors.value[id] ?? null
   }
 
+  function clearErrorMessage() {
+    errorMessage.value = null
+  }
+
   function getPid(id: string): number | null {
     return pids.value[id] ?? null
   }
@@ -80,9 +86,8 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
         // 直接传 pid/error（可能是 null），让 setStatus 区分 null（清除）与 undefined（不改）
         setStatus(installed_id, status as SoftwareStatus, pid, error)
         // 启动/重启失败（如端口占用）弹框提示原因，而不只是把按钮状态置为 Error。
-        // ponytail: 用原生 alert（本项目已在用 confirm），需要更友好样式再换 toast 组件。
         if (status === SoftwareStatus.Error && error) {
-          window.alert(error)
+          errorMessage.value = error
         }
       },
     )
@@ -100,6 +105,7 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
     errors,
     pids,
     initPasswords,
+    errorMessage,
     setStatus,
     getStatus,
     getError,
@@ -107,6 +113,7 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
     setInitPassword,
     getInitPassword,
     clearInitPassword,
+    clearErrorMessage,
     initListener,
     destroyListener,
   }
