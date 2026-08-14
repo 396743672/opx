@@ -69,14 +69,20 @@ impl SoftwareProvider for MongoDbProvider {
         let log_path = PathBuf::from(&ctx.install_path).join("data").join("mongod.log");
         let _ = std::fs::create_dir_all(log_path.parent().unwrap());
 
+        let mut args = vec![
+            "--dbpath".to_string(), abs_dbpath,
+            "--bind_ip".to_string(), bind_ip,
+            "--port".to_string(), port.to_string(),
+            "--logpath".to_string(), log_path.to_string_lossy().to_string(),
+        ];
+        // 可选认证：auth_enabled=true 时开启访问控制（用户需在 mongosh 手动创建首个用户）
+        if ctx.config.get("auth_enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+            args.push("--auth".to_string());
+        }
+
         Ok(StartCommand {
             program: "bin/mongod.exe".to_string(),
-            args: vec![
-                "--dbpath".to_string(), abs_dbpath,
-                "--bind_ip".to_string(), bind_ip,
-                "--port".to_string(), port.to_string(),
-                "--logpath".to_string(), log_path.to_string_lossy().to_string(),
-            ],
+            args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
             creation_flags: CREATE_NO_WINDOW,
@@ -116,6 +122,30 @@ impl SoftwareProvider for MongoDbProvider {
                     default_value: serde_json::json!("./data"),
                     section: None,
                     description_i18n: Some("configField.dataDirDesc".to_string()),
+                },
+                ConfigField {
+                    key: "auth_enabled".to_string(),
+                    label_i18n: "configField.authEnabled".to_string(),
+                    field_type: ConfigFieldType::Boolean,
+                    default_value: serde_json::json!(false),
+                    section: None,
+                    description_i18n: Some("configField.authEnabledDesc".to_string()),
+                },
+                ConfigField {
+                    key: "root_user".to_string(),
+                    label_i18n: "configField.rootUser".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("root"),
+                    section: None,
+                    description_i18n: Some("configField.rootUserDesc".to_string()),
+                },
+                ConfigField {
+                    key: "root_password".to_string(),
+                    label_i18n: "configField.rootPassword".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.rootPasswordDesc".to_string()),
                 },
             ],
             ephemeral_keys: vec![],
@@ -184,5 +214,36 @@ mod tests {
         assert!(keys.contains(&"port"));
         assert!(keys.contains(&"bind_ip"));
         assert!(keys.contains(&"dbpath"));
+    }
+
+    #[test]
+    fn start_command_enables_auth_when_configured() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/mg".into(), version: "7".into(),
+            config: serde_json::json!({ "auth_enabled": true }),
+            custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(cmd.args.iter().any(|a| a == "--auth"), "auth_enabled=true 应带 --auth");
+    }
+
+    #[test]
+    fn start_command_no_auth_by_default() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/mg".into(), version: "7".into(),
+            config: serde_json::json!({}),
+            custom_start_command: None, init_password: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(!cmd.args.iter().any(|a| a == "--auth"), "默认不带 --auth");
+    }
+
+    #[test]
+    fn config_schema_has_auth_fields() {
+        let schema = provider().config_schema().unwrap();
+        let keys: Vec<&str> = schema.fields.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"auth_enabled"));
+        assert!(keys.contains(&"root_user"));
+        assert!(keys.contains(&"root_password"));
     }
 }
