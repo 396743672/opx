@@ -138,7 +138,7 @@ const grouped = computed<Group[]>(() => {
     else if (sw.key === 'redis') g = 'cache'
     else if (sw.key === 'nginx') g = 'webserver'
     else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
-    else if (sw.key === 'consul') g = 'registry'
+    else if (sw.key === 'nacos') g = 'registry'
     else continue
     groups[g].items.push(sw)
   }

@@ -163,7 +163,7 @@ export default {
   rustfsOfficial: 'RustFS Official',
   postgresqlOfficial: 'PostgreSQL Official',
   mongodbOfficial: 'MongoDB Official',
-  consulOfficial: 'HashiCorp Official',
+  nacosOfficial: 'Nacos Official',
   builtinMissing: 'Builtin package missing, please reinstall the app',
   builtinCorrupted: 'Builtin package verification failed, file may be corrupted',
   retry: 'Retry',
@@ -185,7 +185,7 @@ export default {
     rustfs: 'Rust-based S3-Compatible Object Storage',
     postgresql: 'Relational database (PostgreSQL)',
     mongodb: 'Document database',
-    consul: 'Service registry & discovery',
+    nacos: 'Service registry & config center',
   },
 
   // SpringBoot
@@ -450,7 +450,6 @@ export default {
     sharedBuffers: 'Shared Buffers',
     bindIp: 'Bind IP',
     httpPort: 'HTTP Port',
-    consulMode: 'Run Mode',
     authEnabled: 'Enable Auth',
     authEnabledDesc: 'Requires authentication to access; create root user in mongosh on first run',
   }

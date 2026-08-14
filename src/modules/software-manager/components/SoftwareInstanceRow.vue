@@ -84,7 +84,7 @@ const categoryClass = computed(() => {
     case 'minio':
     case 'rustfs':
       return 'storage'
-    case 'consul':
+    case 'nacos':
       return 'registry'
     default:
       return 'custom'

@@ -163,7 +163,7 @@ export default {
   rustfsOfficial: 'RustFS 官方',
   postgresqlOfficial: 'PostgreSQL 官方',
   mongodbOfficial: 'MongoDB 官方',
-  consulOfficial: 'HashiCorp 官方',
+  nacosOfficial: 'Nacos 官方',
   builtinMissing: '内置安装包缺失，请重新安装应用',
   builtinCorrupted: '内置安装包校验失败，文件可能损坏',
   retry: '重试',
@@ -185,7 +185,7 @@ export default {
     rustfs: 'Rust 实现的 S3 兼容对象存储',
     postgresql: '关系型数据库（PostgreSQL）',
     mongodb: '文档数据库',
-    consul: '服务注册与发现',
+    nacos: '服务注册与配置中心',
   },
 
   // SpringBoot
@@ -450,7 +450,6 @@ export default {
     sharedBuffers: '共享缓冲区',
     bindIp: '绑定地址',
     httpPort: 'HTTP 端口',
-    consulMode: '运行模式',
     authEnabled: '启用认证',
     authEnabledDesc: '开启后需认证才能访问；首次需在 mongosh 手动创建 root 用户',
   }
