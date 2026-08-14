@@ -230,7 +230,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.port".to_string(),
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(8848),
-                    section: Some("nacosServer".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosServerPortDesc".to_string()),
                 },
                 ConfigField {
@@ -238,7 +238,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosConsolePort".to_string(),
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(8080),
-                    section: Some("nacosServer".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosConsolePortDesc".to_string()),
                 },
                 ConfigField {
@@ -249,7 +249,7 @@ impl SoftwareProvider for NacosProvider {
                         labels: vec![],
                     },
                     default_value: serde_json::json!("standalone"),
-                    section: Some("nacosDeploy".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosModeDesc".to_string()),
                 },
                 ConfigField {
@@ -260,7 +260,7 @@ impl SoftwareProvider for NacosProvider {
                         labels: vec![],
                     },
                     default_value: serde_json::json!("embedded"),
-                    section: Some("nacosDeploy".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosStorageDesc".to_string()),
                 },
                 ConfigField {
@@ -268,7 +268,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosMysqlHost".to_string(),
                     field_type: ConfigFieldType::Text,
                     default_value: serde_json::json!("127.0.0.1"),
-                    section: Some("nacosMysql".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosMysqlHostDesc".to_string()),
                 },
                 ConfigField {
@@ -276,7 +276,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosMysqlPort".to_string(),
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(3306),
-                    section: Some("nacosMysql".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosMysqlPortDesc".to_string()),
                 },
                 ConfigField {
@@ -284,7 +284,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosMysqlDb".to_string(),
                     field_type: ConfigFieldType::Text,
                     default_value: serde_json::json!("nacos"),
-                    section: Some("nacosMysql".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosMysqlDbDesc".to_string()),
                 },
                 ConfigField {
@@ -292,7 +292,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosMysqlUser".to_string(),
                     field_type: ConfigFieldType::Text,
                     default_value: serde_json::json!("root"),
-                    section: Some("nacosMysql".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosMysqlUserDesc".to_string()),
                 },
                 ConfigField {
@@ -300,7 +300,7 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.nacosMysqlPassword".to_string(),
                     field_type: ConfigFieldType::Password,
                     default_value: serde_json::json!(""),
-                    section: Some("nacosMysql".to_string()),
+                    section: None,
                     description_i18n: Some("configField.nacosMysqlPasswordDesc".to_string()),
                 },
                 ConfigField {
