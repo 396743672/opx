@@ -1,5 +1,9 @@
 # 新增 PostgreSQL / MongoDB / Consul 设计规格
 
+## 变更记录（2026-08-14）
+
+- **Consul → Nacos**：注册中心由 Consul 替换为 Nacos（用户要求）。Nacos 复用项目已装 JDK（`StartContext` 新增 `jdk_install_path`，命令层从已装列表找 JDK），`java -Dnacos.standalone=true -jar target/nacos-server.jar` 前台启动，TCP 8848 健康检查（规避 2.x/3.x 端点差异）。内置 2.5.3（JDK8+）/ 3.2.3（JDK17+）双版本。`SoftwareCategory::Registry` 分类保留给 Nacos。
+
 ## 概述
 
 在 OPX 软件仓库中新增三个常驻服务：PostgreSQL、MongoDB、Consul。复用现有 `SoftwareProvider` trait 与启停机制，无新抽象。
