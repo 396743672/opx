@@ -110,11 +110,12 @@ pub fn merge_versions(
     merged
 }
 
-/// 以 builtin 为底，用 cache 补齐 builtin 缺失的 key。
-/// builtin（代码定义的真相）优先：同 key 用 builtin 的 entry，避免旧缓存
-/// 把新增/更新后的软件覆盖回过期版本。cache 中只补充 builtin 没有的额外 key
-/// （典型来自远程 catalog.json 合并历史）。旧缓存漏了 builtin 新增 key 时，
-/// 新 key 由 builtin 补回 —— 修复「新增内置 provider 后旧缓存不失效」的根因。
+/// 以 builtin 为底，用 cache 补齐。
+/// - 同 key：metadata 用 builtin（代码真相，避免旧缓存覆盖过期字段），
+///   versions 合并 builtin 静态版本 + cache 动态版本（merge_versions 去重）。
+///   这样 JDK/JRE 动态拉取的版本不会因 builtin 覆盖而丢失（回归修复）。
+/// - cache 独有 key：直接加入（远程 catalog.json 合并历史）。
+/// - builtin 独有 key：保留（修复「新增内置 provider 后旧缓存不失效」的根因）。
 pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
     let cache = match cache {
         Some(c) => c,
@@ -126,9 +127,17 @@ pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
         .map(|e| (e.key.clone(), e))
         .collect();
     for cache_entry in cache.entries {
-        builtin_map
-            .entry(cache_entry.key.clone())
-            .or_insert(cache_entry);
+        match builtin_map.get_mut(&cache_entry.key) {
+            Some(builtin_entry) => {
+                // 合并版本：builtin 静态优先，cache 动态追加（同版本去重）
+                let cache_versions = Some(cache_entry.versions);
+                let merged = merge_versions(builtin_entry.versions.clone(), cache_versions);
+                builtin_entry.versions = merged;
+            }
+            None => {
+                builtin_map.insert(cache_entry.key.clone(), cache_entry);
+            }
+        }
     }
     Catalog {
         entries: builtin_map.into_values().collect(),
@@ -195,6 +204,64 @@ mod tests {
         let cache = Catalog { entries: vec![cache_entry], updated_at: None };
         let merged = merge_with_builtin(builtin, Some(cache));
         assert_eq!(merged.entries[0].icon, "mdi:new-icon", "builtin 应优先于缓存");
+    }
+
+    #[test]
+    fn merge_with_builtin_keeps_cache_dynamic_versions_on_same_key() {
+        // 回归：JDK/JRE 动态拉取的版本存在 cache 里，同 key 时 builtin 覆盖
+        // 会丢弃动态版本导致"每次刷新才能选版本"。应保留 cache 的动态版本。
+        let mut builtin_entry = entry("jdk");
+        // 内置只有 1.8（静态）
+        builtin_entry.versions = vec![crate::models::software::CatalogVersion {
+            version: "1.8".to_string(),
+            mirrors: vec![],
+            archive: crate::models::software::ArchiveInfo {
+                format: crate::models::software::ArchiveFormat::Zip,
+                size: None,
+                sha256: None,
+            },
+        }];
+        let builtin = Catalog { entries: vec![builtin_entry], updated_at: None };
+
+        // cache 含内置 1.8 + 动态拉取的 17/21
+        let mut cache_entry = entry("jdk");
+        cache_entry.versions = vec![
+            crate::models::software::CatalogVersion {
+                version: "1.8".to_string(),
+                mirrors: vec![],
+                archive: crate::models::software::ArchiveInfo {
+                    format: crate::models::software::ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            },
+            crate::models::software::CatalogVersion {
+                version: "17".to_string(),
+                mirrors: vec![],
+                archive: crate::models::software::ArchiveInfo {
+                    format: crate::models::software::ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            },
+            crate::models::software::CatalogVersion {
+                version: "21".to_string(),
+                mirrors: vec![],
+                archive: crate::models::software::ArchiveInfo {
+                    format: crate::models::software::ArchiveFormat::Zip,
+                    size: None,
+                    sha256: None,
+                },
+            },
+        ];
+        let cache = Catalog { entries: vec![cache_entry], updated_at: None };
+
+        let merged = merge_with_builtin(builtin, Some(cache));
+        assert_eq!(merged.entries.len(), 1);
+        let versions: Vec<String> = merged.entries[0].versions.iter().map(|v| v.version.clone()).collect();
+        assert!(versions.contains(&"17".to_string()), "cache 动态版本 17 必须保留, got {:?}", versions);
+        assert!(versions.contains(&"21".to_string()), "cache 动态版本 21 必须保留, got {:?}", versions);
+        assert!(versions.contains(&"1.8".to_string()), "内置版本 1.8 必须保留");
     }
 
     #[test]
