@@ -452,5 +452,13 @@ export default {
     httpPort: 'HTTP Port',
     authEnabled: 'Enable Auth',
     authEnabledDesc: 'Requires authentication to access; create root user in mongosh on first run',
+    nacosJdk: 'JDK Selection',
+    nacosJdkDesc: 'JDK/JRE used to start Nacos (install first)',
+    nacosHeap: 'JVM Heap',
+    nacosHeapDesc: 'Startup heap size (-Xms/-Xmx)',
+    nacosFunctionMode: 'Function Mode',
+    nacosFunctionModeDesc: 'Start only specific modules (all = everything)',
+    nacosContextPath: 'Context Path',
+    nacosContextPathDesc: 'HTTP context path',
   }
 }

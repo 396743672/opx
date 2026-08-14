@@ -452,5 +452,13 @@ export default {
     httpPort: 'HTTP 端口',
     authEnabled: '启用认证',
     authEnabledDesc: '开启后需认证才能访问；首次需在 mongosh 手动创建 root 用户',
+    nacosJdk: 'JDK 选择',
+    nacosJdkDesc: '启动 Nacos 用的 JDK/JRE（需先安装）',
+    nacosHeap: 'JVM 堆内存',
+    nacosHeapDesc: '启动堆内存大小（-Xms/-Xmx）',
+    nacosFunctionMode: '功能模块',
+    nacosFunctionModeDesc: '仅启动指定模块（all 为全部）',
+    nacosContextPath: '上下文路径',
+    nacosContextPathDesc: 'HTTP 上下文路径',
   }
 }
