@@ -155,6 +155,7 @@ export type ConfigFieldType =
   | { type: 'Password' }
   | { type: 'Select'; options: string[] }
   | { type: 'Size'; units: string[] }
+  | { type: 'Boolean' }
 
 /// 卸载安全性报告
 export interface UninstallSafetyReport {

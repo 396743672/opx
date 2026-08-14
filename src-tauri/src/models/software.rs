@@ -194,6 +194,7 @@ pub enum ConfigFieldType {
     Select { options: Vec<String> },
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },
+    Boolean,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

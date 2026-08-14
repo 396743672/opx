@@ -37,6 +37,7 @@ export default {
   starting: 'Starting',
   stopping: 'Stopping',
   initializing: 'Initializing',
+  enabled: 'Enabled',
 
   // system monitor
   cpuUsage: 'CPU Usage',

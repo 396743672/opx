@@ -37,6 +37,7 @@ export default {
   starting: '启动中',
   stopping: '停止中',
   initializing: '初始化中',
+  enabled: '开启',
 
   // 系统监控
   cpuUsage: 'CPU 使用率',
