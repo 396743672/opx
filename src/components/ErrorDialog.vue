@@ -25,14 +25,16 @@ import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useLifecycleStore } from '../modules/software-manager/stores/lifecycle'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const lifecycleStore = useLifecycleStore()
 
-// 后端错误可能带 "i18n:key" 前缀：检测并调 t() 转译（同 InstallDialog 的 mirrorName 惯例）
+// 后端错误可能带 "i18n:key" 标记，且外层可能包前缀（如 "启动失败：i18n:xxx"）。
+// 用正则提取 i18n:key 并调 t() 转译；key 不存在或无标记则显示原文（避免暴露裸 key）。
 const message = computed(() => {
   const raw = lifecycleStore.errorMessage
   if (!raw) return ''
-  return raw.startsWith('i18n:') ? t(raw.slice(5)) : raw
+  const m = raw.match(/i18n:([A-Za-z0-9_.-]+)/)
+  return m && te(m[1]) ? t(m[1]) : raw
 })
 
 function close() {
