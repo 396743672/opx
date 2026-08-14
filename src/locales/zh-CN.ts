@@ -142,6 +142,7 @@ export default {
   extracting: '解压中',
   installCompleted: '安装完成',
   installFailed: '安装失败',
+  nacosMysqlNotRunning: 'MySQL 数据库未运行或连接失败，请先启动 MySQL 后再启动 Nacos',
   customName: '名称',
   selectArchive: '选择压缩包',
   refreshCatalog: '刷新目录',
@@ -477,6 +478,5 @@ export default {
     nacosMysqlUserDesc: '数据库模式时使用的 MySQL 账号',
     nacosMysqlPassword: 'MySQL 密码',
     nacosMysqlPasswordDesc: '数据库模式时使用的 MySQL 密码',
-    nacosMysqlNotRunning: 'MySQL 数据库未运行或连接失败，请先启动 MySQL 后再启动 Nacos',
   }
 }

@@ -142,6 +142,7 @@ export default {
   extracting: 'Extracting',
   installCompleted: 'Install Completed',
   installFailed: 'Install Failed',
+  nacosMysqlNotRunning: 'MySQL is not running or connection failed. Please start MySQL before starting Nacos',
   customName: 'Name',
   selectArchive: 'Select Archive',
   refreshCatalog: 'Refresh Catalog',
@@ -477,6 +478,5 @@ export default {
     nacosMysqlUserDesc: 'MySQL account used in database mode',
     nacosMysqlPassword: 'MySQL Password',
     nacosMysqlPasswordDesc: 'MySQL password used in database mode',
-    nacosMysqlNotRunning: 'MySQL is not running or connection failed. Please start MySQL before starting Nacos',
   }
 }
