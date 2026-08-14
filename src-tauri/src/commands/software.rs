@@ -325,6 +325,16 @@ fn find_installed_jdk(manager: &Arc<SoftwareManager>, config: &serde_json::Value
         .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
 }
 
+/// 找已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时建库建表用）。
+/// 返回 None 表示未装 MySQL。
+fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
+    manager
+        .get_installed()
+        .iter()
+        .find(|s| s.key == "mysql")
+        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -363,6 +373,8 @@ pub async fn do_start_software(
         // 需要 JDK 的软件（如 Nacos）：优先用配置里选的 JDK（installed_id），
         // 回退自动找。解析出的 install_path 供 start_command 拼 java 命令。
         jdk_install_path: find_installed_jdk(manager, &software.config),
+        // Nacos 选 MySQL 数据库模式时，用已装 MySQL 的 mysql.exe 建库建表
+        mysql_install_path: find_installed_mysql(manager),
     };
 
     // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）

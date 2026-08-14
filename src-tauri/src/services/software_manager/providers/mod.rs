@@ -83,6 +83,9 @@ pub struct StartContext {
     pub init_password: Option<String>,
     /// 已安装 JDK 的 install_path（如 Nacos 等 Java 软件启动用）。None 表示无 JDK 或软件不需要。
     pub jdk_install_path: Option<String>,
+    /// 已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时，用其 mysql.exe 建库建表）。
+    /// None 表示无 MySQL 或软件不需要。
+    pub mysql_install_path: Option<String>,
 }
 
 /// 健康检查上下文

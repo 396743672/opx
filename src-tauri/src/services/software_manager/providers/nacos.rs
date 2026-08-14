@@ -7,7 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+    ConfigContext, FirstRunInit, HealthContext, InstallContext, SoftwareProvider, StartCommand,
+    StartContext,
 };
 
 #[cfg(windows)]
@@ -17,6 +18,9 @@ const CREATE_NO_WINDOW: u32 = 0;
 
 fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
     c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
+}
+fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
+    c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
 
 pub struct NacosProvider;
@@ -76,6 +80,12 @@ impl SoftwareProvider for NacosProvider {
             .join("target").join("nacos-server.jar");
         let working_dir = PathBuf::from(&ctx.install_path);
 
+        // 部署模式：standalone（默认）/ cluster（预留，暂未实现完整集群）
+        let mode = config_str(&ctx.config, "mode", "standalone");
+        if mode != "standalone" {
+            return Err(anyhow::anyhow!("集群模式暂未支持，请使用单机模式（standalone）"));
+        }
+
         let mut args = vec![
             // nacos.home 指定安装根目录（conf/、data/、logs/ 都在其下）。
             // 不设则默认用户主目录 ~/nacos，导致找不到 conf 启动失败。
@@ -87,6 +97,17 @@ impl SoftwareProvider for NacosProvider {
             "-jar".to_string(),
             jar.to_string_lossy().to_string(),
         ];
+
+        // 服务端口：3.x 主 API 端口（默认 8848）
+        let server_port = config_u64(&ctx.config, "port", 8848);
+        if server_port != 8848 {
+            args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
+        }
+        // 控制台端口：3.x 独立（默认 8080）；2.x 与主端口共用，此参数被忽略（无害）
+        let console_port = config_u64(&ctx.config, "console_port", 8080);
+        if console_port != 8080 {
+            args.insert(0, format!("-Dnacos.console.port={}", console_port));
+        }
 
         // JDK 9+ 强封装：Nacos 的 JRaft 用反射访问 JDK 内部字段，必须 --add-opens
         // （与 startup.cmd 的 NACOS_JVM_OPTS 一致），否则 JDK 16+ 启动报 InaccessibleObjectException。
@@ -105,6 +126,65 @@ impl SoftwareProvider for NacosProvider {
         args.insert(0, "-Dnacos.core.auth.server.identity.key=serverIdentity".to_string());
         args.insert(0, "-Dnacos.core.auth.server.identity.value=security".to_string());
         args.insert(0, "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=".to_string());
+
+        // 数据库模式：embedded（Derby 默认）/ mysql
+        let storage = config_str(&ctx.config, "storage", "embedded");
+        let mut first_run_init = None;
+        if storage == "mysql" {
+            let host = config_str(&ctx.config, "mysql_host", "127.0.0.1");
+            let mysql_port = config_u64(&ctx.config, "mysql_port", 3306);
+            let db = config_str(&ctx.config, "mysql_db", "nacos");
+            let user = config_str(&ctx.config, "mysql_user", "root");
+            let password = config_str(&ctx.config, "mysql_password", "");
+
+            // 配置 Nacos 使用 MySQL 数据源
+            let jdbc_url = format!(
+                "jdbc:mysql://{}:{}/{}?characterEncoding=utf8&connectTimeout=1000&socketTimeout=3000&autoReconnect=true",
+                host, mysql_port, db
+            );
+            args.insert(0, "-Dspring.datasource.platform=mysql".to_string());
+            args.insert(0, "-Ddb.num=1".to_string());
+            args.insert(0, format!("-Ddb.url.0={}", jdbc_url));
+            args.insert(0, format!("-Ddb.user={}", user));
+            args.insert(0, format!("-Ddb.password={}", password));
+
+            // 首次启动自动建库建表：需已装 MySQL 的 mysql.exe
+            let mysql_install = ctx.mysql_install_path.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("请先安装 MySQL（数据库模式需要）"))?;
+            let mysql = std::path::Path::new(mysql_install)
+                .join("bin").join(if cfg!(windows) { "mysql.exe" } else { "mysql" });
+            let schema_path = working_dir.join("conf").join("mysql-schema.sql");
+            if !schema_path.exists() {
+                return Err(anyhow::anyhow!("Nacos 缺少 mysql-schema.sql，请重新安装"));
+            }
+            // mysql -e "CREATE DATABASE ...; USE ...; SOURCE ..." 一步建库建表。
+            // 密码走 MYSQL_PWD 环境变量，避免命令行明文泄漏。
+            let sql = format!(
+                "CREATE DATABASE IF NOT EXISTS `{}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE `{}`; SOURCE {};",
+                db, db,
+                schema_path.to_string_lossy().replace('\\', "/")
+            );
+            let mut env = std::collections::BTreeMap::new();
+            env.insert("MYSQL_PWD".to_string(), password);
+            let init_cmd = StartCommand {
+                program: mysql.to_string_lossy().to_string(),
+                args: vec![
+                    format!("-h{}", host),
+                    format!("-P{}", mysql_port),
+                    format!("-u{}", user),
+                    "--default-character-set=utf8mb4".to_string(),
+                    format!("-e{}", sql),
+                ],
+                env_vars: env,
+                working_dir: working_dir.clone(),
+                creation_flags: CREATE_NO_WINDOW,
+                first_run_init: None,
+            };
+            first_run_init = Some(Box::new(FirstRunInit {
+                init_command: init_cmd,
+                temp_secret_output: None,
+            }));
+        }
 
         // JVM 堆内存：Size 字段存 "512m"/"1g"，拼 -Xms/-Xmx（同值）
         let heap = config_str(&ctx.config, "heap", "512m");
@@ -129,7 +209,7 @@ impl SoftwareProvider for NacosProvider {
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
             creation_flags: CREATE_NO_WINDOW,
-            first_run_init: None,
+            first_run_init,
         })
     }
 
@@ -150,8 +230,78 @@ impl SoftwareProvider for NacosProvider {
                     label_i18n: "configField.port".to_string(),
                     field_type: ConfigFieldType::Port,
                     default_value: serde_json::json!(8848),
-                    section: None,
-                    description_i18n: Some("configField.portDesc".to_string()),
+                    section: Some("nacosServer".to_string()),
+                    description_i18n: Some("configField.nacosServerPortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "console_port".to_string(),
+                    label_i18n: "configField.nacosConsolePort".to_string(),
+                    field_type: ConfigFieldType::Port,
+                    default_value: serde_json::json!(8080),
+                    section: Some("nacosServer".to_string()),
+                    description_i18n: Some("configField.nacosConsolePortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mode".to_string(),
+                    label_i18n: "configField.nacosMode".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec!["standalone".to_string(), "cluster".to_string()],
+                        labels: vec![],
+                    },
+                    default_value: serde_json::json!("standalone"),
+                    section: Some("nacosDeploy".to_string()),
+                    description_i18n: Some("configField.nacosModeDesc".to_string()),
+                },
+                ConfigField {
+                    key: "storage".to_string(),
+                    label_i18n: "configField.nacosStorage".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec!["embedded".to_string(), "mysql".to_string()],
+                        labels: vec![],
+                    },
+                    default_value: serde_json::json!("embedded"),
+                    section: Some("nacosDeploy".to_string()),
+                    description_i18n: Some("configField.nacosStorageDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mysql_host".to_string(),
+                    label_i18n: "configField.nacosMysqlHost".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("127.0.0.1"),
+                    section: Some("nacosMysql".to_string()),
+                    description_i18n: Some("configField.nacosMysqlHostDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mysql_port".to_string(),
+                    label_i18n: "configField.nacosMysqlPort".to_string(),
+                    field_type: ConfigFieldType::Port,
+                    default_value: serde_json::json!(3306),
+                    section: Some("nacosMysql".to_string()),
+                    description_i18n: Some("configField.nacosMysqlPortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mysql_db".to_string(),
+                    label_i18n: "configField.nacosMysqlDb".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("nacos"),
+                    section: Some("nacosMysql".to_string()),
+                    description_i18n: Some("configField.nacosMysqlDbDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mysql_user".to_string(),
+                    label_i18n: "configField.nacosMysqlUser".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("root"),
+                    section: Some("nacosMysql".to_string()),
+                    description_i18n: Some("configField.nacosMysqlUserDesc".to_string()),
+                },
+                ConfigField {
+                    key: "mysql_password".to_string(),
+                    label_i18n: "configField.nacosMysqlPassword".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: Some("nacosMysql".to_string()),
+                    description_i18n: Some("configField.nacosMysqlPasswordDesc".to_string()),
                 },
                 ConfigField {
                     key: "jdk".to_string(),
@@ -225,6 +375,7 @@ mod tests {
             installed_id: "x".into(), install_path: "/n".into(), version: "2.5.3".into(),
             config: serde_json::json!({}), custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         assert!(provider().start_command(&ctx).is_err(), "无 JDK 应报错");
     }
@@ -235,6 +386,7 @@ mod tests {
             installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
             config: serde_json::json!({}), custom_start_command: None, init_password: None,
             jdk_install_path: Some("C:/jdk".into()),
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.program.contains("java"), "program 应为 java, got {}", cmd.program);
@@ -266,6 +418,7 @@ mod tests {
             config: serde_json::json!({ "jdk": "some-installed-id" }),
             custom_start_command: None, init_password: None,
             jdk_install_path: Some("C:/chosen-jdk".into()),
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.program.contains("chosen-jdk"), "应使用命令层解析的 JDK 路径, got {}", cmd.program);
@@ -282,6 +435,7 @@ mod tests {
             }),
             custom_start_command: None, init_password: None,
             jdk_install_path: Some("C:/jdk".into()),
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.args.iter().any(|a| a == "-Xms1g"), "应带 -Xms1g");
@@ -298,6 +452,7 @@ mod tests {
             config: serde_json::json!({}),
             custom_start_command: None, init_password: None,
             jdk_install_path: Some("C:/jdk".into()),
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.args.iter().any(|a| a == "-Xms512m"), "默认堆内存 512m");

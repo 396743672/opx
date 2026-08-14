@@ -233,6 +233,7 @@ mod tests {
             installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
             config: serde_json::json!({}), custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "bin/postgres.exe");
@@ -256,6 +257,7 @@ mod tests {
             config: serde_json::json!({}), custom_start_command: None,
             init_password: Some("secret".into()),
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         let init = cmd.first_run_init.as_ref().unwrap();
@@ -272,6 +274,7 @@ mod tests {
             installed_id: "x".into(), install_path: "/pg".into(), version: "16".into(),
             config: serde_json::json!({}), custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         let init = cmd.first_run_init.as_ref().unwrap();
@@ -287,6 +290,7 @@ mod tests {
             config: serde_json::json!({}), custom_start_command: None,
             init_password: Some(String::new()),
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         let init = cmd.first_run_init.as_ref().unwrap();
@@ -301,6 +305,7 @@ mod tests {
             config: serde_json::json!({ "initialized": true }), custom_start_command: None,
             init_password: Some("secret".into()),
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         let init = cmd.first_run_init.as_ref().unwrap();

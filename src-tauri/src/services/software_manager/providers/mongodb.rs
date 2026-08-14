@@ -174,6 +174,7 @@ mod tests {
             config: serde_json::json!({ "port": 27018, "bind_ip": "127.0.0.1" }),
             custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert_eq!(cmd.program, "bin/mongod.exe");
@@ -208,6 +209,7 @@ mod tests {
             config: serde_json::json!({ "auth_enabled": true }),
             custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.args.iter().any(|a| a == "--auth"), "auth_enabled=true 应带 --auth");
@@ -220,6 +222,7 @@ mod tests {
             config: serde_json::json!({}),
             custom_start_command: None, init_password: None,
             jdk_install_path: None,
+            mysql_install_path: None,
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(!cmd.args.iter().any(|a| a == "--auth"), "默认不带 --auth");
