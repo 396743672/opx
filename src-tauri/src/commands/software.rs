@@ -188,9 +188,14 @@ pub async fn uninstall_software(
     }
     lifecycle::unregister(&installed_id);
 
-    // 删除记录 + 安装目录
-    manager
-        .remove_installed(&installed_id)
+    // 删除记录 + 安装目录。
+    // ponytail: remove_installed 内含 remove_dir_all 删整个安装目录（可能数百 MB），
+    // 同步执行会阻塞 async worker → 前端 await 挂起、卸载框不关。移入 spawn_blocking。
+    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+    let id_for_remove = installed_id.clone();
+    tokio::task::spawn_blocking(move || manager_arc.remove_installed(&id_for_remove))
+        .await
+        .map_err(|e| format!("卸载线程异常: {}", e))?
         .map_err(|e| e.to_string())?;
 
     let _ = app.emit("software-uninstalled", &installed_id);
