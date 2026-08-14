@@ -304,9 +304,20 @@ fn collect_configured_ports(
 }
 
 /// 找已安装 JDK/JRE 的 install_path（供 Nacos 等 Java 软件启动拼 java 命令）。
-/// 优先 JDK，其次 JRE；找不到返回 None（provider 收到 None 时报错提示先装 JDK）。
-fn find_installed_jdk(manager: &Arc<SoftwareManager>) -> Option<String> {
+/// 解析启动用的 JDK/JRE install_path：
+/// 优先用软件配置里选的 jdk（存 installed_id，来自表单选择，与 SpringBoot 一致），
+/// 其次自动找已装 JDK/JRE（优先 JDK 其次 JRE）。找不到返回 None。
+fn find_installed_jdk(manager: &Arc<SoftwareManager>, config: &serde_json::Value) -> Option<String> {
     let installed = manager.get_installed();
+    // 1. 配置里显式选了 JDK（installed_id）→ 按 id 解析路径
+    if let Some(id) = config.get("jdk").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        if let Some(sw) = installed.iter().find(|s| s.id == id) {
+            return Some(
+                crate::utils::paths::resolve_install_path(&sw.install_path).to_string_lossy().to_string(),
+            );
+        }
+    }
+    // 2. 回退：自动找第一个 JDK/JRE
     installed
         .iter()
         .filter(|s| s.key == "jdk" || s.key == "jre")
@@ -349,8 +360,9 @@ pub async fn do_start_software(
         config: software.config.clone(),
         custom_start_command: software.custom_start_command.clone(),
         init_password: init_password.clone(),
-        // 需要 JDK 的软件（如 Nacos）：从已装列表找 JDK 的 install_path 供 start_command 拼 java 命令
-        jdk_install_path: find_installed_jdk(manager),
+        // 需要 JDK 的软件（如 Nacos）：优先用配置里选的 JDK（installed_id），
+        // 回退自动找。解析出的 install_path 供 start_command 拼 java 命令。
+        jdk_install_path: find_installed_jdk(manager, &software.config),
     };
 
     // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）
@@ -896,25 +908,32 @@ pub async fn get_config_schema(
     Ok(Some(schema))
 }
 
-/// 把已装 JDK/JRE 的安装路径填充进 schema 中 key=="jdk" 的 Select 字段 options。
+/// 把已装 JDK/JRE 填充进 schema 中 key=="jdk" 的 Select 字段：
+/// - options 存 installed_id（稳定标识，便携版路径变动不影响）
+/// - labels 存 "name (version) [JDK/JRE]"（与 SpringBoot 应用选择一致）
 /// 供 Nacos 等需选 JDK 的软件复用。找不到 JDK 时保留空 options（前端显示"未安装 JDK"）。
 fn fill_jdk_options(schema: &mut ConfigSchema, manager: &SoftwareManager) {
-    let jdks: Vec<String> = manager
+    let jdks: Vec<InstalledSoftware> = manager
         .get_installed()
-        .iter()
+        .into_iter()
         .filter(|s| s.key == "jdk" || s.key == "jre")
-        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
         .collect();
     if jdks.is_empty() {
         return;
     }
+    let ids: Vec<String> = jdks.iter().map(|s| s.id.clone()).collect();
+    let labels: Vec<String> = jdks
+        .iter()
+        .map(|s| format!("{} ({}) {}", s.name, s.version, if s.key == "jdk" { "[JDK]" } else { "[JRE]" }))
+        .collect();
     for field in &mut schema.fields {
         if field.key == "jdk" {
-            if let ConfigFieldType::Select { options } = &mut field.field_type {
-                *options = jdks.clone();
+            if let ConfigFieldType::Select { options, labels: lbls } = &mut field.field_type {
+                *options = ids.clone();
+                *lbls = labels.clone();
                 // 默认选中第一个 JDK（若默认值为空）
                 if field.default_value.as_str().map(|s| s.is_empty()).unwrap_or(true) {
-                    field.default_value = serde_json::json!(jdks[0]);
+                    field.default_value = serde_json::json!(ids[0]);
                 }
             }
         }

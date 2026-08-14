@@ -66,11 +66,8 @@ impl SoftwareProvider for NacosProvider {
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         // Nacos 是 Java 应用：需要已安装 JDK，java -jar 前台启动。
         // startup.cmd/startup.sh 会 daemon 化（后台运行）破坏 PID 管理，故直连 java。
-        // JDK 优先用表单选择的（config.jdk），未选则回退命令层自动找的。
-        let jdk = ctx.config.get("jdk").and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .or_else(|| ctx.jdk_install_path.clone())
+        // jdk_install_path 由命令层解析（优先表单选择的 JDK，回退自动找），此处直接用。
+        let jdk = ctx.jdk_install_path.as_deref()
             .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动 Nacos"))?;
         let java = std::path::Path::new(&jdk)
             .join("bin")
@@ -135,7 +132,8 @@ impl SoftwareProvider for NacosProvider {
                 ConfigField {
                     key: "jdk".to_string(),
                     label_i18n: "configField.nacosJdk".to_string(),
-                    field_type: ConfigFieldType::Select { options: vec![] },
+                    // options/labels 由 get_config_schema 命令层动态填充（已装 JDK/JRE）
+                    field_type: ConfigFieldType::Select { options: vec![], labels: vec![] },
                     default_value: serde_json::json!(""),
                     section: None,
                     description_i18n: Some("configField.nacosJdkDesc".to_string()),
@@ -159,6 +157,7 @@ impl SoftwareProvider for NacosProvider {
                             "microservice".to_string(),
                             "ai".to_string(),
                         ],
+                        labels: vec![],
                     },
                     default_value: serde_json::json!("all"),
                     section: None,
@@ -231,16 +230,17 @@ mod tests {
     }
 
     #[test]
-    fn start_command_prefers_config_jdk_over_auto() {
-        // 表单选了 JDK（config.jdk）优先于命令层自动找的（jdk_install_path）
+    fn start_command_uses_resolved_jdk_path_from_command_layer() {
+        // 命令层已按表单选的 JDK 解析出路径填 jdk_install_path，provider 直接用。
+        // config.jdk 存的是 installed_id（稳定标识），不再是路径。
         let ctx = StartContext {
             installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
-            config: serde_json::json!({ "jdk": "C:/chosen-jdk" }),
+            config: serde_json::json!({ "jdk": "some-installed-id" }),
             custom_start_command: None, init_password: None,
-            jdk_install_path: Some("C:/auto-jdk".into()),
+            jdk_install_path: Some("C:/chosen-jdk".into()),
         };
         let cmd = provider().start_command(&ctx).unwrap();
-        assert!(cmd.program.contains("chosen-jdk"), "应使用表单选择的 JDK, got {}", cmd.program);
+        assert!(cmd.program.contains("chosen-jdk"), "应使用命令层解析的 JDK 路径, got {}", cmd.program);
     }
 
     #[test]
@@ -248,13 +248,12 @@ mod tests {
         let ctx = StartContext {
             installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
             config: serde_json::json!({
-                "jdk": "C:/jdk",
                 "heap": "1g",
                 "function_mode": "naming",
                 "context_path": "/my-nacos",
             }),
             custom_start_command: None, init_password: None,
-            jdk_install_path: None,
+            jdk_install_path: Some("C:/jdk".into()),
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.args.iter().any(|a| a == "-Xms1g"), "应带 -Xms1g");
@@ -268,9 +267,9 @@ mod tests {
         // 默认 all 模式 + 默认 /nacos 上下文：不传额外参数
         let ctx = StartContext {
             installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
-            config: serde_json::json!({ "jdk": "C:/jdk" }),
+            config: serde_json::json!({}),
             custom_start_command: None, init_password: None,
-            jdk_install_path: None,
+            jdk_install_path: Some("C:/jdk".into()),
         };
         let cmd = provider().start_command(&ctx).unwrap();
         assert!(cmd.args.iter().any(|a| a == "-Xms512m"), "默认堆内存 512m");

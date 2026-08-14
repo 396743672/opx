@@ -252,6 +252,7 @@ impl SoftwareProvider for RedisProvider {
                             "volatile-lru".to_string(),
                             "noeviction".to_string(),
                         ],
+                        labels: vec![],
                     },
                     default_value: serde_json::json!("noeviction"),
                     section: None,

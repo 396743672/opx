@@ -30,7 +30,9 @@
           :disabled="isEphemeral(field) && isInitialized"
         />
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
-          <option v-for="opt in selectOptions(field)" :key="opt" :value="opt">{{ opt }}</option>
+          <option v-for="(opt, i) in selectOptions(field)" :key="opt" :value="opt">
+            {{ selectLabels(field)?.[i] ?? opt }}
+          </option>
         </select>
         <div v-else-if="isSize(field)" class="size-field">
           <input
@@ -125,6 +127,9 @@ function isBoolean(f: ConfigField) {
 }
 function selectOptions(f: ConfigField): string[] {
   return f.field_type.type === 'Select' ? f.field_type.options : []
+}
+function selectLabels(f: ConfigField): string[] | undefined {
+  return f.field_type.type === 'Select' ? f.field_type.labels : undefined
 }
 
 // Size 字段：值形如 "256mb"，拆成「数字 + 单位」编辑，单位只能从下拉里选（防手写单位出错）
