@@ -77,10 +77,34 @@ impl SoftwareProvider for NacosProvider {
         let working_dir = PathBuf::from(&ctx.install_path);
 
         let mut args = vec![
+            // nacos.home 指定安装根目录（conf/、data/、logs/ 都在其下）。
+            // 不设则默认用户主目录 ~/nacos，导致找不到 conf 启动失败。
+            format!("-Dnacos.home={}", working_dir.to_string_lossy()),
+            // loader.path 加载 plugins/ 下的数据源插件（Derby/MySQL 驱动等）。
+            // 不设则 Derby 驱动类找不到，standalone 模式启动失败。
+            format!("-Dloader.path={}", working_dir.join("plugins").to_string_lossy()),
             "-Dnacos.standalone=true".to_string(),
             "-jar".to_string(),
             jar.to_string_lossy().to_string(),
         ];
+
+        // JDK 9+ 强封装：Nacos 的 JRaft 用反射访问 JDK 内部字段，必须 --add-opens
+        // （与 startup.cmd 的 NACOS_JVM_OPTS 一致），否则 JDK 16+ 启动报 InaccessibleObjectException。
+        let add_opens = [
+            "java.base/java.lang=ALL-UNNAMED",
+            "java.base/java.lang.reflect=ALL-UNNAMED",
+            "java.base/java.util=ALL-UNNAMED",
+        ];
+        for o in add_opens {
+            args.insert(0, format!("--add-opens={}", o));
+        }
+
+        // Nacos 2.2.1+ 校验 server identity：即使 auth.enabled=false，部分模块
+        // 初始化也要求 identity 有值，否则报 Empty identity 启动失败。
+        // 提供开发默认值（官方文档示例值），本地开发工具场景足够。
+        args.insert(0, "-Dnacos.core.auth.server.identity.key=serverIdentity".to_string());
+        args.insert(0, "-Dnacos.core.auth.server.identity.value=security".to_string());
+        args.insert(0, "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=".to_string());
 
         // JVM 堆内存：Size 字段存 "512m"/"1g"，拼 -Xms/-Xmx（同值）
         let heap = config_str(&ctx.config, "heap", "512m");
@@ -217,6 +241,10 @@ mod tests {
         assert!(cmd.args.iter().any(|a| a == "-jar"), "应带 -jar");
         assert!(cmd.args.iter().any(|a| a.contains("nacos-server.jar")), "应指定 nacos-server.jar");
         assert!(cmd.args.iter().any(|a| a.contains("standalone")), "应带 standalone");
+        assert!(cmd.args.iter().any(|a| a.contains("nacos.home=/nacos")), "应指定 nacos.home 为安装目录, args={:?}", cmd.args);
+        assert!(cmd.args.iter().any(|a| a.contains("loader.path=") && a.contains("plugins")), "应指定 loader.path 指向 plugins, args={:?}", cmd.args);
+        assert!(cmd.args.iter().any(|a| a.starts_with("--add-opens=")), "应带 --add-opens, args={:?}", cmd.args);
+        assert!(cmd.args.iter().any(|a| a.contains("identity.key=serverIdentity")), "应设 server.identity.key, args={:?}", cmd.args);
         assert!(cmd.first_run_init.is_none());
     }
 
