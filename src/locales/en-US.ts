@@ -451,5 +451,7 @@ export default {
     bindIp: 'Bind IP',
     httpPort: 'HTTP Port',
     consulMode: 'Run Mode',
+    authEnabled: 'Enable Auth',
+    authEnabledDesc: 'Requires authentication to access; create root user in mongosh on first run',
   }
 }

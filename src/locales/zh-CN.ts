@@ -451,5 +451,7 @@ export default {
     bindIp: '绑定地址',
     httpPort: 'HTTP 端口',
     consulMode: '运行模式',
+    authEnabled: '启用认证',
+    authEnabledDesc: '开启后需认证才能访问；首次需在 mongosh 手动创建 root 用户',
   }
 }
