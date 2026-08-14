@@ -15,6 +15,9 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
+    c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
+}
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
@@ -66,22 +69,45 @@ impl SoftwareProvider for NacosProvider {
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         // Nacos 是 Java 应用：需要已安装 JDK，java -jar 前台启动。
         // startup.cmd/startup.sh 会 daemon 化（后台运行）破坏 PID 管理，故直连 java。
-        let jdk = ctx.jdk_install_path.as_deref()
-            .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 再启动 Nacos"))?;
-        let java = std::path::Path::new(jdk)
+        // JDK 优先用表单选择的（config.jdk），未选则回退命令层自动找的。
+        let jdk = ctx.config.get("jdk").and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| ctx.jdk_install_path.clone())
+            .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动 Nacos"))?;
+        let java = std::path::Path::new(&jdk)
             .join("bin")
             .join(if cfg!(windows) { "java.exe" } else { "java" });
         let jar = std::path::Path::new(&ctx.install_path)
             .join("target").join("nacos-server.jar");
         let working_dir = PathBuf::from(&ctx.install_path);
 
+        let mut args = vec![
+            "-Dnacos.standalone=true".to_string(),
+            "-jar".to_string(),
+            jar.to_string_lossy().to_string(),
+        ];
+
+        // JVM 堆内存：Size 字段存 "512m"/"1g"，拼 -Xms/-Xmx（同值）
+        let heap = config_str(&ctx.config, "heap", "512m");
+        if !heap.is_empty() {
+            args.insert(0, format!("-Xmx{}", heap));
+            args.insert(0, format!("-Xms{}", heap));
+        }
+        // 功能模块：config/naming/microservice/ai/all（默认 all 即不传）
+        let function_mode = config_str(&ctx.config, "function_mode", "all");
+        if !function_mode.is_empty() && function_mode != "all" {
+            args.insert(0, format!("-Dnacos.functionMode={}", function_mode));
+        }
+        // 上下文路径（默认 /nacos）
+        let context_path = config_str(&ctx.config, "context_path", "/nacos");
+        if !context_path.is_empty() && context_path != "/nacos" {
+            args.insert(0, format!("-Dnacos.server.contextPath={}", context_path));
+        }
+
         Ok(StartCommand {
             program: java.to_string_lossy().to_string(),
-            args: vec![
-                "-Dnacos.standalone=true".to_string(),
-                "-jar".to_string(),
-                jar.to_string_lossy().to_string(),
-            ],
+            args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
             creation_flags: CREATE_NO_WINDOW,
@@ -108,6 +134,46 @@ impl SoftwareProvider for NacosProvider {
                     default_value: serde_json::json!(8848),
                     section: None,
                     description_i18n: Some("configField.portDesc".to_string()),
+                },
+                ConfigField {
+                    key: "jdk".to_string(),
+                    label_i18n: "configField.nacosJdk".to_string(),
+                    field_type: ConfigFieldType::Select { options: vec![] },
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.nacosJdkDesc".to_string()),
+                },
+                ConfigField {
+                    key: "heap".to_string(),
+                    label_i18n: "configField.nacosHeap".to_string(),
+                    field_type: ConfigFieldType::Size { units: vec!["m".to_string(), "g".to_string()] },
+                    default_value: serde_json::json!("512m"),
+                    section: None,
+                    description_i18n: Some("configField.nacosHeapDesc".to_string()),
+                },
+                ConfigField {
+                    key: "function_mode".to_string(),
+                    label_i18n: "configField.nacosFunctionMode".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec![
+                            "all".to_string(),
+                            "config".to_string(),
+                            "naming".to_string(),
+                            "microservice".to_string(),
+                            "ai".to_string(),
+                        ],
+                    },
+                    default_value: serde_json::json!("all"),
+                    section: None,
+                    description_i18n: Some("configField.nacosFunctionModeDesc".to_string()),
+                },
+                ConfigField {
+                    key: "context_path".to_string(),
+                    label_i18n: "configField.nacosContextPath".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("/nacos"),
+                    section: None,
+                    description_i18n: Some("configField.nacosContextPathDesc".to_string()),
                 },
             ],
             ephemeral_keys: vec![],
@@ -165,6 +231,65 @@ mod tests {
             HealthCheckSpec::Tcp { port, .. } => assert_eq!(port, 8848),
             o => panic!("expected Tcp, got {:?}", o),
         }
+    }
+
+    #[test]
+    fn start_command_prefers_config_jdk_over_auto() {
+        // 表单选了 JDK（config.jdk）优先于命令层自动找的（jdk_install_path）
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
+            config: serde_json::json!({ "jdk": "C:/chosen-jdk" }),
+            custom_start_command: None, init_password: None,
+            jdk_install_path: Some("C:/auto-jdk".into()),
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(cmd.program.contains("chosen-jdk"), "应使用表单选择的 JDK, got {}", cmd.program);
+    }
+
+    #[test]
+    fn start_command_applies_heap_and_function_mode_and_context() {
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
+            config: serde_json::json!({
+                "jdk": "C:/jdk",
+                "heap": "1g",
+                "function_mode": "naming",
+                "context_path": "/my-nacos",
+            }),
+            custom_start_command: None, init_password: None,
+            jdk_install_path: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(cmd.args.iter().any(|a| a == "-Xms1g"), "应带 -Xms1g");
+        assert!(cmd.args.iter().any(|a| a == "-Xmx1g"), "应带 -Xmx1g");
+        assert!(cmd.args.iter().any(|a| a.contains("functionMode=naming")), "应带 functionMode");
+        assert!(cmd.args.iter().any(|a| a.contains("contextPath=/my-nacos")), "应带 contextPath");
+    }
+
+    #[test]
+    fn start_command_defaults_omit_all_mode_and_standard_context() {
+        // 默认 all 模式 + 默认 /nacos 上下文：不传额外参数
+        let ctx = StartContext {
+            installed_id: "x".into(), install_path: "/nacos".into(), version: "2.5.3".into(),
+            config: serde_json::json!({ "jdk": "C:/jdk" }),
+            custom_start_command: None, init_password: None,
+            jdk_install_path: None,
+        };
+        let cmd = provider().start_command(&ctx).unwrap();
+        assert!(cmd.args.iter().any(|a| a == "-Xms512m"), "默认堆内存 512m");
+        assert!(!cmd.args.iter().any(|a| a.contains("functionMode")), "默认 all 不传 functionMode");
+        assert!(!cmd.args.iter().any(|a| a.contains("contextPath")), "默认 /nacos 不传 contextPath");
+    }
+
+    #[test]
+    fn config_schema_has_all_nacos_fields() {
+        let schema = provider().config_schema().unwrap();
+        let keys: Vec<&str> = schema.fields.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"jdk"));
+        assert!(keys.contains(&"heap"));
+        assert!(keys.contains(&"function_mode"));
+        assert!(keys.contains(&"context_path"));
+        assert!(keys.contains(&"port"));
     }
 
     #[test]

@@ -6,8 +6,8 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    CatalogEntry, ConfigSchema, CustomInstallParams, CustomStartCommand, InstallParams,
-    InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
+    CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
+    InstallParams, InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
 };
 use crate::oplog;
 use crate::services::software_manager::{
@@ -870,6 +870,7 @@ pub async fn get_software_status(
 /// 自定义软件返回 None（无统一表单）
 #[tauri::command]
 pub async fn get_config_schema(
+    manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<Option<ConfigSchema>, String> {
     let software = load_software_for_id(&installed_id)?;
@@ -881,7 +882,43 @@ pub async fn get_config_schema(
         .iter()
         .find(|p| p.key() == software.key)
         .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
-    Ok(provider.config_schema())
+    let mut schema = match provider.config_schema() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Nacos 的 JDK 选择：动态列出已装 JDK/JRE 的安装路径作为 Select options。
+    // provider 的 config_schema 是静态的，options 为空，需在此处填充。
+    if software.key == "nacos" {
+        fill_jdk_options(&mut schema, manager.inner());
+    }
+
+    Ok(Some(schema))
+}
+
+/// 把已装 JDK/JRE 的安装路径填充进 schema 中 key=="jdk" 的 Select 字段 options。
+/// 供 Nacos 等需选 JDK 的软件复用。找不到 JDK 时保留空 options（前端显示"未安装 JDK"）。
+fn fill_jdk_options(schema: &mut ConfigSchema, manager: &SoftwareManager) {
+    let jdks: Vec<String> = manager
+        .get_installed()
+        .iter()
+        .filter(|s| s.key == "jdk" || s.key == "jre")
+        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+        .collect();
+    if jdks.is_empty() {
+        return;
+    }
+    for field in &mut schema.fields {
+        if field.key == "jdk" {
+            if let ConfigFieldType::Select { options } = &mut field.field_type {
+                *options = jdks.clone();
+                // 默认选中第一个 JDK（若默认值为空）
+                if field.default_value.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+                    field.default_value = serde_json::json!(jdks[0]);
+                }
+            }
+        }
+    }
 }
 
 /// 读表单数据：优先从 installed.json 的 config 字段读（权威来源），
