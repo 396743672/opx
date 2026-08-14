@@ -18,9 +18,6 @@ const CREATE_NO_WINDOW: u32 = 0;
 fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
     c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
 }
-fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
-    c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
-}
 
 pub struct NacosProvider;
 
