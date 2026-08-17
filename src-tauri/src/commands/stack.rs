@@ -10,9 +10,11 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
-use crate::models::stack::{CreateStackPayload, Stack, UpdateStackPayload};
+use crate::models::stack::{
+    CreateStackPayload, Stack, StackStartPlan, UpdateStackPayload,
+};
 use crate::services::stack_manager::StackManager;
 
 /// 列出所有栈
@@ -60,4 +62,35 @@ pub async fn delete_stack(
     id: String,
 ) -> Result<(), String> {
     manager.delete(&id).map(|_| ())
+}
+
+/// 一键启动栈：逐批 + 批内并发，依赖就绪探测 + 重试 + 回滚。
+/// 运行前再次环检测；过程 emit `stack-status-changed`。
+#[tauri::command]
+pub async fn start_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<StackStartPlan, String> {
+    manager.start(&app, &id).await.map_err(|e| e.to_string())
+}
+
+/// 一键停止栈（逆序优雅停止）
+#[tauri::command]
+pub async fn stop_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    manager.stop(&app, &id).await.map_err(|e| e.to_string())
+}
+
+/// 一键重启栈（先停后起，返回新启动计划）
+#[tauri::command]
+pub async fn restart_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<StackStartPlan, String> {
+    manager.restart(&app, &id).await.map_err(|e| e.to_string())
 }

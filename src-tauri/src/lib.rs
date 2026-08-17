@@ -239,6 +239,9 @@ pub fn run() {
             commands::stack::create_stack,
             commands::stack::update_stack,
             commands::stack::delete_stack,
+            commands::stack::start_stack,
+            commands::stack::stop_stack,
+            commands::stack::restart_stack,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
