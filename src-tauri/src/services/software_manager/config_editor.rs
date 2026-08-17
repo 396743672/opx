@@ -18,6 +18,9 @@ pub fn detect_format(file_path: &Path) -> ConfigFormat {
     let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.ends_with(".ini") || name == "my.cnf" {
         ConfigFormat::Ini
+    } else if name == "postgresql.conf" {
+        // PostgreSQL 配置是 `key = value`（等号分隔、无 section），本质即 INI 语法
+        ConfigFormat::Ini
     } else if name == "redis.conf" {
         ConfigFormat::KeyValue
     } else if name.ends_with(".conf") {
@@ -235,6 +238,9 @@ fn ini_upsert(
     }
 
     if !found {
+        // 空内容（len=0）时 start+1=1 越界，clamp 到 len 避免 panic。
+        // 场景：PG 首次初始化前 postgresql.conf 尚不存在，首次写配置为空内容。
+        let insert_at = insert_at.min(lines.len());
         lines.insert(insert_at, format!("{}={}", key, v_str));
     }
     Ok(lines.join("\n"))
@@ -397,3 +403,4 @@ fn value_to_string(v: &serde_json::Value) -> String {
         other => other.to_string(),
     }
 }
+

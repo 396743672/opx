@@ -124,6 +124,7 @@ const grouped = computed<Group[]>(() => {
     cache: { category: 'cache', label: 'cache', icon: 'mdi:lightning-bolt', items: [] },
     webserver: { category: 'webserver', label: 'webServer', icon: 'mdi:web', items: [] },
     storage: { category: 'storage', label: 'objectStorage', icon: 'mdi:storage', items: [] },
+    registry: { category: 'registry', label: 'registry', icon: 'mdi:hexagon-multiple', items: [] },
     custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
   }
   // JRE 也纳入管理页（提供卸载入口），放在 runtime 分组
@@ -133,10 +134,11 @@ const grouped = computed<Group[]>(() => {
     let g: keyof typeof groups
     if (sw.is_custom) g = 'custom'
     else if (sw.key === 'jre' || sw.key === 'jdk') g = 'runtime'
-    else if (sw.key === 'mysql') g = 'database'
+    else if (sw.key === 'mysql' || sw.key === 'postgresql' || sw.key === 'mongodb') g = 'database'
     else if (sw.key === 'redis') g = 'cache'
     else if (sw.key === 'nginx') g = 'webserver'
     else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
+    else if (sw.key === 'nacos') g = 'registry'
     else continue
     groups[g].items.push(sw)
   }

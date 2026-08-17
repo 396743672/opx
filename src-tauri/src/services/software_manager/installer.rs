@@ -51,20 +51,20 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
 // ponytail: 节流 emit，避免大文件每 chunk 刷屏 IPC
 struct ThrottledEmitter {
     last_emit: std::time::Instant,
-    last_percent: i64,
 }
 
 impl ThrottledEmitter {
     fn new() -> Self {
-        Self { last_emit: std::time::Instant::now(), last_percent: -1 }
+        Self { last_emit: std::time::Instant::now() }
     }
 
-    fn should_emit(&mut self, percent: i64) -> bool {
-        let changed = percent != self.last_percent;
+    fn should_emit(&mut self, _percent: i64) -> bool {
+        // ponytail: 纯 timeout 节流——最多每 200ms emit 一次。
+        // 不因 percent 变化而额外触发：解压大 zip 时每文件 percent 都变，
+        // 若按变化 emit 会刷屏 IPC 卡死前端（见 BUG2 修复）。
         let timeout = self.last_emit.elapsed().as_millis() >= 200;
-        if timeout || changed {
+        if timeout {
             self.last_emit = std::time::Instant::now();
-            self.last_percent = percent;
             true
         } else {
             false

@@ -30,7 +30,9 @@
           :disabled="isEphemeral(field) && isInitialized"
         />
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
-          <option v-for="opt in selectOptions(field)" :key="opt" :value="opt">{{ opt }}</option>
+          <option v-for="(opt, i) in selectOptions(field)" :key="opt" :value="opt">
+            {{ selectLabels(field)?.[i] ?? opt }}
+          </option>
         </select>
         <div v-else-if="isSize(field)" class="size-field">
           <input
@@ -46,6 +48,19 @@
           >
             <option v-for="u in sizeUnits(field)" :key="u" :value="u">{{ u }}</option>
           </select>
+        </div>
+        <div v-else-if="isBoolean(field)" class="switch-field">
+          <div
+            class="toggle"
+            :class="{ off: !formData[field.key] }"
+            role="switch"
+            :aria-checked="!!formData[field.key]"
+            tabindex="0"
+            @click="formData[field.key] = !formData[field.key]"
+            @keydown.enter.prevent="formData[field.key] = !formData[field.key]"
+            @keydown.space.prevent="formData[field.key] = !formData[field.key]"
+          ></div>
+          <span class="switch-label">{{ $t('enabled') }}</span>
         </div>
         <div v-if="field.description_i18n" class="form-field-desc">{{ $t(field.description_i18n) }}</div>
       </div>
@@ -107,8 +122,14 @@ function isPassword(f: ConfigField) {
 function isSelect(f: ConfigField) {
   return f.field_type.type === 'Select'
 }
+function isBoolean(f: ConfigField) {
+  return f.field_type.type === 'Boolean'
+}
 function selectOptions(f: ConfigField): string[] {
   return f.field_type.type === 'Select' ? f.field_type.options : []
+}
+function selectLabels(f: ConfigField): string[] | undefined {
+  return f.field_type.type === 'Select' ? f.field_type.labels : undefined
 }
 
 // Size 字段：值形如 "256mb"，拆成「数字 + 单位」编辑，单位只能从下拉里选（防手写单位出错）
@@ -204,5 +225,43 @@ defineExpose({ formData })
   padding: 32px;
   text-align: center;
   color: var(--color-muted-foreground);
+}
+.switch-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.switch-field .toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.switch-field .toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 18px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  transition: left 0.2s;
+}
+.switch-field .toggle.off {
+  background: var(--color-border);
+}
+.switch-field .toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.switch-field .toggle.off::after {
+  left: 2px;
+}
+.switch-label {
+  font-size: 13px;
 }
 </style>

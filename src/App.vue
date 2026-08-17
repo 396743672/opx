@@ -21,6 +21,7 @@
     @cancel="showCloseDialog = false"
   />
   <StopProgressDialog v-if="showStopProgress" />
+  <ErrorDialog v-if="lifecycleStore.errorMessage" />
 </template>
 
 <script setup lang="ts">
@@ -29,14 +30,17 @@ import { Icon } from '@iconify/vue'
 import MainLayout from '@/layouts/MainLayout.vue'
 import CloseDialog from '@/components/CloseDialog.vue'
 import StopProgressDialog from '@/components/StopProgressDialog.vue'
+import ErrorDialog from '@/components/ErrorDialog.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
+import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
+const lifecycleStore = useLifecycleStore()
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)

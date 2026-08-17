@@ -43,6 +43,7 @@ pub enum SoftwareCategory {
     Runtime,
     Cache,
     WebServer,
+    Registry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,9 +191,17 @@ pub enum ConfigFieldType {
     Number,
     Port,
     Password,
-    Select { options: Vec<String> },
+    /// options 是选项值（存 config），labels 是对应显示文本（长度与 options 一致）。
+    /// 用于「值存稳定标识（如 installed_id）、显示友好名称」的场景（如 JDK 选择）。
+    /// labels 为空时前端直接显示 options 值，向后兼容。
+    Select {
+        options: Vec<String>,
+        #[serde(default)]
+        labels: Vec<String>,
+    },
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },
+    Boolean,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

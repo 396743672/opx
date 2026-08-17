@@ -1,5 +1,9 @@
 # 新增 PostgreSQL / MongoDB / Consul 设计规格
 
+## 变更记录（2026-08-14）
+
+- **Consul → Nacos**：注册中心由 Consul 替换为 Nacos（用户要求）。Nacos 复用项目已装 JDK（`StartContext` 新增 `jdk_install_path`，命令层从已装列表找 JDK），`java -Dnacos.standalone=true -jar target/nacos-server.jar` 前台启动，TCP 8848 健康检查（规避 2.x/3.x 端点差异）。内置 2.5.3（JDK8+）/ 3.2.3（JDK17+）双版本。`SoftwareCategory::Registry` 分类保留给 Nacos。
+
 ## 概述
 
 在 OPX 软件仓库中新增三个常驻服务：PostgreSQL、MongoDB、Consul。复用现有 `SoftwareProvider` trait 与启停机制，无新抽象。
@@ -36,6 +40,8 @@
 
 ### 2. MongoDB — `providers/mongodb.rs`
 
+> **文档验证修正**：MongoDB 官方 `mongod.cfg` 为 **YAML** 格式（见 MongoDB 手册 administration/configuration）。现有 `config_editor` 仅支持 Ini/KeyValue/NginxConf/Json/Plaintext，无 YAML 读写器；为单一软件引入 YAML 引擎违背 ponytail。改为**纯命令行参数启动**（同 MinIO 模式），无配置文件、无源码视图，表单字段直接映射 CLI 参数。
+
 | 项 | 值 |
 |----|----|
 | key / name | `mongodb` / `MongoDB` |
@@ -43,9 +49,9 @@
 | icon | `mdi:leaf` |
 | 版本 | 硬编码官方 Windows zip（7.x / 6.x） |
 | 首次初始化 | 无（`mongod` 自动创建 dbpath） |
-| 启动 | `mongod.exe --config mongod.cfg` |
+| 启动 | `mongod.exe --dbpath <install>/data --bind_ip <bind> --port <port> --logpath <install>/data/mongod.log`，表单字段直接映射 CLI 参数 |
 | 健康检查 | TCP 27017 |
-| 配置 | 表单（port / bind_ip / dbpath）+ 源码 `mongod.cfg` |
+| 配置 | 表单（port / bind_ip / dbpath），**无源码编辑**（`config_file_path` 返回 None） |
 
 ### 3. Consul — `providers/consul.rs`
 
@@ -63,12 +69,16 @@
 ## 跨层改动
 
 1. **`SoftwareCategory` 枚举**（后端 `models/software.rs` + 前端 `models/software.ts`）：新增 `Registry`。前端 `catalog.ts` 的 `groupedEntries` 记录同步加 `Registry` 键。
-2. **i18n**（`zh-CN.ts` / `en-US.ts`）：新增
-   - `categoryRegistry`（注册中心）
+2. **`SoftwareListPage.vue` 第 120-144 行**：现有 `grouped` 是按 `sw.key` **硬编码**分组（`mysql → database`、`redis → cache` 等），新增三类：
+   - `postgresql` / `mongodb` → `database` 组（复用 `database` label）
+   - `consul` → **新增 `registry` 组**（label `registry`、icon `mdi:hexagon-multiple`），同步在 `groups` 记录加 `registry` 键
+3. **i18n**（`zh-CN.ts` / `en-US.ts`）：新增
+   - `categoryRegistry`（注册中心）/ `registry`（SoftwareListPage 组标签，复用同一文案）
    - `catalogDesc.postgresql` / `catalogDesc.mongodb` / `catalogDesc.consul`
-   - 各 `configField.*`（port / listen_addresses / shared_buffers / max_connections / bind_ip / dbpath / mode / bind / http_port / data_dir 等）
-   - mirror 名称（`i18n:postgresqlOfficial` / `mongodbOfficial` / `consulOfficial`）
-3. **图标**：在 provider `catalog_entry()` 写 `mdi:xxx`，跑 `npm run icons:gen` 自动扫描收录进 `mdi-icons.json`。图标名以 `gen-icons.mjs` 校验为准（不存在的名字会报错 exit 1）。
+   - 各 `configField.*`（port / listenAddresses / sharedBuffers / maxConnections / bindIp / dbpath / consulMode / bind / httpPort / initPassword / authEnabled / rootUser / rootPassword）
+   - 新增 `configField.consulMode` 为 `Select`（dev / server），后端 Select 字段 options 即 `["dev","server"]`
+   - mirror 名称（`postgresqlOfficial` / `mongodbOfficial` / `consulOfficial`）
+4. **图标**：在 provider `catalog_entry()` 写 `mdi:xxx`，跑 `npm run icons:gen` 自动扫描收录进 `mdi-icons.json`。图标名以 `gen-icons.mjs` 校验为准（不存在的名字会报错 exit 1）。注意 `mdi:hexagon-multiple` 与 `mdi:leaf` 需确认在 `@iconify-json/mdi` 中存在，否则 `icons:gen` 会失败。
 
 ## 版本策略
 
@@ -85,3 +95,37 @@
 - `cargo test`（后端单测）
 - `npm run build`（前端类型 + 构建）
 - `npm run icons:gen`（图标子集生成，校验图标名存在）
+
+---
+
+# 追加：初始化与认证配置（2026-08-14）
+
+## 需求
+
+测试中发现三个新软件缺少初始化/认证配置：
+
+- **PostgreSQL**：需设置初始账号密码（现状 `initdb --auth=trust` 无密码）
+- **MongoDB**：需设置验证方式（现状无 `--auth`）
+
+## 决策（已与用户确认）
+
+| 软件 | 决策 |
+|------|------|
+| PostgreSQL | 复用现有 `init_password` ephemeral 机制 + `scram-sha-256` 认证，**可选密码**：填了用 `initdb --pwfile` 设密码，没填保持 trust |
+| MongoDB | **可选认证**：表单加 `auth_enabled` 开关，开启则启动命令带 `--auth`；首次建用户由用户在 mongosh 手动执行（mongosh 不随服务器 zip 打包，不自动下载） |
+
+> **实现修正（2026-08-14 复审）**：`root_user`/`root_password` 字段**已废弃删除**——MongoDB 的 `start_command` 从不消费这两个值，明文落盘 installed.json 是不消费的死凭据，违反 MySQL/PG 的 init_password 不落盘惯例，且用户改密码后旧值永不过期。只保留 `auth_enabled`，凭据由用户在 mongosh 内自行设定。
+
+## 改动
+
+### PostgreSQL
+- `config_schema` 加 `init_password`（ephemeral，复用现有 `configField.initPassword`/`initPasswordDesc` key，零前端新代码）
+- `start_command`：填了密码 → 写临时 `.pgpass` 文件 + initdb 加 `--pwfile` + 认证 `scram-sha-256`；没填 → 保持 `--auth=trust`
+
+### MongoDB
+- `config_schema` 加 `auth_enabled`（**新增 Boolean 字段类型**）
+- `start_command` 读 `auth_enabled`，为 true 时 args 加 `--auth`
+
+### 跨层改动
+- `ConfigFieldType` 新增 `Boolean` 变体（后端 `models/software.rs` + 前端 `models/software.ts` + `ConfigFormTab.vue` 渲染开关）
+- i18n 加 `configField.authEnabled` / `configField.authEnabledDesc`（+ 通用 `enabled` 开关标签）

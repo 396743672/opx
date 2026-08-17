@@ -6,8 +6,8 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    CatalogEntry, ConfigSchema, CustomInstallParams, CustomStartCommand, InstallParams,
-    InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
+    CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
+    InstallParams, InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
 };
 use crate::oplog;
 use crate::services::software_manager::{
@@ -23,8 +23,11 @@ use crate::services::software_manager::providers::{ConfigContext, HealthContext,
 pub async fn list_available_software(
     manager: State<'_, Arc<SoftwareManager>>,
 ) -> Result<Vec<CatalogEntry>, String> {
-    // ponytail: 优先用缓存，缓存不存在时用内置
-    let catalog = catalog::load_catalog_cache().unwrap_or_else(|| catalog::build_builtin_catalog());
+    // ponytail: 以 builtin 为底，用旧缓存补齐 builtin 没有的额外 key。
+    // builtin（含新增 provider）优先，避免旧缓存把新增内置软件覆盖回过期版本。
+    let builtin = catalog::build_builtin_catalog();
+    let cached = catalog::load_catalog_cache();
+    let catalog = catalog::merge_with_builtin(builtin, cached);
     manager.set_catalog(catalog);
     Ok(manager.get_catalog().entries)
 }
@@ -185,9 +188,14 @@ pub async fn uninstall_software(
     }
     lifecycle::unregister(&installed_id);
 
-    // 删除记录 + 安装目录
-    manager
-        .remove_installed(&installed_id)
+    // 删除记录 + 安装目录。
+    // ponytail: remove_installed 内含 remove_dir_all 删整个安装目录（可能数百 MB），
+    // 同步执行会阻塞 async worker → 前端 await 挂起、卸载框不关。移入 spawn_blocking。
+    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+    let id_for_remove = installed_id.clone();
+    tokio::task::spawn_blocking(move || manager_arc.remove_installed(&id_for_remove))
+        .await
+        .map_err(|e| format!("卸载线程异常: {}", e))?
         .map_err(|e| e.to_string())?;
 
     let _ = app.emit("software-uninstalled", &installed_id);
@@ -295,6 +303,38 @@ fn collect_configured_ports(
     ports
 }
 
+/// 找已安装 JDK/JRE 的 install_path（供 Nacos 等 Java 软件启动拼 java 命令）。
+/// 解析启动用的 JDK/JRE install_path：
+/// 优先用软件配置里选的 jdk（存 installed_id，来自表单选择，与 SpringBoot 一致），
+/// 其次自动找已装 JDK/JRE（优先 JDK 其次 JRE）。找不到返回 None。
+fn find_installed_jdk(manager: &Arc<SoftwareManager>, config: &serde_json::Value) -> Option<String> {
+    let installed = manager.get_installed();
+    // 1. 配置里显式选了 JDK（installed_id）→ 按 id 解析路径
+    if let Some(id) = config.get("jdk").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        if let Some(sw) = installed.iter().find(|s| s.id == id) {
+            return Some(
+                crate::utils::paths::resolve_install_path(&sw.install_path).to_string_lossy().to_string(),
+            );
+        }
+    }
+    // 2. 回退：自动找第一个 JDK/JRE
+    installed
+        .iter()
+        .filter(|s| s.key == "jdk" || s.key == "jre")
+        .min_by_key(|s| if s.key == "jdk" { 0 } else { 1 })
+        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+}
+
+/// 找已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时建库建表用）。
+/// 返回 None 表示未装 MySQL。
+fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
+    manager
+        .get_installed()
+        .iter()
+        .find(|s| s.key == "mysql")
+        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -330,6 +370,11 @@ pub async fn do_start_software(
         config: software.config.clone(),
         custom_start_command: software.custom_start_command.clone(),
         init_password: init_password.clone(),
+        // 需要 JDK 的软件（如 Nacos）：优先用配置里选的 JDK（installed_id），
+        // 回退自动找。解析出的 install_path 供 start_command 拼 java 命令。
+        jdk_install_path: find_installed_jdk(manager, &software.config),
+        // Nacos 选 MySQL 数据库模式时，用已装 MySQL 的 mysql.exe 建库建表
+        mysql_install_path: find_installed_mysql(manager),
     };
 
     // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）
@@ -353,6 +398,25 @@ pub async fn do_start_software(
         .find_map(|a| a.strip_prefix("--init-file="))
         .map(std::path::PathBuf::from);
 
+    // 捕获 PostgreSQL initdb 通过 --pwfile 注入的临时明文密码文件路径。
+    // PG 的 initdb 是短命进程：run_first_run_init 同步阻塞等它退出后 pwfile 必已读取，
+    // 返回后立即删除即可（不复用 MySQL 的延迟删除时机）。
+    let init_pwfile_path: Option<PathBuf> = cmd
+        .first_run_init
+        .as_ref()
+        .and_then(|fri| {
+            fri.init_command
+                .args
+                .iter()
+                .find_map(|a| a.strip_prefix("--pwfile="))
+        })
+        .map(std::path::PathBuf::from);
+    let cleanup_pwfile = || {
+        if let Some(ref p) = init_pwfile_path {
+            let _ = std::fs::remove_file(p);
+        }
+    };
+
     // 首次初始化（如 mysqld --initialize-insecure）
     // 用 take() 取出所有权，避免后续 spawn_process(cmd) 时 cmd 仍被借用
     if let Some(fri) = cmd.first_run_init.take() {
@@ -369,6 +433,8 @@ pub async fn do_start_software(
                 data_dir = %data_dir.display(),
                 "already initialized, skipping first_run_init"
             );
+            // 防御性清理：已初始化不应再有 PG pwfile 明文残留
+            cleanup_pwfile();
         } else {
             // 未初始化：若 data 目录非空（上次 init 超时/kill 残留的半初始化文件，
             // 即 RC3 链式放大），先彻底清空再重新初始化，避免用损坏的 data 目录
@@ -435,6 +501,7 @@ pub async fn do_start_software(
                         None,
                         Some(msg),
                     );
+                    cleanup_pwfile();
                     return Err(e);
                 }
                 Err(e) => {
@@ -447,10 +514,14 @@ pub async fn do_start_software(
                         None,
                         Some(format!("{}", err)),
                     )?;
+                    cleanup_pwfile();
                     return Err(err);
                 }
             };
             let _ = output; // 暂不使用 stderr 输出（如 MySQL 临时密码），保留接口
+
+            // initdb 已退出（pwfile 必已读取），立即删除临时明文密码文件
+            cleanup_pwfile();
 
             // 标记 initialized = true
             let mut new_config = software.config.clone();
@@ -823,6 +894,7 @@ pub async fn get_software_status(
 /// 自定义软件返回 None（无统一表单）
 #[tauri::command]
 pub async fn get_config_schema(
+    manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<Option<ConfigSchema>, String> {
     let software = load_software_for_id(&installed_id)?;
@@ -834,7 +906,61 @@ pub async fn get_config_schema(
         .iter()
         .find(|p| p.key() == software.key)
         .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
-    Ok(provider.config_schema())
+    let mut schema = match provider.config_schema() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Nacos 的 JDK 选择：动态列出已装 JDK/JRE 的安装路径作为 Select options。
+    // provider 的 config_schema 是静态的，options 为空，需在此处填充。
+    if software.key == "nacos" {
+        fill_jdk_options(&mut schema, manager.inner());
+        // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
+        let storage = software
+            .config
+            .get("storage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("embedded");
+        if storage != "mysql" {
+            schema
+                .fields
+                .retain(|f| !f.key.starts_with("mysql_"));
+        }
+    }
+
+    Ok(Some(schema))
+}
+
+/// 把已装 JDK/JRE 填充进 schema 中 key=="jdk" 的 Select 字段：
+/// - options 存 installed_id（稳定标识，便携版路径变动不影响）
+/// - labels 存 "name (version) [JDK/JRE]"（与 SpringBoot 应用选择一致）
+/// 供 Nacos 等需选 JDK 的软件复用。找不到 JDK 时保留空 options（前端显示"未安装 JDK"）。
+fn fill_jdk_options(schema: &mut ConfigSchema, manager: &SoftwareManager) {
+    let jdks: Vec<InstalledSoftware> = manager
+        .get_installed()
+        .into_iter()
+        .filter(|s| s.key == "jdk" || s.key == "jre")
+        .collect();
+    if jdks.is_empty() {
+        return;
+    }
+    let ids: Vec<String> = jdks.iter().map(|s| s.id.clone()).collect();
+    let labels: Vec<String> = jdks
+        .iter()
+        .map(|s| format!("{} ({}) {}", s.name, s.version, if s.key == "jdk" { "[JDK]" } else { "[JRE]" }))
+        .collect();
+    for field in &mut schema.fields {
+        if field.key == "jdk" {
+            if let ConfigFieldType::Select { options, labels: lbls } = &mut field.field_type {
+                *options = ids.clone();
+                *lbls = labels.clone();
+                // 默认选中第一个 JDK（若默认值为空）
+                if field.default_value.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+                    field.default_value = serde_json::json!(ids[0]);
+                }
+            }
+        }
+    }
 }
 
 /// 读表单数据：优先从 installed.json 的 config 字段读（权威来源），

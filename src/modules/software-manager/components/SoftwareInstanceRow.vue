@@ -74,6 +74,8 @@ const categoryClass = computed(() => {
     case 'jre':
       return 'runtime'
     case 'mysql':
+    case 'postgresql':
+    case 'mongodb':
       return 'database'
     case 'redis':
       return 'cache'
@@ -82,6 +84,8 @@ const categoryClass = computed(() => {
     case 'minio':
     case 'rustfs':
       return 'storage'
+    case 'nacos':
+      return 'registry'
     default:
       return 'custom'
   }
@@ -99,6 +103,8 @@ const categoryIcon = computed(() => {
       return 'mdi:web'
     case 'storage':
       return 'mdi:storage'
+    case 'registry':
+      return 'mdi:hexagon-multiple'
     default:
       return 'mdi:upload'
   }
@@ -214,6 +220,10 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .card-icon.custom {
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
+}
+.card-icon.registry {
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
 }
 .name {
   font-size: 14px;

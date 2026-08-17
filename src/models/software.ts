@@ -33,6 +33,7 @@ export enum SoftwareCategory {
   Runtime = 'Runtime',
   Cache = 'Cache',
   WebServer = 'WebServer',
+  Registry = 'Registry',
 }
 
 export interface CatalogEntry {
@@ -152,8 +153,9 @@ export type ConfigFieldType =
   | { type: 'Number' }
   | { type: 'Port' }
   | { type: 'Password' }
-  | { type: 'Select'; options: string[] }
+  | { type: 'Select'; options: string[]; labels?: string[] }
   | { type: 'Size'; units: string[] }
+  | { type: 'Boolean' }
 
 /// 卸载安全性报告
 export interface UninstallSafetyReport {
