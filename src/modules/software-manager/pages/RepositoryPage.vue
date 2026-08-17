@@ -143,6 +143,10 @@ function categoryName(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Cache) return t('categoryCache')
   if (cat === SoftwareCategory.WebServer) return t('categoryWebServer')
   if (cat === SoftwareCategory.Registry) return t('categoryRegistry')
+  if (cat === SoftwareCategory.Storage) return t('categoryStorage')
+  if (cat === SoftwareCategory.MessageQueue) return t('categoryMessageQueue')
+  if (cat === SoftwareCategory.Search) return t('categorySearch')
+  if (cat === SoftwareCategory.TimeSeries) return t('categoryTimeSeries')
   return cat
 }
 
@@ -152,6 +156,10 @@ function categoryIcon(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Cache) return 'mdi:database'
   if (cat === SoftwareCategory.WebServer) return 'mdi:web'
   if (cat === SoftwareCategory.Registry) return 'mdi:hexagon-multiple'
+  if (cat === SoftwareCategory.Storage) return 'mdi:storage'
+  if (cat === SoftwareCategory.MessageQueue) return 'mdi:message-text-outline'
+  if (cat === SoftwareCategory.Search) return 'mdi:magnify'
+  if (cat === SoftwareCategory.TimeSeries) return 'mdi:chart-line'
   return 'mdi:package-variant-closed'
 }
 

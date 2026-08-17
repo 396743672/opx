@@ -90,7 +90,7 @@ impl SoftwareProvider for MinioProvider {
             name: "MinIO".to_string(),
             description: "S3 兼容对象存储".to_string(),
             description_i18n: Some("catalogDesc.minio".to_string()),
-            category: SoftwareCategory::Database,
+            category: SoftwareCategory::Storage,
             icon: "mdi:cloud".to_string(),
             versions,
             default_version: "RELEASE.2025-04-22".to_string(),
