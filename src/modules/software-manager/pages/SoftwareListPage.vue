@@ -53,6 +53,9 @@
             @config="onConfig(item)"
             @startup-settings="onStartupSettings(item)"
             @uninstall="onUninstall(item)"
+            @log="onLog(item)"
+            @backup="onBackup(item)"
+            @reset="onReset(item)"
           />
         </div>
       </div>
@@ -90,6 +93,7 @@
       v-if="backupTarget"
       :software="backupTarget"
       :instances="manageableInstances"
+      :initial-tab="backupInitialTab"
       @close="backupTarget = null"
     />
   </div>
@@ -123,6 +127,8 @@ const customTarget = ref<InstalledSoftware | null>(null)
 const uninstallTarget = ref<InstalledSoftware | null>(null)
 const logTarget = ref<InstalledSoftware | null>(null)
 const backupTarget = ref<InstalledSoftware | null>(null)
+// 备份/恢复对话框初始 Tab：backup 按钮打开快照列表，reset 按钮直接定位到一键重置（Tab B）
+const backupInitialTab = ref<'snapshots' | 'reset'>('snapshots')
 // 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
 const actingStates = ref<Record<string, 'start' | 'stop'>>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -291,6 +297,12 @@ function onLog(item: InstalledSoftware) {
 }
 
 function onBackup(item: InstalledSoftware) {
+  backupInitialTab.value = 'snapshots'
+  backupTarget.value = item
+}
+
+function onReset(item: InstalledSoftware) {
+  backupInitialTab.value = 'reset'
   backupTarget.value = item
 }
 

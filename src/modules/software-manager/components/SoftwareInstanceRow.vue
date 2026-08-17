@@ -46,6 +46,9 @@
       <button class="btn" :disabled="!canOps" :title="$t('backup')" @click="$emit('backup')">
         <Icon icon="mdi:backup-restore" /> {{ $t('backup') }}
       </button>
+      <button class="btn danger" :disabled="!canOps" :title="$t('resetInstance')" @click="$emit('reset')">
+        <Icon icon="mdi:delete-forever" /> {{ $t('resetInstance') }}
+      </button>
       <button class="btn ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
         <Icon icon="mdi:tune-vertical" />
       </button>
@@ -75,6 +78,7 @@ defineEmits<{
   uninstall: []
   log: []
   backup: []
+  reset: []
 }>()
 
 const categoryClass = computed(() => {
