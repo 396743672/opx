@@ -60,14 +60,20 @@ pub fn run() {
             }
 
             // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
-            app.manage(std::sync::Arc::new(
+            let software_mgr = std::sync::Arc::new(
                 crate::services::software_manager::SoftwareManager::new(),
-            ));
+            );
+            app.manage(software_mgr.clone());
             app.manage(std::sync::Arc::new(
                 crate::services::website_manager::WebsiteManager::new(),
             ));
-            app.manage(std::sync::Arc::new(
+            let springboot_mgr = std::sync::Arc::new(
                 crate::services::springboot_manager::SpringBootManager::new(),
+            );
+            app.manage(springboot_mgr.clone());
+            // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
+            app.manage(std::sync::Arc::new(
+                crate::services::stack_manager::StackManager::new(software_mgr, springboot_mgr),
             ));
 
             // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
