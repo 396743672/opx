@@ -170,22 +170,30 @@ impl StackManager {
             .iter_mut()
             .find(|s| s.id == id)
             .ok_or_else(|| format!("未找到栈: {}", id))?;
+
+        // 先基于克隆（候选）应用变更并做环检测，保证失败原子性：
+        // 环检测失败时直接返回，内存状态与磁盘均不被污染。
+        let mut candidate = stack.clone();
         if let Some(name) = payload.name {
             let n = name.trim().to_string();
             if n.is_empty() {
                 return Err("栈名称不能为空".to_string());
             }
-            stack.name = n;
+            candidate.name = n;
         }
         if let Some(desc) = payload.description {
-            stack.description = desc;
+            candidate.description = desc;
         }
         if let Some(items) = payload.items {
-            stack.items = items;
+            candidate.items = items;
         }
-        stack.updated_at = now_utc();
-        // 保存前环检测
-        let _ = Self::compute_plan(stack)?;
+        candidate.updated_at = now_utc();
+
+        // 保存前环检测（作用于候选，失败即返回，不触碰内存/磁盘）
+        let _ = Self::compute_plan(&candidate)?;
+
+        // 校验通过：原子地应用到内存并落盘
+        *stack = candidate;
         let cloned = stack.clone();
         inner.save().map_err(|e| e.to_string())?;
         Ok(cloned)
@@ -312,6 +320,14 @@ impl StackManager {
             member_status.values().cloned().collect(),
         );
 
+        // 记录本次编排前已在运行的成员，回滚时将其排除，避免误杀预运行服务（P2 回滚过杀防护）
+        let pre_running: HashSet<String> = stack
+            .items
+            .iter()
+            .filter(|it| self.is_member_running(it))
+            .map(|it| it.ref_id.clone())
+            .collect();
+
         let mut started: Vec<StackItem> = Vec::new();
 
         for layer in &plan.layers {
@@ -334,9 +350,17 @@ impl StackManager {
             for (ref_id, res) in layer.iter().zip(results.into_iter()) {
                 match res {
                     Ok(()) => {
-                        started.push(
-                            stack.items.iter().find(|it| &it.ref_id == ref_id).cloned().unwrap(),
-                        );
+                        // 仅将“本次编排启动”的成员纳入回滚集合；预运行成员不计入，避免误杀
+                        if !pre_running.contains(ref_id) {
+                            started.push(
+                                stack
+                                    .items
+                                    .iter()
+                                    .find(|it| &it.ref_id == ref_id)
+                                    .cloned()
+                                    .unwrap(),
+                            );
+                        }
                         if let Some(m) = member_status.get_mut(ref_id) {
                             m.status = StackMemberStatus::Running;
                             m.message = String::new();
@@ -400,10 +424,15 @@ impl StackManager {
         stack: &Stack,
         item: StackItem,
     ) -> Result<(), String> {
-        // R9：依赖成员必须已就绪（Running）
+        // R9：依赖成员必须已就绪（Running）。与 compute_plan 的拓扑语义保持一致：
+        // 被禁用（enabled=false）的依赖成员不参与编排，直接跳过其就绪检查；
+        // 指向栈外 id 的依赖在 compute_plan 中同样被忽略，此处亦跳过。
         for dep_ref in &item.depends_on {
             let dep_item = stack.items.iter().find(|it| &it.ref_id == dep_ref);
             if let Some(di) = dep_item {
+                if !di.enabled {
+                    continue;
+                }
                 if !self.is_member_running(di) {
                     return Err(format!(
                         "依赖成员 {} 未就绪（需先成功启动）",
@@ -920,6 +949,512 @@ mod tests {
             items: vec![item("A", 0, &["B"]), item("B", 0, &["A"])],
         });
         assert!(res.is_err(), "存在环的栈应被拒绝创建");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ------------------------- compute_plan 拓扑排序 -------------------------
+
+    #[test]
+    fn test_compute_plan_empty_stack() {
+        let stack = make_stack(vec![]);
+        let plan = StackManager::compute_plan(&stack).expect("空栈应为无环计划");
+        assert!(plan.layers.is_empty(), "空栈应产生空分层");
+        assert!(plan.cycle.is_none());
+    }
+
+    #[test]
+    fn test_compute_plan_single_node() {
+        let stack = make_stack(vec![item("A", 0, &[])]);
+        let plan = StackManager::compute_plan(&stack).expect("单节点应为无环计划");
+        assert_eq!(plan.layers.len(), 1);
+        assert_eq!(plan.layers[0], vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn test_compute_plan_diamond_dependency() {
+        // A -> {B,C} -> D：期望分层 [[A],[B,C],[D]]，B/C 同层并发
+        let stack = make_stack(vec![
+            item("D", 3, &["B", "C"]),
+            item("C", 2, &["A"]),
+            item("B", 1, &["A"]),
+            item("A", 0, &[]),
+        ]);
+        let plan = StackManager::compute_plan(&stack).expect("菱形依赖应为无环计划");
+        assert_eq!(plan.layers.len(), 3);
+        assert_eq!(plan.layers[0], vec!["A".to_string()]);
+        assert_eq!(plan.layers[1], vec!["B".to_string(), "C".to_string()]);
+        assert_eq!(plan.layers[2], vec!["D".to_string()]);
+    }
+
+    #[test]
+    fn test_compute_plan_disabled_item_excluded() {
+        // A(启用) -> B(禁用) -> C(启用, 依赖B)。
+        // 禁用项不参与拓扑：B 被排除；C 对 B 的依赖被忽略 -> C 与 A 同层。
+        let mut b = item("B", 1, &["A"]);
+        b.enabled = false;
+        let stack = make_stack(vec![item("A", 0, &[]), b, item("C", 2, &["B"])]);
+        let plan = StackManager::compute_plan(&stack).expect("禁用项应被排除");
+        assert_eq!(plan.layers.len(), 1);
+        assert_eq!(plan.layers[0], vec!["A".to_string(), "C".to_string()]);
+        assert!(!plan.layers[0].contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn test_compute_plan_depends_on_external_ignored() {
+        // A 依赖一个不存在于栈内的 id -> 该边应被忽略，不应误判为环
+        let stack = make_stack(vec![item("A", 0, &["not_a_member"])]);
+        let plan = StackManager::compute_plan(&stack).expect("引用栈外成员不应形成环");
+        assert_eq!(plan.layers.len(), 1);
+        assert_eq!(plan.layers[0], vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn test_compute_plan_self_dependency_is_cycle() {
+        // A 依赖自身 -> 应检测为环
+        let stack = make_stack(vec![item("A", 0, &["A"])]);
+        let res = StackManager::compute_plan(&stack);
+        assert!(res.is_err(), "自依赖应被检测为环");
+        let msg = res.err().unwrap();
+        assert!(msg.contains("循环依赖"), "错误信息应提示循环依赖: {}", msg);
+    }
+
+    #[test]
+    fn test_compute_plan_order_tie_break_multiple_same_layer() {
+        // 三个无依赖节点，order 分别为 2/0/1 -> 同层按 order 升序 [Y,Z,X]
+        let stack = make_stack(vec![
+            item("X", 2, &[]),
+            item("Y", 0, &[]),
+            item("Z", 1, &[]),
+        ]);
+        let plan = StackManager::compute_plan(&stack).expect("应为无环计划");
+        assert_eq!(plan.layers.len(), 1);
+        assert_eq!(
+            plan.layers[0],
+            vec!["Y".to_string(), "Z".to_string(), "X".to_string()]
+        );
+    }
+
+    // ------------------------- build_plan -------------------------
+
+    #[test]
+    fn test_build_plan_missing_id() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let res = mgr.build_plan("does_not_exist");
+        assert!(res.is_err(), "不存在的栈 build_plan 应返回错误");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_build_plan_existing_matches_compute_plan() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "p".to_string(),
+                description: String::new(),
+                items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
+            })
+            .unwrap();
+        let plan = mgr.build_plan(&created.id).expect("已保存栈应有计划");
+        assert_eq!(plan.layers.len(), 2);
+        assert_eq!(plan.layers[0], vec!["A".to_string()]);
+        assert_eq!(plan.layers[1], vec!["B".to_string()]);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ------------------------- create -------------------------
+
+    #[test]
+    fn test_create_empty_name_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        for name in ["", "   ", "\t"] {
+            let res = mgr.create(CreateStackPayload {
+                name: name.to_string(),
+                description: String::new(),
+                items: vec![],
+            });
+            assert!(res.is_err(), "空白名称 '{}' 应被拒绝", name);
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_create_valid_generates_id_and_timestamps() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "  spaced  ".to_string(),
+                description: "desc".to_string(),
+                items: vec![item("A", 0, &[])],
+            })
+            .expect("合法栈应创建成功");
+        assert!(!created.id.is_empty(), "创建后应生成 id");
+        assert_eq!(created.name, "spaced", "名称应被 trim");
+        assert!(!created.created_at.is_empty(), "应写入 created_at");
+        assert_eq!(created.updated_at, "", "新建栈 updated_at 应为空");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_create_empty_items_ok() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "empty".to_string(),
+                description: String::new(),
+                items: vec![],
+            })
+            .expect("无成员的空栈应允许创建");
+        assert!(created.items.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ------------------------- update -------------------------
+
+    #[test]
+    fn test_update_rename_and_timestamp() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "orig".to_string(),
+                description: String::new(),
+                items: vec![item("A", 0, &[])],
+            })
+            .unwrap();
+        let updated = mgr
+            .update(
+                &created.id,
+                UpdateStackPayload {
+                    name: Some("renamed".to_string()),
+                    description: None,
+                    items: None,
+                },
+            )
+            .expect("重命名应成功");
+        assert_eq!(updated.name, "renamed");
+        assert!(!updated.updated_at.is_empty(), "更新应写入 updated_at");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_update_empty_name_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "orig".to_string(),
+                description: String::new(),
+                items: vec![item("A", 0, &[])],
+            })
+            .unwrap();
+        let res = mgr.update(
+            &created.id,
+            UpdateStackPayload {
+                name: Some("  ".to_string()),
+                description: None,
+                items: None,
+            },
+        );
+        assert!(res.is_err(), "更新为空名称应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_update_items_none_keeps_old_items() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "orig".to_string(),
+                description: String::new(),
+                items: vec![item("A", 0, &[]), item("B", 1, &[])],
+            })
+            .unwrap();
+        let updated = mgr
+            .update(
+                &created.id,
+                UpdateStackPayload {
+                    name: Some("renamed".to_string()),
+                    description: None,
+                    items: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.items.len(), 2, "未提供 items 时应保留原成员");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_update_missing_id_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let res = mgr.update(
+            "nope",
+            UpdateStackPayload {
+                name: Some("x".to_string()),
+                description: None,
+                items: None,
+            },
+        );
+        assert!(res.is_err(), "更新不存在的栈应返回错误");
+        assert!(res.err().unwrap().contains("未找到栈"), "应提示未找到栈");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// 回归测试：update 在环检测失败时，必须不破坏内存中已有的合法状态。
+    /// 设计预期：保存前环检测 -> 拒绝；但不应已把内存里的 items 改成非法内容。
+    #[test]
+    fn test_update_rejects_cycle_preserves_in_memory_state() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        // 初始为单成员合法栈
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "orig".to_string(),
+                description: String::new(),
+                items: vec![item("A", 0, &[])],
+            })
+            .unwrap();
+        // 尝试更新为环（A<->B）
+        let res = mgr.update(
+            &created.id,
+            UpdateStackPayload {
+                name: None,
+                description: None,
+                items: Some(vec![item("A", 0, &["B"]), item("B", 0, &["A"])]),
+            },
+        );
+        assert!(res.is_err(), "更新为环应被拒绝");
+        // 拒绝后，内存状态应仍为最初的单成员合法栈
+        let after = mgr.get(&created.id).expect("栈应仍然存在");
+        assert_eq!(
+            after.items.len(),
+            1,
+            "拒绝环后内存中的成员数不应被改为 2（状态一致性 bug）"
+        );
+        assert_eq!(after.items[0].ref_id, "A");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ------------------------- delete -------------------------
+
+    #[test]
+    fn test_delete_existing_returns_true() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "d".to_string(),
+                description: String::new(),
+                items: vec![],
+            })
+            .unwrap();
+        let ok = mgr.delete(&created.id).expect("delete 不应返回错误");
+        assert!(ok, "删除存在的栈应返回 true");
+        assert_eq!(mgr.list().len(), 0);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_delete_missing_returns_false() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let ok = mgr.delete("missing").expect("delete 不应返回错误");
+        assert!(!ok, "删除不存在的栈应返回 false");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ------------------------- 导出 / 导入 -------------------------
+
+    #[test]
+    fn test_export_import_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let created = mgr
+            .create(CreateStackPayload {
+                name: "roundtrip".to_string(),
+                description: "d".to_string(),
+                items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
+            })
+            .unwrap();
+
+        let export_path = std::env::temp_dir().join(format!("opx_export_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&export_path);
+        mgr.export_stack(&created.id, export_path.to_str().unwrap())
+            .expect("导出应成功");
+        assert!(export_path.exists(), "导出文件应被创建");
+
+        // 用全新 manager 导入同一导出文件
+        let mgr2 = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let imported = mgr2
+            .import_stack(export_path.to_str().unwrap())
+            .expect("导入应成功");
+        assert_ne!(imported.id, created.id, "导入应生成新 id");
+        assert_eq!(imported.name, created.name, "导入应保留名称");
+        assert_eq!(imported.items.len(), 2, "导入应保留成员");
+        assert_eq!(imported.items[1].depends_on, vec!["A".to_string()]);
+        assert_eq!(mgr2.list().len(), 2, "导入后应有 2 个栈");
+
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&export_path);
+    }
+
+    #[test]
+    fn test_import_missing_file_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let res = mgr.import_stack("C:/no/such/file.json");
+        assert!(res.is_err(), "导入不存在的文件应返回错误");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_import_invalid_json_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let bad = std::env::temp_dir().join(format!("opx_bad_{}.json", Uuid::new_v4()));
+        std::fs::write(&bad, "{ this is not json ]").unwrap();
+        let res = mgr.import_stack(bad.to_str().unwrap());
+        assert!(res.is_err(), "导入非法 JSON 应返回错误");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn test_import_cyclic_rejected() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        // 手写一个含环的栈 JSON
+        let mut cyc = make_stack(vec![item("A", 0, &["B"]), item("B", 0, &["A"])]);
+        cyc.id = "x".to_string();
+        cyc.created_at = "t".to_string();
+        let json = serde_json::to_string_pretty(&cyc).unwrap();
+        let path = std::env::temp_dir().join(format!("opx_cyc_{}.json", Uuid::new_v4()));
+        std::fs::write(&path, json).unwrap();
+        let res = mgr.import_stack(path.to_str().unwrap());
+        assert!(res.is_err(), "导入含环的栈应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ------------------------- get / list -------------------------
+
+    #[test]
+    fn test_get_and_list() {
+        let tmp = std::env::temp_dir().join(format!("opx_test_stacks_{}.json", Uuid::new_v4()));
+        let _ = std::fs::remove_file(&tmp);
+        let mgr = StackManager::new_with_path(
+            Arc::new(SoftwareManager::new()),
+            Arc::new(SpringBootManager::new()),
+            tmp.clone(),
+        );
+        let a = mgr
+            .create(CreateStackPayload {
+                name: "a".to_string(),
+                description: String::new(),
+                items: vec![],
+            })
+            .unwrap();
+        let b = mgr
+            .create(CreateStackPayload {
+                name: "b".to_string(),
+                description: String::new(),
+                items: vec![],
+            })
+            .unwrap();
+        assert_eq!(mgr.list().len(), 2);
+        assert!(mgr.get(&a.id).is_some());
+        assert!(mgr.get(&b.id).is_some());
+        assert!(mgr.get("missing").is_none());
         let _ = std::fs::remove_file(&tmp);
     }
 }
