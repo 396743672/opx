@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+    ConfigContext, HealthContext, InstallContext, LogContext, SoftwareProvider, StartCommand,
+    StartContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -20,6 +21,16 @@ pub struct NginxProvider;
 impl NginxProvider {
     pub fn new() -> Self {
         Self
+    }
+}
+
+    // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 }
 
