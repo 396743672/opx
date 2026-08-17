@@ -40,6 +40,12 @@
       <button class="btn" :disabled="!canConfig" @click="$emit('config')">
         <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
       </button>
+      <button class="btn" :disabled="!canOps" :title="$t('logs')" @click="$emit('log')">
+        <Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}
+      </button>
+      <button class="btn" :disabled="!canOps" :title="$t('backup')" @click="$emit('backup')">
+        <Icon icon="mdi:backup-restore" /> {{ $t('backup') }}
+      </button>
       <button class="btn ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
         <Icon icon="mdi:tune-vertical" />
       </button>
@@ -67,6 +73,8 @@ defineEmits<{
   config: []
   'startup-settings': []
   uninstall: []
+  log: []
+  backup: []
 }>()
 
 const categoryClass = computed(() => {
@@ -144,6 +152,9 @@ const canConfig = computed(
 )
 
 const canStartupSettings = computed(() => canConfig.value)
+
+// JRE/JDK 是运行时依赖，不支持日志/备份入口（与 isRuntime 一致）
+const canOps = computed(() => !isRuntime.value)
 
 const canUninstall = computed(
   () =>

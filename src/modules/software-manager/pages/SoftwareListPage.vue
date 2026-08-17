@@ -79,6 +79,19 @@
       @close="uninstallTarget = null"
       @uninstalled="onUninstalled"
     />
+
+    <LogViewerDialog
+      v-if="logTarget"
+      :software="logTarget"
+      :instances="manageableInstances"
+      @close="logTarget = null"
+    />
+    <BackupRestoreDialog
+      v-if="backupTarget"
+      :software="backupTarget"
+      :instances="manageableInstances"
+      @close="backupTarget = null"
+    />
   </div>
 </template>
 
@@ -94,6 +107,8 @@ import ConfigEditDialog from '../components/ConfigEditDialog.vue'
 import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
+import LogViewerDialog from '../components/LogViewerDialog.vue'
+import BackupRestoreDialog from '../components/BackupRestoreDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
 import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
 
@@ -106,6 +121,8 @@ const configTarget = ref<InstalledSoftware | null>(null)
 const startupTarget = ref<InstalledSoftware | null>(null)
 const customTarget = ref<InstalledSoftware | null>(null)
 const uninstallTarget = ref<InstalledSoftware | null>(null)
+const logTarget = ref<InstalledSoftware | null>(null)
+const backupTarget = ref<InstalledSoftware | null>(null)
 // 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
 const actingStates = ref<Record<string, 'start' | 'stop'>>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -144,6 +161,11 @@ const grouped = computed<Group[]>(() => {
   }
   return Object.values(groups).filter((g) => g.items.length > 0)
 })
+
+// 可运维实例（排除 JRE/JDK 运行时依赖，与 SoftwareInstanceRow.canOps 一致）
+const manageableInstances = computed(() =>
+  installed.value.filter((s) => s.key !== 'jre' && s.key !== 'jdk'),
+)
 
 function mergeStatus(item: InstalledSoftware): InstalledSoftware {
   const liveStatus = lifecycleStore.getStatus(item.id)
@@ -262,6 +284,14 @@ function onStartupSettingsClose() {
 
 function onUninstall(item: InstalledSoftware) {
   uninstallTarget.value = item
+}
+
+function onLog(item: InstalledSoftware) {
+  logTarget.value = item
+}
+
+function onBackup(item: InstalledSoftware) {
+  backupTarget.value = item
 }
 
 function onUninstalled() {
