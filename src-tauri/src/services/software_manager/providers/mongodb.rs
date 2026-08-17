@@ -7,7 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+    ConfigContext, DataDirContext, HealthContext, InstallContext, LogContext, LogSource,
+    LogSourceKind, SoftwareProvider, StartCommand, StartContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -125,6 +126,43 @@ impl SoftwareProvider for MongoDbProvider {
     }
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> { None }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        let mut sources = default_log_sources(ctx);
+        // MongoDB 自带结构化日志：data/mongod.log
+        let mongo_log = Path::new(&ctx.install_path).join("data").join("mongod.log");
+        if mongo_log.exists() {
+            sources.push(LogSource {
+                path: mongo_log.to_string_lossy().to_string(),
+                kind: LogSourceKind::ProviderFile,
+                has_levels: true,
+                level_pattern: None,
+            });
+        }
+        sources
+    }
+
+    fn data_dirs(&self, ctx: &DataDirContext) -> Vec<PathBuf> {
+        // dbpath 来自配置（默认 ./data），可能与默认 <install_path>/data 不同
+        let dbpath = ctx
+            .config
+            .get("dbpath")
+            .and_then(|v| v.as_str())
+            .unwrap_or("./data");
+        let abs = if Path::new(dbpath).is_absolute() {
+            dbpath.to_string()
+        } else {
+            let clean = dbpath
+                .strip_prefix("./")
+                .or_else(|| dbpath.strip_prefix(".\\"))
+                .unwrap_or(dbpath);
+            Path::new(&ctx.install_path)
+                .join(clean)
+                .to_string_lossy()
+                .to_string()
+        };
+        vec![PathBuf::from(abs)]
+    }
 }
 
 fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {

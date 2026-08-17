@@ -128,6 +128,78 @@ pub struct InstalledSoftware {
     pub custom_start_command: Option<CustomStartCommand>,
 }
 
+// ===== C 扩展（日志查看器 + 备份/恢复）新增类型 =====
+
+/// 日志来源种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LogSourceKind {
+    /// 进程 stdout/stderr 重定向落盘（spawn_process 写入 <install_path>/logs/opx-<installed_id>.log）
+    StdoutRedirect,
+    /// provider 自带日志文件（如 MongoDB 的 data/mongod.log）
+    ProviderFile,
+}
+
+/// 单条日志来源（序列化给前端展示与选择）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogSource {
+    /// 日志文件绝对路径
+    pub path: String,
+    pub kind: LogSourceKind,
+    /// 是否结构化、可显示级别筛选（决策 6：仅结构化级别日志显示筛选）
+    pub has_levels: bool,
+    /// provider 提供的级别提取正则；None 时用 LogService 内置默认正则
+    pub level_pattern: Option<String>,
+}
+
+/// 读取日志返回的分块（前端轮询/分页消费）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogChunk {
+    /// 命中的日志行（已应用关键字/正则/级别过滤）
+    pub lines: Vec<String>,
+    /// 本块首行的字节偏移
+    pub start_offset: u64,
+    /// 本块末行之后的字节偏移（前端下次轮询/分页携带）
+    pub end_offset: u64,
+    /// 文件总字节数
+    pub total_bytes: u64,
+    /// 向前是否还有更早的历史（用于「加载更多历史」）
+    pub has_more: bool,
+    /// 因超过单次上限被截断（命中行多于 limit）
+    pub truncated: bool,
+}
+
+/// 备份快照元信息（持久化于 <app_data>/backups/<id>/manifest.json）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotMeta {
+    /// = 快照文件名去后缀（如 20260817_143000）
+    pub id: String,
+    /// RFC3339 创建时间
+    pub created_at: String,
+    /// 来源软件 key（如 "mysql"）
+    pub source_key: String,
+    /// 来源软件版本（如 "8.4.11"）
+    pub source_version: String,
+    /// 首数字段大版本；MinIO 等以非数字开头的版本无法解析时为 None
+    pub major_version: Option<u32>,
+    /// zip 文件字节大小
+    pub size_bytes: u64,
+    /// 快照格式（"zip"）
+    pub format: String,
+    /// 用户自定义名称（P1-B1）
+    pub name: Option<String>,
+    /// 用户自定义备注（P1-B1）
+    pub note: Option<String>,
+}
+
+/// 备份模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BackupMode {
+    /// 默认：先停服再备份（决策 2）
+    StopAndBackup,
+    /// 热备（提供警告）
+    Hot,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledSoftwareList {
     pub software: Vec<InstalledSoftware>,

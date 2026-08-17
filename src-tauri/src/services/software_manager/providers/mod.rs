@@ -1,7 +1,10 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::{CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec};
+use crate::models::software::{
+    CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec, LogSource,
+    LogSourceKind,
+};
 
 pub mod mysql;
 pub mod jre;
@@ -48,6 +51,26 @@ pub trait SoftwareProvider: Send + Sync {
     /// 启动时的工作目录（默认 install_path；MySQL 重写为子目录）
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
         PathBuf::from(&ctx.install_path)
+    }
+
+    // ===== C 扩展：日志来源 / 数据目录 / 级别正则（默认实现，新 provider 零改动即获得能力）=====
+
+    /// 日志来源列表。默认仅 StdoutRedirect（spawn_process 落盘文件存在时返回）。
+    /// provider 可覆盖以追加自带日志文件（如 MongoDB 的 data/mongod.log）。
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        default_log_sources(ctx)
+    }
+
+    /// 需要备份/重置的数据目录。默认 [<install_path>/data]。
+    /// 数据目录来自配置（非默认 <install_path>/data）的 provider 应覆盖此方法。
+    fn data_dirs(&self, ctx: &DataDirContext) -> Vec<PathBuf> {
+        default_data_dirs(ctx)
+    }
+
+    /// 结构化日志的级别提取正则；默认 None → LogService 用内置默认正则。
+    /// 返回 Some(pattern) 时优先使用该正则做级别匹配。
+    fn log_level_pattern(&self) -> Option<String> {
+        None
     }
 }
 
@@ -107,6 +130,66 @@ pub struct ConfigContext {
 pub struct WorkingDirContext {
     pub install_path: String,
     pub version: String,
+}
+
+// ===== C 扩展：日志来源 / 数据目录 上下文与默认实现 =====
+
+/// 传给 `log_sources` 的上下文（由命令层从 InstalledSoftware 构造）
+pub struct LogContext {
+    pub installed_id: String,
+    pub install_path: String, // 已 resolve 的绝对路径
+    pub version: String,
+    pub config: serde_json::Value,
+    pub pid: Option<u32>,
+}
+
+/// 传给 `data_dirs` 的上下文（由命令层从 InstalledSoftware 构造）
+pub struct DataDirContext {
+    pub install_path: String,
+    pub version: String,
+    pub config: serde_json::Value,
+}
+
+/// 默认日志来源：仅 StdoutRedirect（基于 spawn_process 落盘的日志）。
+/// 要求 <install_path>/logs/opx-<installed_id>.log 存在；不存在时返回空 vec（决策：仅展示运行实例）。
+pub fn default_log_sources(ctx: &LogContext) -> Vec<LogSource> {
+    let p = Path::new(&ctx.install_path)
+        .join("logs")
+        .join(format!("opx-{}.log", ctx.installed_id));
+    if p.exists() {
+        vec![LogSource {
+            path: p.to_string_lossy().to_string(),
+            kind: LogSourceKind::StdoutRedirect,
+            has_levels: false, // 通用 stdout 默认无级别
+            level_pattern: None,
+        }]
+    } else {
+        vec![]
+    }
+}
+
+/// 默认数据目录：<install_path>/data
+pub fn default_data_dirs(ctx: &DataDirContext) -> Vec<PathBuf> {
+    vec![Path::new(&ctx.install_path).join("data")]
+}
+
+/// 从 config 解析绝对 data 目录（与 provider.start_command 的解析逻辑保持一致）。
+/// 绝对路径原样返回；相对路径按 install_path 拼接。
+pub(crate) fn resolve_data_dir(config: &serde_json::Value, key: &str, default: &str, install_path: &str) -> PathBuf {
+    let raw = config
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default);
+    if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        let clean = raw
+            .strip_prefix("./")
+            .or_else(|| raw.strip_prefix(".\\"))
+            .unwrap_or(raw);
+        Path::new(install_path).join(clean)
+    }
 }
 
 /// 启动命令（provider 返回，由 lifecycle 执行 spawn）

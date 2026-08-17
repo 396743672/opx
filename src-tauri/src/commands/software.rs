@@ -6,13 +6,14 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
-    InstallParams, InstalledSoftware, JreUsageReport, SoftwareStatus, UninstallSafetyReport,
+    BackupMode, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
+    InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource, SnapshotMeta,
+    SoftwareStatus, UninstallSafetyReport,
 };
 use crate::oplog;
 use crate::services::software_manager::{
-    catalog, config_editor, health_check, installer, lifecycle, providers, uninstall_guard,
-    SoftwareManager,
+    backup, catalog, config_editor, health_check, installer, lifecycle, log_viewer, providers,
+    uninstall_guard, SoftwareManager,
 };
 use crate::services::software_manager::config_editor::FormData;
 use crate::services::software_manager::providers::custom_templates;
@@ -544,7 +545,7 @@ pub async fn do_start_software(
         "spawning software"
     );
 
-    let child = match lifecycle::spawn_process(cmd) {
+    let child = match lifecycle::spawn_process(cmd, installed_id) {
         Ok(child) => child,
         Err(e) => {
             if let Some(ref p) = init_sql_path {
@@ -1315,4 +1316,113 @@ pub async fn restore_config_backup(
     config_editor::backup_config(&full_path).map_err(|e| e.to_string())?;
     std::fs::copy(&backup_path, &full_path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ===== C 扩展：日志查看器 + 备份/恢复 命令（任务 T2 / T3）=====
+
+/// 获取某实例的日志来源列表（StdoutRedirect / ProviderFile）
+#[tauri::command]
+pub async fn get_log_sources(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<Vec<LogSource>, String> {
+    log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())
+}
+
+/// 读取日志（tail / 增量 / 历史分页 + 关键字/正则/级别过滤）
+///
+/// - offset = None → tail 末尾 limit 行（默认 2000）
+/// - offset = Some(o), before = false → 从字节 o 向前（朝 EOF）读取增量
+/// - offset = Some(o), before = true  → 读取字节 o 之前（朝文件头）的 limit 行（历史分页）
+#[tauri::command]
+pub async fn read_log(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    source_index: usize,
+    offset: Option<u64>,
+    before: Option<bool>,
+    limit: Option<u64>,
+    keyword: Option<String>,
+    regex: bool,
+    level: Option<String>,
+) -> Result<LogChunk, String> {
+    let limit = limit.map(|l| l as usize).unwrap_or(2000);
+    let before = before.unwrap_or(false);
+    log_viewer::read_log(
+        &manager,
+        &installed_id,
+        source_index,
+        offset,
+        before,
+        limit,
+        keyword.as_deref(),
+        regex,
+        level.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 下载（拷贝）指定日志源到用户选择的路径
+#[tauri::command]
+pub async fn download_log(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    source_index: usize,
+    dest_path: String,
+) -> Result<(), String> {
+    let sources = log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let source = sources
+        .get(source_index)
+        .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
+    log_viewer::download_log(&source.path, &dest_path).map_err(|e| e.to_string())
+}
+
+/// 创建快照（压缩 data_dirs → <app_data>/backups/<id>/<ts>.zip，并写 manifest）
+#[tauri::command]
+pub async fn create_snapshot(
+    manager: State<'_, Arc<SoftwareManager>>,
+    app: AppHandle,
+    installed_id: String,
+    mode: BackupMode,
+    name: Option<String>,
+    note: Option<String>,
+) -> Result<SnapshotMeta, String> {
+    backup::create_snapshot(&manager, &app, &installed_id, mode, name, note).map_err(|e| e.to_string())
+}
+
+/// 列出某实例的全部快照
+#[tauri::command]
+pub async fn list_snapshots(
+    installed_id: String,
+) -> Result<Vec<SnapshotMeta>, String> {
+    backup::list_snapshots(&installed_id).map_err(|e| e.to_string())
+}
+
+/// 恢复快照（运行态需先停服；跨大版本需 force 确认）
+#[tauri::command]
+pub async fn restore_snapshot(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    snapshot_id: String,
+    force: bool,
+) -> Result<(), String> {
+    backup::restore_snapshot(&manager, &installed_id, &snapshot_id, force).map_err(|e| e.to_string())
+}
+
+/// 删除快照（删 zip + 更新 manifest）
+#[tauri::command]
+pub async fn delete_snapshot(
+    installed_id: String,
+    snapshot_id: String,
+) -> Result<(), String> {
+    backup::delete_snapshot(&installed_id, &snapshot_id).map_err(|e| e.to_string())
+}
+
+/// 一键重置（对每个 data_dir 重建空态，含护栏）
+#[tauri::command]
+pub async fn reset_instance(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<(), String> {
+    backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
 }

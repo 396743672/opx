@@ -1,10 +1,12 @@
-pub mod catalog;
-pub mod installer;
-pub mod providers;
 pub mod audit_log;
-pub mod health_check;
-pub mod lifecycle;
+pub mod backup;
+pub mod catalog;
 pub mod config_editor;
+pub mod health_check;
+pub mod installer;
+pub mod lifecycle;
+pub mod log_viewer;
+pub mod providers;
 pub mod uninstall_guard;
 
 use std::collections::HashMap;
