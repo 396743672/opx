@@ -128,7 +128,7 @@ const props = defineProps<{
   instances?: InstalledSoftware[]
   initialTab?: 'snapshots' | 'reset'
 }>()
-const emit = defineEmits<{ close: [] }>()
+defineEmits<{ close: [] }>()
 
 const tab = ref<'snapshots' | 'reset'>(props.initialTab ?? 'snapshots')
 const selectedId = ref(props.software.id)
