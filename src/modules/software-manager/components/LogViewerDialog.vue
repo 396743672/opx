@@ -119,7 +119,7 @@ const props = defineProps<{
   software: InstalledSoftware
   instances?: InstalledSoftware[]
 }>()
-const emit = defineEmits<{ close: [] }>()
+defineEmits<{ close: [] }>()
 
 const POLL_INTERVAL = 1500
 const TAIL_LIMIT = 2000

@@ -1,0 +1,115 @@
+//! B 扩展（一键启动栈 Stack）Tauri 命令层
+//!
+//! 栈 CRUD / 编排 / 导出导入命令，全部复用 `State<'_, Arc<StackManager>>`，
+//! 与现有 `start_software` / `start_springboot_app` 风格一致，返回 `Result<T, String>`。
+//!
+//! 本文件按实现计划分批落地：
+//! - T2：list_stacks / get_stack / create_stack / update_stack / delete_stack
+//! - T3：start_stack / stop_stack / restart_stack
+//! - T4：export_stack / import_stack
+
+use std::sync::Arc;
+
+use tauri::{AppHandle, State};
+
+use crate::models::stack::{
+    CreateStackPayload, Stack, StackStartPlan, UpdateStackPayload,
+};
+use crate::services::stack_manager::StackManager;
+
+/// 列出所有栈
+#[tauri::command]
+pub async fn list_stacks(
+    manager: State<'_, Arc<StackManager>>,
+) -> Result<Vec<Stack>, String> {
+    Ok(manager.list())
+}
+
+/// 获取单个栈
+#[tauri::command]
+pub async fn get_stack(
+    manager: State<'_, Arc<StackManager>>,
+    id: String,
+) -> Result<Stack, String> {
+    manager
+        .get(&id)
+        .ok_or_else(|| format!("未找到栈: {}", id))
+}
+
+/// 创建栈（保存前做环检测，有环返回环路径错误，不写入）
+#[tauri::command]
+pub async fn create_stack(
+    manager: State<'_, Arc<StackManager>>,
+    payload: CreateStackPayload,
+) -> Result<Stack, String> {
+    manager.create(payload).map_err(|e| e.to_string())
+}
+
+/// 更新栈（保存前做环检测，有环返回环路径错误）
+#[tauri::command]
+pub async fn update_stack(
+    manager: State<'_, Arc<StackManager>>,
+    id: String,
+    payload: UpdateStackPayload,
+) -> Result<Stack, String> {
+    manager.update(&id, payload).map_err(|e| e.to_string())
+}
+
+/// 删除栈
+#[tauri::command]
+pub async fn delete_stack(
+    manager: State<'_, Arc<StackManager>>,
+    id: String,
+) -> Result<(), String> {
+    manager.delete(&id).map(|_| ())
+}
+
+/// 一键启动栈：逐批 + 批内并发，依赖就绪探测 + 重试 + 回滚。
+/// 运行前再次环检测；过程 emit `stack-status-changed`。
+#[tauri::command]
+pub async fn start_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<StackStartPlan, String> {
+    manager.start(&app, &id).await.map_err(|e| e.to_string())
+}
+
+/// 一键停止栈（逆序优雅停止）
+#[tauri::command]
+pub async fn stop_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    manager.stop(&app, &id).await.map_err(|e| e.to_string())
+}
+
+/// 一键重启栈（先停后起，返回新启动计划）
+#[tauri::command]
+pub async fn restart_stack(
+    manager: State<'_, Arc<StackManager>>,
+    app: AppHandle,
+    id: String,
+) -> Result<StackStartPlan, String> {
+    manager.restart(&app, &id).await.map_err(|e| e.to_string())
+}
+
+/// 导出栈为 JSON 文件（R7，含 items / depends_on，供团队分享）
+#[tauri::command]
+pub async fn export_stack(
+    manager: State<'_, Arc<StackManager>>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    manager.export_stack(&id, &path).map_err(|e| e.to_string())
+}
+
+/// 从 JSON 文件导入栈（重新生成 id / created_at，导入时同样做环检测）
+#[tauri::command]
+pub async fn import_stack(
+    manager: State<'_, Arc<StackManager>>,
+    path: String,
+) -> Result<Stack, String> {
+    manager.import_stack(&path).map_err(|e| e.to_string())
+}

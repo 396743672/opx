@@ -41,6 +41,12 @@ const routes = [
     component: () => import('@/modules/settings/pages/SettingsPage.vue'),
     meta: { title: 'settings' },
   },
+  {
+    path: '/stacks',
+    name: 'stacks',
+    component: () => import('@/modules/stack/StackList.vue'),
+    meta: { title: 'stacks' },
+  },
 ]
 
 const router = createRouter({
