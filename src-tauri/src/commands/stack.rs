@@ -94,3 +94,22 @@ pub async fn restart_stack(
 ) -> Result<StackStartPlan, String> {
     manager.restart(&app, &id).await.map_err(|e| e.to_string())
 }
+
+/// 导出栈为 JSON 文件（R7，含 items / depends_on，供团队分享）
+#[tauri::command]
+pub async fn export_stack(
+    manager: State<'_, Arc<StackManager>>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    manager.export_stack(&id, &path).map_err(|e| e.to_string())
+}
+
+/// 从 JSON 文件导入栈（重新生成 id / created_at，导入时同样做环检测）
+#[tauri::command]
+pub async fn import_stack(
+    manager: State<'_, Arc<StackManager>>,
+    path: String,
+) -> Result<Stack, String> {
+    manager.import_stack(&path).map_err(|e| e.to_string())
+}
