@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+    ConfigContext, HealthContext, InstallContext, LogContext, SoftwareProvider, StartCommand,
+    StartContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -258,6 +259,15 @@ impl SoftwareProvider for NginxProvider {
             ],
             ephemeral_keys: vec![],
         })
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 
     fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {

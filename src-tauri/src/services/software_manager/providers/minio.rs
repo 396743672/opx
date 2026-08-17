@@ -7,7 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, SoftwareProvider, StartCommand, StartContext,
+    ConfigContext, DataDirContext, HealthContext, InstallContext, SoftwareProvider, StartCommand,
+    StartContext, resolve_data_dir,
 };
 
 #[cfg(windows)]
@@ -232,5 +233,10 @@ impl SoftwareProvider for MinioProvider {
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
         None
+    }
+
+    fn data_dirs(&self, ctx: &DataDirContext) -> Vec<PathBuf> {
+        // MinIO 数据目录来自配置 data_dir（默认 ./data），需按 install_path 解析绝对路径
+        vec![resolve_data_dir(&ctx.config, "data_dir", "./data", &ctx.install_path)]
     }
 }

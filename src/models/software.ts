@@ -203,3 +203,60 @@ export interface CustomTemplate {
 
 /// 配置表单数据（key → 字段值）
 export type FormData = Record<string, any>
+
+// ===== C 扩展（日志查看器 + 备份/恢复）前端类型 =====
+
+/** 日志来源种类 */
+export type LogSourceKind = 'StdoutRedirect' | 'ProviderFile'
+
+/** 单条日志来源（后端 SoftwareProvider.log_sources 序列化给前端） */
+export interface LogSource {
+  /** 日志文件绝对路径 */
+  path: string
+  kind: LogSourceKind
+  /** 是否结构化、可显示级别筛选 */
+  has_levels: boolean
+  /** provider 提供的级别提取正则；null 时用前端内置默认正则 */
+  level_pattern: string | null
+}
+
+/** 读取日志返回的分块（前端轮询/分页消费） */
+export interface LogChunk {
+  /** 命中的日志行（已应用关键字/正则/级别过滤） */
+  lines: string[]
+  /** 本块首行的字节偏移 */
+  start_offset: number
+  /** 本块末行之后的字节偏移（下次轮询/分页携带） */
+  end_offset: number
+  /** 文件总字节数 */
+  total_bytes: number
+  /** 向前是否还有更早的历史（用于「加载更多历史」） */
+  has_more: boolean
+  /** 因超过单次上限被截断（命中行多于 limit） */
+  truncated: boolean
+}
+
+/** 备份模式 */
+export type BackupMode = 'StopAndBackup' | 'Hot'
+
+/** 快照元信息（持久化于 <app_data>/backups/<id>/manifest.json） */
+export interface SnapshotMeta {
+  /** = 快照文件名去后缀（如 20260817_143000） */
+  id: string
+  /** RFC3339 创建时间 */
+  created_at: string
+  /** 来源软件 key（如 "mysql"） */
+  source_key: string
+  /** 来源软件版本（如 "8.4.11"） */
+  source_version: string
+  /** 首数字段大版本；MinIO 等无法解析为 null */
+  major_version: number | null
+  /** zip 文件字节大小 */
+  size_bytes: number
+  /** 快照格式（"zip"） */
+  format: string
+  /** 用户自定义名称 */
+  name: string | null
+  /** 用户自定义备注 */
+  note: string | null
+}

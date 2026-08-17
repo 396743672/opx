@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
 };
 
 use super::{
-    ConfigContext, FirstRunInit, HealthContext, InstallContext, SoftwareProvider, StartCommand,
-    StartContext, WorkingDirContext,
+    ConfigContext, FirstRunInit, HealthContext, InstallContext, LogContext, SoftwareProvider,
+    StartCommand, StartContext, WorkingDirContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -172,6 +172,15 @@ impl SoftwareProvider for PostgreSqlProvider {
         // postgres.exe -D <install>/data 只读 <install>/data/postgresql.conf，
         // 相对 install_path 返回 data/ 子目录下的实际配置文件
         Some(PathBuf::from("data/postgresql.conf"))
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
