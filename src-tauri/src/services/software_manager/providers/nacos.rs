@@ -29,15 +29,6 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
 pub struct NacosProvider;
 
 impl NacosProvider { pub fn new() -> Self { Self } }
-    // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
-    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
-        let mut sources = default_log_sources(ctx);
-        for s in &mut sources {
-            s.has_levels = true;
-        }
-        sources
-    }
-}
 
 impl Default for NacosProvider { fn default() -> Self { Self::new() } }
 
@@ -387,6 +378,15 @@ impl SoftwareProvider for NacosProvider {
             ],
             ephemeral_keys: vec![],
         })
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> { None }

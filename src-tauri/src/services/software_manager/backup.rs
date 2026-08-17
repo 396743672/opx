@@ -7,7 +7,7 @@
 //! - 快照存储根：<app_data>/backups/<installed_id>/，内含 `<ts>.zip` + `manifest.json`
 //! - 恢复前若实例运行中则拒绝（先停服）；跨大版本恢复需 `force` 确认（决策 8）
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
@@ -57,12 +57,21 @@ fn read_manifest(installed_id: &str) -> Vec<SnapshotMeta> {
     serde_json::from_str(&content).unwrap_or_default()
 }
 
+/// 每个实例最多保留的快照数（决策：滚动保留 5 个）
+const MAX_SNAPSHOTS_PER_INSTANCE: usize = 5;
+
 fn write_manifest(installed_id: &str, metas: &[SnapshotMeta]) -> anyhow::Result<()> {
     let p = manifest_path(installed_id);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let content = serde_json::to_string_pretty(metas)?;
+    // 滚动保留最近 MAX_SNAPSHOTS_PER_INSTANCE 个快照（按传入顺序保留末尾最近）
+    let kept: &[SnapshotMeta] = if metas.len() > MAX_SNAPSHOTS_PER_INSTANCE {
+        &metas[metas.len() - MAX_SNAPSHOTS_PER_INSTANCE..]
+    } else {
+        metas
+    };
+    let content = serde_json::to_string_pretty(kept)?;
     std::fs::write(&p, content)?;
     Ok(())
 }
@@ -120,11 +129,14 @@ fn extract_zip_to_data_dirs(
             .by_index(i)
             .map_err(|e| anyhow::anyhow!("读取条目失败: {}", e))?;
         let name = file.name().to_string();
-        let target = if is_absolute_entry(&name) {
-            PathBuf::from(&name)
-        } else {
-            install_path.join(&name)
-        };
+        // zip-slip 防护：拒绝绝对路径或含 .. 的 entry（防目录逃逸）
+        if is_absolute_entry(&name) || name.contains("..") {
+            return Err(anyhow::anyhow!(
+                "快照含非法路径（绝对路径或 .. 逃逸），拒绝解压: {}",
+                name
+            ));
+        }
+        let target = install_path.join(&name);
         // 护栏：解压目标必须落在某个数据目录内或 install_path 内，防 zip-slip
         let allowed = data_dirs.iter().any(|d| target.starts_with(d))
             || target.starts_with(install_path);
@@ -229,8 +241,25 @@ pub fn create_snapshot(
         note,
     };
     let mut manifest = read_manifest(installed_id);
+    // 预先计算将被滚动淘汰的最旧快照（写 manifest 前先删其 zip，避免孤立文件）
+    let dropped: Vec<String> = if manifest.len() >= MAX_SNAPSHOTS_PER_INSTANCE {
+        manifest
+            .iter()
+            .take(manifest.len() - MAX_SNAPSHOTS_PER_INSTANCE + 1)
+            .map(|m| m.id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     manifest.push(meta.clone());
     write_manifest(installed_id, &manifest)?;
+    // 清理被淘汰快照的 zip 文件（manifest 已由 write_manifest 裁剪保留最近 5 个）
+    for id in dropped {
+        let old_zip = backups_root(installed_id).join(format!("{}.zip", id));
+        if old_zip.exists() {
+            let _ = std::fs::remove_file(&old_zip);
+        }
+    }
     Ok(meta)
 }
 
@@ -344,4 +373,90 @@ pub fn reset_instance(manager: &SoftwareManager, installed_id: &str) -> anyhow::
     let data_dirs = provider.data_dirs(&dctx);
     lifecycle::reset_data_dirs(&data_dirs, &install_path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::paths::data_dir;
+    use std::fs;
+    use std::io::Write;
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    fn meta(id: &str) -> SnapshotMeta {
+        SnapshotMeta {
+            id: id.to_string(),
+            created_at: "2024-01-01T00:00:00+00:00".to_string(),
+            source_key: "mysql".to_string(),
+            source_version: "8.4.11".to_string(),
+            major_version: Some(8),
+            size_bytes: 1024,
+            format: "zip".to_string(),
+            name: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_major_version() {
+        assert_eq!(parse_major_version("8.4.11"), Some(8));
+        assert_eq!(parse_major_version("9.7.2"), Some(9));
+        assert_eq!(parse_major_version("10"), Some(10));
+        assert_eq!(parse_major_version("RELEASE.2025"), None);
+        assert_eq!(parse_major_version("v1.2.3"), None);
+        assert_eq!(parse_major_version(""), None);
+    }
+
+    /// 预期：每实例应保留最多 5 个快照（第 6 个生成后最旧被删）。
+    /// 当前 create_snapshot 未实现滚动删除，manifest 会无限增长 => 该断言在修复前会失败。
+    #[test]
+    fn test_snapshot_retention_keeps_five() {
+        let id = format!("__qa_retention_{}", unique_suffix());
+        let metas: Vec<SnapshotMeta> = (0..6).map(|i| meta(&format!("s{}", i))).collect();
+        write_manifest(&id, &metas).unwrap();
+        let got = read_manifest(&id);
+        // 清理：避免污染 target 目录下的数据目录
+        let _ = fs::remove_dir_all(data_dir().join("backups").join(&id));
+        assert!(
+            got.len() <= 5,
+            "应保留最多 5 个快照（设计：每实例保留 5 个滚动删除），实际 {} 个",
+            got.len()
+        );
+    }
+
+    /// 预期：restore 解压应对含 ../ 的 entry 做 zip-slip 防护（拒绝或归一化到目标目录内）。
+    /// 当前 extract_zip_to_data_dirs 用未归一化的 target.starts_with(install_path) 判定，
+    /// Rust 的 Path::starts_with 不会消解 ..，导致 ../ 条目被放行 => 该断言在修复前会失败。
+    #[test]
+    fn test_restore_rejects_path_traversal() {
+        let base = std::env::temp_dir().join(format!("opx_qa_restore_{}", unique_suffix()));
+        let _ = fs::create_dir_all(&base);
+        let zip_path = base.join("snap.zip");
+        {
+            let f = fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            // 恶意 entry：尝试逃出 install_path
+            zw.start_file("../__opx_qa_escape__.txt", opts).unwrap();
+            zw.write_all(b"pwned").unwrap();
+            zw.finish().unwrap();
+        }
+        let install_path = base.join("install");
+        let _ = fs::create_dir_all(&install_path);
+        let result = extract_zip_to_data_dirs(&zip_path, &[], &install_path);
+        // 清理：含可能被错误写出到上级目录的文件
+        let _ = fs::remove_file(base.join("__opx_qa_escape__.txt"));
+        let _ = fs::remove_dir_all(&base);
+        assert!(
+            result.is_err(),
+            "restore 应包含 ../ 的 entry 拒绝/归一化（zip-slip 防护）"
+        );
+    }
 }

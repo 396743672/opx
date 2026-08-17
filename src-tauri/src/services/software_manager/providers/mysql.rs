@@ -41,16 +41,6 @@ impl MySqlProvider {
     }
 }
 
-    // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
-    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
-        let mut sources = default_log_sources(ctx);
-        for s in &mut sources {
-            s.has_levels = true;
-        }
-        sources
-    }
-}
-
 impl Default for MySqlProvider {
     fn default() -> Self {
         Self::new()
@@ -309,6 +299,15 @@ lower_case_table_names=1\n",
             // init_password 为一次性敏感字段：仅首次初始化消费，绝不写入 my.ini / installed.json
             ephemeral_keys: vec!["init_password".to_string()],
         })
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {

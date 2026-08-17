@@ -118,7 +118,22 @@ fn resolve_program_path(program: &str, working_dir: &std::path::Path) -> PathBuf
 /// 文件名用 installed_id 而非 pid：pid 在 spawn 前不可知，且 Windows 下 rename 打开中的文件会失败。
 /// install_path 取 StartCommand.working_dir 解析后的绝对路径（各 provider 的 working_dir 均为 install_path）。
 pub fn stdout_log_path(install_path: &std::path::Path, installed_id: &str) -> PathBuf {
-    install_path.join("logs").join(format!("opx-{}.log", installed_id))
+    // 防御性 sanitize：installed_id 可能含 / : 等非法文件名字符，
+    // 直接拼进文件名会造成路径穿越或 File::create 失败（Windows）。
+    // 仅保留字母数字与 - _，其余一律替换为下划线。
+    let safe_id: String = installed_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    install_path
+        .join("logs")
+        .join(format!("opx-{}.log", safe_id))
 }
 
 /// 用 StartCommand 构造并 spawn 子进程，将其 stdout+stderr 重定向到
@@ -568,4 +583,35 @@ pub fn stop_all_on_exit(app: &AppHandle) {
         );
     }
     let _ = app.emit("stop-complete", ());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stdout_log_path;
+    use std::path::Path;
+
+    #[test]
+    fn test_stdout_log_path_shape() {
+        let id = "9f1c2b3a-4d5e-6f70-8a9b-0c1d2e3f4a5b";
+        let p = stdout_log_path(Path::new("/opt/opx/inst1"), id);
+        let fname = p.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(fname, format!("opx-{}.log", id));
+        // 路径应包含 logs 目录组件（跨平台）
+        let has_logs = p.components().any(|c| c.as_os_str() == "logs");
+        assert!(has_logs, "stdout 落盘路径应包含 logs 目录组件");
+    }
+
+    /// 预期：installed_id 若含非法文件名字符（/ : 等），落盘文件名必须被 sanitize，
+    /// 否则 Windows 上 File::create 会失败、或造成路径穿越。
+    /// 当前实现未 sanitize => 该断言预期失败（installed_id 实际为 UUID，故为防御性 P2）。
+    #[test]
+    fn test_stdout_log_path_sanitizes_illegal_chars() {
+        let p = stdout_log_path(Path::new("/opt/opx/inst1"), "a/b:c");
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(
+            !name.contains('/') && !name.contains('\\') && !name.contains(':'),
+            "stdout_log_path 必须对 installed_id 做文件名 sanitize，当前文件名: {}",
+            name
+        );
+    }
 }

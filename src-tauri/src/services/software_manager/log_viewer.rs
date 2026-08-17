@@ -204,7 +204,7 @@ fn read_backward_filtered(
     for b in blocks.into_iter().rev() {
         all.extend_from_slice(&b);
     }
-    let content_start = total - all.len() as u64;
+    let content_start = from_byte - all.len() as u64;
     let text = String::from_utf8_lossy(&all);
     let lines: Vec<&str> = text.split('\n').collect();
 
@@ -216,7 +216,7 @@ fn read_backward_filtered(
         if filter.matches(line) {
             matched.push((byte_pos, line));
         }
-        let has_nl = byte_pos + line_len as u64 < total;
+        let has_nl = (byte_pos + line_len as u64) < total;
         byte_pos += line_len as u64 + if has_nl { 1 } else { 0 };
     }
 
@@ -284,4 +284,123 @@ fn read_since(
         has_more: from_byte > 0,
         truncated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    fn tmp_file(prefix: &str, content: &[u8]) -> std::path::PathBuf {
+        let p = std::env::temp_dir()
+            .join(format!("opx_qa_lv_{}_{}.log", prefix, unique_suffix()));
+        let mut f = fs::File::create(&p).unwrap();
+        f.write_all(content).unwrap();
+        p
+    }
+
+    #[test]
+    fn test_line_filter_keyword() {
+        let f = LineFilter {
+            keyword: Some("err"),
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        assert!(f.matches("this is an error"));
+        assert!(!f.matches("all good"));
+    }
+
+    #[test]
+    fn test_line_filter_regex() {
+        let re = regex::Regex::new("ERR|WARN").unwrap();
+        let f = LineFilter {
+            keyword: None,
+            regex: Some(re),
+            level: None,
+            level_regex: None,
+        };
+        assert!(f.matches("line WARN here"));
+        assert!(!f.matches("line INFO here"));
+    }
+
+    #[test]
+    fn test_line_filter_level_default_regex() {
+        let re = regex::Regex::new(DEFAULT_LEVEL_REGEX).unwrap();
+        let f = LineFilter {
+            keyword: None,
+            regex: None,
+            level: Some("ERROR".to_string()),
+            level_regex: Some(re),
+        };
+        assert!(f.matches("2024-01-01 ERROR boom"));
+        assert!(!f.matches("2024-01-01 INFO ok"));
+        // 默认级别正则可不区分大小写匹配
+        assert!(f.matches("2024-01-01 error lowercase"));
+    }
+
+    #[test]
+    fn test_read_since_basic() {
+        let p = tmp_file("since", b"a\nb\nc\n");
+        let total = fs::metadata(&p).unwrap().len();
+        let filter = LineFilter {
+            keyword: None,
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        let chunk = read_since(&p, total, 0, 100, &filter).unwrap();
+        assert_eq!(chunk.lines.len(), 3);
+        assert_eq!(chunk.start_offset, 0);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_read_backward_tail_basic() {
+        let content = b"L0\nL1\nL2\nL3\nL4\n";
+        let p = tmp_file("tail", content);
+        let total = fs::metadata(&p).unwrap().len();
+        let filter = LineFilter {
+            keyword: None,
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        let chunk = read_backward_filtered(&p, total, total, 100, &filter).unwrap();
+        assert_eq!(chunk.lines.iter().filter(|l| !l.is_empty()).count(), 5);
+        assert_eq!(chunk.start_offset, 0);
+        let _ = fs::remove_file(&p);
+    }
+
+    /// 历史模式（before=true）：from_byte 之前的内容，start_offset 应等于该内容首字节真实偏移。
+    /// 当前实现 content_start = total - all.len()，在 before 模式（from_byte < total）下
+    /// 会偏大 (total - from_byte)，导致分页偏移错位 => 该断言在修复前会失败。
+    #[test]
+    fn test_read_backward_before_mode_offset() {
+        let content = b"L0\nL1\nL2\nL3\nL4\n"; // 每行 3 字节，total = 15
+        let p = tmp_file("before", content);
+        let total = fs::metadata(&p).unwrap().len();
+        let filter = LineFilter {
+            keyword: None,
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        // from_byte = 6（L2 起始），应返回 [0,6) 的 "L0","L1"，start_offset 正确应为 0
+        let chunk = read_backward_filtered(&p, total, 6, 100, &filter).unwrap();
+        assert_eq!(chunk.lines.iter().filter(|l| !l.is_empty()).count(), 2);
+        assert_eq!(
+            chunk.start_offset, 0,
+            "before 模式 start_offset 计算错误（应为真实首字节偏移 0，当前实现会偏大）"
+        );
+        let _ = fs::remove_file(&p);
+    }
 }
