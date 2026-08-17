@@ -234,6 +234,11 @@ pub fn run() {
             commands::springboot::read_springboot_log,
             commands::springboot::export_springboot_config,
             commands::springboot::import_springboot_config,
+            commands::stack::list_stacks,
+            commands::stack::get_stack,
+            commands::stack::create_stack,
+            commands::stack::update_stack,
+            commands::stack::delete_stack,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
