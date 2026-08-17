@@ -9,7 +9,7 @@
 //! - `offset == Some(o), before == true` → 历史模式，读取字节 `o` 之前（朝文件头）的 `limit` 行。
 
 use std::io::{BufRead, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::models::software::{LogChunk, LogSource};
 use crate::services::software_manager::providers::{all_providers, LogContext};
