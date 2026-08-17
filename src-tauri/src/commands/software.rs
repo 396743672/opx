@@ -912,11 +912,14 @@ pub async fn get_config_schema(
         None => return Ok(None),
     };
 
-    // Nacos 的 JDK 选择：动态列出已装 JDK/JRE 的安装路径作为 Select options。
-    // provider 的 config_schema 是静态的，options 为空，需在此处填充。
+    // JDK 选择字段填充：凡 config_schema 含 key=="jdk" 的 Select 字段（nacos/kafka/elasticsearch 等 Java 中间件），
+    // 动态列出已装 JDK/JRE 作为 Select options。provider 的 config_schema 是静态的，options 为空，需在此处填充。
+    let has_jdk_field = schema.fields.iter().any(|f| f.key == "jdk");
+    if has_jdk_field {
+        fill_jdk_options(&mut schema, manager.inner(), provider.min_jdk_version());
+    }
+    // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
     if software.key == "nacos" {
-        fill_jdk_options(&mut schema, manager.inner());
-        // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
         let storage = software
             .config
             .get("storage")
@@ -932,15 +935,38 @@ pub async fn get_config_schema(
     Ok(Some(schema))
 }
 
+/// 解析 JDK/JRE 版本串的主版本号：
+/// - 以 "1." 开头取第二段（"1.8.0" → 8）
+/// - 否则取首段（"17.0.12" → 17、"21" → 21）
+fn parse_jdk_major(version: &str) -> Option<u32> {
+    let v = version.trim();
+    if let Some(rest) = v.strip_prefix("1.") {
+        rest.split('.').next().and_then(|s| s.parse::<u32>().ok())
+    } else {
+        v.split(['.', '-']).next().and_then(|s| s.parse::<u32>().ok())
+    }
+}
+
 /// 把已装 JDK/JRE 填充进 schema 中 key=="jdk" 的 Select 字段：
 /// - options 存 installed_id（稳定标识，便携版路径变动不影响）
 /// - labels 存 "name (version) [JDK/JRE]"（与 SpringBoot 应用选择一致）
 /// 供 Nacos 等需选 JDK 的软件复用。找不到 JDK 时保留空 options（前端显示"未安装 JDK"）。
-fn fill_jdk_options(schema: &mut ConfigSchema, manager: &SoftwareManager) {
+/// `min_jdk_version` 用于过滤低于软件最低要求的 JDK/JRE（如 Kafka 隐藏 <11、ES 隐藏 <17）。
+fn fill_jdk_options(
+    schema: &mut ConfigSchema,
+    manager: &SoftwareManager,
+    min_jdk_version: Option<u32>,
+) {
     let jdks: Vec<InstalledSoftware> = manager
         .get_installed()
         .into_iter()
         .filter(|s| s.key == "jdk" || s.key == "jre")
+        .filter(|s| match min_jdk_version {
+            Some(min) => parse_jdk_major(&s.version)
+                .map(|mj| mj >= min)
+                .unwrap_or(false),
+            None => true,
+        })
         .collect();
     if jdks.is_empty() {
         return;

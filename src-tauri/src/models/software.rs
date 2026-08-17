@@ -44,6 +44,14 @@ pub enum SoftwareCategory {
     Cache,
     WebServer,
     Registry,
+    /// 对象存储（MinIO / RustFS 等，治理自 Database 迁移而来）
+    Storage,
+    /// 消息队列（Kafka 等）
+    MessageQueue,
+    /// 搜索（Elasticsearch 等）
+    Search,
+    /// 时序数据库（InfluxDB 等）
+    TimeSeries,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

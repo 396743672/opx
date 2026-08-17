@@ -148,6 +148,9 @@ const grouped = computed<Group[]>(() => {
     webserver: { category: 'webserver', label: 'webServer', icon: 'mdi:web', items: [] },
     storage: { category: 'storage', label: 'objectStorage', icon: 'mdi:storage', items: [] },
     registry: { category: 'registry', label: 'registry', icon: 'mdi:hexagon-multiple', items: [] },
+    messagequeue: { category: 'messagequeue', label: 'messageQueue', icon: 'mdi:message-text-outline', items: [] },
+    search: { category: 'search', label: 'search', icon: 'mdi:magnify', items: [] },
+    timeseries: { category: 'timeseries', label: 'timeSeries', icon: 'mdi:chart-line', items: [] },
     custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
   }
   // JRE 也纳入管理页（提供卸载入口），放在 runtime 分组
@@ -162,6 +165,9 @@ const grouped = computed<Group[]>(() => {
     else if (sw.key === 'nginx') g = 'webserver'
     else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
     else if (sw.key === 'nacos') g = 'registry'
+    else if (sw.key === 'kafka') g = 'messagequeue'
+    else if (sw.key === 'elasticsearch') g = 'search'
+    else if (sw.key === 'influxdb') g = 'timeseries'
     else continue
     groups[g].items.push(sw)
   }

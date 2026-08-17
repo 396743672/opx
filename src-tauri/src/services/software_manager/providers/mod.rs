@@ -16,6 +16,9 @@ pub mod rustfs;
 pub mod postgresql;
 pub mod mongodb;
 pub mod nacos;
+pub mod kafka;
+pub mod elasticsearch;
+pub mod influxdb;
 pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
@@ -70,6 +73,13 @@ pub trait SoftwareProvider: Send + Sync {
     /// 结构化日志的级别提取正则；默认 None → LogService 用内置默认正则。
     /// 返回 Some(pattern) 时优先使用该正则做级别匹配。
     fn log_level_pattern(&self) -> Option<String> {
+        None
+    }
+
+    /// 该软件所需的最低 JDK 主版本（仅 Java 中间件需要，如 Kafka=11、ES=17）。
+    /// 默认 None 表示不需要 JDK（如 InfluxDB 等原生二进制）。
+    /// 命令层 `fill_jdk_options` 据此过滤不兼容的已装 JDK/JRE。
+    fn min_jdk_version(&self) -> Option<u32> {
         None
     }
 }
@@ -193,6 +203,7 @@ pub(crate) fn resolve_data_dir(config: &serde_json::Value, key: &str, default: &
 }
 
 /// 启动命令（provider 返回，由 lifecycle 执行 spawn）
+#[derive(Debug)]
 pub struct StartCommand {
     pub program: String,
     pub args: Vec<String>,
@@ -203,12 +214,14 @@ pub struct StartCommand {
 }
 
 /// 首次启动前执行的初始化命令（如 mysqld --initialize-insecure）
+#[derive(Debug)]
 pub struct FirstRunInit {
     pub init_command: StartCommand,
     pub temp_secret_output: Option<TempSecretSpec>,
 }
 
 /// 临时密码提取方式
+#[derive(Debug)]
 pub enum TempSecretSpec {
     FromStdoutRegex(String),
     FromLogFile { path: PathBuf, regex: String },
@@ -277,5 +290,8 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(postgresql::PostgreSqlProvider::new()),
         Box::new(mongodb::MongoDbProvider::new()),
         Box::new(nacos::NacosProvider::new()),
+        Box::new(kafka::KafkaProvider::new()),
+        Box::new(elasticsearch::ElasticsearchProvider::new()),
+        Box::new(influxdb::InfluxdbProvider::new()),
     ]
 }

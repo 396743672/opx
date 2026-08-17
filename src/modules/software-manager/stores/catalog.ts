@@ -15,6 +15,10 @@ export const useCatalogStore = defineStore('catalog', () => {
       [SoftwareCategory.Cache]: [],
       [SoftwareCategory.WebServer]: [],
       [SoftwareCategory.Registry]: [],
+      [SoftwareCategory.Storage]: [],
+      [SoftwareCategory.MessageQueue]: [],
+      [SoftwareCategory.Search]: [],
+      [SoftwareCategory.TimeSeries]: [],
     }
     entries.value.forEach((e) => {
       if (groups[e.category]) {

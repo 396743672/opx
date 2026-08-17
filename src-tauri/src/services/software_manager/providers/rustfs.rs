@@ -76,7 +76,7 @@ impl SoftwareProvider for RustfsProvider {
             name: "RustFS".to_string(),
             description: "Rust 实现的 S3 兼容对象存储".to_string(),
             description_i18n: Some("catalogDesc.rustfs".to_string()),
-            category: SoftwareCategory::Database,
+            category: SoftwareCategory::Storage,
             icon: "mdi:cloud".to_string(),
             versions,
             default_version: "latest".to_string(),

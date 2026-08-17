@@ -34,6 +34,10 @@ export enum SoftwareCategory {
   Cache = 'Cache',
   WebServer = 'WebServer',
   Registry = 'Registry',
+  Storage = 'Storage',
+  MessageQueue = 'MessageQueue',
+  Search = 'Search',
+  TimeSeries = 'TimeSeries',
 }
 
 export interface CatalogEntry {
