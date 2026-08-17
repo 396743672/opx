@@ -129,6 +129,7 @@ const groups: NavGroup[] = [
       { path: '/software', titleKey: 'softwareManagement', icon: 'mdi:package-variant-closed' },
       { path: '/websites', titleKey: 'websiteManagement', icon: 'mdi:web-box' },
       { path: '/springboot', titleKey: 'springBoot', icon: 'mdi:leaf' },
+      { path: '/stacks', titleKey: 'stacks', icon: 'mdi:layers-outline' },
     ],
   },
 ]
