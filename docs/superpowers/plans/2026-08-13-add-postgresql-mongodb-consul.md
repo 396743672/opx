@@ -1326,6 +1326,8 @@ git commit -m "feat: PostgreSQL 支持可选初始化密码（scram-sha-256）"
 
 ## 任务 13：MongoDB 可选认证
 
+> **⚠️ 已撤销（2026-08-17）**：用户实测后决定 MongoDB **不做登录验证**（开启认证繁琐、且 mongosh 不随服务器 zip 打包需额外下载）。`auth_enabled` 开关、`ConfigFieldType::Boolean` 变体、`config_schema` 中的 auth 字段均已移除，`start_command` 不含 `--auth`。本任务不再执行。
+
 **文件：**
 - 修改：`src-tauri/src/services/software_manager/providers/mongodb.rs`
 
@@ -1424,6 +1426,8 @@ git commit -m "feat: MongoDB 支持可选认证（--auth）"
 
 ## 任务 14：i18n 新增认证配置文案
 
+> **⚠️ 已撤销（2026-08-17）**：随任务 13 一并撤销，`configField.authEnabled` / `configField.authEnabledDesc` 文案未落地（已从 `zh-CN.ts` / `en-US.ts` 删除）。
+
 **文件：**
 - 修改：`src/locales/zh-CN.ts`（configField 块 `consulMode` 后）
 - 修改：`src/locales/en-US.ts`（同位置）
@@ -1488,3 +1492,17 @@ git commit -m "feat: 新增认证配置 i18n 文案"
 **3. 类型一致性：** `ConfigFieldType::Boolean` 在任务 11 前后端一致；i18n key `configField.authEnabled/authEnabledDesc/rootUser/rootUserDesc/rootPassword/rootPasswordDesc` + 通用 `enabled` 在 provider（任务 13）与 i18n（任务 14）一致。init_password 复用现有 key `configField.initPassword/initPasswordDesc`。
 
 **3. 类型一致性：** Provider 结构体名 `PostgreSqlProvider`/`MongoDbProvider`/`ConsulProvider` 在任务 4/5/6 定义并在任务 7 注册一致；`SoftwareCategory::Registry` 在任务 1（后端）与任务 2（前端）一致；i18n key `catalogDesc.postgresql`/`catalogDesc.mongodb`/`catalogDesc.consul`、`configField.listenAddresses`/`sharedBuffers`/`bindIp`/`httpPort`/`consulateMode`、mirror 名 `postgresqlOfficial`/`mongodbOfficial`/`consulOfficial` 在 provider 实现（任务 4-6）与 i18n（任务 8）中一致；`SoftwareListPage` 的 `registry` 组 label 用 `registry`（任务 9）对应 i18n `registry` key（任务 8）。无命名漂移。
+
+---
+
+# 修订记录
+
+**2026-08-17 — MongoDB 取消登录认证（任务 13 / 14 撤销）**
+- 用户实测后决定 MongoDB 不做登录验证（开启认证繁琐、mongosh 不随服务器 zip 打包需额外下载插件）。
+- 代码侧已落地（已合并至 `dev`）：
+  - `mongodb.rs`：移除 `auth_enabled` 字段与 `start_command` 中的 `--auth` 分支，`config_schema` 仅保留 `port` / `bind_ip` / `dbpath`。
+  - `ConfigFieldType::Boolean` 变体因无其他消费方一并移除。
+  - `zh-CN.ts` / `en-US.ts` 删除 `configField.authEnabled` / `configField.authEnabledDesc`。
+  - 对应 Rust `#[cfg(test)]` 单元测试按约定在功能验证后清理。
+- 文档侧同步：本计划「任务 13 / 14」标注撤销，设计文档 `specs/...-design.md` 的「初始化与认证配置」节同步更新决策与改动说明。
+- 注：PostgreSQL 的可选密码 + `scram-sha-256` 认证（任务 12）**保持不变**，仍按原设计生效。
