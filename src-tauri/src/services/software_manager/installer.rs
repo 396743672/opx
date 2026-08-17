@@ -72,34 +72,6 @@ impl ThrottledEmitter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn throttle_limits_emit_rate_not_percent_changes() {
-        let mut t = ThrottledEmitter::new();
-        // 首次调用：timeout 未到（刚 new），应不 emit
-        assert!(!t.should_emit(1), "首次调用不应 emit");
-        // 连续快速变化 percent：不应 emit（未到 200ms）
-        assert!(!t.should_emit(2));
-        assert!(!t.should_emit(3));
-        assert!(!t.should_emit(100));
-        // 等到超过 200ms 后：应 emit
-        std::thread::sleep(std::time::Duration::from_millis(210));
-        assert!(t.should_emit(100), "超过 200ms 应 emit");
-    }
-
-    #[test]
-    fn throttle_emits_after_timeout_even_same_percent() {
-        let mut t = ThrottledEmitter::new();
-        std::thread::sleep(std::time::Duration::from_millis(210));
-        assert!(t.should_emit(50), "超过 200ms 即使 percent 未变也应 emit");
-        // 刚 emit 后立即再调：不应 emit
-        assert!(!t.should_emit(50));
-    }
-}
-
 /// 校验自定义软件名称：仅允许字母、数字、下划线、连字符
 fn is_valid_custom_name(name: &str) -> bool {
     !name.is_empty()

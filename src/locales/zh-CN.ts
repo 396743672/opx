@@ -451,8 +451,6 @@ export default {
     sharedBuffers: '共享缓冲区',
     bindIp: '绑定地址',
     httpPort: 'HTTP 端口',
-    authEnabled: '启用认证',
-    authEnabledDesc: '开启后需认证才能访问；首次需在 mongosh 手动创建 root 用户',
     nacosJdk: 'JDK 选择',
     nacosJdkDesc: '启动 Nacos 用的 JDK/JRE（需先安装）',
     nacosHeap: 'JVM 堆内存',

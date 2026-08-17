@@ -451,8 +451,6 @@ export default {
     sharedBuffers: 'Shared Buffers',
     bindIp: 'Bind IP',
     httpPort: 'HTTP Port',
-    authEnabled: 'Enable Auth',
-    authEnabledDesc: 'Requires authentication to access; create root user in mongosh on first run',
     nacosJdk: 'JDK Selection',
     nacosJdkDesc: 'JDK/JRE used to start Nacos (install first)',
     nacosHeap: 'JVM Heap',
