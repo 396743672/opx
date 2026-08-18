@@ -154,6 +154,7 @@
                       v-model="item.depends_on"
                       class="dep-select"
                       :title="$t('dependsOnHint')"
+                      @change="reorderByDependencies()"
                     >
                       <option
                         v-for="other in items.filter((i) => i.ref_id !== item.ref_id)"
@@ -282,12 +283,35 @@ function moveDown(idx: number) {
   reindexOrder()
 }
 
+// 依赖变更后按依赖拓扑重排列表，让显示顺序=实际启动顺序（被依赖者在前）
+function reorderByDependencies() {
+  const byId = new Map(items.value.map((i) => [i.ref_id, i]))
+  const visited = new Set<string>()
+  const placed: StackItem[] = []
+  const visit = (item: StackItem) => {
+    if (visited.has(item.ref_id)) return
+    visited.add(item.ref_id)
+    for (const dep of item.depends_on) {
+      const d = byId.get(dep)
+      if (d) visit(d) // 先排被依赖者
+    }
+    placed.push(item)
+  }
+  for (const it of items.value) visit(it)
+  if (placed.length === items.value.length) {
+    items.value = placed
+    reindexOrder()
+  }
+}
+
 async function onSave() {
   error.value = null
   if (!name.value.trim()) {
     error.value = $tSafe('stackName')
     return
   }
+  // 保存前按依赖拓扑重排，保证入库顺序与启动顺序一致
+  reorderByDependencies()
   saving.value = true
   try {
     if (isEdit.value && props.stack) {
