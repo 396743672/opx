@@ -111,6 +111,14 @@
                       :title="$t('moveDown')"
                       @click="moveDown(idx)"
                     >&#8595;</button>
+                    <button
+                      class="mini-btn remove"
+                      type="button"
+                      :title="$t('removeMember')"
+                      @click="removeMember(item.ref_id)"
+                    >
+                      <Icon icon="mdi:close" />
+                    </button>
                   </div>
                 </div>
                 <label class="mini-toggle">
@@ -146,21 +154,17 @@
                       v-model="item.depends_on"
                       class="dep-select"
                       :title="$t('dependsOnHint')"
-                      @change="syncDependencyMembers()"
                     >
                       <option
-                        v-for="c in dependencyPool.filter((c) => c.id !== item.ref_id)"
-                        :key="c.id"
-                        :value="c.id"
+                        v-for="other in items.filter((i) => i.ref_id !== item.ref_id)"
+                        :key="other.ref_id"
+                        :value="other.ref_id"
                       >
-                        {{ c.name }}
+                        {{ resolveName(other) }}
                       </option>
                     </select>
                   </label>
                 </div>
-                <button class="member-remove" @click="removeMember(item.ref_id)">
-                  <Icon icon="mdi:close" />
-                </button>
               </div>
               <div v-if="items.length === 0" class="empty-hint">
                 {{ $t('noMembers') }}
@@ -209,20 +213,6 @@ const description = ref('')
 const items = ref<StackItem[]>([])
 const saving = ref(false)
 const error = ref<string | null>(null)
-
-// 依赖候选：全部可运行软件（组内 + 组外），选中组外依赖时自动纳入成员
-const dependencyPool = computed(() => [
-  ...candidateSoftware.value.map((s) => ({
-    id: s.id,
-    name: s.name,
-    refType: 'software' as StackItemRefType,
-  })),
-  ...store.springbootApps.map((a) => ({
-    id: a.id,
-    name: a.name,
-    refType: 'springboot' as StackItemRefType,
-  })),
-])
 
 // 进入时根据 props.stack 初始化表单
 watch(
@@ -290,33 +280,6 @@ function moveDown(idx: number) {
   const arr = items.value
   ;[arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]]
   reindexOrder()
-}
-
-// select 依赖时，把不在组内的已装软件自动纳入成员，保证后端 compute_plan 能正确建边排序
-function syncDependencyMembers() {
-  const known = new Set(items.value.map((i) => i.ref_id))
-  const added: StackItem[] = []
-  for (const item of items.value) {
-    for (const dep of item.depends_on) {
-      if (known.has(dep)) continue
-      const cand = dependencyPool.value.find((c) => c.id === dep)
-      if (cand) {
-        added.push({
-          ref_type: cand.refType,
-          ref_id: cand.id,
-          order: 0,
-          depends_on: [],
-          enabled: true,
-          retry: 0,
-        })
-        known.add(dep)
-      }
-    }
-  }
-  if (added.length) {
-    items.value.push(...added)
-    reindexOrder()
-  }
 }
 
 async function onSave() {
@@ -559,7 +522,10 @@ function onClose() {
   font-weight: 500;
 }
 .mini-toggle {
-  margin-left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
   font-size: 11px;
   color: var(--color-muted-foreground);
 }
@@ -592,27 +558,16 @@ function onClose() {
 }
 .dep-select {
   width: 100%;
-  height: 26px;
+  min-height: 64px;
   background: var(--color-muted);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   color: var(--color-foreground);
   font-size: 12px;
+  padding: 2px;
 }
-.member-remove {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-}
-.member-remove:hover {
-  background: var(--color-muted);
+.mini-btn.remove:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
   color: var(--color-danger, red);
 }
 .empty-hint {
