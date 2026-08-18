@@ -37,6 +37,7 @@ const full = JSON.parse(
 const subset = {
   prefix: full.prefix,
   icons: {},
+  aliases: {},
 }
 if (full.width) subset.width = full.width
 if (full.height) subset.height = full.height
@@ -46,9 +47,9 @@ for (const name of USED_ICONS) {
   if (full.icons[name]) {
     subset.icons[name] = full.icons[name]
   } else if (full.aliases && full.aliases[name]) {
-    // 解析别名：把别名指向的父图标一并纳入
+    // 别名归入 aliases 桶（无 body，放进 icons 会让 Iconify 校验拒绝整个集合）
     const parent = full.aliases[name].parent
-    subset.icons[name] = full.aliases[name]
+    subset.aliases[name] = full.aliases[name]
     if (parent && full.icons[parent]) subset.icons[parent] = full.icons[parent]
   } else {
     missing.push(name)
