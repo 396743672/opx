@@ -54,7 +54,7 @@
           <button
             class="icon-btn"
             :title="t('startStack')"
-            :disabled="busyId === stack.id"
+            :disabled="busyId === stack.id || isRunning(stack)"
             @click="onStart(stack)"
           >
             <Icon v-if="busyId === stack.id && busyAction === 'start'" icon="mdi:loading" class="spinning" />
@@ -81,10 +81,20 @@
           <button class="icon-btn" :title="t('exportStack')" @click="onExport(stack)">
             <Icon icon="mdi:export" />
           </button>
-          <button class="icon-btn" :title="t('editStack')" @click="onEdit(stack)">
+          <button
+            class="icon-btn"
+            :title="t('editStack')"
+            :disabled="busyId === stack.id || isRunning(stack)"
+            @click="onEdit(stack)"
+          >
             <Icon icon="mdi:pencil" />
           </button>
-          <button class="icon-btn danger" :title="t('deleteStack')" @click="onDelete(stack)">
+          <button
+            class="icon-btn danger"
+            :title="t('deleteStack')"
+            :disabled="busyId === stack.id || isRunning(stack)"
+            @click="onDelete(stack)"
+          >
             <Icon icon="mdi:delete" />
           </button>
           <div v-if="busyId === stack.id" class="busy-mask">
@@ -164,6 +174,11 @@ function cardStatusLabel(stack: Stack): string {
 }
 function cardStatusClass(stack: Stack): string {
   return `st-${overallStatusOf(stack)}`
+}
+
+// 运行中/编排中（starting/stopping）的栈禁止破坏性操作（启动、编辑、删除）
+function isRunning(stack: Stack): boolean {
+  return ['running', 'starting', 'stopping'].includes(overallStatusOf(stack))
 }
 
 function openCreate() {
@@ -390,6 +405,20 @@ onUnmounted(() => {
 .icon-btn.danger:hover {
   background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
   color: var(--color-danger, red);
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+}
+.icon-btn:disabled:hover {
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+}
+.icon-btn.danger:disabled:hover {
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
 }
 .run-area {
   margin-top: 18px;
