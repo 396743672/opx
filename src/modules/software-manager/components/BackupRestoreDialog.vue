@@ -56,7 +56,7 @@
             <div v-for="s in snapshots" :key="s.id" class="snap-row">
               <div class="snap-info">
                 <div class="snap-title">
-                  <Icon icon="mdi:file-cabinet-outline" />
+                  <Icon icon="mdi:file-cabinet" />
                   <span class="snap-name">{{ s.name || s.id }}</span>
                   <span v-if="s.major_version != null" class="snap-mv">v{{ s.major_version }}.x</span>
                 </div>
