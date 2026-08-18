@@ -775,6 +775,7 @@ pub async fn stop_software(
         .map_err(|e| e.to_string())?;
     lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
 
+    let pid_for_status = pid;
     // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
     let result = tokio::time::timeout(
         Duration::from_secs(15),
@@ -784,37 +785,64 @@ pub async fn stop_software(
     let graceful = match result {
         Ok(Ok((true, _))) => true,
         other => {
-            tracing::warn!(installed_id = %installed_id, pid = pid,
-                stop_result = ?other, "stop_one incomplete/unexpected, forcing Stopped");
+            tracing::warn!(installed_id = %installed_id, pid = pid_for_status,
+                stop_result = ?other, "stop_one incomplete/unexpected");
             false
         }
     };
 
-    // 无论 stop_one 结果如何，确保状态更新为 Stopped
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let app_clone = app.clone();
     let installed_id_clone = installed_id.clone();
-    manager_arc
-        .update_runtime_fields(
+
+    // 停止成功：置 Stopped。停止失败（进程仍存活）：如实反馈 Error，保留 pid 供下次 stop，
+    // 避免 UI 假报"已停止"导致进程残留占用端口。
+    if graceful {
+        manager_arc
+            .update_runtime_fields(
+                &installed_id_clone,
+                SoftwareStatus::Stopped,
+                None,
+                None,
+                Some(Local::now().naive_local()),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        lifecycle::unregister(&installed_id_clone);
+        lifecycle::emit_status_changed(
+            &app_clone,
             &installed_id_clone,
             SoftwareStatus::Stopped,
             None,
             None,
-            Some(Local::now().naive_local()),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-    lifecycle::unregister(&installed_id_clone);
-    lifecycle::emit_status_changed(
-        &app_clone,
-        &installed_id_clone,
-        SoftwareStatus::Stopped,
-        None,
-        None,
-    );
-
-    tracing::info!(installed_id = %installed_id_clone, pid = pid, "software stopped");
-    Ok(graceful)
+        );
+        tracing::info!(installed_id = %installed_id_clone, pid = pid_for_status, "software stopped");
+        Ok(graceful)
+    } else {
+        let msg = format!(
+            "进程 PID {} 未能停止，可能仍在运行并占用端口，请重试或手动结束该进程。",
+            pid_for_status
+        );
+        manager_arc
+            .update_runtime_fields(
+                &installed_id_clone,
+                SoftwareStatus::Error,
+                Some(pid_for_status),
+                None,
+                None,
+                Some(msg.clone()),
+            )
+            .map_err(|e| e.to_string())?;
+        lifecycle::emit_status_changed(
+            &app_clone,
+            &installed_id_clone,
+            SoftwareStatus::Error,
+            Some(pid_for_status),
+            Some(msg.clone()),
+        );
+        tracing::error!(installed_id = %installed_id_clone, pid = pid_for_status, "software stop failed, process may still hold ports");
+        Err(msg)
+    }
 }
 
 /// 重启软件
