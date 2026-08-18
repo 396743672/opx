@@ -26,7 +26,7 @@
         </span>
       </div>
       <div v-if="software.last_error" class="error-text">
-        <Icon icon="mdi:alert-circle" /> {{ software.last_error }}
+        <Icon icon="mdi:alert-circle" /> {{ translateError(software.last_error, t, te) }}
       </div>
     </div>
 
@@ -61,9 +61,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
 import { InstalledSoftware, SoftwareStatus } from '@/models/software'
+import { translateError } from '@/utils/i18nError'
+
+const { t, te } = useI18n()
 
 const props = defineProps<{
   software: InstalledSoftware
