@@ -53,9 +53,6 @@ pub struct StackManager {
 struct StackManagerInner {
     stacks: Vec<Stack>,
     data_path: PathBuf,
-    /// 本次启动由栈拉起的外部依赖（ref_id 列表，stack_id → list）。
-    /// 仅内存态：应用重启后关系丢失，stop 时不再自动停这些依赖（可接受，启动编排通常在会话内完成）。
-    managed_externals: HashMap<String, Vec<String>>,
 }
 
 impl StackManagerInner {
@@ -82,11 +79,7 @@ impl StackManager {
         Self {
             software_mgr,
             springboot_mgr,
-            inner: Mutex::new(StackManagerInner {
-                stacks,
-                data_path,
-                managed_externals: HashMap::new(),
-            }),
+            inner: Mutex::new(StackManagerInner { stacks, data_path }),
         }
     }
 
@@ -101,11 +94,7 @@ impl StackManager {
         Self {
             software_mgr,
             springboot_mgr,
-            inner: Mutex::new(StackManagerInner {
-                stacks,
-                data_path,
-                managed_externals: HashMap::new(),
-            }),
+            inner: Mutex::new(StackManagerInner { stacks, data_path }),
         }
     }
 
@@ -160,6 +149,7 @@ impl StackManager {
             items: payload.items,
             created_at: now_utc(),
             updated_at: String::new(),
+            managed_externals: None,
         };
         // 保存前环检测：存在环则拒绝写入
         let _ = Self::compute_plan(&stack)?;
@@ -208,6 +198,22 @@ impl StackManager {
         let cloned = stack.clone();
         inner.save().map_err(|e| e.to_string())?;
         Ok(cloned)
+    }
+
+    /// 记录某栈本次拉起的组外依赖清单（持久化到 stacks.json，供应用重启后停止时使用）
+    fn set_managed_externals(&self, id: &str, externals: Vec<String>) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        let stack = inner
+            .stacks
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or_else(|| format!("未找到栈: {}", id))?;
+        if externals.is_empty() {
+            stack.managed_externals = None;
+        } else {
+            stack.managed_externals = Some(externals);
+        }
+        inner.save().map_err(|e| e.to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<bool, String> {
@@ -478,11 +484,7 @@ impl StackManager {
                         m.status = StackMemberStatus::Stopped;
                     }
                 }
-                self.inner
-                    .lock()
-                    .unwrap()
-                    .managed_externals
-                    .remove(&stack.id);
+                let _ = self.set_managed_externals(&stack.id, vec![]);
                 self.emit(
                     app,
                     &stack.id,
@@ -502,11 +504,7 @@ impl StackManager {
             StackMemberStatus::Running,
             member_status.values().cloned().collect(),
         );
-        self.inner
-            .lock()
-            .unwrap()
-            .managed_externals
-            .insert(stack.id.clone(), managed_external);
+        self.set_managed_externals(&stack.id, managed_external)?;
         Ok(plan)
     }
 
@@ -792,18 +790,17 @@ impl StackManager {
             }
         }
 
-        // 停止本次由栈拉起的组外依赖（启动前已在运行的不停，避免误杀用户独立使用的服务）
-        let managed = self
-            .inner
-            .lock()
-            .unwrap()
+        // 停止本次由栈拉起的组外依赖（启动前已在运行的不停，避免误杀用户独立使用的服务）。
+        // 从持久化的栈记录读取，应用重启后仍能正确停止上次拉起的依赖。
+        let managed = stack
             .managed_externals
-            .remove(&stack.id)
+            .clone()
             .unwrap_or_default();
         if !managed.is_empty() {
             for dep in managed.iter().rev() {
                 self.stop_external(app, dep).await;
             }
+            let _ = self.set_managed_externals(&stack.id, vec![]);
         }
 
         let mut members: Vec<StackMemberRuntime> = stack
@@ -1069,6 +1066,7 @@ mod tests {
             items,
             created_at: String::new(),
             updated_at: String::new(),
+            managed_externals: None,
         }
     }
 

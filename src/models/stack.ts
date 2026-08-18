@@ -27,6 +27,8 @@ export interface Stack {
   items: StackItem[]
   created_at: string
   updated_at: string
+  /** 上次启动由栈拉起的组外依赖（可选，运行时记录） */
+  managed_externals?: string[] | null
 }
 
 /** 成员运行态（snake_case 序列化） */

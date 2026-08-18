@@ -55,6 +55,10 @@ pub struct Stack {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// 上次启动由栈拉起的组外依赖（ref_id）。仅内存态运行时记录，用于停止时一并停止
+    /// 本次拉起的依赖；持久化到 stacks.json 以在应用重启后仍能正确停止。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_externals: Option<Vec<String>>,
 }
 
 /// 成员运行态（不持久化）
