@@ -149,21 +149,23 @@
                   </label>
                   <label class="mini-field grow">
                     {{ $t('dependsOn') }}
-                    <select
-                      multiple
-                      v-model="item.depends_on"
-                      class="dep-select"
-                      :title="$t('dependsOnHint')"
-                      @change="reorderByDependencies()"
-                    >
-                      <option
+                    <div class="dep-panel" :title="$t('dependsOnHint')">
+                      <label
                         v-for="c in dependencyPool.filter((c) => c.id !== item.ref_id)"
                         :key="c.id"
-                        :value="c.id"
+                        class="dep-option"
                       >
-                        {{ c.name }}
-                      </option>
-                    </select>
+                        <input
+                          type="checkbox"
+                          :checked="item.depends_on.includes(c.id)"
+                          @change="toggleDep(item, c.id)"
+                        />
+                        <span :class="{ self: c.id === item.ref_id }">{{ c.name }}</span>
+                      </label>
+                      <div v-if="dependencyPool.filter((c) => c.id !== item.ref_id).length === 0" class="dep-empty">
+                        {{ $t('noMembers') }}
+                      </div>
+                    </div>
                   </label>
                 </div>
               </div>
@@ -287,6 +289,14 @@ function moveDown(idx: number) {
   const arr = items.value
   ;[arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]]
   reindexOrder()
+}
+
+// 勾选/取消依赖，并触发按依赖拓扑重排（显示顺序=启动顺序）
+function toggleDep(item: StackItem, depId: string) {
+  const idx = item.depends_on.indexOf(depId)
+  if (idx >= 0) item.depends_on.splice(idx, 1)
+  else item.depends_on.push(depId)
+  reorderByDependencies()
 }
 
 // 依赖变更后按依赖拓扑重排列表，让显示顺序=实际启动顺序（被依赖者在前）
@@ -586,15 +596,35 @@ function onClose() {
   color: var(--color-foreground);
   font-size: 12px;
 }
-.dep-select {
+.dep-panel {
   width: 100%;
-  min-height: 64px;
+  max-height: 120px;
+  overflow-y: auto;
   background: var(--color-muted);
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--color-foreground);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dep-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  padding: 2px;
+  color: var(--color-foreground);
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.dep-option:hover {
+  background: var(--color-card);
+}
+.dep-empty {
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+  padding: 6px 4px;
 }
 .mini-btn.remove:hover:not(:disabled) {
   background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
