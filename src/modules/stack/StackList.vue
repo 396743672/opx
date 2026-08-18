@@ -52,54 +52,43 @@
 
         <div class="sc-actions" @click.stop>
           <button
-            class="icon-btn"
-            :title="t('startStack')"
-            :disabled="busyId === stack.id || isRunning(stack)"
+            class="btn"
+            :class="{ primary: canStart(stack) }"
+            :disabled="!canStart(stack) || busyId === stack.id"
             @click="onStart(stack)"
           >
             <Icon v-if="busyId === stack.id && busyAction === 'start'" icon="mdi:loading" class="spinning" />
             <Icon v-else icon="mdi:play" />
+            {{ t('startStack') }}
           </button>
           <button
-            class="icon-btn"
-            :title="t('stopStack')"
-            :disabled="busyId === stack.id"
+            class="btn"
+            :class="{ primary: canStop(stack) }"
+            :disabled="!canStop(stack) || busyId === stack.id"
             @click="onStop(stack)"
           >
             <Icon v-if="busyId === stack.id && busyAction === 'stop'" icon="mdi:loading" class="spinning" />
             <Icon v-else icon="mdi:stop" />
+            {{ t('stopStack') }}
           </button>
           <button
-            class="icon-btn"
-            :title="t('restartStack')"
-            :disabled="busyId === stack.id"
+            class="btn"
+            :disabled="!canRestart(stack) || busyId === stack.id"
             @click="onRestart(stack)"
           >
             <Icon v-if="busyId === stack.id && busyAction === 'restart'" icon="mdi:loading" class="spinning" />
             <Icon v-else icon="mdi:restart" />
+            {{ t('restartStack') }}
           </button>
-          <button class="icon-btn" :title="t('exportStack')" @click="onExport(stack)">
+          <button class="btn ghost" :disabled="busyId === stack.id || !canStop(stack)" :title="t('exportStack')" @click="onExport(stack)">
             <Icon icon="mdi:export" />
           </button>
-          <button
-            class="icon-btn"
-            :title="t('editStack')"
-            :disabled="busyId === stack.id || isRunning(stack)"
-            @click="onEdit(stack)"
-          >
-            <Icon icon="mdi:pencil" />
+          <button class="btn ghost" :disabled="!canEdit(stack) || busyId === stack.id" @click="onEdit(stack)">
+            <Icon icon="mdi:pencil" /> {{ t('editStack') }}
           </button>
-          <button
-            class="icon-btn danger"
-            :title="t('deleteStack')"
-            :disabled="busyId === stack.id || isRunning(stack)"
-            @click="onDelete(stack)"
-          >
+          <button class="btn danger ghost" :disabled="!canEdit(stack) || busyId === stack.id" @click="onDelete(stack)">
             <Icon icon="mdi:delete" />
           </button>
-          <div v-if="busyId === stack.id" class="busy-mask">
-            <Icon icon="mdi:loading" class="spinning" />
-          </div>
         </div>
       </div>
     </div>
@@ -176,9 +165,21 @@ function cardStatusClass(stack: Stack): string {
   return `st-${overallStatusOf(stack)}`
 }
 
-// 运行中/编排中（starting/stopping）的栈禁止破坏性操作（启动、编辑、删除）
+// 状态驱动的按钮门控（与软件管理一致）：未运行不能停，已运行不能启
 function isRunning(stack: Stack): boolean {
   return ['running', 'starting', 'stopping'].includes(overallStatusOf(stack))
+}
+function canStart(stack: Stack): boolean {
+  return !isRunning(stack)
+}
+function canStop(stack: Stack): boolean {
+  return isRunning(stack)
+}
+function canRestart(stack: Stack): boolean {
+  return overallStatusOf(stack) === 'running'
+}
+function canEdit(stack: Stack): boolean {
+  return !isRunning(stack)
 }
 
 function openCreate() {
@@ -365,60 +366,12 @@ onUnmounted(() => {
 }
 .sc-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   flex-wrap: wrap;
   position: relative;
 }
-.busy-mask {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  border-radius: 8px;
-  background: color-mix(in oklch, var(--color-card) 85%, transparent);
-  backdrop-filter: blur(1px);
-  font-size: 11px;
-  color: var(--color-muted-foreground);
-}
 .spinning {
   animation: opx-spin 1s linear infinite;
-}
-.icon-btn {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--color-border);
-  background: var(--color-muted);
-  color: var(--color-foreground);
-  border-radius: 6px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.icon-btn:hover {
-  background: var(--color-primary/15);
-  color: var(--color-primary);
-}
-.icon-btn.danger:hover {
-  background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
-  color: var(--color-danger, red);
-}
-.icon-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-  background: var(--color-muted);
-  color: var(--color-muted-foreground);
-}
-.icon-btn:disabled:hover {
-  background: var(--color-muted);
-  color: var(--color-muted-foreground);
-}
-.icon-btn.danger:disabled:hover {
-  background: var(--color-muted);
-  color: var(--color-muted-foreground);
 }
 .run-area {
   margin-top: 18px;
@@ -435,14 +388,37 @@ onUnmounted(() => {
   border: 1px solid var(--color-border);
   background: var(--color-card);
   color: var(--color-foreground);
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--color-muted);
 }
 .btn.primary {
   background: var(--color-primary);
   color: var(--color-primary-foreground);
   border-color: var(--color-primary);
+}
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-primary) 88%, black);
+}
+.btn.danger {
+  background: color-mix(in oklch, var(--color-danger, red) 12%, transparent);
+  color: var(--color-danger, red);
+  border-color: color-mix(in oklch, var(--color-danger, red) 30%, transparent);
+}
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-danger, red) 20%, transparent);
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn.ghost:hover:not(:disabled) {
+  background: var(--color-muted);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* 状态着色（与运行面板一致） */
