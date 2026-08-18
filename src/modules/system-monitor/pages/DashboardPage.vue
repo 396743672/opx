@@ -189,6 +189,33 @@
       </div>
     </div>
 
+    <!-- 服务组概览 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card">
+      <CardHeader icon="mdi:layers-outline" :title="$t('stacks')" />
+      <div v-if="stackOverview.length === 0" class="py-3 text-sm text-muted-foreground">
+        {{ $t('noStacks') }}
+      </div>
+      <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div
+          v-for="sg in stackOverview"
+          :key="sg.id"
+          class="rounded-md border border-border p-3 flex items-center justify-between"
+        >
+          <div>
+            <div class="text-sm font-medium">{{ sg.name }}</div>
+            <div class="text-xs text-muted-foreground tnum">
+              {{ sg.running }} / {{ sg.total }} {{ $t('stackMembers') }}
+            </div>
+          </div>
+          <Icon
+            :icon="sg.failed ? 'mdi:alert-circle' : sg.running === sg.total && sg.total > 0 ? 'mdi:check-circle' : 'mdi:circle-outline'"
+            class="shrink-0"
+            :class="sg.failed ? 'text-destructive' : sg.running === sg.total && sg.total > 0 ? 'text-success' : 'text-muted-foreground'"
+          />
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -199,6 +226,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useSystemStore } from '@/stores/system'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
+import { useStackStore } from '@/stores/stack'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { InstalledSoftware } from '@/models/software'
 import { SoftwareStatus } from '@/models/software'
@@ -216,6 +244,7 @@ useI18n()
 const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
 const lifecycleStore = useLifecycleStore()
+const stackStore = useStackStore()
 
 const installedSoftware = ref<InstalledSoftware[]>([])
 const runningApps = ref<SpringBootApp[]>([])
@@ -230,6 +259,16 @@ const runningSoftware = computed(() =>
 )
 
 const systemInfo = computed(() => systemStore.systemInfo)
+
+// 服务组概览：各服务组 running/总数 聚合、failed 标红
+const stackOverview = computed(() =>
+  stackStore.stacks.map((s) => {
+    const rt = stackStore.getRuntime(s.id)
+    const running = rt.filter((m) => m.status === 'running').length
+    const failed = rt.some((m) => m.status === 'failed')
+    return { id: s.id, name: s.name, total: s.items.length, running, failed }
+  })
+)
 
 const bootTimeStr = computed(() =>
   systemInfo.value ? formatBootTime(systemInfo.value.boot_time) : '-'
@@ -253,6 +292,8 @@ onMounted(async () => {
   }, 1000)
   // ponytail: 监听启动/停止事件，运行列表实时刷新
   await lifecycleStore.initListener()
+  await stackStore.loadStacks()
+  await stackStore.subscribe()
   unlistenSb = await listen('springboot-status-changed', async () => {
     await sbStore.fetchApps()
     runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
@@ -262,6 +303,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
   lifecycleStore.destroyListener()
+  stackStore.unsubscribe()
   unlistenSb?.()
 })
 </script>
