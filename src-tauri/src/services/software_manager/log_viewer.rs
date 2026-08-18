@@ -19,6 +19,15 @@ use crate::services::software_manager::SoftwareManager;
 const DEFAULT_LEVEL_REGEX: &str =
     r"(?i)\b(ERROR|ERR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|CRITICAL|PANIC|NOTICE)\b";
 
+/// 日志文件解码：优先 UTF-8 严格解码；失败则按 GBK 转码。
+/// Windows 中文系统下 PostgreSQL 等按系统码页(GBK)输出日志，UTF-8 lossy 会得到乱码。
+fn decode_log_bytes(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => encoding_rs::GBK.decode(bytes).0.into_owned(),
+    }
+}
+
 /// 行过滤器：关键字 / 正则 / 级别三重过滤
 struct LineFilter<'a> {
     keyword: Option<&'a str>,
@@ -205,7 +214,7 @@ fn read_backward_filtered(
         all.extend_from_slice(&b);
     }
     let content_start = from_byte - all.len() as u64;
-    let text = String::from_utf8_lossy(&all);
+    let text = decode_log_bytes(&all);
     let lines: Vec<&str> = text.split('\n').collect();
 
     // 收集匹配行及其在文件中的字节偏移（相对文件整体）
@@ -257,11 +266,12 @@ fn read_since(
     let mut truncated = false;
     loop {
         let _start = reader.stream_position()?;
-        let mut line = String::new();
-        let n = reader.read_line(&mut line)?;
+        let mut raw = Vec::new();
+        let n = reader.read_until(b'\n', &mut raw)?;
         if n == 0 {
             break; // EOF
         }
+        let line = decode_log_bytes(&raw);
         let end = reader.stream_position()?;
         if filter.matches(&line) {
             if lines.len() >= limit {
@@ -345,6 +355,27 @@ mod tests {
         assert!(!f.matches("2024-01-01 INFO ok"));
         // 默认级别正则可不区分大小写匹配
         assert!(f.matches("2024-01-01 error lowercase"));
+    }
+
+    #[test]
+    fn test_decode_log_bytes_gbk_and_utf8() {
+        // 真实 PG 日志字节（GBK 编码的「日志： 正在」，Windows 中文系统码页输出）
+        let gbk: &[u8] = &[
+            0xc8, 0xd5, 0xd6, 0xbe, 0x3a, 0x20, 0x20, 0xd5, 0xfd, 0xd4, 0xda, 0xc6, 0xf4,
+            0xb6, 0xaf,
+        ];
+        let s = decode_log_bytes(gbk);
+        assert!(s.contains("日志"), "GBK 解码应得中文: got {:?}", s);
+        assert!(s.contains("正在"));
+
+        let utf8 = "2026-08-18 INFO starting\n".as_bytes();
+        assert_eq!(decode_log_bytes(utf8), "2026-08-18 INFO starting\n");
+
+        // 混合：整体非 UTF-8 时回退 GBK（含 ASCII 前缀行）
+        let mixed: &[u8] = b"2026-08-18 INFO ok\n\xc8\xd5\xd6\xbe\x3a\x20\xd5\xfd\xd4\xda\n";
+        let sm = decode_log_bytes(mixed);
+        assert!(sm.contains("2026-08-18 INFO ok"));
+        assert!(sm.contains("日志"));
     }
 
     #[test]

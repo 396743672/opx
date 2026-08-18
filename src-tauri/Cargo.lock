@@ -2554,6 +2554,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "encoding_rs",
  "flate2",
  "futures",
  "once_cell",
