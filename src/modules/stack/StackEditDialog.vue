@@ -205,7 +205,7 @@ import type {
 } from '@/models/stack'
 import { SoftwareCategory } from '@/models/software'
 
-const props = defineProps<{ stack: Stack | null }>()
+const props = defineProps<{ stack: Stack | null; initialItems?: StackItem[] }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const store = useStackStore()
@@ -231,8 +231,8 @@ const dependencyPool = computed(() => [
 
 // 进入时根据 props.stack 初始化表单
 watch(
-  () => props.stack,
-  (s) => {
+  () => [props.stack, props.initialItems] as [Stack | null, StackItem[] | undefined],
+  ([s, initItems]) => {
     error.value = null
     if (s) {
       name.value = s.name
@@ -243,7 +243,11 @@ watch(
       name.value = ''
       description.value = ''
       autoStart.value = false
-      items.value = []
+      // 模板预填：优先用 initialItems 副本（深拷贝 depends_on）
+      items.value = (initItems ?? []).map((i) => ({
+        ...i,
+        depends_on: [...i.depends_on],
+      }))
     }
   },
   { immediate: true }

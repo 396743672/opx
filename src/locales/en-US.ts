@@ -607,4 +607,7 @@ export default {
   p2Reserved: '(reserved, implemented in a later version)',
   selectFile: 'Select file',
   importStackTitle: 'Import Service Group',
+  templateDevEnv: 'Dev Env (MySQL+Redis+Nginx)',
+  templateCacheWeb: 'Cache & Gateway (Redis+Nginx)',
+  templateObjectStorage: 'Object Storage (MinIO)',
 }

@@ -607,4 +607,7 @@ export default {
   p2Reserved: '（预留，后续版本实现）',
   selectFile: '选择文件',
   importStackTitle: '导入服务组',
+  templateDevEnv: '联调环境（MySQL+Redis+Nginx）',
+  templateCacheWeb: '缓存与网关（Redis+Nginx）',
+  templateObjectStorage: '对象存储（MinIO）',
 }

@@ -6,6 +6,21 @@
         <p class="page-desc">{{ t('stacksDesc') }}</p>
       </div>
       <div class="head-actions">
+        <div class="tmpl-wrap">
+          <button class="btn" @click="showTemplates = !showTemplates">
+            <Icon icon="mdi:apps" /> {{ t('stackTemplates') }}
+          </button>
+          <div v-if="showTemplates" class="tmpl-menu">
+            <button
+              v-for="tmpl in templateItems"
+              :key="tmpl.key"
+              class="tmpl-item"
+              @click="openWithTemplate(tmpl); showTemplates = false"
+            >
+              <Icon icon="mdi:view-grid-plus" /> {{ t(tmpl.labelKey) }}
+            </button>
+          </div>
+        </div>
         <button class="btn" @click="onImport">
           <Icon icon="mdi:file-import" /> {{ t('importStack') }}
         </button>
@@ -102,6 +117,7 @@
     <StackEditDialog
       v-if="showDialog"
       :stack="editingStack"
+      :initial-items="dialogInitialItems"
       @close="showDialog = false"
       @saved="onSaved"
     />
@@ -114,7 +130,7 @@ import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useStackStore } from '@/stores/stack'
-import type { Stack, StackMemberStatus } from '@/models/stack'
+import type { Stack, StackMemberStatus, StackItem } from '@/models/stack'
 import StackEditDialog from './StackEditDialog.vue'
 import StackRunPanel from './StackRunPanel.vue'
 
@@ -184,14 +200,77 @@ function canEdit(stack: Stack): boolean {
 
 function openCreate() {
   editingStack.value = null
+  dialogInitialItems.value = undefined
   showDialog.value = true
 }
 function onEdit(stack: Stack) {
   editingStack.value = stack
+  dialogInitialItems.value = undefined
   showDialog.value = true
 }
 function onSaved() {
   showDialog.value = false
+}
+
+// ---- 模板 ----
+// 内置预设模板：软件 key → 已装 id，预填新建对话框。软件未装则跳过该项（模板仍可用）。
+const STACK_TEMPLATES: { key: string; labelKey: string; requires: { key: string; name: string }[] }[] = [
+  {
+    key: 'dev-env',
+    labelKey: 'templateDevEnv',
+    requires: [
+      { key: 'mysql', name: 'MySQL' },
+      { key: 'redis', name: 'Redis' },
+      { key: 'nginx', name: 'Nginx' },
+    ],
+  },
+  {
+    key: 'cache-web',
+    labelKey: 'templateCacheWeb',
+    requires: [
+      { key: 'redis', name: 'Redis' },
+      { key: 'nginx', name: 'Nginx' },
+    ],
+  },
+  {
+    key: 'object-storage',
+    labelKey: 'templateObjectStorage',
+    requires: [
+      { key: 'minio', name: 'MinIO' },
+      { key: 'rustfs', name: 'RustFS' },
+    ],
+  },
+]
+
+const dialogInitialItems = ref<StackItem[] | undefined>(undefined)
+const showTemplates = ref(false)
+const templateItems = computed(() =>
+  STACK_TEMPLATES.map((tmpl) => ({
+    ...tmpl,
+    // 解析为已装软件成员（按 key 匹配已装软件 id；未装则留空项）
+    items: tmpl.requires
+      .map((r) => {
+        const sw = store.installedSoftware.find((s) => s.key === r.key)
+        return sw
+          ? {
+              ref_type: 'software' as const,
+              ref_id: sw.id,
+              order: 0,
+              depends_on: [] as string[],
+              enabled: true,
+              retry: 0,
+            }
+          : null
+      })
+      .filter(Boolean) as StackItem[],
+  }))
+)
+
+function openWithTemplate(tmpl: (typeof templateItems.value)[number]) {
+  editingStack.value = null
+  // 模板成员若全部未装则 items 空，回退为空新建
+  dialogInitialItems.value = tmpl.items
+  showDialog.value = true
 }
 
 const busyAction = ref<'start' | 'stop' | 'restart'>('start')
@@ -288,6 +367,39 @@ onUnmounted(() => {
 .head-actions {
   display: flex;
   gap: 8px;
+}
+.tmpl-wrap {
+  position: relative;
+}
+.tmpl-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 180px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px oklch(0 0 0 / 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.tmpl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-foreground);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.tmpl-item:hover {
+  background: var(--color-muted);
 }
 .global-error {
   background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
