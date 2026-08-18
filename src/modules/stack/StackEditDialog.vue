@@ -87,19 +87,32 @@
                 v-for="(item, idx) in items"
                 :key="item.ref_id"
                 class="member"
-                draggable="true"
-                @dragstart="onDragStart(idx)"
-                @dragover.prevent
-                @drop="onDrop(idx)"
               >
-                <Icon icon="mdi:drag" class="drag-handle" />
-                <span
-                  class="type-badge"
-                  :class="item.ref_type === 'software' ? 't-sw' : 't-sb'"
-                >
-                  {{ item.ref_type === 'software' ? $t('softwareType') : $t('springbootType') }}
-                </span>
-                <span class="member-name">{{ resolveName(item) }}</span>
+                <div class="member-head">
+                  <span
+                    class="type-badge"
+                    :class="item.ref_type === 'software' ? 't-sw' : 't-sb'"
+                  >
+                    {{ item.ref_type === 'software' ? $t('softwareType') : $t('springbootType') }}
+                  </span>
+                  <span class="member-name">{{ resolveName(item) }}</span>
+                  <div class="move-btns">
+                    <button
+                      class="mini-btn"
+                      type="button"
+                      :disabled="idx === 0"
+                      :title="$t('moveUp')"
+                      @click="moveUp(idx)"
+                    >&#8593;</button>
+                    <button
+                      class="mini-btn"
+                      type="button"
+                      :disabled="idx === items.length - 1"
+                      :title="$t('moveDown')"
+                      @click="moveDown(idx)"
+                    >&#8595;</button>
+                  </div>
+                </div>
                 <label class="mini-toggle">
                   <input
                     type="checkbox"
@@ -133,13 +146,14 @@
                       v-model="item.depends_on"
                       class="dep-select"
                       :title="$t('dependsOnHint')"
+                      @change="syncDependencyMembers()"
                     >
                       <option
-                        v-for="other in items.filter((i) => i.ref_id !== item.ref_id)"
-                        :key="other.ref_id"
-                        :value="other.ref_id"
+                        v-for="c in dependencyPool.filter((c) => c.id !== item.ref_id)"
+                        :key="c.id"
+                        :value="c.id"
                       >
-                        {{ resolveName(other) }}
+                        {{ c.name }}
                       </option>
                     </select>
                   </label>
@@ -195,7 +209,20 @@ const description = ref('')
 const items = ref<StackItem[]>([])
 const saving = ref(false)
 const error = ref<string | null>(null)
-let dragIndex = -1
+
+// 依赖候选：全部可运行软件（组内 + 组外），选中组外依赖时自动纳入成员
+const dependencyPool = computed(() => [
+  ...candidateSoftware.value.map((s) => ({
+    id: s.id,
+    name: s.name,
+    refType: 'software' as StackItemRefType,
+  })),
+  ...store.springbootApps.map((a) => ({
+    id: a.id,
+    name: a.name,
+    refType: 'springboot' as StackItemRefType,
+  })),
+])
 
 // 进入时根据 props.stack 初始化表单
 watch(
@@ -249,16 +276,47 @@ function resolveName(item: StackItem): string {
   return store.resolveName(item)
 }
 
-function onDragStart(idx: number) {
-  dragIndex = idx
-}
-function onDrop(idx: number) {
-  if (dragIndex < 0 || dragIndex === idx) return
-  const moved = items.value.splice(dragIndex, 1)[0]
-  items.value.splice(idx, 0, moved)
-  // 重排 order，保持同层顺序
+function reindexOrder() {
   items.value.forEach((it, i) => (it.order = i))
-  dragIndex = -1
+}
+function moveUp(idx: number) {
+  if (idx <= 0) return
+  const arr = items.value
+  ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+  reindexOrder()
+}
+function moveDown(idx: number) {
+  if (idx >= items.value.length - 1) return
+  const arr = items.value
+  ;[arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]]
+  reindexOrder()
+}
+
+// select 依赖时，把不在组内的已装软件自动纳入成员，保证后端 compute_plan 能正确建边排序
+function syncDependencyMembers() {
+  const known = new Set(items.value.map((i) => i.ref_id))
+  const added: StackItem[] = []
+  for (const item of items.value) {
+    for (const dep of item.depends_on) {
+      if (known.has(dep)) continue
+      const cand = dependencyPool.value.find((c) => c.id === dep)
+      if (cand) {
+        added.push({
+          ref_type: cand.refType,
+          ref_id: cand.id,
+          order: 0,
+          depends_on: [],
+          enabled: true,
+          retry: 0,
+        })
+        known.add(dep)
+      }
+    }
+  }
+  if (added.length) {
+    items.value.push(...added)
+    reindexOrder()
+  }
 }
 
 async function onSave() {
@@ -451,12 +509,36 @@ function onClose() {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--color-card);
-  cursor: grab;
 }
-.drag-handle {
-  color: var(--color-muted-foreground);
-  vertical-align: middle;
-  margin-right: 4px;
+.member-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.move-btns {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.mini-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-muted);
+  color: var(--color-foreground);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.mini-btn:hover:not(:disabled) {
+  background: var(--color-primary/15);
+  color: var(--color-primary);
+}
+.mini-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 .type-badge {
   font-size: 10px;
