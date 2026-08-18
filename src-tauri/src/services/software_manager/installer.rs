@@ -391,6 +391,7 @@ pub async fn install_software(
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
+            category: None,
         };
         manager.add_installed(installed)?;
 
@@ -593,6 +594,7 @@ pub async fn install_custom(
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
+            category: None,
         };
         manager.add_installed(installed)?;
 
@@ -950,6 +952,7 @@ async fn install_from_builtin(
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
+            category: None,
         };
         manager.add_installed(installed)?;
 

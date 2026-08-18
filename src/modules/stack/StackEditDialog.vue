@@ -36,7 +36,7 @@
             </div>
             <div class="candidate-list">
               <label
-                v-for="sw in store.installedSoftware"
+                v-for="sw in candidateSoftware"
                 :key="sw.id"
                 class="candidate"
                 :class="{ selected: isSelected('software', sw.id) }"
@@ -177,12 +177,18 @@ import type {
   CreateStackPayload,
   UpdateStackPayload,
 } from '@/models/stack'
+import { SoftwareCategory } from '@/models/software'
 
 const props = defineProps<{ stack: Stack | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const store = useStackStore()
 const isEdit = computed(() => props.stack !== null)
+
+// 可运行的服务类软件（排除 JDK/JRE 等 Runtime 环境软件；自定义软件 category 为 null 也保留）
+const candidateSoftware = computed(() =>
+  store.installedSoftware.filter((sw) => sw.category !== SoftwareCategory.Runtime)
+)
 
 const name = ref('')
 const description = ref('')

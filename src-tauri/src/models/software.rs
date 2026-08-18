@@ -134,6 +134,10 @@ pub struct InstalledSoftware {
 
     #[serde(default)]
     pub custom_start_command: Option<CustomStartCommand>,
+
+    /// 软件分类（来自 catalog，用于栈候选等按类型过滤）；自定义软件为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<SoftwareCategory>,
 }
 
 // ===== C 扩展（日志查看器 + 备份/恢复）新增类型 =====

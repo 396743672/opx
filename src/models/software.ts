@@ -92,6 +92,8 @@ export interface InstalledSoftware {
   last_stopped_at: string | null
   last_error: string | null
   custom_start_command: CustomStartCommand | null
+  // 来自 catalog 的软件分类；自定义软件为 null
+  category: SoftwareCategory | null
 }
 
 export interface InstalledSoftwareList {
