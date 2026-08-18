@@ -109,6 +109,16 @@ pub fn run() {
                 .await;
             });
 
+            // 服务组自启：启用 auto_start 的服务组在应用启动后按序拉起
+            let app_handle_for_stack_auto = app.handle().clone();
+            let stack_mgr_arc = app
+                .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                stack_mgr_arc.auto_start_all(&app_handle_for_stack_auto).await;
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单

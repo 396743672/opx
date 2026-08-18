@@ -29,6 +29,8 @@ export interface Stack {
   updated_at: string
   /** 上次启动由栈拉起的组外依赖（可选，运行时记录） */
   managed_externals?: string[] | null
+  /** 应用启动时是否自动拉起 */
+  auto_start: boolean
 }
 
 /** 成员运行态（snake_case 序列化） */
@@ -59,6 +61,7 @@ export interface CreateStackPayload {
   name: string
   description: string
   items: StackItem[]
+  auto_start: boolean
 }
 
 /** 更新栈请求载荷（全可选） */
@@ -66,6 +69,7 @@ export interface UpdateStackPayload {
   name?: string | null
   description?: string | null
   items?: StackItem[] | null
+  auto_start?: boolean | null
 }
 
 /** stack-status-changed 事件载荷 */

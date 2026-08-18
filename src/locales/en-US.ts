@@ -601,7 +601,7 @@ export default {
   stackFailed: 'Start failed',
   stackPending: 'Pending',
   noMembers: 'This service group has no members',
-  stackAutoStart: 'Auto start',
+  stackAutoStart: 'Auto start this service group on app launch',
   stackTemplates: 'Templates',
   startupReport: 'Startup report',
   p2Reserved: '(reserved, implemented in a later version)',

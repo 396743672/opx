@@ -150,6 +150,7 @@ impl StackManager {
             created_at: now_utc(),
             updated_at: String::new(),
             managed_externals: None,
+            auto_start: payload.auto_start,
         };
         // 保存前环检测：存在环则拒绝写入
         let _ = Self::compute_plan(&stack)?;
@@ -188,6 +189,9 @@ impl StackManager {
         if let Some(items) = payload.items {
             candidate.items = items;
         }
+        if let Some(auto_start) = payload.auto_start {
+            candidate.auto_start = auto_start;
+        }
         candidate.updated_at = now_utc();
 
         // 保存前环检测（作用于候选，失败即返回，不触碰内存/磁盘）
@@ -198,6 +202,18 @@ impl StackManager {
         let cloned = stack.clone();
         inner.save().map_err(|e| e.to_string())?;
         Ok(cloned)
+    }
+
+    /// 应用启动时按启动顺序自动拉起启用自启的服务组（逐个，不并发，单组失败不阻塞后续）
+    pub async fn auto_start_all(&self, app: &AppHandle) {
+        let stacks = self.list();
+        let mut eligible: Vec<&Stack> = stacks.iter().filter(|s| s.auto_start).collect();
+        eligible.sort_by_key(|s| s.updated_at.clone());
+        for stack in eligible {
+            if let Err(e) = self.start(app, &stack.id).await {
+                tracing::warn!(stack_id = %stack.id, error = %e, "服务组自启失败");
+            }
+        }
     }
 
     /// 记录某栈本次拉起的组外依赖清单（持久化到 stacks.json，供应用重启后停止时使用）
@@ -1067,6 +1083,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             managed_externals: None,
+            auto_start: false,
         }
     }
 
@@ -1118,6 +1135,7 @@ mod tests {
                 name: "demo".to_string(),
                 description: "roundtrip".to_string(),
                 items: vec![item("A", 0, &[])],
+            auto_start: false,
             })
             .expect("create 应成功");
         assert_eq!(mgr.list().len(), 1);
@@ -1147,6 +1165,7 @@ mod tests {
             name: "cyclic".to_string(),
             description: String::new(),
             items: vec![item("A", 0, &["B"]), item("B", 0, &["A"])],
+            auto_start: false,
         });
         assert!(res.is_err(), "存在环的栈应被拒绝创建");
         let _ = std::fs::remove_file(&tmp);
@@ -1264,6 +1283,7 @@ mod tests {
                 name: "p".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
+            auto_start: false,
             })
             .unwrap();
         let plan = mgr.build_plan(&created.id).expect("已保存栈应有计划");
@@ -1289,6 +1309,7 @@ mod tests {
                 name: name.to_string(),
                 description: String::new(),
                 items: vec![],
+            auto_start: false,
             });
             assert!(res.is_err(), "空白名称 '{}' 应被拒绝", name);
         }
@@ -1309,6 +1330,7 @@ mod tests {
                 name: "  spaced  ".to_string(),
                 description: "desc".to_string(),
                 items: vec![item("A", 0, &[])],
+            auto_start: false,
             })
             .expect("合法栈应创建成功");
         assert!(!created.id.is_empty(), "创建后应生成 id");
@@ -1332,6 +1354,7 @@ mod tests {
                 name: "empty".to_string(),
                 description: String::new(),
                 items: vec![],
+            auto_start: false,
             })
             .expect("无成员的空栈应允许创建");
         assert!(created.items.is_empty());
@@ -1354,6 +1377,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
+            auto_start: false,
             })
             .unwrap();
         let updated = mgr
@@ -1363,6 +1387,7 @@ mod tests {
                     name: Some("renamed".to_string()),
                     description: None,
                     items: None,
+                    auto_start: None,
                 },
             )
             .expect("重命名应成功");
@@ -1385,6 +1410,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
+            auto_start: false,
             })
             .unwrap();
         let res = mgr.update(
@@ -1393,6 +1419,7 @@ mod tests {
                 name: Some("  ".to_string()),
                 description: None,
                 items: None,
+                    auto_start: None,
             },
         );
         assert!(res.is_err(), "更新为空名称应被拒绝");
@@ -1413,6 +1440,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[]), item("B", 1, &[])],
+            auto_start: false,
             })
             .unwrap();
         let updated = mgr
@@ -1422,6 +1450,7 @@ mod tests {
                     name: Some("renamed".to_string()),
                     description: None,
                     items: None,
+                    auto_start: None,
                 },
             )
             .unwrap();
@@ -1444,6 +1473,7 @@ mod tests {
                 name: Some("x".to_string()),
                 description: None,
                 items: None,
+                    auto_start: None,
             },
         );
         assert!(res.is_err(), "更新不存在的栈应返回错误");
@@ -1468,6 +1498,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
+            auto_start: false,
             })
             .unwrap();
         // 尝试更新为环（A<->B）
@@ -1477,6 +1508,7 @@ mod tests {
                 name: None,
                 description: None,
                 items: Some(vec![item("A", 0, &["B"]), item("B", 0, &["A"])]),
+                    auto_start: None,
             },
         );
         assert!(res.is_err(), "更新为环应被拒绝");
@@ -1507,6 +1539,7 @@ mod tests {
                 name: "d".to_string(),
                 description: String::new(),
                 items: vec![],
+            auto_start: false,
             })
             .unwrap();
         let ok = mgr.delete(&created.id).expect("delete 不应返回错误");
@@ -1545,6 +1578,7 @@ mod tests {
                 name: "roundtrip".to_string(),
                 description: "d".to_string(),
                 items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
+            auto_start: false,
             })
             .unwrap();
 
@@ -1642,6 +1676,7 @@ mod tests {
                 name: "a".to_string(),
                 description: String::new(),
                 items: vec![],
+            auto_start: false,
             })
             .unwrap();
         let b = mgr
@@ -1649,6 +1684,7 @@ mod tests {
                 name: "b".to_string(),
                 description: String::new(),
                 items: vec![],
+            auto_start: false,
             })
             .unwrap();
         assert_eq!(mgr.list().len(), 2);

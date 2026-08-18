@@ -601,7 +601,7 @@ export default {
   stackFailed: '启动失败',
   stackPending: '等待中',
   noMembers: '该服务组暂无成员',
-  stackAutoStart: '组自启',
+  stackAutoStart: '应用启动时自动拉起此服务组',
   stackTemplates: '组模板',
   startupReport: '启动报告',
   p2Reserved: '（预留，后续版本实现）',
