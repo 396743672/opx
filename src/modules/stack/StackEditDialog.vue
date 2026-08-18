@@ -157,11 +157,11 @@
                       @change="reorderByDependencies()"
                     >
                       <option
-                        v-for="other in items.filter((i) => i.ref_id !== item.ref_id)"
-                        :key="other.ref_id"
-                        :value="other.ref_id"
+                        v-for="c in dependencyPool.filter((c) => c.id !== item.ref_id)"
+                        :key="c.id"
+                        :value="c.id"
                       >
-                        {{ resolveName(other) }}
+                        {{ c.name }}
                       </option>
                     </select>
                   </label>
@@ -214,6 +214,12 @@ const description = ref('')
 const items = ref<StackItem[]>([])
 const saving = ref(false)
 const error = ref<string | null>(null)
+
+// 依赖候选：全部已装可运行软件（组内 + 组外），选中组外依赖启动服务组时自动先拉起
+const dependencyPool = computed(() => [
+  ...candidateSoftware.value.map((s) => ({ id: s.id, name: s.name })),
+  ...store.springbootApps.map((a) => ({ id: a.id, name: a.name })),
+])
 
 // 进入时根据 props.stack 初始化表单
 watch(

@@ -53,6 +53,9 @@ pub struct StackManager {
 struct StackManagerInner {
     stacks: Vec<Stack>,
     data_path: PathBuf,
+    /// 本次启动由栈拉起的外部依赖（ref_id 列表，stack_id → list）。
+    /// 仅内存态：应用重启后关系丢失，stop 时不再自动停这些依赖（可接受，启动编排通常在会话内完成）。
+    managed_externals: HashMap<String, Vec<String>>,
 }
 
 impl StackManagerInner {
@@ -79,7 +82,11 @@ impl StackManager {
         Self {
             software_mgr,
             springboot_mgr,
-            inner: Mutex::new(StackManagerInner { stacks, data_path }),
+            inner: Mutex::new(StackManagerInner {
+                stacks,
+                data_path,
+                managed_externals: HashMap::new(),
+            }),
         }
     }
 
@@ -94,7 +101,11 @@ impl StackManager {
         Self {
             software_mgr,
             springboot_mgr,
-            inner: Mutex::new(StackManagerInner { stacks, data_path }),
+            inner: Mutex::new(StackManagerInner {
+                stacks,
+                data_path,
+                managed_externals: HashMap::new(),
+            }),
         }
     }
 
@@ -330,6 +341,75 @@ impl StackManager {
 
         let mut started: Vec<StackItem> = Vec::new();
 
+        // 外部依赖（enabled 成员对组外已装软件的依赖，如 nacos 依赖未入组的 mysql）：
+        // 先于组内启动，保证依赖方就绪探测通过；启动前已在运行的不纳入组管理（停止时不误杀）。
+        let external_deps = self.collect_external_deps(&stack);
+        let mut managed_external: Vec<String> = Vec::new();
+        if !external_deps.is_empty() {
+            for dep in &external_deps {
+                member_status.insert(
+                    dep.clone(),
+                    StackMemberRuntime {
+                        ref_id: dep.clone(),
+                        status: StackMemberStatus::Pending,
+                        message: String::new(),
+                    },
+                );
+            }
+            self.emit(
+                app,
+                &stack.id,
+                StackMemberStatus::Starting,
+                member_status.values().cloned().collect(),
+            );
+            let was_running: HashMap<String, bool> = external_deps
+                .iter()
+                .map(|d| (d.clone(), self.ref_running(d)))
+                .collect();
+            let results = future::join_all(
+                external_deps.iter().map(|d| self.start_external(app, d)),
+            )
+            .await;
+            let mut ext_err: Option<String> = None;
+            for (dep, res) in external_deps.iter().zip(results.into_iter()) {
+                match res {
+                    Ok(()) => {
+                        if let Some(m) = member_status.get_mut(dep) {
+                            m.status = StackMemberStatus::Running;
+                        }
+                        if !was_running.get(dep).copied().unwrap_or(false) {
+                            managed_external.push(dep.clone());
+                        }
+                    }
+                    Err(e) => {
+                        ext_err = Some(format!("{}: {}", dep, e));
+                        if let Some(m) = member_status.get_mut(dep) {
+                            m.status = StackMemberStatus::Failed;
+                            m.message = e.clone();
+                        }
+                    }
+                }
+            }
+            if let Some(err) = ext_err {
+                for dep in managed_external.iter().rev() {
+                    self.stop_external(app, dep).await;
+                    if let Some(m) = member_status.get_mut(dep) {
+                        m.status = StackMemberStatus::Stopped;
+                    }
+                }
+                self.emit(
+                    app,
+                    &stack.id,
+                    StackMemberStatus::Failed,
+                    member_status.values().cloned().collect(),
+                );
+                return Err(format!(
+                    "外部依赖启动失败，已回滚本次拉起的依赖: {}",
+                    err
+                ));
+            }
+        }
+
         for layer in &plan.layers {
             // 批内并发启动
             let mut futs = Vec::new();
@@ -391,6 +471,18 @@ impl StackManager {
                         m.status = StackMemberStatus::Stopped;
                     }
                 }
+                // 组拉起的组外依赖一并回滚
+                for dep in managed_external.iter().rev() {
+                    self.stop_external(app, dep).await;
+                    if let Some(m) = member_status.get_mut(dep) {
+                        m.status = StackMemberStatus::Stopped;
+                    }
+                }
+                self.inner
+                    .lock()
+                    .unwrap()
+                    .managed_externals
+                    .remove(&stack.id);
                 self.emit(
                     app,
                     &stack.id,
@@ -410,6 +502,11 @@ impl StackManager {
             StackMemberStatus::Running,
             member_status.values().cloned().collect(),
         );
+        self.inner
+            .lock()
+            .unwrap()
+            .managed_externals
+            .insert(stack.id.clone(), managed_external);
         Ok(plan)
     }
 
@@ -426,7 +523,7 @@ impl StackManager {
     ) -> Result<(), String> {
         // R9：依赖成员必须已就绪（Running）。与 compute_plan 的拓扑语义保持一致：
         // 被禁用（enabled=false）的依赖成员不参与编排，直接跳过其就绪检查；
-        // 指向栈外 id 的依赖在 compute_plan 中同样被忽略，此处亦跳过。
+        // 组外依赖（外部依赖）已在 start 前置启动，此处校验其对应服务确为 Running。
         for dep_ref in &item.depends_on {
             let dep_item = stack.items.iter().find(|it| &it.ref_id == dep_ref);
             if let Some(di) = dep_item {
@@ -439,6 +536,8 @@ impl StackManager {
                         dep_ref
                     ));
                 }
+            } else if !self.ref_running(dep_ref) {
+                return Err(format!("外部依赖 {} 未就绪", dep_ref));
             }
         }
 
@@ -582,6 +681,90 @@ impl StackManager {
         }
     }
 
+    /// 按 ref_id 解析成员类型（组外依赖可能是已装软件或 Spring Boot 应用）
+    fn resolve_ref_type(&self, ref_id: &str) -> Option<StackItemRefType> {
+        if self.software_mgr.find_installed(ref_id).is_some() {
+            Some(StackItemRefType::Software)
+        } else if self.springboot_mgr.find_app(ref_id).is_ok() {
+            Some(StackItemRefType::Springboot)
+        } else {
+            None
+        }
+    }
+
+    /// 按 ref_id 判断对应服务是否已运行
+    fn ref_running(&self, ref_id: &str) -> bool {
+        if let Some(sw) = self.software_mgr.find_installed(ref_id) {
+            return sw.status == SoftwareStatus::Running;
+        }
+        if let Ok(app) = self.springboot_mgr.find_app(ref_id) {
+            return app.status == AppStatus::Running;
+        }
+        false
+    }
+
+    /// 收集栈的外部依赖：enabled 成员 depends_on 中不在组内、且系统里可解析的 ref_id（去重）。
+    /// 外部依赖先于组内启动，保证依赖方就绪探测能通过。
+    fn collect_external_deps(&self, stack: &Stack) -> Vec<String> {
+        let group: HashSet<String> = stack
+            .items
+            .iter()
+            .filter(|i| i.enabled)
+            .map(|i| i.ref_id.clone())
+            .collect();
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for it in stack.items.iter().filter(|i| i.enabled) {
+            for dep in &it.depends_on {
+                if group.contains(dep) || seen.contains(dep) {
+                    continue;
+                }
+                if self.resolve_ref_type(dep).is_none() {
+                    continue;
+                }
+                seen.insert(dep.clone());
+                out.push(dep.clone());
+            }
+        }
+        out
+    }
+
+    /// 启动单个外部依赖（复用成员启动逻辑；已在运行则跳过）
+    async fn start_external(&self, app: &AppHandle, ref_id: &str) -> Result<(), String> {
+        let rt = self
+            .resolve_ref_type(ref_id)
+            .ok_or_else(|| format!("未找到依赖软件: {}", ref_id))?;
+        if self.ref_running(ref_id) {
+            return Ok(());
+        }
+        let item = StackItem {
+            ref_type: rt,
+            ref_id: ref_id.to_string(),
+            order: 0,
+            depends_on: vec![],
+            enabled: true,
+            retry: 0,
+        };
+        self.start_once(app, &item)
+            .await
+            .map_err(|e| format!("外部依赖 {} 启动失败: {}", ref_id, e))
+    }
+
+    /// 停止单个外部依赖（仅对组拉起的调用；按 ref_id 解析类型后复用 stop_one）
+    async fn stop_external(&self, app: &AppHandle, ref_id: &str) {
+        if let Some(rt) = self.resolve_ref_type(ref_id) {
+            let item = StackItem {
+                ref_type: rt,
+                ref_id: ref_id.to_string(),
+                order: 0,
+                depends_on: vec![],
+                enabled: true,
+                retry: 0,
+            };
+            self.stop_one(app, &item).await;
+        }
+    }
+
     /// 一键停止：逆序优雅停止（按拓扑分层逆序，后启动的先停）
     pub async fn stop(&self, app: &AppHandle, id: &str) -> Result<(), String> {
         let stack = self
@@ -609,7 +792,21 @@ impl StackManager {
             }
         }
 
-        let members: Vec<StackMemberRuntime> = stack
+        // 停止本次由栈拉起的组外依赖（启动前已在运行的不停，避免误杀用户独立使用的服务）
+        let managed = self
+            .inner
+            .lock()
+            .unwrap()
+            .managed_externals
+            .remove(&stack.id)
+            .unwrap_or_default();
+        if !managed.is_empty() {
+            for dep in managed.iter().rev() {
+                self.stop_external(app, dep).await;
+            }
+        }
+
+        let mut members: Vec<StackMemberRuntime> = stack
             .items
             .iter()
             .map(|it| StackMemberRuntime {
@@ -618,6 +815,11 @@ impl StackManager {
                 message: String::new(),
             })
             .collect();
+        members.extend(managed.into_iter().map(|ref_id| StackMemberRuntime {
+            ref_id,
+            status: StackMemberStatus::Stopped,
+            message: String::new(),
+        }));
         self.emit(app, &stack.id, StackMemberStatus::Stopped, members);
         Ok(())
     }

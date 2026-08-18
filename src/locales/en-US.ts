@@ -588,7 +588,7 @@ export default {
   moveUp: 'Move up',
   moveDown: 'Move down',
   dragToSort: 'Use the up/down buttons to reorder (same layer ordered by `order` ascending)',
-  dependsOnHint: 'This member starts after its dependencies (choose from group members)',
+  dependsOnHint: 'This member starts after its dependencies; a dependency can be a group member or any installed software (external deps are auto-started before the group)',
   cycleDetected: 'Circular dependency detected. Fix depends_on and retry.',
   saveStack: 'Save Group',
   confirmDeleteStack: 'Delete this service group? This cannot be undone.',

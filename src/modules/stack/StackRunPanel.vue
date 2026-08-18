@@ -88,7 +88,13 @@ function resolveName(item: StackItem): string {
 }
 function resolveDep(refId: string): string {
   const item: StackItem | undefined = props.stack.items.find((i) => i.ref_id === refId)
-  return item ? resolveName(item) : refId
+  if (item) return resolveName(item)
+  // 组外依赖：从已装软件 / Spring Boot 应用候选解析名称
+  return (
+    store.installedSoftware.find((s) => s.id === refId)?.name ??
+    store.springbootApps.find((a) => a.id === refId)?.name ??
+    refId
+  )
 }
 
 const runningCount = computed(

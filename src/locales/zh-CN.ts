@@ -588,7 +588,7 @@ export default {
   moveUp: '上移',
   moveDown: '下移',
   dragToSort: '使用上移/下移按钮调整顺序（同层按 order 升序）',
-  dependsOnHint: '该成员会在其依赖的成员之后启动（依赖从本组成员中选择）',
+  dependsOnHint: '该成员会在其依赖之后启动；依赖可为本组成员或组外已装软件（组外依赖启动服务组时自动先拉起）',
   cycleDetected: '检测到循环依赖，请修正 depends_on 后重试',
   saveStack: '保存服务组',
   confirmDeleteStack: '确定删除该服务组？此操作不可撤销。',
