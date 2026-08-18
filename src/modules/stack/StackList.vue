@@ -2,28 +2,28 @@
   <div class="page">
     <div class="page-head">
       <div>
-        <h1 class="page-title">{{ $t('stacks') }}</h1>
-        <p class="page-desc">{{ $t('stacksDesc') }}</p>
+        <h1 class="page-title">{{ t('stacks') }}</h1>
+        <p class="page-desc">{{ t('stacksDesc') }}</p>
       </div>
       <div class="head-actions">
         <button class="btn" @click="onImport">
-          <Icon icon="mdi:file-import" /> {{ $t('importStack') }}
+          <Icon icon="mdi:file-import" /> {{ t('importStack') }}
         </button>
         <button class="btn primary" @click="openCreate">
-          <Icon icon="mdi:plus" /> {{ $t('createStack') }}
+          <Icon icon="mdi:plus" /> {{ t('createStack') }}
         </button>
       </div>
     </div>
 
     <div v-if="store.error" class="global-error">{{ store.error }}</div>
 
-    <div v-if="store.loading" class="loading">{{ $t('loading') || 'Loading…' }}</div>
+    <div v-if="store.loading" class="loading">{{ t('loading') }}</div>
 
     <div v-else-if="store.stacks.length === 0" class="empty-state">
       <Icon icon="mdi:layers-outline" class="empty-icon" />
-      <div>{{ $t('noStacks') }}</div>
+      <div>{{ t('noStacks') }}</div>
       <button class="btn primary" @click="openCreate">
-        <Icon icon="mdi:plus" /> {{ $t('createStack') }}
+        <Icon icon="mdi:plus" /> {{ t('createStack') }}
       </button>
     </div>
 
@@ -41,34 +41,55 @@
             <div v-if="stack.description" class="sc-desc">{{ stack.description }}</div>
           </div>
           <span class="sc-status" :class="cardStatusClass(stack)">
-            {{ $t(cardStatusLabel(stack)) }}
+            {{ t(cardStatusLabel(stack)) }}
           </span>
         </div>
 
         <div class="sc-meta">
           <Icon icon="mdi:account-group" />
-          {{ stack.items.length }} {{ $t('stackMembers') }}
+          {{ stack.items.length }} {{ t('stackMembers') }}
         </div>
 
         <div class="sc-actions" @click.stop>
-          <button class="icon-btn" :title="$t('startStack')" @click="onStart(stack)">
-            <Icon icon="mdi:play" />
+          <button
+            class="icon-btn"
+            :title="t('startStack')"
+            :disabled="busyId === stack.id"
+            @click="onStart(stack)"
+          >
+            <Icon v-if="busyId === stack.id && busyAction === 'start'" icon="mdi:loading" class="spinning" />
+            <Icon v-else icon="mdi:play" />
           </button>
-          <button class="icon-btn" :title="$t('stopStack')" @click="onStop(stack)">
-            <Icon icon="mdi:stop" />
+          <button
+            class="icon-btn"
+            :title="t('stopStack')"
+            :disabled="busyId === stack.id"
+            @click="onStop(stack)"
+          >
+            <Icon v-if="busyId === stack.id && busyAction === 'stop'" icon="mdi:loading" class="spinning" />
+            <Icon v-else icon="mdi:stop" />
           </button>
-          <button class="icon-btn" :title="$t('restartStack')" @click="onRestart(stack)">
-            <Icon icon="mdi:restart" />
+          <button
+            class="icon-btn"
+            :title="t('restartStack')"
+            :disabled="busyId === stack.id"
+            @click="onRestart(stack)"
+          >
+            <Icon v-if="busyId === stack.id && busyAction === 'restart'" icon="mdi:loading" class="spinning" />
+            <Icon v-else icon="mdi:restart" />
           </button>
-          <button class="icon-btn" :title="$t('exportStack')" @click="onExport(stack)">
+          <button class="icon-btn" :title="t('exportStack')" @click="onExport(stack)">
             <Icon icon="mdi:export" />
           </button>
-          <button class="icon-btn" :title="$t('editStack')" @click="onEdit(stack)">
+          <button class="icon-btn" :title="t('editStack')" @click="onEdit(stack)">
             <Icon icon="mdi:pencil" />
           </button>
-          <button class="icon-btn danger" :title="$t('deleteStack')" @click="onDelete(stack)">
+          <button class="icon-btn danger" :title="t('deleteStack')" @click="onDelete(stack)">
             <Icon icon="mdi:delete" />
           </button>
+          <div v-if="busyId === stack.id" class="busy-mask">
+            <Icon icon="mdi:loading" class="spinning" />
+          </div>
         </div>
       </div>
     </div>
@@ -90,6 +111,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useStackStore } from '@/stores/stack'
@@ -97,10 +119,13 @@ import type { Stack, StackMemberStatus } from '@/models/stack'
 import StackEditDialog from './StackEditDialog.vue'
 import StackRunPanel from './StackRunPanel.vue'
 
+const { t } = useI18n()
 const store = useStackStore()
 const showDialog = ref(false)
 const editingStack = ref<Stack | null>(null)
 const selectedId = ref<string | null>(null)
+// 正在编排的栈 id（启动/停止/重启期间阻挡重复点击并显示遮罩）
+const busyId = ref<string | null>(null)
 
 const selectedStack = computed<Stack | null>(
   () => store.stacks.find((s) => s.id === selectedId.value) ?? null
@@ -153,14 +178,35 @@ function onSaved() {
   showDialog.value = false
 }
 
+const busyAction = ref<'start' | 'stop' | 'restart'>('start')
+
+async function runBusy(id: string, action: 'start' | 'stop' | 'restart', fn: () => Promise<void>) {
+  if (busyId.value) return
+  busyId.value = id
+  busyAction.value = action
+  try {
+    await fn()
+  } catch (e) {
+    store.error = String(e)
+  } finally {
+    busyId.value = null
+  }
+}
+
 async function onStart(stack: Stack) {
-  await store.startStack(stack.id)
+  await runBusy(stack.id, 'start', async () => {
+    await store.startStack(stack.id)
+  })
 }
 async function onStop(stack: Stack) {
-  await store.stopStack(stack.id)
+  await runBusy(stack.id, 'stop', async () => {
+    await store.stopStack(stack.id)
+  })
 }
 async function onRestart(stack: Stack) {
-  await store.restartStack(stack.id)
+  await runBusy(stack.id, 'restart', async () => {
+    await store.restartStack(stack.id)
+  })
 }
 
 async function onExport(stack: Stack) {
@@ -189,14 +235,9 @@ async function onImport() {
 }
 
 async function onDelete(stack: Stack) {
-  if (!confirm($t('confirmDeleteStack'))) return
+  if (!confirm(t('confirmDeleteStack'))) return
   await store.deleteStack(stack.id)
   if (selectedId.value === stack.id) selectedId.value = null
-}
-
-function $t(key: string): string {
-  // 通过全局 i18n 取文案（避免在 setup 作用域外使用模板 $t）
-  return (window as any).__opx_i18n__?.t?.(key) ?? key
 }
 
 onMounted(async () => {
@@ -311,6 +352,24 @@ onUnmounted(() => {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+  position: relative;
+}
+.busy-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--color-card) 85%, transparent);
+  backdrop-filter: blur(1px);
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+.spinning {
+  animation: opx-spin 1s linear infinite;
 }
 .icon-btn {
   width: 30px;
