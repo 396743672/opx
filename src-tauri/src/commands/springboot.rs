@@ -105,47 +105,20 @@ pub async fn replace_springboot_jar(
     id: String,
     new_jar_path: String,
 ) -> Result<ReplaceResult, String> {
-    use chrono::Local;
-    use std::path::Path;
-
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     oplog!("springboot_replace_jar", &format!("{} ({})", app.name, id));
     if app.status == crate::models::springboot::AppStatus::Running {
         return Err("运行中的应用不可换包".to_string());
     }
 
-    let new_path = Path::new(&new_jar_path);
-    if !new_path.exists() {
-        return Err("新 JAR 文件不存在".to_string());
-    }
+    let old_jar = std::path::PathBuf::from(&app.jar_path);
+    let new_jar = std::path::Path::new(&new_jar_path);
+    let (backup_path, new_version) =
+        replace_jar_file(&app.name, &old_jar, &new_jar).map_err(|e| e.to_string())?;
 
-    let old_jar = Path::new(&app.jar_path);
-    if !old_jar.exists() {
-        return Err("原 JAR 文件不存在".to_string());
-    }
-
-    // 备份：{data_dir}/backups/{app_name}/{jar}.{timestamp}.bak
-    let backup_dir = crate::utils::paths::data_dir()
-        .join("backups")
-        .join(&app.name);
-    std::fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {}", e))?;
-
-    let timestamp = Local::now().format("%Y%m%d%H%M%S");
-    let fname = old_jar.file_name().unwrap().to_str().unwrap();
-    let backup_path = backup_dir.join(format!("{}.{}.bak", fname, timestamp));
-
-    std::fs::copy(old_jar, &backup_path).map_err(|e| format!("备份失败: {}", e))?;
-
-    // 替换
-    std::fs::copy(new_path, old_jar).map_err(|e| format!("替换 JAR 失败: {}", e))?;
-
-    // 读取新版本
-    let new_version = crate::services::springboot_manager::read_jar_version(new_path.to_str().unwrap())
-        .unwrap_or_else(|| "unknown".to_string());
     manager.update_version(&id, new_version.clone()).map_err(|e| e.to_string())?;
-
     Ok(ReplaceResult {
-        backup_path: backup_path.to_str().unwrap().to_string(),
+        backup_path: backup_path.to_str().unwrap_or("").to_string(),
         old_version: app.version,
         new_version,
     })
