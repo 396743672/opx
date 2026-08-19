@@ -50,6 +50,27 @@
             </button>
           </div>
 
+          <!-- 定时自动备份（R1：按分钟间隔自动 Hot 快照，0 = 关闭） -->
+          <div class="schedule-box">
+            <label class="sched-toggle">
+              <input type="checkbox" v-model="scheduleEnabled" @change="onScheduleChange" />
+              {{ $t('scheduledBackup') }}
+            </label>
+            <template v-if="scheduleEnabled">
+              <label class="sched-field">
+                {{ $t('scheduleInterval') }}
+                <input
+                  v-model.number="scheduleMinutes"
+                  type="number"
+                  min="1"
+                  class="input num"
+                  @change="onScheduleChange"
+                />
+                {{ $t('minuteUnit') }}
+              </label>
+            </template>
+          </div>
+
           <div v-if="loadingSnaps" class="text-muted py-4 text-center">{{ $t('loading') }}</div>
           <div v-else-if="snapshots.length === 0" class="text-muted py-4 text-center">{{ $t('noSnapshots') }}</div>
           <div v-else class="snap-list">
@@ -175,6 +196,27 @@ async function loadSnapshots() {
   }
 }
 
+// ---- 定时自动备份 (R1) ----
+const scheduleEnabled = ref(false)
+const scheduleMinutes = ref(60)
+async function loadSchedule() {
+  try {
+    const m = await ops.getBackupSchedule(selectedId.value)
+    scheduleEnabled.value = m > 0
+    scheduleMinutes.value = m > 0 ? m : 60
+  } catch {
+    scheduleEnabled.value = false
+  }
+}
+async function onScheduleChange() {
+  const minutes = scheduleEnabled.value ? Math.max(1, scheduleMinutes.value || 1) : 0
+  try {
+    await ops.setBackupSchedule(selectedId.value, minutes)
+  } catch (e) {
+    console.error('set backup schedule failed:', e)
+  }
+}
+
 function switchTab(next: 'snapshots' | 'reset') {
   if (next === tab.value) return
   tab.value = next
@@ -272,10 +314,12 @@ function formatTime(rfc: string): string {
 // 切换实例 → 刷新快照
 watch(selectedId, () => {
   resetMsg.value = null
+  loadSchedule()
   if (tab.value === 'snapshots') loadSnapshots()
 })
 
 onMounted(() => {
+  loadSchedule()
   if (tab.value === 'snapshots') loadSnapshots()
 })
 </script>
@@ -409,6 +453,37 @@ onMounted(() => {
 .create-box .input {
   flex: 1;
   min-width: 120px;
+}
+.schedule-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-muted);
+}
+.sched-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-foreground);
+  cursor: pointer;
+}
+.sched-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+.sched-field .num {
+  width: 70px;
+  height: 28px;
+  padding: 0 6px;
 }
 .text-muted {
   color: var(--color-muted-foreground);

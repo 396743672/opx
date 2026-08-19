@@ -101,6 +101,9 @@ pub fn run() {
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
                 .clone();
+            // 定时备份调度（在 manager_arc 被 auto_start spawn 捕获前克隆）
+            let bs_manager = manager_arc.clone();
+            let bs_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 crate::services::software_manager::lifecycle::auto_start_all(
                     &manager_arc,
@@ -117,6 +120,12 @@ pub fn run() {
                 .clone();
             tauri::async_runtime::spawn(async move {
                 stack_mgr_arc.auto_start_all(&app_handle_for_stack_auto).await;
+            });
+
+            // 定时备份调度：后台循环按配置间隔自动对实例做 Hot 快照
+            tauri::async_runtime::spawn(async move {
+                crate::services::software_manager::backup_scheduler::run_scheduler(bs_manager, bs_app)
+                    .await;
             });
 
             #[cfg(desktop)]
@@ -216,6 +225,8 @@ pub fn run() {
             commands::software::restore_snapshot,
             commands::software::delete_snapshot,
             commands::software::reset_instance,
+            commands::software::set_backup_schedule,
+            commands::software::get_backup_schedule,
             commands::website::list_websites,
             commands::website::save_website,
             commands::website::delete_website,
