@@ -28,6 +28,11 @@
           <input v-model="description" class="text-input" />
         </div>
 
+        <label class="auto-start-row">
+          <input type="checkbox" v-model="autoStart" />
+          {{ $t('stackAutoStart') }}
+        </label>
+
         <div class="columns">
           <!-- 左：候选成员 -->
           <div class="col">
@@ -200,7 +205,7 @@ import type {
 } from '@/models/stack'
 import { SoftwareCategory } from '@/models/software'
 
-const props = defineProps<{ stack: Stack | null }>()
+const props = defineProps<{ stack: Stack | null; initialItems?: StackItem[] }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const store = useStackStore()
@@ -216,6 +221,7 @@ const description = ref('')
 const items = ref<StackItem[]>([])
 const saving = ref(false)
 const error = ref<string | null>(null)
+const autoStart = ref(false)
 
 // 依赖候选：全部已装可运行软件（组内 + 组外），选中组外依赖启动服务组时自动先拉起
 const dependencyPool = computed(() => [
@@ -225,17 +231,23 @@ const dependencyPool = computed(() => [
 
 // 进入时根据 props.stack 初始化表单
 watch(
-  () => props.stack,
-  (s) => {
+  () => [props.stack, props.initialItems] as [Stack | null, StackItem[] | undefined],
+  ([s, initItems]) => {
     error.value = null
     if (s) {
       name.value = s.name
       description.value = s.description
+      autoStart.value = s.auto_start
       items.value = s.items.map((i) => ({ ...i, depends_on: [...i.depends_on] }))
     } else {
       name.value = ''
       description.value = ''
-      items.value = []
+      autoStart.value = false
+      // 模板预填：优先用 initialItems 副本（深拷贝 depends_on）
+      items.value = (initItems ?? []).map((i) => ({
+        ...i,
+        depends_on: [...i.depends_on],
+      }))
     }
   },
   { immediate: true }
@@ -335,6 +347,7 @@ async function onSave() {
         name: name.value.trim(),
         description: description.value,
         items: items.value,
+        auto_start: autoStart.value,
       }
       await store.updateStack(props.stack.id, payload)
     } else {
@@ -342,6 +355,7 @@ async function onSave() {
         name: name.value.trim(),
         description: description.value,
         items: items.value,
+        auto_start: autoStart.value,
       }
       await store.createStack(payload)
     }
@@ -432,6 +446,15 @@ function onClose() {
 }
 .field {
   margin-bottom: 12px;
+}
+.auto-start-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-foreground);
+  margin-bottom: 12px;
+  cursor: pointer;
 }
 .form-field-label {
   display: block;
@@ -666,7 +689,10 @@ function onClose() {
   border-color: var(--color-primary);
 }
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
+  background: var(--color-muted);
+  border-color: var(--color-border);
+  color: var(--color-muted-foreground);
 }
 </style>

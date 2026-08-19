@@ -88,7 +88,8 @@
               :key="idx"
               class="log-line"
               :class="lineClass(line)"
-            >{{ line }}</div>
+              v-html="highlightLine(line)"
+            ></div>
             <div v-if="truncated" class="log-note">{{ $t('logTruncated') }}</div>
           </div>
         </div>
@@ -312,6 +313,47 @@ function onLevelChange() {
   if (level.value) onlyErrors.value = false
 }
 
+// 对日志行做匹配词高亮：转义 HTML 后按匹配区间嵌入 <mark>。
+// 仅当有关键字/正则过滤启用时；纯级别过滤不高亮。
+function highlightLine(line: string): string {
+  const kw = keyword.value.trim()
+  if (!kw || (onlyErrors.value && !useRegex.value)) return escapeHtml(line)
+  let re: RegExp
+  try {
+    re = new RegExp(useRegex.value ? kw : kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+  } catch {
+    return escapeHtml(line)
+  }
+  // 在原文上定位匹配区间，再对原文做 HTML 转义（区间偏移不受转义影响）
+  const ranges: Array<[number, number]> = []
+  let m: RegExpExecArray | null
+  let last = 0
+  while ((m = re.exec(line)) !== null && m[0] !== '') {
+    const start = m.index
+    if (start >= last) {
+      ranges.push([start, start + m[0].length])
+      last = start + m[0].length
+    }
+  }
+  if (!ranges.length) return escapeHtml(line)
+  let out = ''
+  let prev = 0
+  for (const [s, e] of ranges) {
+    out += escapeHtml(line.slice(prev, s)) + '<mark>' + escapeHtml(line.slice(s, e)) + '</mark>'
+    prev = e
+  }
+  return out + escapeHtml(line.slice(prev))
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function lineClass(line: string): string {
   const u = line.toUpperCase()
   if (
@@ -528,6 +570,12 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-all;
   padding: 0 2px;
+}
+.log-line mark {
+  background: color-mix(in oklch, var(--color-warning) 45%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 .log-line.lvl-error {
   color: var(--color-destructive);

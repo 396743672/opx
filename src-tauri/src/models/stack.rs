@@ -55,6 +55,13 @@ pub struct Stack {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// 上次启动由栈拉起的组外依赖（ref_id）。仅内存态运行时记录，用于停止时一并停止
+    /// 本次拉起的依赖；持久化到 stacks.json 以在应用重启后仍能正确停止。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_externals: Option<Vec<String>>,
+    /// 应用启动时是否自动拉起该服务组（默认 false）
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 /// 成员运行态（不持久化）
@@ -95,6 +102,9 @@ pub struct CreateStackPayload {
     #[serde(default)]
     pub description: String,
     pub items: Vec<StackItem>,
+    /// 应用启动时是否自动拉起（默认 false）
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 /// 更新栈请求载荷（所有字段可选）
@@ -106,6 +116,9 @@ pub struct UpdateStackPayload {
     pub description: Option<String>,
     #[serde(default)]
     pub items: Option<Vec<StackItem>>,
+    /// 应用启动时是否自动拉起
+    #[serde(default)]
+    pub auto_start: Option<bool>,
 }
 
 /// `stack-status-changed` 事件载荷（栈级状态聚合）
