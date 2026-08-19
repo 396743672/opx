@@ -129,14 +129,20 @@ fn extract_zip_to_data_dirs(
             .by_index(i)
             .map_err(|e| anyhow::anyhow!("读取条目失败: {}", e))?;
         let name = file.name().to_string();
-        // zip-slip 防护：拒绝绝对路径或含 .. 的 entry（防目录逃逸）
-        if is_absolute_entry(&name) || name.contains("..") {
+        // zip-slip 防护：拒绝含 .. 的 entry（防目录逃逸）
+        if name.contains("..") {
             return Err(anyhow::anyhow!(
-                "快照含非法路径（绝对路径或 .. 逃逸），拒绝解压: {}",
+                "快照含非法路径（.. 逃逸），拒绝解压: {}",
                 name
             ));
         }
-        let target = install_path.join(&name);
+        // 绝对条目（创建快照时对绝对 data_dir 存的是原绝对路径）→ 恢复到原路径；
+        // 相对条目 → install_path 下对应位置。二者统一走下方 allowed 护栏校验防越界。
+        let target = if is_absolute_entry(&name) {
+            PathBuf::from(&name)
+        } else {
+            install_path.join(&name)
+        };
         // 护栏：解压目标必须落在某个数据目录内或 install_path 内，防 zip-slip
         let allowed = data_dirs.iter().any(|d| target.starts_with(d))
             || target.starts_with(install_path);
@@ -458,5 +464,35 @@ mod tests {
             result.is_err(),
             "restore 应包含 ../ 的 entry 拒绝/归一化（zip-slip 防护）"
         );
+    }
+
+    /// 预期：绝对路径条目应恢复到原 data_dir 内（创建快照时对绝对 data_dir 存的是原绝对路径）。
+    /// 修复前 extract_zip_to_data_dirs 一律拒绝绝对条目，恢复必然失败 => 该断言在修复前会失败。
+    #[test]
+    fn test_restore_allows_absolute_entry_in_data_dir() {
+        let base = std::env::temp_dir().join(format!("opx_qa_restore_abs_{}", unique_suffix()));
+        let install_path = base.join("install");
+        let data_dir = install_path.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let zip_path = base.join("snap.zip");
+        let abs_entry = data_dir.join("payload.txt");
+        {
+            let f = fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            // 模拟 add_dir_to_zip 对绝对 data_dir 的存法：entry = 原绝对路径
+            zw.start_file(abs_entry.to_string_lossy().replace('\\', "/"), opts)
+                .unwrap();
+            zw.write_all(b"hello").unwrap();
+            zw.finish().unwrap();
+        }
+        // 恢复前清空 data_dir（与 restore_snapshot 行为一致）
+        fs::remove_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&data_dir).unwrap();
+        extract_zip_to_data_dirs(&zip_path, &[data_dir.clone()], &install_path).unwrap();
+        let restored = fs::read_to_string(&abs_entry).unwrap();
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(restored, "hello", "绝对路径条目应恢复到原 data_dir 内");
     }
 }
