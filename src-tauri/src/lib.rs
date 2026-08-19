@@ -227,6 +227,7 @@ pub fn run() {
             commands::software::reset_instance,
             commands::software::set_backup_schedule,
             commands::software::get_backup_schedule,
+            commands::software::sample_process_resources,
             commands::website::list_websites,
             commands::website::save_website,
             commands::website::delete_website,

@@ -1384,6 +1384,12 @@ pub async fn restore_config_backup(
     Ok(())
 }
 
+/// 采样进程的 CPU / 内存使用
+#[tauri::command]
+pub fn sample_process_resources(pids: Vec<u32>) -> Result<Vec<crate::services::software_manager::process_monitor::ProcessSample>, String> {
+    Ok(crate::services::software_manager::process_monitor::sample_processes(&pids))
+}
+
 // ===== C 扩展：日志查看器 + 备份/恢复 命令（任务 T2 / T3）=====
 
 /// 获取某实例的日志来源列表（StdoutRedirect / ProviderFile）
