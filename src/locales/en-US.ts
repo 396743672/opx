@@ -56,7 +56,7 @@ export default {
   installPath: 'Install Path',
   autoStart: 'Auto Start',
   startupOrder: 'Startup Order',
-  startupSettings: 'Startup Settings',
+  startupSettings: 'Autostart',
   editConfig: 'Edit Config',
   config: 'Config',
   viewLogs: 'View Logs',

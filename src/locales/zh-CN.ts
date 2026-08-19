@@ -56,7 +56,7 @@ export default {
   installPath: '安装路径',
   autoStart: '自动启动',
   startupOrder: '启动顺序',
-  startupSettings: '启动设置',
+  startupSettings: '自启',
   editConfig: '编辑配置',
   config: '配置',
   viewLogs: '查看日志',

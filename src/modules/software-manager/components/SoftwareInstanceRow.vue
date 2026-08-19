@@ -49,11 +49,11 @@
       <button class="btn danger" :disabled="!canOps" :title="$t('resetInstance')" @click="$emit('reset')">
         <Icon icon="mdi:rotate-left" /> {{ $t('resetInstance') }}
       </button>
-      <button class="btn ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
-        <Icon icon="mdi:tune-vertical" />
+      <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
+        <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
       </button>
       <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
-        <Icon icon="mdi:delete" />
+        <Icon icon="mdi:delete" /> {{ $t('uninstall') }}
       </button>
     </div>
   </div>

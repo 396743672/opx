@@ -430,10 +430,14 @@ onUnmounted(() => {
   gap: 14px;
 }
 .stack-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   background: var(--color-card);
-  padding: 14px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
