@@ -61,6 +61,13 @@
         <Icon icon="mdi:package-up" /> {{ $t('replaceJar') }}
       </button>
       <button
+        class="btn"
+        :disabled="app.status === AppStatus.Starting || app.status === AppStatus.Stopping"
+        @click="$emit('replaceRestart', app.id)"
+      >
+        <Icon icon="mdi:package-up" /> {{ $t('replaceAndRestart') }}
+      </button>
+      <button
         v-if="app.status === AppStatus.Running && app.jdk_type !== 'jre'"
         class="btn"
         @click="$emit('monitor', app.id)"
@@ -100,6 +107,7 @@ defineEmits<{
   restart: [id: string]
   config: [id: string]
   replace: [id: string]
+  replaceRestart: [id: string]
   monitor: [id: string]
   logs: [id: string]
   delete: [id: string]

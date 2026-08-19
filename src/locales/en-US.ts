@@ -247,6 +247,8 @@ export default {
   noGroup: 'No Group',
   autoRestart: 'Auto Restart',
   replaceJar: 'Replace JAR',
+  replaceAndRestart: 'Replace & Restart',
+  replaceRestartSuccess: 'Replaced and restarted',
   advancedSettings: 'Advanced Settings',
   startedAt: 'Started At',
   noSpringbootApps: 'No Spring Boot apps',

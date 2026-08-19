@@ -247,6 +247,8 @@ export default {
   noGroup: '无分组',
   autoRestart: '自动重启',
   replaceJar: '换包',
+  replaceAndRestart: '替换并重启',
+  replaceRestartSuccess: '替换并重启成功',
   advancedSettings: '高级设置',
   startedAt: '启动时间',
   noSpringbootApps: '暂无 Spring Boot 应用',
