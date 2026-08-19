@@ -151,6 +151,34 @@ pub async fn replace_springboot_jar(
     })
 }
 
+/// 纯文件操作：校验新旧 jar → 备份旧 jar → 复制新 jar 覆盖 → 读新版本。
+/// 不依赖 SpringBootManager，可直接单测。返回 (backup_path, new_version)。
+fn replace_jar_file(app_name: &str, old_jar: &Path, new_jar: &Path) -> anyhow::Result<(std::path::PathBuf, String)> {
+    use chrono::Local;
+
+    if !new_jar.exists() {
+        anyhow::bail!("新 JAR 文件不存在");
+    }
+    if !old_jar.exists() {
+        anyhow::bail!("原 JAR 文件不存在");
+    }
+
+    // 备份：{data_dir}/backups/{app_name}/{jar}.{timestamp}.bak
+    let backup_dir = crate::utils::paths::data_dir().join("backups").join(app_name);
+    std::fs::create_dir_all(&backup_dir).map_err(|e| anyhow::anyhow!("创建备份目录失败: {}", e))?;
+
+    let timestamp = Local::now().format("%Y%m%d%H%M%S");
+    let fname = old_jar.file_name().unwrap_or_default();
+    let backup_path = backup_dir.join(format!("{}.{}.bak", fname.to_string_lossy(), timestamp));
+
+    std::fs::copy(old_jar, &backup_path).map_err(|e| anyhow::anyhow!("备份失败: {}", e))?;
+    std::fs::copy(new_jar, old_jar).map_err(|e| anyhow::anyhow!("替换 JAR 失败: {}", e))?;
+
+    let new_version = crate::services::springboot_manager::read_jar_version(new_jar.to_str().unwrap_or(""))
+        .unwrap_or_else(|| "unknown".to_string());
+    Ok((backup_path, new_version))
+}
+
 #[tauri::command]
 pub async fn get_springboot_jvm_metrics(
     manager: State<'_, Arc<SpringBootManager>>,
@@ -523,4 +551,67 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_jar_file;
+    use std::io::Write;
+
+    fn fake_jar(path: &std::path::Path, manifest: &str) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(f);
+        let opts = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("META-INF/MANIFEST.MF", opts).unwrap();
+        zip.write_all(manifest.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn jar_has_version(path: &std::path::Path) -> Option<String> {
+        crate::services::springboot_manager::read_jar_version(path.to_str().unwrap())
+    }
+
+    #[test]
+    fn replace_jar_file_backs_up_and_overwrites() {
+        let dir = std::env::temp_dir().join(format!("opx_repl_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let old = dir.join("app.jar");
+        let new = dir.join("new.jar");
+        fake_jar(&old, "Implementation-Version: 1.0.0\r\n");
+        fake_jar(&new, "Implementation-Version: 2.0.0\r\n");
+
+        let (backup, version) = replace_jar_file("test-app", &old, &new).unwrap();
+
+        assert_eq!(version, "2.0.0");
+        assert_eq!(jar_has_version(&old), Some("2.0.0".to_string()));
+        // 备份是一份旧的 1.0.0 且文件名以 .bak 结尾
+        assert!(backup.extension().map(|e| e == "bak").unwrap_or(false));
+        assert!(backup.exists());
+        assert_eq!(jar_has_version(&backup), Some("1.0.0".to_string()));
+        // 旧 jar 已不是原文件（内容被覆盖）
+        assert_ne!(std::fs::read(&old).unwrap(), std::fs::read(&backup).unwrap());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn replace_jar_file_rejects_missing_files() {
+        let dir = std::env::temp_dir().join(format!("opx_repl_err_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let old = dir.join("app.jar");
+        let new = dir.join("new.jar");
+        fake_jar(&old, "Implementation-Version: 1.0.0\r\n");
+        // new 不存在
+        assert!(replace_jar_file("t", &old, &new).is_err());
+
+        // old 不存在
+        let old2 = dir.join("missing.jar");
+        assert!(replace_jar_file("t", &old2, &new).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
