@@ -605,6 +605,7 @@ mod tests {
         assert_ne!(std::fs::read(&old).unwrap(), std::fs::read(&backup).unwrap());
 
         std::fs::remove_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(crate::utils::paths::data_dir().join("backups").join("test-app"));
     }
 
     #[test]
@@ -624,5 +625,6 @@ mod tests {
         assert!(replace_jar_file("t", &old2, &new).is_err());
 
         std::fs::remove_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(crate::utils::paths::data_dir().join("backups").join("t"));
     }
 }
