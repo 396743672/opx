@@ -124,6 +124,44 @@ pub async fn replace_springboot_jar(
     })
 }
 
+#[tauri::command]
+pub async fn replace_springboot_jar_and_restart(
+    manager: State<'_, Arc<SpringBootManager>>,
+    software_mgr: State<'_, Arc<SoftwareManager>>,
+    app_handle: AppHandle,
+    id: String,
+    new_jar_path: String,
+) -> Result<ReplaceResult, String> {
+    use crate::models::springboot::AppStatus;
+
+    let app = manager.find_app(&id).map_err(|e| e.to_string())?;
+    oplog!("springboot_replace_restart", &format!("{} ({})", app.name, id));
+
+    // 运行中/错误态先停（优雅），停止态直接换包
+    if matches!(app.status, AppStatus::Running | AppStatus::Error) {
+        crate::services::springboot_manager::lifecycle::stop_app(
+            &id, &manager, &software_mgr, &app_handle,
+        ).await?;
+    }
+
+    let old_jar = std::path::PathBuf::from(&app.jar_path);
+    let new_jar = std::path::Path::new(&new_jar_path);
+    let (backup_path, new_version) =
+        replace_jar_file(&app.name, &old_jar, &new_jar).map_err(|e| e.to_string())?;
+
+    manager.update_version(&id, new_version.clone()).map_err(|e| e.to_string())?;
+
+    crate::services::springboot_manager::lifecycle::start_app(
+        &id, &manager, &software_mgr, &app_handle,
+    ).await?;
+
+    Ok(ReplaceResult {
+        backup_path: backup_path.to_str().unwrap_or("").to_string(),
+        old_version: app.version,
+        new_version,
+    })
+}
+
 /// 纯文件操作：校验新旧 jar → 备份旧 jar → 复制新 jar 覆盖 → 读新版本。
 /// 不依赖 SpringBootManager，可直接单测。返回 (backup_path, new_version)。
 fn replace_jar_file(app_name: &str, old_jar: &Path, new_jar: &Path) -> anyhow::Result<(std::path::PathBuf, String)> {

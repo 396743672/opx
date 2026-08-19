@@ -243,6 +243,7 @@ pub fn run() {
             commands::springboot::stop_springboot_app,
             commands::springboot::restart_springboot_app,
             commands::springboot::replace_springboot_jar,
+            commands::springboot::replace_springboot_jar_and_restart,
             commands::springboot::get_springboot_jvm_metrics,
             commands::springboot::list_springboot_groups,
             commands::springboot::save_springboot_groups,
