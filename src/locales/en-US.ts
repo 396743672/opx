@@ -48,6 +48,13 @@ export default {
   os: 'OS',
   hostname: 'Hostname',
   bootTime: 'Boot Time',
+  // process monitor
+  processMonitor: 'Process Monitor',
+  noRunningProcess: 'No running processes',
+  view: 'View',
+  collapse: 'Collapse',
+  processAlertCpu: 'Process "{name}" CPU {value}% exceeded 90% threshold',
+  processAlertMem: 'Process "{name}" memory usage {value}% exceeded 90% threshold',
 
   // software management
   installedSoftware: 'Installed Software',

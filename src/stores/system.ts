@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { SystemInfo, HistoryPoint } from '@/models/system'
+import type { ProcessSample } from '@/models/process'
 
 const POLL_INTERVAL = 1000
 /** 趋势图最多保留的点数，超出后丢弃最旧的 */
@@ -13,6 +14,34 @@ export const useSystemStore = defineStore('system', () => {
 
   const loading = ref(false)
   const lastUpdated = ref<number>(0)
+
+  /** pid -> 该进程的历史采样点（环形 MAX_HISTORY） */
+  const processSamples = ref<Record<number, HistoryPoint[]>>({})
+  /** 最近一次整机内存总量，用于内存趋势归一化 */
+  const memTotal = ref(0)
+
+  // 进程采样：一次 invoke 批量采样所有 pid，写入各 pid 历史
+  async function sampleProcesses(pids: number[]) {
+    if (pids.length === 0) return []
+    try {
+      const samples = await invoke<ProcessSample[]>('sample_process_resources', { pids })
+      for (const s of samples) {
+        const point: HistoryPoint = {
+          timestamp: Date.now(),
+          cpu_usage: s.cpu_usage,
+          memory_usage: memTotal.value > 0 ? (s.mem_bytes / memTotal.value) * 100 : 0,
+        }
+        const list = processSamples.value[s.pid] ?? []
+        list.push(point)
+        if (list.length > MAX_HISTORY) list.splice(0, list.length - MAX_HISTORY)
+        processSamples.value[s.pid] = list
+      }
+      return samples
+    } catch (e) {
+      console.error('process sample failed:', e)
+      return []
+    }
+  }
 
   /** 上一次网络字节，用于计算实时速率 */
   let prevNet: { sent: number; recv: number; ts: number } | null = null
@@ -36,6 +65,7 @@ export const useSystemStore = defineStore('system', () => {
     try {
       const info = await invoke<SystemInfo>('system_info')
       systemInfo.value = info
+      if (info.memory_total) memTotal.value = info.memory_total
 
       // 计算网络速率
       const now = Date.now()
@@ -111,9 +141,12 @@ export const useSystemStore = defineStore('system', () => {
     cpuUsage,
     memoryUsage,
     diskUsage,
+    processSamples,
+    memTotal,
     fetchAll,
     loadHistory,
     startPolling,
     stopPolling,
+    sampleProcesses,
   }
 })

@@ -115,6 +115,48 @@
       </div>
     </div>
 
+    <!-- 进程资源监控 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
+      <CardHeader icon="mdi:chart-timeline-variant" :title="$t('processMonitor')" />
+      <div v-if="processRows.length === 0" class="py-3 text-sm text-muted-foreground">
+        {{ $t('noRunningProcess') }}
+      </div>
+      <div v-else class="space-y-1">
+        <div v-for="row in processRows" :key="row.pid" class="border border-border rounded-md">
+          <!-- 表格行 -->
+          <div class="flex items-center justify-between px-3 py-2 text-sm">
+            <span class="flex items-center gap-2 min-w-0">
+              <Icon :icon="row.type === 'springboot' ? 'mdi:leaf' : 'mdi:server'" :class="row.type === 'springboot' ? 'text-green-500' : 'text-info'" />
+              <span class="truncate">{{ row.name }}</span>
+              <span class="text-xs text-muted-foreground tnum">({{ row.pid }})</span>
+            </span>
+            <span class="flex items-center gap-4 shrink-0">
+              <span class="text-xs tnum" :class="row.cpu >= 90 ? 'text-destructive' : ''">
+                CPU {{ row.cpu.toFixed(1) }}%
+              </span>
+              <span class="text-xs tnum" :class="row.memPct >= 90 ? 'text-destructive' : ''">
+                内存 {{ formatBytes(row.memBytes) }}
+              </span>
+              <button class="btn btn-sm" @click="toggleProcess(row.pid)">
+                {{ expandedPids.has(row.pid) ? $t('collapse') : $t('view') }}
+              </button>
+            </span>
+          </div>
+          <!-- 行内展开趋势图 -->
+          <div v-if="expandedPids.has(row.pid)" class="border-t border-border p-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <div class="text-xs text-muted-foreground mb-1">{{ $t('cpuUsage') }}</div>
+              <TrendChart metric="cpu" :points="processPoints(row.pid)" color-var="--color-chart-1" :height="120" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground mb-1">{{ $t('memoryUsage') }}（占整机 %）</div>
+              <TrendChart metric="memory" :points="processPoints(row.pid)" color-var="--color-chart-2" :height="120" :max="100" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 信息行：系统信息 / 磁盘 / 网络 -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
       <!-- 系统信息 -->
@@ -232,6 +274,9 @@ import type { InstalledSoftware } from '@/models/software'
 import { SoftwareStatus } from '@/models/software'
 import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
+import type { ProcessSample } from '@/models/process'
+import type { HistoryPoint } from '@/models/system'
+import { toast } from '@/composables/useToast'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
@@ -240,7 +285,7 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
-useI18n()
+const { t } = useI18n()
 const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
 const lifecycleStore = useLifecycleStore()
@@ -257,6 +302,67 @@ const runningSoftware = computed(() =>
     return status === SoftwareStatus.Running
   })
 )
+
+// ===== 进程资源监控 =====
+const expandedPids = ref<Set<number>>(new Set())
+/** 告警去重：pid:metric 已告警标记 */
+const alerted = ref<Set<string>>(new Set())
+/** 最近一次采样结果（pid -> sample），用于表格实时值回填 */
+const latestSamples = ref<Map<number, ProcessSample>>(new Map())
+
+interface ProcRow { name: string; type: 'software' | 'springboot'; pid: number; cpu: number; memBytes: number; memPct: number }
+
+const processRows = computed<ProcRow[]>(() => {
+  const rows: ProcRow[] = []
+  for (const s of runningSoftware.value) {
+    if (s.pid == null) continue
+    const smp = latestSamples.value.get(s.pid)
+    const memPct = systemStore.memTotal > 0 ? ((smp?.mem_bytes ?? 0) / systemStore.memTotal) * 100 : 0
+    rows.push({ name: s.name, type: 'software', pid: s.pid, cpu: smp?.cpu_usage ?? 0, memBytes: smp?.mem_bytes ?? 0, memPct })
+  }
+  for (const a of runningApps.value) {
+    if (a.pid == null) continue
+    const smp = latestSamples.value.get(a.pid)
+    const memPct = systemStore.memTotal > 0 ? ((smp?.mem_bytes ?? 0) / systemStore.memTotal) * 100 : 0
+    rows.push({ name: a.name, type: 'springboot', pid: a.pid, cpu: smp?.cpu_usage ?? 0, memBytes: smp?.mem_bytes ?? 0, memPct })
+  }
+  return rows
+})
+
+function processPoints(pid: number): HistoryPoint[] {
+  return systemStore.processSamples[pid] ?? []
+}
+
+function toggleProcess(pid: number) {
+  const next = new Set(expandedPids.value)
+  next.has(pid) ? next.delete(pid) : next.add(pid)
+  expandedPids.value = next
+}
+
+const THRESHOLD_CPU = 90
+const THRESHOLD_MEM = 90
+function checkAlerts() {
+  for (const row of processRows.value) {
+    if (row.cpu >= THRESHOLD_CPU) {
+      const key = `${row.pid}:cpu`
+      if (!alerted.value.has(key)) {
+        alerted.value.add(key)
+        toast(t('processAlertCpu', { name: row.name, value: row.cpu.toFixed(0) }), 'err')
+      }
+    } else {
+      alerted.value.delete(`${row.pid}:cpu`)
+    }
+    if (row.memPct >= THRESHOLD_MEM) {
+      const key = `${row.pid}:mem`
+      if (!alerted.value.has(key)) {
+        alerted.value.add(key)
+        toast(t('processAlertMem', { name: row.name, value: row.memPct.toFixed(0) }), 'err')
+      }
+    } else {
+      alerted.value.delete(`${row.pid}:mem`)
+    }
+  }
+}
 
 const systemInfo = computed(() => systemStore.systemInfo)
 
@@ -277,6 +383,7 @@ const bootTimeStr = computed(() =>
 /* 运行时长 */
 const nowTick = ref(Date.now())
 let tickTimer: number | null = null
+let procTimer: number | null = null
 const uptime = computed(() => {
   const boot = systemInfo.value?.boot_time
   if (!boot) return '-'
@@ -290,6 +397,16 @@ onMounted(async () => {
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
   }, 1000)
+  // 进程采样 + 告警：与整机轮询同频（1s）
+  procTimer = window.setInterval(async () => {
+    const pids = processRows.value.map((r) => r.pid).filter((p) => p != null)
+    if (pids.length === 0) return
+    const samples = await systemStore.sampleProcesses(pids)
+    for (const s of samples) {
+      latestSamples.value.set(s.pid, s)
+    }
+    checkAlerts()
+  }, 1000)
   // ponytail: 监听启动/停止事件，运行列表实时刷新
   await lifecycleStore.initListener()
   await stackStore.loadStacks()
@@ -302,6 +419,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
+  if (procTimer) clearInterval(procTimer)
   lifecycleStore.destroyListener()
   stackStore.unsubscribe()
   unlistenSb?.()

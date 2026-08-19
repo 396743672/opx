@@ -48,6 +48,13 @@ export default {
   os: '操作系统',
   hostname: '主机名',
   bootTime: '启动时间',
+  // 进程监控
+  processMonitor: '进程资源监控',
+  noRunningProcess: '暂无运行中的进程',
+  view: '查看',
+  collapse: '收起',
+  processAlertCpu: '进程「{name}」CPU {value}% 已超过阈值 90%',
+  processAlertMem: '进程「{name}」内存占用 {value}% 已超过阈值 90%',
 
   // 软件管理
   installedSoftware: '已安装软件',
