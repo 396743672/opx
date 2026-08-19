@@ -341,7 +341,13 @@ function toggleProcess(pid: number) {
 
 const THRESHOLD_CPU = 90
 const THRESHOLD_MEM = 90
+// 冷启动首个采样 CPU% 因 sysinfo 增量算法可能虚高，故跳过首个 tick 的告警判定
+const firstTick = ref(true)
 function checkAlerts() {
+  if (firstTick.value) {
+    firstTick.value = false
+    return
+  }
   for (const row of processRows.value) {
     if (row.cpu >= THRESHOLD_CPU) {
       const key = `${row.pid}:cpu`
