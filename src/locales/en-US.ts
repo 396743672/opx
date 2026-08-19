@@ -555,7 +555,7 @@ export default {
   restoreSuccess: 'Restore succeeded. Run first start if re-init is needed',
   deleteSnapshot: 'Delete',
   deleteConfirm: 'Delete this snapshot? This cannot be undone.',
-  resetInstance: 'Reset Instance',
+  resetInstance: 'Reset',
   resetDanger: 'This will wipe all data directories and recreate empty state. This cannot be undone!',
   resetConfirmCheckbox: 'I understand the risk and confirm reset',
   resetTypeName: 'Type the instance name "{name}" to confirm',

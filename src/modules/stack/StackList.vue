@@ -95,14 +95,14 @@
             <Icon v-else icon="mdi:restart" />
             {{ t('restartStack') }}
           </button>
-          <button class="btn ghost" :disabled="busyId === stack.id || !canStop(stack)" :title="t('exportStack')" @click="onExport(stack)">
-            <Icon icon="mdi:export" />
+          <button class="btn" :disabled="busyId === stack.id || !canStop(stack)" @click="onExport(stack)">
+            <Icon icon="mdi:export" /> {{ t('exportStack') }}
           </button>
-          <button class="btn ghost" :disabled="!canEdit(stack) || busyId === stack.id" @click="onEdit(stack)">
+          <button class="btn" :disabled="!canEdit(stack) || busyId === stack.id" @click="onEdit(stack)">
             <Icon icon="mdi:pencil" /> {{ t('editStack') }}
           </button>
-          <button class="btn danger ghost" :disabled="!canEdit(stack) || busyId === stack.id" @click="onDelete(stack)">
-            <Icon icon="mdi:delete" />
+          <button class="btn danger" :disabled="!canEdit(stack) || busyId === stack.id" @click="onDelete(stack)">
+            <Icon icon="mdi:delete" /> {{ t('deleteStack') }}
           </button>
         </div>
       </div>
@@ -529,8 +529,11 @@ onUnmounted(() => {
   background: var(--color-muted);
 }
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
+  background: var(--color-muted);
+  border-color: var(--color-border);
+  color: var(--color-muted-foreground);
 }
 
 /* 状态着色（与运行面板一致） */

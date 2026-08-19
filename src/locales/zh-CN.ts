@@ -555,7 +555,7 @@ export default {
   restoreSuccess: '恢复成功，如需重新初始化请执行首次启动',
   deleteSnapshot: '删除',
   deleteConfirm: '确认删除该快照？此操作不可撤销。',
-  resetInstance: '一键重置',
+  resetInstance: '重置',
   resetDanger: '将清空该实例所有数据目录并重建空态，此操作不可撤销！',
   resetConfirmCheckbox: '我已了解风险，确认重置',
   resetTypeName: '输入实例名称 “{name}” 以确认',
