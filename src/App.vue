@@ -22,6 +22,8 @@
   />
   <StopProgressDialog v-if="showStopProgress" />
   <ErrorDialog v-if="lifecycleStore.errorMessage" />
+  <ConfirmDialog />
+  <ToastHost />
 </template>
 
 <script setup lang="ts">
@@ -31,6 +33,8 @@ import MainLayout from '@/layouts/MainLayout.vue'
 import CloseDialog from '@/components/CloseDialog.vue'
 import StopProgressDialog from '@/components/StopProgressDialog.vue'
 import ErrorDialog from '@/components/ErrorDialog.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ToastHost from '@/components/ToastHost.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'

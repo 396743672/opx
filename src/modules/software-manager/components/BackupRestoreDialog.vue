@@ -59,14 +59,14 @@
             <template v-if="scheduleEnabled">
               <label class="sched-field">
                 {{ $t('scheduleInterval') }}
-                <input
-                  v-model.number="scheduleMinutes"
-                  type="number"
-                  min="1"
-                  class="input num"
-                  @change="onScheduleChange"
-                />
-                {{ $t('minuteUnit') }}
+                <select v-model.number="scheduleValue" class="select num" @change="onScheduleChange">
+                  <option v-for="n in scheduleOptions" :key="n" :value="n">{{ n }}</option>
+                </select>
+                <select v-model="scheduleUnit" class="select" @change="onScheduleChange">
+                  <option value="min">{{ $t('minuteUnit') }}</option>
+                  <option value="hour">{{ $t('hourUnit') }}</option>
+                  <option value="day">{{ $t('dayUnit') }}</option>
+                </select>
               </label>
             </template>
           </div>
@@ -90,7 +90,8 @@
               </div>
               <div class="snap-actions">
                 <button class="btn btn-sm" :disabled="restoring" @click="onRestore(s)">
-                  {{ $t('restore') }}
+                  <span v-if="restoring" class="spinner" />
+                  {{ restoring ? $t('restoring') : $t('restore') }}
                 </button>
                 <button class="btn btn-sm danger" :disabled="deleting" @click="onDelete(s)">
                   {{ $t('deleteSnapshot') }}
@@ -118,7 +119,6 @@
           </label>
 
           <div class="dialog-footer">
-            <span v-if="resetMsg" class="meta" :class="resetMsgKind">{{ resetMsg }}</span>
             <button class="btn danger" :disabled="!canReset || resetting" @click="onReset">
               <Icon v-if="!resetting" icon="mdi:delete-forever" />
               <span v-else class="spinner" />
@@ -137,6 +137,8 @@ import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useOpsStore } from '../stores/ops'
 import { useLifecycleStore } from '../stores/lifecycle'
+import { confirmAsync } from '@/composables/useConfirm'
+import { toast } from '@/composables/useToast'
 import { formatBytes } from '@/utils/format'
 import { SoftwareStatus, type BackupMode, type InstalledSoftware, type SnapshotMeta } from '@/models/software'
 
@@ -177,8 +179,6 @@ const snapMode = ref<BackupMode>('StopAndBackup')
 const resetAck = ref(false)
 const resetInput = ref('')
 const resetting = ref(false)
-const resetMsg = ref<string | null>(null)
-const resetMsgKind = ref<'err' | 'ok'>('ok')
 
 const canReset = computed(
   () => resetAck.value && resetInput.value === (current.value?.name ?? '') && !resetting.value,
@@ -198,18 +198,42 @@ async function loadSnapshots() {
 
 // ---- 定时自动备份 (R1) ----
 const scheduleEnabled = ref(false)
-const scheduleMinutes = ref(60)
+const scheduleValue = ref(1)
+const scheduleUnit = ref<'min' | 'hour' | 'day'>('hour')
+const UNIT_MINUTES = { min: 1, hour: 60, day: 1440 }
+const schedulePresets: Record<'min' | 'hour' | 'day', number[]> = {
+  min: [10, 15, 20, 30, 45, 60],
+  hour: [1, 2, 3, 4, 6, 8, 12],
+  day: [1, 2, 3, 4, 5, 7],
+}
+const scheduleOptions = computed(() => {
+  const base = schedulePresets[scheduleUnit.value]
+  // 反解出的值可能不在预设里，补进选项避免下拉为空
+  return base.includes(scheduleValue.value) ? base : [scheduleValue.value, ...base]
+})
+function minutesToParts(m: number) {
+  if (m % 1440 === 0) return { value: m / 1440, unit: 'day' as const }
+  if (m % 60 === 0) return { value: m / 60, unit: 'hour' as const }
+  return { value: m, unit: 'min' as const }
+}
 async function loadSchedule() {
   try {
     const m = await ops.getBackupSchedule(selectedId.value)
     scheduleEnabled.value = m > 0
-    scheduleMinutes.value = m > 0 ? m : 60
+    if (m > 0) {
+      const parts = minutesToParts(m)
+      scheduleValue.value = parts.value
+      scheduleUnit.value = parts.unit
+    } else {
+      scheduleValue.value = 1
+      scheduleUnit.value = 'hour'
+    }
   } catch {
     scheduleEnabled.value = false
   }
 }
 async function onScheduleChange() {
-  const minutes = scheduleEnabled.value ? Math.max(1, scheduleMinutes.value || 1) : 0
+  const minutes = scheduleEnabled.value ? scheduleValue.value * UNIT_MINUTES[scheduleUnit.value] : 0
   try {
     await ops.setBackupSchedule(selectedId.value, minutes)
   } catch (e) {
@@ -230,6 +254,7 @@ async function onCreate() {
     snapName.value = ''
     snapNote.value = ''
     snapMode.value = 'StopAndBackup'
+    await loadSnapshots()
   } catch (e) {
     console.error('create snapshot failed:', e)
   } finally {
@@ -241,33 +266,28 @@ async function onRestore(s: SnapshotMeta) {
   const id = selectedId.value
   // 运行态必须先停服（决策 2）
   if (lifecycleStore.getStatus(id) === SoftwareStatus.Running) {
-    resetMsg.value = t('restoreNeedStop')
-    resetMsgKind.value = 'err'
+    toast(t('restoreNeedStop'), 'err')
     return
   }
-  if (!confirm(t('restoreConfirm'))) return
+  if (!(await confirmAsync(t('restoreConfirm')))) return
   restoring.value = true
   try {
     await ops.restoreSnapshot(id, s.id, false)
-    resetMsg.value = t('restoreSuccess')
-    resetMsgKind.value = 'ok'
+    toast(t('restoreSuccess'), 'ok')
   } catch (e: unknown) {
     const msg = String(e)
     // 跨大版本/跨来源不一致：提示可强制恢复（决策 8）
     if (msg.includes('强制恢复') || msg.includes('force')) {
-      if (confirm(t('restoreForceConfirm'))) {
+      if (await confirmAsync(t('restoreForceConfirm'), { danger: true })) {
         try {
           await ops.restoreSnapshot(id, s.id, true)
-          resetMsg.value = t('restoreSuccess')
-          resetMsgKind.value = 'ok'
+          toast(t('restoreSuccess'), 'ok')
         } catch (e2: unknown) {
-          resetMsg.value = String(e2)
-          resetMsgKind.value = 'err'
+          toast(String(e2), 'err')
         }
       }
     } else {
-      resetMsg.value = msg
-      resetMsgKind.value = 'err'
+      toast(msg, 'err')
     }
   } finally {
     restoring.value = false
@@ -275,12 +295,15 @@ async function onRestore(s: SnapshotMeta) {
 }
 
 async function onDelete(s: SnapshotMeta) {
-  if (!confirm(t('deleteConfirm'))) return
+  if (!(await confirmAsync(t('deleteConfirm'), { danger: true }))) return
   deleting.value = true
   try {
     await ops.deleteSnapshot(selectedId.value, s.id)
+    await loadSnapshots()
+    toast(t('deleteSnapshotSuccess'), 'ok')
   } catch (e) {
     console.error('delete snapshot failed:', e)
+    toast(t('deleteSnapshotFailed'), 'err')
   } finally {
     deleting.value = false
   }
@@ -288,18 +311,15 @@ async function onDelete(s: SnapshotMeta) {
 
 async function onReset() {
   if (!canReset.value) return
-  if (!confirm(t('resetDanger'))) return
+  if (!(await confirmAsync(t('resetDanger'), { danger: true }))) return
   resetting.value = true
-  resetMsg.value = null
   try {
     await ops.resetInstance(selectedId.value)
-    resetMsg.value = t('resetSuccess')
-    resetMsgKind.value = 'ok'
+    toast(t('resetSuccess'), 'ok')
     resetInput.value = ''
     resetAck.value = false
   } catch (e: unknown) {
-    resetMsg.value = String(e)
-    resetMsgKind.value = 'err'
+    toast(String(e), 'err')
   } finally {
     resetting.value = false
   }
@@ -313,7 +333,6 @@ function formatTime(rfc: string): string {
 
 // 切换实例 → 刷新快照
 watch(selectedId, () => {
-  resetMsg.value = null
   loadSchedule()
   if (tab.value === 'snapshots') loadSnapshots()
 })
@@ -480,10 +499,12 @@ onMounted(() => {
   font-size: 12px;
   color: var(--color-muted-foreground);
 }
-.sched-field .num {
-  width: 70px;
+.sched-field .select {
   height: 28px;
   padding: 0 6px;
+}
+.sched-field .num {
+  width: 64px;
 }
 .text-muted {
   color: var(--color-muted-foreground);
@@ -590,17 +611,6 @@ onMounted(() => {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--color-border);
-}
-.meta {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  margin-right: auto;
-}
-.meta.err {
-  color: var(--color-destructive);
-}
-.meta.ok {
-  color: var(--color-success);
 }
 .spinner {
   width: 12px;
