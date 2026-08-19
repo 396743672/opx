@@ -689,7 +689,10 @@ function onClose() {
   border-color: var(--color-primary);
 }
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
+  background: var(--color-muted);
+  border-color: var(--color-border);
+  color: var(--color-muted-foreground);
 }
 </style>
