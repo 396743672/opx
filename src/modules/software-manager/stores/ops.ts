@@ -88,6 +88,16 @@ export const useOpsStore = defineStore('software-ops', () => {
     return meta
   }
 
+  /** 设置定时备份间隔（分钟，0 关闭） */
+  async function setBackupSchedule(installedId: string, minutes: number): Promise<void> {
+    await invoke('set_backup_schedule', { installedId, minutes })
+  }
+
+  /** 查询定时备份间隔（分钟，0 表示未启用） */
+  async function getBackupSchedule(installedId: string): Promise<number> {
+    return invoke<number>('get_backup_schedule', { installedId })
+  }
+
   /** 直接读取后端快照列表（不写缓存） */
   async function listSnapshots(installedId: string): Promise<SnapshotMeta[]> {
     return invoke<SnapshotMeta[]>('list_snapshots', { installedId })
@@ -137,5 +147,7 @@ export const useOpsStore = defineStore('software-ops', () => {
     restoreSnapshot,
     deleteSnapshot,
     resetInstance,
+    setBackupSchedule,
+    getBackupSchedule,
   }
 })

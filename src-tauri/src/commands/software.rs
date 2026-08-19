@@ -12,8 +12,8 @@ use crate::models::software::{
 };
 use crate::oplog;
 use crate::services::software_manager::{
-    backup, catalog, config_editor, health_check, installer, lifecycle, log_viewer, providers,
-    uninstall_guard, SoftwareManager,
+    backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
+    log_viewer, providers, uninstall_guard, SoftwareManager,
 };
 use crate::services::software_manager::config_editor::FormData;
 use crate::services::software_manager::providers::custom_templates;
@@ -1482,6 +1482,21 @@ pub async fn delete_snapshot(
     snapshot_id: String,
 ) -> Result<(), String> {
     backup::delete_snapshot(&installed_id, &snapshot_id).map_err(|e| e.to_string())
+}
+
+/// 设置某实例的定时备份间隔（分钟；0 关闭）。返回全部配置。
+#[tauri::command]
+pub async fn set_backup_schedule(
+    installed_id: String,
+    minutes: u64,
+) -> Result<std::collections::HashMap<String, u64>, String> {
+    backup_scheduler::set_schedule(&installed_id, minutes).map_err(|e| e.to_string())
+}
+
+/// 查询某实例的定时备份间隔（分钟；0 表示未启用）
+#[tauri::command]
+pub async fn get_backup_schedule(installed_id: String) -> Result<u64, String> {
+    Ok(backup_scheduler::get_schedule(&installed_id))
 }
 
 /// 一键重置（对每个 data_dir 重建空态，含护栏）

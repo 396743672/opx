@@ -36,6 +36,18 @@
         </button>
       </div>
 
+      <div v-if="tab === 'form' && matchedPresets.length" class="preset-bar">
+        <span class="preset-label">{{ $t('configPresets') }}:</span>
+        <button
+          v-for="p in matchedPresets"
+          :key="p.nameKey"
+          class="btn btn-sm"
+          @click="applyPreset(p)"
+        >
+          <Icon icon="mdi:auto-fix" /> {{ $t(p.nameKey) }}
+        </button>
+      </div>
+
       <ConfigFormTab
         v-if="tab === 'form'"
         ref="formTabRef"
@@ -87,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
@@ -112,6 +124,40 @@ const sourceTabRef = ref<InstanceType<typeof ConfigSourceTab>>()
 const backups = ref<{ name: string; size: number; modified: number }[]>([])
 const loadingBackups = ref(false)
 let sourceContent = ''
+
+// ---- R3 配置预设：按软件 key 命中，应用一组 key→value 到表单 ----
+const CONFIG_PRESETS: {
+  key: string
+  nameKey: string
+  values: Record<string, string | number>
+}[] = [
+  {
+    key: 'mysql',
+    nameKey: 'presetMysqlDev',
+    values: { max_connections: 500, wait_timeout: 28800, max_allowed_packet: 67108864 },
+  },
+  {
+    key: 'redis',
+    nameKey: 'presetRedisCache',
+    values: { maxmemory: '256mb', maxmemory_policy: 'allkeys-lru' },
+  },
+]
+const matchedPresets = computed(() =>
+  CONFIG_PRESETS.filter((p) => p.key === props.software.key)
+)
+function applyPreset(preset: (typeof CONFIG_PRESETS)[number]) {
+  const fd = formTabRef.value?.formData
+  if (!fd) return
+  for (const [k, v] of Object.entries(preset.values)) {
+    if (k in fd) {
+      fd[k] = v as never
+    } else {
+      // 允许从 schema 默认缺失的 key 直接写入
+      fd[k] = v as never
+    }
+  }
+  dirty.value = true
+}
 
 onMounted(async () => {
   try {
@@ -309,6 +355,16 @@ async function onSaveAndRestart() {
   background: var(--color-muted);
   border-radius: 6px;
   margin-bottom: 16px;
+}
+.preset-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.preset-label {
+  color: var(--color-muted-foreground);
 }
 .tab {
   flex: 1;
