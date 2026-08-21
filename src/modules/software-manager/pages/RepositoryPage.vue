@@ -6,6 +6,16 @@
       :subtitle="$t('installNewSoftware')"
     >
       <template #actions>
+        <button
+          v-if="selectedCount > 0"
+          class="btn primary batch-install-btn"
+          :disabled="batchInstalling"
+          @click="batchInstall"
+        >
+          <Icon v-if="batchInstalling" icon="mdi:loading" class="spinning" />
+          <Icon v-else icon="mdi:download-multiple" />
+          {{ $t('batchInstall') }} ({{ selectedCount }})
+        </button>
       </template>
     </PageHeader>
 
@@ -34,7 +44,10 @@
             :entry="entry"
             :installed-version="getInstalledVersion(entry.key)"
             :is-default-jre="entry.key === 'jre' && defaultJreId !== null"
+            :selectable="isSelectable(entry)"
+            :selected="selectedKeys.has(entry.key)"
             @install="openInstall"
+            @toggle-select="toggleSelect(entry)"
           />
         </div>
       </div>
@@ -102,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -130,11 +143,60 @@ const allCollapsed = ref(false)
 const installedList = ref<InstalledSoftware[]>([])
 const defaultJreId = ref<string | null>(null)
 
+// 批量选择安装状态
+const selectedKeys = ref<Set<string>>(new Set())
+const batchInstalling = ref(false)
+const selectedCount = computed(() => selectedKeys.value.size)
+
 let completedUnlisten: UnlistenFn | null = null
 
 function getInstalledVersion(key: string): string | null {
   const found = installedList.value.find((s) => s.key === key && !s.is_custom)
   return found ? found.version : null
+}
+
+/** 已安装及安装中的条目不可批量选择 */
+function isSelectable(entry: CatalogEntry): boolean {
+  return getInstalledVersion(entry.key) === null && !installStore.hasActiveTask(entry.key)
+}
+
+function toggleSelect(entry: CatalogEntry) {
+  const next = new Set(selectedKeys.value)
+  if (next.has(entry.key)) next.delete(entry.key)
+  else next.add(entry.key)
+  selectedKeys.value = next
+}
+
+/** 批量安装：每个选中条目用 catalog 默认版本 + 首个镜像源，逐条调用 install_software */
+async function batchInstall() {
+  const entries = Object.values(catalogStore.groupedEntries)
+    .flat()
+    .filter((e) => selectedKeys.value.has(e.key))
+  if (entries.length === 0) return
+  batchInstalling.value = true
+  try {
+    for (const entry of entries) {
+      const version =
+        entry.versions.find((v) => v.version === entry.default_version) ?? entry.versions[0]
+      if (!version) continue
+      try {
+        const installId = await invoke('install_software', {
+          params: {
+            key: entry.key,
+            version: version.version,
+            mirror_index: 0,
+            set_as_default_jre: false,
+          },
+        }) as string
+        installStore.createTask(installId, entry.key, `${entry.name} ${version.version}`)
+      } catch (e) {
+        console.error(`Failed to install ${entry.key}:`, e)
+      }
+    }
+  } finally {
+    batchInstalling.value = false
+    selectedKeys.value = new Set()
+  }
 }
 
 function categoryName(cat: SoftwareCategory): string {

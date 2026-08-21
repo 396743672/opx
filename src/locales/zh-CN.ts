@@ -21,6 +21,10 @@ export default {
   confirm: '确认',
   close: '关闭',
   install: '安装',
+    batchInstall: '批量安装',
+    deselect: '取消选择',
+    selectForBatch: '选择以批量安装',
+
   uninstall: '卸载',
   status: '状态',
   name: '名称',

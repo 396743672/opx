@@ -21,6 +21,10 @@ export default {
   confirm: 'Confirm',
   close: 'Close',
   install: 'Install',
+    batchInstall: 'Batch Install',
+    deselect: 'Deselect',
+    selectForBatch: 'Select for batch install',
+
   uninstall: 'Uninstall',
   status: 'Status',
   name: 'Name',
