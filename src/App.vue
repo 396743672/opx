@@ -59,6 +59,7 @@ const defaultChoice = computed<'tray' | 'exit'>(() =>
 
 let unlistenClose: UnlistenFn | null = null
 let unlistenStopComplete: UnlistenFn | null = null
+let unlistenTrayStop: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -147,12 +148,23 @@ onMounted(async () => {
     }, 600)
   })
 
+  // 托盘菜单点击「运行中软件」→ 停止该软件（复用现有 stop_software 命令）
+  unlistenTrayStop = await listen<string>('tray-software-stop', (e) => {
+    const installedId = e.payload
+    if (installedId) {
+      invoke('stop_software', { installedId }).catch(() => {
+        // 停止失败时以后端 emit 的 software-status-changed Error 事件为准，此处静默
+      })
+    }
+  })
+
   window.clearTimeout(bootTimeout)
 })
 
 onUnmounted(() => {
   unlistenClose?.()
   unlistenStopComplete?.()
+  unlistenTrayStop?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

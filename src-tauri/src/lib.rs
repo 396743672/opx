@@ -4,9 +4,9 @@ pub mod services;
 pub mod utils;
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WindowEvent,
+    AppHandle, Emitter, Listener, Manager, WindowEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -130,18 +130,27 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
-                // 托盘右键菜单
-                let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-                let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+                // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
+                let tray_manager: std::sync::Arc<
+                    crate::services::software_manager::SoftwareManager,
+                > = app
+                    .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                    .inner()
+                    .clone();
 
-                let app_handle = app.handle().clone();
+                let (menu, tooltip) = build_tray_menu(app.handle(), &tray_manager)?;
+
                 let icon = app.default_window_icon().cloned();
-                let mut builder = TrayIconBuilder::new().menu(&menu).show_menu_on_left_click(false);
+                let mut builder = TrayIconBuilder::new()
+                    .menu(&menu)
+                    .show_menu_on_left_click(false);
                 if let Some(img) = icon {
                     builder = builder.icon(img);
                 }
-                let _tray = builder
+                if !tooltip.is_empty() {
+                    builder = builder.tooltip(&tooltip);
+                }
+                let tray = builder
                     .on_menu_event(move |app, event| match event.id.as_ref() {
                         "show" => {
                             if let Some(window) = app.get_webview_window("main") {
@@ -153,7 +162,12 @@ pub fn run() {
                         "quit" => {
                             let _ = app.emit("close-requested", ());
                         }
-                        _ => {}
+                        other => {
+                            // running_{installed_id}：转发给前端执行停止
+                            if let Some(id) = other.strip_prefix("running_") {
+                                let _ = app.emit("tray-software-stop", id.to_string());
+                            }
+                        }
                     })
                     .on_tray_icon_event(move |tray, event| {
                         if let TrayIconEvent::Click {
@@ -171,7 +185,18 @@ pub fn run() {
                         }
                     })
                     .build(app)?;
-                let _ = app_handle;
+
+                // 软件状态变化时重建托盘，保持「运行中列表 + tooltip 运行数」同步
+                let tray_for_listen = tray.clone();
+                let manager_for_listen = tray_manager.clone();
+                app.handle().listen("software-status-changed", move |_| {
+                    let handle = tray_for_listen.app_handle().clone();
+                    if let Ok((menu, tooltip)) = build_tray_menu(&handle, &manager_for_listen) {
+                        let _ = tray_for_listen.set_menu(Some(menu));
+                        let tooltip = if tooltip.is_empty() { None } else { Some(tooltip) };
+                        let _ = tray_for_listen.set_tooltip(tooltip);
+                    }
+                });
             }
             Ok(())
         })
@@ -274,4 +299,109 @@ pub fn run() {
 
 fn set_focus_safe(window: &tauri::WebviewWindow) -> Result<(), tauri::Error> {
     window.set_focus()
+}
+
+/// 构建含运行中软件列表的托盘菜单，并返回 tooltip 文本。
+/// 菜单项：显示窗口 / (分隔) / 运行中软件(点击停止) / (分隔) / 退出。
+#[cfg(desktop)]
+fn build_tray_menu(
+    app: &AppHandle,
+    manager: &std::sync::Arc<crate::services::software_manager::SoftwareManager>,
+) -> tauri::Result<(Menu<tauri::Wry>, String)> {
+    let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+
+    let (running, tooltip) = running_softwares(&manager.get_installed());
+
+    // 用 owned Box 持有全部菜单项，再取引用构造成异构图项数组（解决异构生命周期借用）
+    let mut owned: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = Vec::new();
+    owned.push(Box::new(show_item));
+    if !running.is_empty() {
+        owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+        for (id, name) in &running {
+            owned.push(Box::new(MenuItem::with_id(
+                app,
+                format!("running_{}", id),
+                name.clone(),
+                true,
+                None::<&str>,
+            )?));
+        }
+    }
+    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+    owned.push(Box::new(quit_item));
+
+    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> =
+        owned.iter().map(|b| b.as_ref() as &dyn IsMenuItem<tauri::Wry>).collect();
+    let menu = Menu::with_items(app, &refs)?;
+    Ok((menu, tooltip))
+}
+
+/// 从已安装列表筛出运行中软件，返回 (id, name) 列表与 tooltip 文本。
+/// 分离为纯函数以便单测验证筛选与 tooltip 逻辑。
+fn running_softwares(
+    installed: &[crate::models::software::InstalledSoftware],
+) -> (Vec<(String, String)>, String) {
+    use crate::models::software::SoftwareStatus;
+    let running: Vec<_> = installed
+        .iter()
+        .filter(|s| s.status == SoftwareStatus::Running)
+        .map(|s| (s.id.clone(), s.name.clone()))
+        .collect();
+    let tooltip = if running.is_empty() {
+        String::new()
+    } else {
+        format!("运行中：{} 个软件", running.len())
+    };
+    (running, tooltip)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::software::{InstalledSoftware, SoftwareStatus};
+
+    fn sample(status: SoftwareStatus) -> InstalledSoftware {
+        InstalledSoftware {
+            id: "id-1".into(),
+            key: "k".into(),
+            version: "1.0".into(),
+            name: "测试软件".into(),
+            install_path: "p".into(),
+            install_time: chrono::NaiveDateTime::default(),
+            status,
+            port: 0,
+            config: serde_json::Value::Null,
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: crate::models::software::InstallSource::Builtin { version: "1.0".into() },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
+            category: None,
+        }
+    }
+
+    #[test]
+    fn running_softwares_filters_and_tooltip() {
+        let list = vec![
+            sample(SoftwareStatus::Running),
+            sample(SoftwareStatus::Stopped),
+            sample(SoftwareStatus::Error),
+        ];
+        let (running, tooltip) = super::running_softwares(&list);
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].1, "测试软件");
+        assert_eq!(tooltip, "运行中：1 个软件");
+    }
+
+    #[test]
+    fn running_softwares_empty_tooltip() {
+        let list = vec![sample(SoftwareStatus::Stopped)];
+        let (running, tooltip) = super::running_softwares(&list);
+        assert!(running.is_empty());
+        assert!(tooltip.is_empty());
+    }
 }
