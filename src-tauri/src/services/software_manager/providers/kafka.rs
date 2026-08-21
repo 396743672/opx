@@ -49,7 +49,8 @@ impl SoftwareProvider for KafkaProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         // Kafka 官方包为 .tgz，跨平台（含 bin/kafka-server-start.sh 与 bin/windows/kafka-server-start.bat）。
         let version = "3.9.2".to_string();
-        let url = "https://downloads.apache.org/kafka/3.9.2/kafka_2.13-3.9.2.tgz".to_string();
+        let url =
+            "https://archive.apache.org/dist/kafka/3.9.2/kafka_2.13-3.9.2.tgz".to_string();
         let versions = vec![CatalogVersion {
             version: version.clone(),
             mirrors: vec![MirrorSource {
