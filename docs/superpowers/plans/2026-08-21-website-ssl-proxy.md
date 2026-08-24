@@ -247,48 +247,7 @@ fn sanitize_path(path: &str) -> String {
 }
 ```
 
-改造 `generate_location` 的 Proxy 分支（在 `LocationKind::Proxy` 的 match 内替换为）：
-
-```rust
-        LocationKind::Proxy => {
-            let subpath = loc
-                .proxy_subpath
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            // 多后端 → upstream 名；否则单后端 target
-            let proxy_target: Option<String> = if loc.upstreams.len() > 1 {
-                let short_id: String = site_id_placeholder();
-                let _ = short_id;
-                loc.upstreams
-                    .first()
-                    .map(|_| format!("http://site_{}_{}", site_id(), sanitize_path(&loc.path)))
-            } else {
-                loc.target.clone()
-            };
-            if let Some(base) = proxy_target {
-                let base = match subpath {
-                    Some(sp) => format!("{}{}", base.trim_end_matches('/'), sp),
-                    None => base,
-                };
-                s.push_str(&format!("        proxy_pass {};\n", base));
-                s.push_str("        proxy_http_version 1.1;\n");
-                s.push_str("        proxy_set_header Host $host;\n");
-                s.push_str("        proxy_set_header X-Real-IP $remote_addr;\n");
-                s.push_str("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
-                s.push_str("        proxy_set_header X-Forwarded-Proto $scheme;\n");
-                s.push_str("        proxy_set_header Upgrade $http_upgrade;\n");
-                s.push_str("        proxy_set_header Connection $connection_upgrade;\n");
-                for h in &loc.proxy_headers {
-                    if !h.name.trim().is_empty() {
-                        s.push_str(&format!("        proxy_set_header {} {};\n", h.name, h.value));
-                    }
-                }
-            }
-        }
-```
-
-> 注意：`generate_location` 当前签名是 `fn generate_location(loc: &Location) -> String`，无 site 上下文，无法取 site_id。需将签名改为 `fn generate_location(loc: &Location, short_id: &str) -> String`，并把 `generate_server_block` 中调用改为 `generate_location(loc, &short_id)`。上文 Proxy 分支中的 `site_id()` 是示意——实现时直接使用 `short_id` 参数，移除 `site_id_placeholder`/`site_id` 占位。请把 Proxy 分支改造成：
+改造 `generate_location` 的 Proxy 分支（在 `LocationKind::Proxy` 的 match 内替换为），并将 `generate_location` 签名改为 `fn generate_location(loc: &Location, short_id: &str) -> String`：
 
 ```rust
         LocationKind::Proxy => {
@@ -324,7 +283,7 @@ fn sanitize_path(path: &str) -> String {
         }
 ```
 
-`generate_server_block` 尾部调用改为 `out.push_str(&generate_location(loc, &short_id));`。
+`generate_server_block` 中 `generate_location` 的调用改为 `out.push_str(&generate_location(loc, &short_id));`；其函数签名同步改为 `fn generate_location(loc: &Location, short_id: &str) -> String`。
 
 - [ ] **Step 4: 运行测试确认通过**
 
