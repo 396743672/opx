@@ -6,7 +6,7 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    BackupMode, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
+    BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
     InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource, SnapshotMeta,
     SoftwareStatus, UninstallSafetyReport,
 };
@@ -1522,7 +1522,6 @@ pub async fn reset_instance(
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
 /// 任一段含非数字时退化为字符串比较（v1 < v2）。
 fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
     let ap: Vec<&str> = a.split('.').collect();
     let bp: Vec<&str> = b.split('.').collect();
     for i in 0..ap.len().min(bp.len()) {
@@ -1535,10 +1534,113 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     ap.len().cmp(&bp.len())
 }
 
+/// 计算已装软件的升级目标：catalog 中高于当前版本的最高版本
+fn compute_upgrades(installed: &[InstalledSoftware], catalog: &Catalog) -> Vec<crate::models::software::UpgradeInfo> {
+    use crate::models::software::UpgradeInfo;
+    let mut out = Vec::new();
+    for sw in installed {
+        if sw.is_custom {
+            continue;
+        }
+        let Some(entry) = catalog.entries.iter().find(|e| e.key == sw.key) else {
+            continue;
+        };
+        let target = entry
+            .versions
+            .iter()
+            .map(|v| v.version.as_str())
+            .filter(|v| compare_versions(v, &sw.version) == std::cmp::Ordering::Greater)
+            .max_by(|x, y| compare_versions(x, y))
+            .map(|s| s.to_string());
+        out.push(UpgradeInfo {
+            key: sw.key.clone(),
+            name: entry.name.clone(),
+            current_version: sw.version.clone(),
+            target_version: target,
+        });
+    }
+    out
+}
+
+/// 升级检测：基于当前 catalog（含内置 + 远程合并缓存）纯本地对比，立即返回
+#[tauri::command]
+pub fn check_upgrades(manager: State<'_, Arc<SoftwareManager>>) -> Vec<crate::models::software::UpgradeInfo> {
+    let catalog = manager.get_catalog();
+    let installed = manager.get_installed();
+    compute_upgrades(&installed, &catalog)
+}
+
 #[cfg(test)]
 mod tests {
     use super::compare_versions;
     use std::cmp::Ordering;
+
+    use crate::models::software::{Catalog, CatalogEntry, CatalogVersion, InstalledSoftware, InstallSource, SoftwareCategory, SoftwareStatus};
+    use crate::services::software_manager::SoftwareManager;
+
+    fn dummy_installed(key: &str, version: &str) -> InstalledSoftware {
+        InstalledSoftware {
+            id: format!("{}-{version}", key),
+            key: key.into(),
+            version: version.into(),
+            name: format!("{key} {version}"),
+            install_path: format!("{key}/{version}"),
+            install_time: chrono::Utc::now().naive_utc(),
+            status: SoftwareStatus::Unknown,
+            port: 0,
+            config: serde_json::json!({}),
+            is_custom: false,
+            auto_start_on_app_start: false,
+            startup_order: 0,
+            source: InstallSource::Mirror { mirror_name: "m".into(), url: "http://x".into() },
+            pid: None,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+            custom_start_command: None,
+            category: None,
+        }
+    }
+
+    fn dummy_catalog(key: &str, versions: &[&str]) -> Catalog {
+        Catalog {
+            updated_at: None,
+            entries: vec![CatalogEntry {
+                key: key.into(),
+                name: key.to_uppercase(),
+                description: String::new(),
+                description_i18n: None,
+                category: SoftwareCategory::Database,
+                icon: String::new(),
+                versions: versions
+                    .iter()
+                    .map(|v| CatalogVersion {
+                        version: v.to_string(),
+                        mirrors: vec![],
+                        archive: crate::models::software::ArchiveInfo { format: crate::models::software::ArchiveFormat::Zip, size: None, sha256: None },
+                    })
+                    .collect(),
+                default_version: versions[0].to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn compute_upgrades_picks_highest() {
+        let installed = vec![dummy_installed("mysql", "5.7.44")];
+        let catalog = dummy_catalog("mysql", &["5.7.44", "8.0.36", "8.4.0"]);
+        let ups = super::compute_upgrades(&installed, &catalog);
+        assert_eq!(ups.len(), 1);
+        assert_eq!(ups[0].target_version.as_deref(), Some("8.4.0"));
+    }
+
+    #[test]
+    fn compute_upgrades_none_when_latest() {
+        let installed = vec![dummy_installed("mysql", "8.4.0")];
+        let catalog = dummy_catalog("mysql", &["5.7.44", "8.0.36", "8.4.0"]);
+        let ups = super::compute_upgrades(&installed, &catalog);
+        assert_eq!(ups[0].target_version, None);
+    }
 
     #[test]
     fn version_cross_major() {

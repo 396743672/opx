@@ -212,6 +212,16 @@ pub enum BackupMode {
     Hot,
 }
 
+/// 软件升级检测结果：target_version 为比当前版本高的最高可用版本
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpgradeInfo {
+    pub key: String,
+    pub name: String,
+    pub current_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_version: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledSoftwareList {
     pub software: Vec<InstalledSoftware>,

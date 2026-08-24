@@ -225,6 +225,7 @@ pub fn run() {
             commands::software::install_custom,
             commands::software::uninstall_software,
             commands::software::fetch_remote_versions_for,
+            commands::software::check_upgrades,
             commands::software::start_software,
             commands::software::stop_software,
             commands::software::restart_software,
