@@ -194,9 +194,10 @@ impl SoftwareProvider for NginxProvider {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 80 });
-        HealthCheckSpec::Http {
-            url: format!("http://127.0.0.1:{}/", port),
-            expected_status: 200,
+        // Tcp 探测：nginx 端口通即健康。Http 200 过于严格——SSL 站点 80 会 301 跳转、
+        // 无首页返回 404 时会被误判超时（引发僵尸进程累积）。
+        HealthCheckSpec::Tcp {
+            port,
             timeout_ms: 1000,
         }
     }

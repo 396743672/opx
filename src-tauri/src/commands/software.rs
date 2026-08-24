@@ -688,10 +688,15 @@ pub async fn do_start_software(
                 tracing::info!(installed_id = %installed_id_clone, "software healthy");
             }
             health_check::HealthCheckResult::Timeout => {
+                // 关键：健康检查失败必须清理子进程树，否则残留僵尸软件（如 nginx）累积
+                // 重复占用端口 → 后续健康检查更易失败 → 恶性循环
+                let dead_pid = pid;
+                let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(dead_pid)).await;
+                lifecycle::unregister(&installed_id_clone);
                 let _ = manager_clone.update_runtime_fields(
                     &installed_id_clone,
                     SoftwareStatus::Error,
-                    Some(pid),
+                    None,
                     None,
                     None,
                     Some("健康检查超时".to_string()),
@@ -700,7 +705,7 @@ pub async fn do_start_software(
                     &app_clone,
                     &installed_id_clone,
                     SoftwareStatus::Error,
-                    Some(pid),
+                    None,
                     Some("健康检查超时".to_string()),
                 );
             }
