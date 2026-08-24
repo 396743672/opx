@@ -195,6 +195,7 @@ async function refreshUpgrades(keys: string[]) {
 async function onUpgrade(item: InstalledSoftware) {
   const target = upgradeMap.value[item.key]
   if (!target) return
+  if (installStore.hasActiveTask(item.key)) return // 该软件已有安装/升级任务防重
   try {
     const installId = (await invoke('install_software', {
       params: { key: item.key, version: target, mirror_index: 0, set_as_default_jre: false },
@@ -422,6 +423,7 @@ watch(
 
 onBeforeUnmount(() => {
   lifecycleStore.destroyListener()
+  installStore.cleanup()
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null

@@ -1576,7 +1576,6 @@ mod tests {
     use std::cmp::Ordering;
 
     use crate::models::software::{Catalog, CatalogEntry, CatalogVersion, InstalledSoftware, InstallSource, SoftwareCategory, SoftwareStatus};
-    use crate::services::software_manager::SoftwareManager;
 
     fn dummy_installed(key: &str, version: &str) -> InstalledSoftware {
         InstalledSoftware {
