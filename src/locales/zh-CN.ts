@@ -93,6 +93,7 @@ export default {
   importSuccess: '配置已导入',
   upgradeTo: '升级到 {v}',
   upgradeHint: '安装 catalog 中的更高版本（新旧并存，不自动启动）',
+  rollbackTo: '回滚到 {v}',
 
   // 软件分类（SoftwareListPage 分组标题）
   database: '数据库',

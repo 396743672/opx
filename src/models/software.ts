@@ -106,6 +106,8 @@ export interface UpgradeInfo {
   name: string
   current_version: string
   target_version?: string | null
+  /// 同 key 存在 <ver>.bak 备份时的回滚目标版本
+  rollback_to?: string | null
 }
 
 export interface InstallParams {

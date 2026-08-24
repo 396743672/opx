@@ -220,6 +220,9 @@ pub struct UpgradeInfo {
     pub current_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_version: Option<String>,
+    /// 同 key 存在 <ver>.bak 备份时填该旧版本（回滚目标）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

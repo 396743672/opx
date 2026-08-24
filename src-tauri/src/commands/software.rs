@@ -1830,6 +1830,7 @@ fn compute_upgrades(installed: &[InstalledSoftware], catalog: &Catalog) -> Vec<c
             name: entry.name.clone(),
             current_version: sw.version.clone(),
             target_version: target,
+            rollback_to: scan_rollback_backup(&sw.install_path),
         });
     }
     out
@@ -1841,6 +1842,125 @@ pub fn check_upgrades(manager: State<'_, Arc<SoftwareManager>>) -> Vec<crate::mo
     let catalog = manager.get_catalog();
     let installed = manager.get_installed();
     compute_upgrades(&installed, &catalog)
+}
+
+/// 扫描 install_path（apps/<key>/<cur>）所在 <key> 目录下的 *.bak 子目录，
+/// 返回第一个去 `.bak` 后缀的目录名作为回滚目标版本；无备份返回 None。
+/// 供 check_upgrades 填充 rollback_to（升级后同 key 会保留 <old_ver>.bak）。
+fn scan_rollback_backup(install_path: &str) -> Option<String> {
+    let dir = crate::utils::paths::resolve_install_path(install_path);
+    let key_dir = dir.parent()?;
+    std::fs::read_dir(key_dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
+        if !e.path().is_dir() {
+            return None;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".bak").map(|s| s.to_string())
+    })
+}
+
+/// 一键回滚：把升级时保留的 <old_ver>.bak 备份恢复为当前运行版本，
+/// 当前版本目录改名为 <cur>.off 保留。同 key 记录保持一条，字段（version/name/install_path）回退到旧版。
+#[tauri::command]
+pub async fn rollback_software(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<(), String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    oplog!("rollback", &software.name);
+
+    // 1. 解析 key、当前版本目录与同 key 的 .bak 备份
+    let key = software.key.clone();
+    let cur_version = software.version.clone();
+    let key_dir = crate::utils::paths::apps_dir().join(&key);
+    let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+    let cur_dir_name = old_install_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
+        .map_err(|e| format!("读取目录失败: {}", e))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".bak")
+                .map(|v| (v.to_string(), e.path()))
+        })
+        .collect();
+    baks.sort_by(|a, b| crate::commands::software::compare_versions(&a.0, &b.0));
+    let (old_ver, bak_path) = baks
+        .pop()
+        .ok_or_else(|| "无可用回滚备份".to_string())?;
+
+    // 2. 运行中/启动中 → 停止并等待
+    if software.status == SoftwareStatus::Running || software.status == SoftwareStatus::Starting {
+        let pid = software
+            .pid
+            .ok_or_else(|| "进程状态为运行中但无 PID，无法停止".to_string())?;
+        let (ok, _) = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+            .await
+            .map_err(|e| format!("停止线程异常: {}", e))?;
+        if !ok {
+            return Err(format!("停止当前版本进程失败（PID {} 仍在运行），请先手动停止", pid));
+        }
+        manager
+            .update_runtime_fields(
+                &software.id,
+                SoftwareStatus::Stopped,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| format!("状态更新失败: {}", e))?;
+        lifecycle::unregister(&software.id);
+    }
+
+    // 3. 目录互换：当前版本 → <cur>.off 保留，备份 .bak → 原目录名
+    if old_install_path.exists() && !cur_dir_name.is_empty() {
+        let off_path = key_dir.join(format!("{}.off", cur_dir_name));
+        if off_path.exists() {
+            std::fs::remove_dir_all(&off_path)
+                .map_err(|e| format!("清理旧 .off 目录失败: {}", e))?;
+        }
+        std::fs::rename(&old_install_path, &off_path)
+            .map_err(|e| format!("移动当前版本目录失败: {}", e))?;
+    }
+    std::fs::rename(&bak_path, &key_dir.join(&old_ver))
+        .map_err(|e| format!("恢复备份目录失败: {}", e))?;
+
+    // 4. 更新记录：version/name/install_path 回退到旧版，其余字段保持
+    let catalog = manager.get_catalog();
+    let catalog_name = catalog
+        .entries
+        .iter()
+        .find(|e| e.key == key)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| software.name.clone());
+    let mut new_record = software.clone();
+    new_record.version = old_ver.clone();
+    new_record.name = format!("{} {}", catalog_name, old_ver);
+    new_record.install_path = format!("{}/{}", key, old_ver);
+    new_record.status = SoftwareStatus::Unknown;
+    new_record.pid = None;
+    new_record.last_error = None;
+
+    let removed = manager
+        .remove_installed(&installed_id)
+        .map_err(|e| format!("删除旧记录失败: {}", e))?;
+    manager
+        .add_installed(new_record)
+        .map_err(|e| {
+            let _ = manager.add_installed(removed);
+            format!("写入新记录失败: {}", e)
+        })?;
+
+    Ok(())
 }
 
 #[cfg(test)]

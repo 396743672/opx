@@ -93,6 +93,7 @@ export default {
   importSuccess: 'Config imported',
   upgradeTo: 'Upgrade to {v}',
   upgradeHint: 'Install a newer version from catalog (keeps old version, does not auto-start)',
+  rollbackTo: 'Rollback to {v}',
 
   // Software categories (SoftwareListPage group titles)
   database: 'Database',

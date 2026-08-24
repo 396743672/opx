@@ -40,6 +40,15 @@
       >
         <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
       </button>
+      <button
+        v-if="rollbackTo"
+        class="btn"
+        :disabled="actingStates?.[software.id] != null"
+        :title="t('rollbackTo', { v: rollbackTo })"
+        @click="$emit('rollback')"
+      >
+        <Icon icon="mdi:history" /> {{ $t('rollbackTo', { v: rollbackTo }) }}
+      </button>
       <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
         <Icon icon="mdi:play" /> {{ $t('start') }}
       </button>
@@ -82,6 +91,7 @@ const props = defineProps<{
   software: InstalledSoftware
   actingStates?: Record<string, 'start' | 'stop'>
   upgradeTo?: string | null
+  rollbackTo?: string | null
 }>()
 
 defineEmits<{
@@ -94,6 +104,7 @@ defineEmits<{
   backup: []
   reset: []
   upgrade: []
+  rollback: []
 }>()
 
 const categoryClass = computed(() => {

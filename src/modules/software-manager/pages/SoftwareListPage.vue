@@ -49,6 +49,7 @@
             :software="mergeStatus(item)"
             :acting-states="actingStates"
             :upgrade-to="upgradeMap[item.key]"
+            :rollback-to="rollbackMap[item.key]"
             @start="onStart(item)"
             @stop="onStop(item)"
             @config="onConfig(item)"
@@ -58,6 +59,7 @@
             @backup="onBackup(item)"
             @reset="onReset(item)"
             @upgrade="onUpgrade(item)"
+            @rollback="onRollback(item)"
           />
         </div>
       </div>
@@ -158,16 +160,21 @@ const actingStates = ref<Record<string, 'start' | 'stop'>>({})
 const installStore = useInstallStore()
 // key → 目标升级版本（无可升级则无该 key）
 const upgradeMap = ref<Record<string, string>>({})
+// key → 可回滚的旧版本（同 key 存在 <ver>.bak 备份时）
+const rollbackMap = ref<Record<string, string>>({})
 const allCollapsed = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let completedUnlisten: UnlistenFn | null = null
 
 function applyUpgrades(list: UpgradeInfo[]) {
   const map: Record<string, string> = {}
+  const rb: Record<string, string> = {}
   for (const u of list) {
     if (u.target_version) map[u.key] = u.target_version
+    if (u.rollback_to) rb[u.key] = u.rollback_to
   }
   upgradeMap.value = map
+  rollbackMap.value = rb
 }
 
 /** 内置检测先行返回；随后并行在线刷新，失败静默回退 */
@@ -201,6 +208,18 @@ async function onUpgrade(item: InstalledSoftware) {
     installStore.createTask(installId, item.key, `升级 ${item.name}`)
   } catch (e) {
     console.error('upgrade failed:', e)
+  }
+}
+
+/** 一键回滚：恢复升级时保留的 .bak 备份（后端 rollback_software），完成后刷新列表与可升级徽标 */
+async function onRollback(item: InstalledSoftware) {
+  if (installStore.hasActiveTask(item.key)) return
+  try {
+    await invoke('rollback_software', { installedId: item.id })
+    loadInstalled()
+    loadUpgrades()
+  } catch (e) {
+    console.error('rollback failed:', e)
   }
 }
 
