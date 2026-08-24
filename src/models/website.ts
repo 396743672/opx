@@ -2,6 +2,14 @@
 export type LocationKind = 'Static' | 'Proxy'
 export type StaticSource = 'Dir' | 'Upload'
 
+export interface UpstreamTarget {
+  addr: string
+}
+export interface ProxyHeader {
+  name: string
+  value: string
+}
+
 export interface SiteLocation {
   path: string
   kind: LocationKind
@@ -9,6 +17,9 @@ export interface SiteLocation {
   root?: string | null
   spa_fallback: boolean
   target?: string | null
+  upstreams?: UpstreamTarget[] | null
+  proxy_headers?: ProxyHeader[] | null
+  proxy_subpath?: string | null
 }
 
 export interface SslConfig {
@@ -39,8 +50,8 @@ export function emptySite(): Site {
     ssl: { enabled: false, cert_path: null, key_path: null },
     enabled: false,
     locations: [
-      { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null },
-      { path: '/api', kind: 'Proxy', source: null, root: null, spa_fallback: false, target: null },
+      { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null, upstreams: [], proxy_headers: [], proxy_subpath: null },
+      { path: '/api', kind: 'Proxy', source: null, root: null, spa_fallback: false, target: null, upstreams: [], proxy_headers: [], proxy_subpath: null },
     ],
     custom_conf: false,
   }

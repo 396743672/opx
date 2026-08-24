@@ -12,6 +12,17 @@ pub enum StaticSource {
     Upload,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamTarget {
+    pub addr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHeader {
+    pub name: String,
+    pub value: String,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -28,6 +39,15 @@ pub struct Location {
     pub spa_fallback: bool,
     #[serde(default)]
     pub target: Option<String>,
+    /// 多后端负载均衡目标（与 target 二选一，非空时生成 upstream 块）
+    #[serde(default)]
+    pub upstreams: Vec<UpstreamTarget>,
+    /// 自定义 proxy_set_header（追加在默认头之后）
+    #[serde(default)]
+    pub proxy_headers: Vec<ProxyHeader>,
+    /// 子路径改写：非空时 proxy_pass 目标拼接该子路径
+    #[serde(default)]
+    pub proxy_subpath: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
