@@ -299,7 +299,15 @@ async fn do_upgrade(
         })?;
 
     // 5. 迁移用户数据/配置：从 .bak 复制 data_dirs + config_file_path 到新目录
-    copy_paths_to_new(&bak_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)?;
+    //    迁移失败时回滚：删除已装好的新目录，恢复 .bak → 旧目录，旧记录不动
+    copy_paths_to_new(&bak_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&new_install_path);
+            if bak_path.exists() {
+                let _ = std::fs::rename(&bak_path, &old_install_path);
+            }
+            e
+        })?;
 
     // 6. 记录合并：删旧记录，生成新记录（继承 config/auto_start/startup_order/port）
     let new_installed_id = uuid::Uuid::new_v4().to_string();
@@ -330,9 +338,14 @@ async fn do_upgrade(
         .remove_installed(installed_id)
         .map_err(|e| anyhow::anyhow!("删除旧记录失败: {}", e))?;
     let _ = old_removed;
+
+    // add_installed 失败时回滚：恢复旧记录，新目录保持已装状态、.bak 保留（旧目录待升级成功后再清理）
     manager
         .add_installed(new_record)
-        .map_err(|e| anyhow::anyhow!("写入新记录失败: {}", e))?;
+        .map_err(|e| {
+            let _ = manager.add_installed(old_removed);
+            anyhow::anyhow!("写入新记录失败: {}", e)
+        })?;
 
     // 7. emit completed（install_id 由前端 createTask 给定）
     let _ = app.emit(
@@ -371,6 +384,8 @@ fn copy_paths_to_new(
     }
 
     if let Some(rel) = config_file_path {
+        // 与 data_dirs 一致：绝对路径（旧 install_path 内）先归一化为相对路径，否则 join 静默失效
+        let rel = rel.strip_prefix(old_install_path).unwrap_or(rel);
         let src = bak_path.join(rel);
         if src.exists() {
             let dst = new_install_path.join(rel);
@@ -1943,6 +1958,28 @@ mod tests {
         super::copy_paths_to_new(&bak, &old, &new, &data_dirs, &config).unwrap();
 
         assert!(new.join("data").join("keep.txt").exists());
+        assert!(new.join("conf").join("nginx.conf").exists());
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn copy_paths_migrates_absolute_config_file_path() {
+        use std::path::PathBuf;
+        // 绝对路径 config_file_path（模拟 nginx 返回 {install_path}/conf/nginx.conf）
+        let tmp = std::env::temp_dir().join(format!("opx_upg_test_{}", uuid::Uuid::new_v4()));
+        let old = tmp.join("old");
+        let bak = tmp.join("old.bak");
+        let new = tmp.join("new");
+        let old_install_path = tmp.join("apps").join("nginx");
+        std::fs::create_dir_all(old.join("conf")).unwrap();
+        std::fs::write(old.join("conf").join("nginx.conf"), b"server {}").unwrap();
+        std::fs::rename(&old, &bak).unwrap();
+
+        let data_dirs: Vec<PathBuf> = vec![];
+        // 绝对路径 config：{install_path}/conf/nginx.conf，需归一化后迁到新目录 conf/nginx.conf
+        let config = Some(old_install_path.join("conf").join("nginx.conf"));
+        super::copy_paths_to_new(&bak, &old_install_path, &new, &data_dirs, &config).unwrap();
+
         assert!(new.join("conf").join("nginx.conf").exists());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
