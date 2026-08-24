@@ -37,7 +37,7 @@
             @click="activeSource = idx"
           >
             <Icon :icon="s.kind === 'ProviderFile' ? 'mdi:file' : 'mdi:console'" />
-            {{ s.kind === 'ProviderFile' ? $t('fileLog') : $t('consoleLog') }}
+            {{ s.label || (s.kind === 'ProviderFile' ? $t('fileLog') : $t('consoleLog')) }}
             <span v-if="s.has_levels" class="lvl-badge" :title="$t('level')">L</span>
           </button>
         </div>

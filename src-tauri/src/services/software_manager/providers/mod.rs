@@ -172,6 +172,7 @@ pub fn default_log_sources(ctx: &LogContext) -> Vec<LogSource> {
             kind: LogSourceKind::StdoutRedirect,
             has_levels: false, // 通用 stdout 默认无级别
             level_pattern: None,
+            label: None,
         }]
     } else {
         vec![]

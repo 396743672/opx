@@ -234,6 +234,8 @@ export interface LogSource {
   has_levels: boolean
   /** provider 提供的级别提取正则；null 时用前端内置默认正则 */
   level_pattern: string | null
+  /** 展示名（如「访问日志」「错误日志」）；null 时前端用通用标签 */
+  label?: string | null
 }
 
 /** 读取日志返回的分块（前端轮询/分页消费） */

@@ -1976,6 +1976,9 @@ pub async fn rollback_software(
     unzip_to(&bak_zip_path, &restore_path)
         .map_err(|e| format!("解压恢复备份失败: {}", e))?;
 
+    // 回滚后旧备份使命结束：删除 .bak.zip，避免残留导致同一版本可无限回滚
+    let _ = std::fs::remove_file(&bak_zip_path);
+
     // 4. 更新记录：version/name/install_path 回退到旧版，其余字段保持
     let catalog = manager.get_catalog();
     let catalog_name = catalog

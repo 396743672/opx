@@ -161,6 +161,9 @@ pub struct LogSource {
     pub has_levels: bool,
     /// provider 提供的级别提取正则；None 时用 LogService 内置默认正则
     pub level_pattern: Option<String>,
+    /// 展示名（如 nginx 的「访问日志」「错误日志」）；None 时前端回退通用标签
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// 读取日志返回的分块（前端轮询/分页消费）

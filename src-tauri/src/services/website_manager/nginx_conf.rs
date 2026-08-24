@@ -197,6 +197,31 @@ pub fn ensure_include(nginx_conf: &str) -> String {
     nginx_conf.to_string()
 }
 
+/// 启用 nginx JSON 访问日志（幂等）：在 http {} 块顶部注入
+/// `log_format opx_json escape=json '...'` 与 `access_log logs/access.log opx_json;`。
+/// JSON 结构化行便于后续日志分析/防护功能程序化消费。
+pub fn ensure_access_log(nginx_conf: &str) -> String {
+    if nginx_conf.contains("log_format opx_json") {
+        return nginx_conf.to_string();
+    }
+    let http_idx = nginx_conf.find("http {").or_else(|| nginx_conf.find("http{"));
+    let Some(idx) = http_idx else {
+        return nginx_conf.to_string();
+    };
+    let Some(brace_off) = nginx_conf[idx..].find('{') else {
+        return nginx_conf.to_string();
+    };
+    let pos = idx + brace_off + 1;
+    let block = {
+        "    log_format opx_json escape=json '{\"time\":\"$time_iso8601\",\"remote_addr\":\"$remote_addr\",\"method\":\"$request_method\",\"uri\":\"$request_uri\",\"status\":$status,\"body_bytes\":$body_bytes_sent,\"request_time\":$request_time,\"host\":\"$host\",\"referer\":\"$http_referer\",\"user_agent\":\"$http_user_agent\"}';\n    access_log logs/access.log opx_json;\n"
+    };
+    let mut out = String::with_capacity(nginx_conf.len() + block.len());
+    out.push_str(&nginx_conf[..pos]);
+    out.push_str(block);
+    out.push_str(&nginx_conf[pos..]);
+    out
+}
+
 /// 确保主配置 http {} 块内含 WebSocket 反代所需的
 /// `map $http_upgrade $connection_upgrade { ... }`（缺失则注入一次，幂等）。
 /// map 必须在 http{} 内、server{} 外，故与 ensure_include 一样注入到 http { 之后。

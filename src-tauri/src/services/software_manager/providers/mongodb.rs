@@ -137,6 +137,7 @@ impl SoftwareProvider for MongoDbProvider {
                 kind: LogSourceKind::ProviderFile,
                 has_levels: true,
                 level_pattern: None,
+                label: None,
             });
         }
         sources
