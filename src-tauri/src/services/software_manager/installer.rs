@@ -38,12 +38,6 @@ fn cleanup_path(path: &Path) {
     }
 }
 
-fn cleanup_file(path: &Path) {
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-}
-
 fn emit_event(app: &AppHandle, payload: serde_json::Value) {
     let _ = app.emit("install-progress", payload);
 }
@@ -87,20 +81,6 @@ pub async fn install_software(
     params: InstallParams,
     install_id: String,
 ) {
-    // 缓存目录：cache/{key}/（持久保留，复用避免重复下载）
-    let cache_key_dir = paths::cache_dir().join(&params.key);
-    if let Err(e) = fs::create_dir_all(&cache_key_dir) {
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id,
-                "phase": "failed",
-                "error": format!("创建缓存目录失败: {}", e),
-                "stage": "download"
-            }),
-        );
-        return;
-    }
     let install_path = paths::apps_dir()
         .join(&params.key)
         .join(&params.version);
@@ -165,22 +145,7 @@ pub async fn install_software(
         return;
     }
 
-    // 缓存文件名按归档格式派生：
-    // - Zip → {version}.zip；TarGz → {version}.tar.gz
-    // - Executable → 取 URL 文件名（如 minio.exe），避免存成误导性的 .zip
-    let cache_file_name = match version_info.archive.format {
-        ArchiveFormat::Zip => format!("{}.zip", params.version),
-        ArchiveFormat::TarGz => format!("{}.tar.gz", params.version),
-        ArchiveFormat::Executable => mirror
-            .url
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("app.exe")
-            .to_string(),
-    };
-    let cache_path = cache_key_dir.join(&cache_file_name);
-
+    // 查重
     if manager.is_installed(&params.key, &params.version) {
         emit_event(
             &app,
@@ -226,143 +191,8 @@ pub async fn install_software(
     );
 
     let result: Result<()> = async {
-        // 检查缓存：若 cache_path 存在则跳过下载
-        let cache_hit = cache_path.exists();
-        if cache_hit {
-            emit_event(
-                &app,
-                serde_json::json!({
-                    "install_id": install_id.clone(),
-                    "phase": "downloading",
-                    "downloaded": 0,
-                    "total": serde_json::Value::Null,
-                    "percent": 100,
-                    "cached": true
-                }),
-            );
-        } else {
-            emit_event(
-                &app,
-                serde_json::json!({
-                    "install_id": install_id.clone(),
-                    "phase": "downloading",
-                    "downloaded": 0,
-                    "total": serde_json::Value::Null,
-                    "percent": serde_json::Value::Null
-                }),
-            );
-
-            let app_for_progress = app.clone();
-            let install_id_for_progress = install_id.clone();
-            // 节流：大文件按每 chunk 回调会刷屏 IPC，限制为最多每 200ms 或百分比变化时 emit 一次
-            let mut last_emit = std::time::Instant::now();
-            let mut last_percent: i64 = -1;
-            download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
-                let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
-                let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
-                if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                    last_emit = std::time::Instant::now();
-                    if let Some(p) = percent {
-                        last_percent = p;
-                    }
-                    emit_event(
-                        &app_for_progress,
-                        serde_json::json!({
-                            "install_id": install_id_for_progress.clone(),
-                            "phase": "downloading",
-                            "downloaded": downloaded,
-                            "total": total,
-                            "percent": percent
-                        }),
-                    );
-                }
-            })
-            .await?;
-        }
-
-        if let Some(expected_sha) = &version_info.archive.sha256 {
-            let computed = compute_sha256(&cache_path)?;
-            if computed != expected_sha.to_lowercase() {
-                // 校验失败：缓存可能损坏，删除缓存让下次重新下载
-                let _ = fs::remove_file(&cache_path);
-                return Err(anyhow::anyhow!("SHA256 校验失败"));
-            }
-        }
-
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id.clone(),
-                "phase": "extracting",
-                "percent": 0
-            }),
-        );
-
-        let app_ep = app.clone();
-        let id_ep = install_id.clone();
-        let cache_path2 = cache_path.clone();
-        let install_path2 = install_path.clone();
-        let fmt = version_info.archive.format.clone();
-        let blocking_result = tokio::task::spawn_blocking(move || {
-            let mut throttle = ThrottledEmitter::new();
-            let on_progress = move |extracted: u64, total: u64| {
-                let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
-                if throttle.should_emit(percent) {
-                    emit_event(
-                        &app_ep,
-                        serde_json::json!({
-                            "install_id": id_ep.clone(),
-                            "phase": "extracting",
-                            "percent": percent
-                        }),
-                    );
-                }
-            };
-
-            match fmt {
-                ArchiveFormat::Zip => {
-                    archive::extract_zip_flatten(&cache_path2, &install_path2, on_progress)
-                }
-                ArchiveFormat::TarGz => {
-                    archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
-                }
-                ArchiveFormat::Executable => {
-                    let dest_file = install_path2.join(
-                        cache_path2.file_name().unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
-                    );
-                    fs::copy(&cache_path2, &dest_file).map(|_| ()).map_err(Into::into)
-                }
-            }
-        }).await;
-        let inner = blocking_result.map_err(|e| anyhow::anyhow!("解压线程异常: {}", e))?;
-        inner?;
-
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id.clone(),
-                "phase": "extracting",
-                "percent": 100
-            }),
-        );
-
-        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
-            let ctx = InstallContext::new(
-                params.key.clone(),
-                params.version.clone(),
-                install_path.to_string_lossy().to_string(),
-            );
-            provider.post_install(&ctx)?;
-        }
-
-        emit_event(
-            &app,
-            serde_json::json!({
-                "install_id": install_id.clone(),
-                "phase": "extracting",
-                "percent": 100
-            }),
-        );
+        // 下载到缓存→SHA 校验→解压到 install_path→provider.post_install（含进度事件）
+        download_and_extract(&params, &install_path, &app, &install_id, version_info, mirror).await?;
 
         // 关键：在 move 进 InstalledSoftware 之前克隆 installed_id，
         // 后续的 jre_default 更新和 completed 事件需要使用这个 id。
@@ -426,10 +256,7 @@ pub async fn install_software(
                 "stage": "download"
             }),
         );
-        cleanup_file(&cache_path); // 失败时删缓存（可能不完整）
         cleanup_path(&install_path);
-    } else {
-        // 成功：保留 cache_path 供下次复用，不删除
     }
 
     manager.remove_install_task(&install_id);
@@ -629,6 +456,183 @@ pub async fn install_custom(
     }
 
     manager.remove_install_task(&install_id);
+}
+
+/// 下载到缓存→SHA 校验→解压到 install_path→provider.post_install（含进度事件）。
+/// `install_software` / `upgrade_software` 共用；不含 add_installed（记录合并由调用方负责）。
+pub async fn download_and_extract(
+    params: &InstallParams,
+    install_path: &Path,
+    app: &AppHandle,
+    install_id: &str,
+    version_info: &CatalogVersion,
+    mirror: &MirrorSource,
+) -> Result<(), anyhow::Error> {
+    // 缓存目录：cache/{key}/（持久保留，复用避免重复下载）
+    let cache_key_dir = paths::cache_dir().join(&params.key);
+    fs::create_dir_all(&cache_key_dir)?;
+
+    // 缓存文件名按归档格式派生：
+    // - Zip → {version}.zip；TarGz → {version}.tar.gz
+    // - Executable → 取 URL 文件名（如 minio.exe），避免存成误导性的 .zip
+    let cache_file_name = match version_info.archive.format {
+        ArchiveFormat::Zip => format!("{}.zip", params.version),
+        ArchiveFormat::TarGz => format!("{}.tar.gz", params.version),
+        ArchiveFormat::Executable => mirror
+            .url
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("app.exe")
+            .to_string(),
+    };
+    let cache_path = cache_key_dir.join(&cache_file_name);
+
+    // 检查缓存：若 cache_path 存在则跳过下载
+    let cache_hit = cache_path.exists();
+    if cache_hit {
+        emit_event(
+            app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "downloading",
+                "downloaded": 0,
+                "total": serde_json::Value::Null,
+                "percent": 100,
+                "cached": true
+            }),
+        );
+    } else {
+        emit_event(
+            app,
+            serde_json::json!({
+                "install_id": install_id,
+                "phase": "downloading",
+                "downloaded": 0,
+                "total": serde_json::Value::Null,
+                "percent": serde_json::Value::Null
+            }),
+        );
+
+        let app_for_progress = app.clone();
+        let install_id_for_progress = install_id.to_string();
+        // 节流：大文件按每 chunk 回调会刷屏 IPC，限制为最多每 200ms 或百分比变化时 emit 一次
+        let mut last_emit = std::time::Instant::now();
+        let mut last_percent: i64 = -1;
+        if let Err(e) = download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
+            let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+            let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
+            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                last_emit = std::time::Instant::now();
+                if let Some(p) = percent {
+                    last_percent = p;
+                }
+                emit_event(
+                    &app_for_progress,
+                    serde_json::json!({
+                        "install_id": install_id_for_progress.clone(),
+                        "phase": "downloading",
+                        "downloaded": downloaded,
+                        "total": total,
+                        "percent": percent
+                    }),
+                );
+            }
+        })
+        .await
+        {
+            // 下载失败：删除不完整的缓存文件，避免下次误当命中复用
+            let _ = fs::remove_file(&cache_path);
+            return Err(e);
+        }
+    }
+
+    if let Some(expected_sha) = &version_info.archive.sha256 {
+        let computed = compute_sha256(&cache_path)?;
+        if computed != expected_sha.to_lowercase() {
+            // 校验失败：缓存可能损坏，删除缓存让下次重新下载
+            let _ = fs::remove_file(&cache_path);
+            return Err(anyhow::anyhow!("SHA256 校验失败"));
+        }
+    }
+
+    emit_event(
+        app,
+        serde_json::json!({
+            "install_id": install_id,
+            "phase": "extracting",
+            "percent": 0
+        }),
+    );
+
+    let app_ep = app.clone();
+    let id_ep = install_id.to_string();
+    let cache_path2 = cache_path.clone();
+    let install_path2 = install_path.to_path_buf();
+    let fmt = version_info.archive.format.clone();
+    let blocking_result = tokio::task::spawn_blocking(move || {
+        let mut throttle = ThrottledEmitter::new();
+        let on_progress = move |extracted: u64, total: u64| {
+            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            if throttle.should_emit(percent) {
+                emit_event(
+                    &app_ep,
+                    serde_json::json!({
+                        "install_id": id_ep.clone(),
+                        "phase": "extracting",
+                        "percent": percent
+                    }),
+                );
+            }
+        };
+
+        match fmt {
+            ArchiveFormat::Zip => {
+                archive::extract_zip_flatten(&cache_path2, &install_path2, on_progress)
+            }
+            ArchiveFormat::TarGz => {
+                archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
+            }
+            ArchiveFormat::Executable => {
+                let dest_file = install_path2.join(
+                    cache_path2.file_name().unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
+                );
+                fs::copy(&cache_path2, &dest_file).map(|_| ()).map_err(Into::into)
+            }
+        }
+    })
+    .await;
+    let inner = blocking_result.map_err(|e| anyhow::anyhow!("解压线程异常: {}", e))?;
+    inner?;
+
+    emit_event(
+        app,
+        serde_json::json!({
+            "install_id": install_id,
+            "phase": "extracting",
+            "percent": 100
+        }),
+    );
+
+    if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+        let ctx = InstallContext::new(
+            params.key.clone(),
+            params.version.clone(),
+            install_path.to_string_lossy().to_string(),
+        );
+        provider.post_install(&ctx)?;
+    }
+
+    emit_event(
+        app,
+        serde_json::json!({
+            "install_id": install_id,
+            "phase": "extracting",
+            "percent": 100
+        }),
+    );
+
+    Ok(())
 }
 
 /// 从内置 zip 安装（离线安装）

@@ -7,8 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, LogContext, SoftwareProvider, StartCommand,
-    StartContext, default_log_sources,
+    ConfigContext, DataDirContext, HealthContext, InstallContext, LogContext, SoftwareProvider,
+    StartCommand, StartContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -273,5 +273,13 @@ impl SoftwareProvider for NginxProvider {
 
     fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {
         Some(PathBuf::from(&ctx.install_path).join("conf").join("nginx.conf"))
+    }
+
+    /// 升级时需迁移到新版的用户目录：站点配置（conf/sites）+ 站点数据（sites-data）
+    fn data_dirs(&self, _ctx: &DataDirContext) -> Vec<PathBuf> {
+        vec![
+            PathBuf::from("sites-data"),
+            PathBuf::from("conf/sites"),
+        ]
     }
 }

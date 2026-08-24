@@ -193,16 +193,12 @@ async function refreshUpgrades(keys: string[]) {
   }
 }
 
-/** 一键升级：安装 catalog 中的目标版本（新旧并存，不自动启动） */
+/** 替换式升级：停旧→装新→迁移数据，列表保持一条记录（后端 upgrade_software） */
 async function onUpgrade(item: InstalledSoftware) {
-  const target = upgradeMap.value[item.key]
-  if (!target) return
   if (installStore.hasActiveTask(item.key)) return // 该软件已有安装/升级任务防重
   try {
-    const installId = (await invoke('install_software', {
-      params: { key: item.key, version: target, mirror_index: 0, set_as_default_jre: false },
-    })) as string
-    installStore.createTask(installId, item.key, `${item.name} → ${target}`)
+    const installId = (await invoke('upgrade_software', { installedId: item.id })) as string
+    installStore.createTask(installId, item.key, `升级 ${item.name}`)
   } catch (e) {
     console.error('upgrade failed:', e)
   }

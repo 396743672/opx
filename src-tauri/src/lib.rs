@@ -152,13 +152,6 @@ pub fn run() {
                 }
                 let tray = builder
                     .on_menu_event(move |app, event| match event.id.as_ref() {
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = set_focus_safe(&window);
-                            }
-                        }
                         "quit" => {
                             let _ = app.emit("close-requested", ());
                         }
@@ -177,11 +170,7 @@ pub fn run() {
                         } = event
                         {
                             let app = tray.app_handle();
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = set_focus_safe(&window);
-                            }
+                            show_main_window(app);
                         }
                     })
                     .build(app)?;
@@ -222,6 +211,7 @@ pub fn run() {
             commands::software::refresh_catalog,
             commands::software::list_installed_software,
             commands::software::install_software,
+            commands::software::upgrade_software,
             commands::software::install_custom,
             commands::software::uninstall_software,
             commands::software::fetch_remote_versions_for,
@@ -303,6 +293,20 @@ fn set_focus_safe(window: &tauri::WebviewWindow) -> Result<(), tauri::Error> {
     window.set_focus()
 }
 
+/// 显示并聚焦主窗口（托盘恢复用）。Windows 前台锁可能让 set_focus 被忽略
+/// （后台进程无法抢前台），用「置顶→取消」强制把窗口提到最前（社区通用做法）。
+fn show_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("[tray] show_main_window: main window not found");
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = set_focus_safe(&window);
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_always_on_top(false);
+}
+
 /// 构建含运行中软件列表的托盘菜单，并返回 tooltip 文本。
 /// 菜单项：显示窗口 / (分隔) / 运行中软件(点击停止) / (分隔) / 退出。
 #[cfg(desktop)]
@@ -310,14 +314,12 @@ fn build_tray_menu(
     app: &AppHandle,
     manager: &std::sync::Arc<crate::services::software_manager::SoftwareManager>,
 ) -> tauri::Result<(Menu<tauri::Wry>, String)> {
-    let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
     let (running, tooltip) = running_softwares(&manager.get_installed());
 
     // 用 owned Box 持有全部菜单项，再取引用构造成异构图项数组（解决异构生命周期借用）
     let mut owned: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = Vec::new();
-    owned.push(Box::new(show_item));
     if !running.is_empty() {
         owned.push(Box::new(PredefinedMenuItem::separator(app)?));
         for (id, name) in &running {

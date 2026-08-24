@@ -17,7 +17,7 @@ use crate::services::software_manager::{
 };
 use crate::services::software_manager::config_editor::FormData;
 use crate::services::software_manager::providers::custom_templates;
-use crate::services::software_manager::providers::{ConfigContext, HealthContext, StartContext};
+use crate::services::software_manager::providers::{ConfigContext, DataDirContext, HealthContext, StartContext};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -145,6 +145,264 @@ pub async fn install_software(
         installer::install_software(app, manager_arc, params, install_id_for_task).await;
     });
     Ok(install_id)
+}
+
+/// 替换式升级：停旧 → 备份旧目录为 .bak → 装新版 → 迁移数据/配置 → 合并记录。
+/// 返回安装任务 id（供前端 createTask 跟踪进度），进度/完成事件复用 install-progress。
+#[tauri::command]
+pub async fn upgrade_software(
+    manager: State<'_, Arc<SoftwareManager>>,
+    app: AppHandle,
+    installed_id: String,
+) -> Result<String, String> {
+    let install_id = uuid::Uuid::new_v4().to_string();
+    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+    let installed_id_for_task = installed_id.clone();
+    let install_id_for_task = install_id.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = do_upgrade(&manager_arc, &app, &installed_id_for_task, &install_id_for_task).await {
+            let _ = app.emit(
+                "install-progress",
+                serde_json::json!({
+                    "install_id": install_id_for_task,
+                    "phase": "failed",
+                    "error": format!("{}", e),
+                    "stage": "upgrade"
+                }),
+            );
+        }
+    });
+    Ok(install_id)
+}
+
+/// 替换式升级核心流程（供 upgrade_software 后台任务执行）
+async fn do_upgrade(
+    manager: &Arc<SoftwareManager>,
+    app: &AppHandle,
+    installed_id: &str,
+    install_id: &str,
+) -> anyhow::Result<()> {
+    let software = manager
+        .find_installed(installed_id)
+        .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+    oplog!("upgrade", &software.name);
+
+    // 目标版本：compute_upgrades 中该软件的 target_version（无可升级则报错）
+    let catalog = manager.get_catalog();
+    let installed_all = manager.get_installed();
+    let target_version = compute_upgrades(&installed_all, &catalog)
+        .into_iter()
+        .find(|u| u.key == software.key)
+        .and_then(|u| u.target_version)
+        .ok_or_else(|| anyhow::anyhow!("{} 已是最新版本", software.name))?;
+
+    let providers_list = providers::all_providers();
+    let provider = providers_list
+        .iter()
+        .find(|p| p.key() == software.key)
+        .ok_or_else(|| anyhow::anyhow!("未找到 provider: {}", software.key))?;
+
+    // 数据/配置迁移目录（相对 install_path）+ 配置文件相对路径
+    let data_dirs = provider.data_dirs(&DataDirContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    });
+    let config_file_path = provider.config_file_path(&ConfigContext {
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+    });
+
+    // 1. 若运行中（Running/Starting）→ 停止并等待
+    if software.status == SoftwareStatus::Running || software.status == SoftwareStatus::Starting {
+        if let Some(pid) = software.pid {
+            let (ok, _) = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+                .await
+                .map_err(|e| anyhow::anyhow!("停止线程异常: {}", e))?;
+            if !ok {
+                return Err(anyhow::anyhow!("停止旧版本进程失败（PID {} 仍在运行）", pid));
+            }
+        }
+        manager
+            .update_runtime_fields(
+                &software.id,
+                SoftwareStatus::Stopped,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| anyhow::anyhow!("状态更新失败: {}", e))?;
+        lifecycle::unregister(&software.id);
+    }
+
+    // 2. 备份：旧目录 rename 为 <old_ver>.bak（已有同名先删）
+    let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+    let bak_path = old_install_path.with_file_name(format!(
+        "{}.bak",
+        old_install_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+    ));
+    if bak_path.exists() {
+        std::fs::remove_dir_all(&bak_path)
+            .map_err(|e| anyhow::anyhow!("清理旧备份失败: {}", e))?;
+    }
+    if old_install_path.exists() {
+        std::fs::rename(&old_install_path, &bak_path)
+            .map_err(|e| anyhow::anyhow!("备份旧目录失败: {}", e))?;
+    }
+
+    // 2.5 备份后把新版本父目录建好（download_and_extract 解压时落到新目录）
+    let new_install_path = crate::utils::paths::apps_dir()
+        .join(&software.key)
+        .join(&target_version);
+    std::fs::create_dir_all(&new_install_path)
+        .map_err(|e| anyhow::anyhow!("创建新版安装目录失败: {}", e))?;
+
+    // 3. 装新版到 <key>/<target_version>（下载→SHA 校验→解压→post_install）
+    //    从 builtin 静态目录取 version_info/mirror（upgrade 目标 vs 当前目录优先匹配）
+    let catalog_entry = catalog
+        .entries
+        .iter()
+        .find(|e| e.key == software.key)
+        .ok_or_else(|| anyhow::anyhow!("未知软件：{}", software.key))?;
+    let version_info = catalog_entry
+        .versions
+        .iter()
+        .find(|v| v.version == target_version)
+        .ok_or_else(|| anyhow::anyhow!("{} 不支持版本 {}", catalog_entry.name, target_version))?;
+    // 选可联网下载的镜像（builtin 镜像无真实 URL，download_and_extract 走 HTTP 下载）
+    let mirror = version_info
+        .mirrors
+        .iter()
+        .find(|m| m.builtin.is_none())
+        .or_else(|| version_info.mirrors.first())
+        .ok_or_else(|| anyhow::anyhow!("{} 无可用镜像源", target_version))?;
+
+    let params = InstallParams {
+        key: software.key.clone(),
+        version: target_version.clone(),
+        mirror_index: 0,
+        set_as_default_jre: false,
+    };
+
+    // 4. 下载+解压到新目录
+    installer::download_and_extract(&params, &new_install_path, app, install_id, version_info, mirror)
+        .await
+        .map_err(|e| {
+            // 解压失败：回滚新目录，恢复 .bak → 旧目录
+            let _ = std::fs::remove_dir_all(&new_install_path);
+            if bak_path.exists() {
+                let _ = std::fs::rename(&bak_path, &old_install_path);
+            }
+            e
+        })?;
+
+    // 5. 迁移用户数据/配置：从 .bak 复制 data_dirs + config_file_path 到新目录
+    copy_paths_to_new(&bak_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)?;
+
+    // 6. 记录合并：删旧记录，生成新记录（继承 config/auto_start/startup_order/port）
+    let new_installed_id = uuid::Uuid::new_v4().to_string();
+    let new_record = InstalledSoftware {
+        id: new_installed_id.clone(),
+        key: software.key.clone(),
+        version: target_version.clone(),
+        name: format!("{} {}", catalog_entry.name, target_version),
+        install_path: format!("{}/{}", software.key, target_version),
+        install_time: chrono::Utc::now().naive_utc(),
+        status: SoftwareStatus::Unknown,
+        port: software.port,
+        config: software.config.clone(),
+        is_custom: software.is_custom,
+        auto_start_on_app_start: software.auto_start_on_app_start,
+        startup_order: software.startup_order,
+        source: software.source.clone(),
+        pid: None,
+        last_started_at: None,
+        last_stopped_at: None,
+        last_error: None,
+        custom_start_command: None,
+        category: software.category.clone(),
+    };
+
+    // remove_installed 会删除旧安装目录（旧目录已改名 .bak，此时路径不存在，不误删备份）
+    let old_removed = manager
+        .remove_installed(installed_id)
+        .map_err(|e| anyhow::anyhow!("删除旧记录失败: {}", e))?;
+    let _ = old_removed;
+    manager
+        .add_installed(new_record)
+        .map_err(|e| anyhow::anyhow!("写入新记录失败: {}", e))?;
+
+    // 7. emit completed（install_id 由前端 createTask 给定）
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "install_id": install_id,
+            "phase": "completed",
+            "installed_id": new_installed_id,
+        }),
+    );
+
+    Ok(())
+}
+
+/// 从备份目录复制 data_dirs（目录递归）+ config_file_path 指向的文件到新目录。
+/// 目标父目录不存在则创建；跳过源不存在的路径。
+/// data_dirs 可能返回绝对路径（旧 install_path 内），先归一化为相对路径再映射到新目录。
+fn copy_paths_to_new(
+    bak_path: &std::path::Path,
+    old_install_path: &std::path::Path,
+    new_install_path: &std::path::Path,
+    data_dirs: &[std::path::PathBuf],
+    config_file_path: &Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    for rel in data_dirs {
+        let rel = rel.strip_prefix(old_install_path).unwrap_or(rel);
+        let src = bak_path.join(rel);
+        if src.exists() {
+            let dst = new_install_path.join(rel);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| anyhow::anyhow!("创建目标目录失败 {}: {}", parent.display(), e))?;
+            }
+            copy_dir_recursive(&src, &dst)?;
+        }
+    }
+
+    if let Some(rel) = config_file_path {
+        let src = bak_path.join(rel);
+        if src.exists() {
+            let dst = new_install_path.join(rel);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| anyhow::anyhow!("创建目标目录失败 {}: {}", parent.display(), e))?;
+            }
+            std::fs::copy(&src, &dst)
+                .map_err(|e| anyhow::anyhow!("复制配置文件失败 {}: {}", dst.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 递归复制目录（std::fs，无第三方依赖）
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| anyhow::anyhow!("创建目录失败 {}: {}", dst.display(), e))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| anyhow::anyhow!("读取目录失败 {}: {}", src.display(), e))?
+    {
+        let entry = entry.map_err(|e| anyhow::anyhow!("读取目录项失败: {}", e))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)
+                .map_err(|e| anyhow::anyhow!("复制文件失败 {}: {}", to.display(), e))?;
+        }
+    }
+    Ok(())
 }
 
 /// 安装用户上传的自定义压缩包
@@ -1660,5 +1918,32 @@ mod tests {
     #[test]
     fn version_non_numeric_falls_back_to_string() {
         assert_eq!(compare_versions("v1", "v2"), Ordering::Less);
+    }
+
+    #[test]
+    fn copy_paths_migrates_relative_and_absolute_data_dirs() {
+        use std::path::PathBuf;
+        // 构造临时目录：old/data/keep.txt、old/conf/nginx.conf
+        let tmp = std::env::temp_dir().join(format!("opx_upg_test_{}", uuid::Uuid::new_v4()));
+        let old = tmp.join("old");
+        let bak = tmp.join("old.bak");
+        let new = tmp.join("new");
+        std::fs::create_dir_all(old.join("data")).unwrap();
+        std::fs::create_dir_all(old.join("conf")).unwrap();
+        std::fs::write(old.join("data").join("keep.txt"), b"x").unwrap();
+        std::fs::write(old.join("conf").join("nginx.conf"), b"server {}").unwrap();
+        std::fs::rename(&old, &bak).unwrap();
+
+        // 混合：相对 data/、绝对 {old}/data（模拟默认 provider 返回绝对路径）
+        let data_dirs = vec![
+            PathBuf::from("data"),
+            old.join("data"),
+        ];
+        let config = Some(PathBuf::from("conf/nginx.conf"));
+        super::copy_paths_to_new(&bak, &old, &new, &data_dirs, &config).unwrap();
+
+        assert!(new.join("data").join("keep.txt").exists());
+        assert!(new.join("conf").join("nginx.conf").exists());
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
