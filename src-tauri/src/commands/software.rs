@@ -237,22 +237,14 @@ async fn do_upgrade(
         lifecycle::unregister(&software.id);
     }
 
-    // 2. 备份：旧目录 rename 为 <old_ver>.bak（已有同名先删）
+    // 2. 备份源：旧安装目录（不 rename，装完压缩为 {old_ver}.bak.zip 省磁盘）
     let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
-    let bak_path = old_install_path.with_file_name(format!(
-        "{}.bak",
+    let bak_zip_path = old_install_path.with_file_name(format!(
+        "{}.bak.zip",
         old_install_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
     ));
-    if bak_path.exists() {
-        std::fs::remove_dir_all(&bak_path)
-            .map_err(|e| anyhow::anyhow!("清理旧备份失败: {}", e))?;
-    }
-    if old_install_path.exists() {
-        std::fs::rename(&old_install_path, &bak_path)
-            .map_err(|e| anyhow::anyhow!("备份旧目录失败: {}", e))?;
-    }
 
-    // 2.5 备份后把新版本父目录建好（download_and_extract 解压时落到新目录）
+    // 2.5 把新版本父目录建好（download_and_extract 解压时落到新目录）
     let new_install_path = crate::utils::paths::apps_dir()
         .join(&software.key)
         .join(&target_version);
@@ -290,24 +282,37 @@ async fn do_upgrade(
     installer::download_and_extract(&params, &new_install_path, app, install_id, version_info, mirror)
         .await
         .map_err(|e| {
-            // 解压失败：回滚新目录，恢复 .bak → 旧目录
+            // 解压失败：回滚新目录（旧目录未动）
             let _ = std::fs::remove_dir_all(&new_install_path);
-            if bak_path.exists() {
-                let _ = std::fs::rename(&bak_path, &old_install_path);
-            }
             e
         })?;
 
-    // 5. 迁移用户数据/配置：从 .bak 复制 data_dirs + config_file_path 到新目录
-    //    迁移失败时回滚：删除已装好的新目录，恢复 .bak → 旧目录，旧记录不动
-    copy_paths_to_new(&bak_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)
+    // 5. 迁移用户数据/配置：从旧目录复制 data_dirs + config_file_path 到新目录
+    //    迁移失败时回滚：删除已装好的新目录，旧目录不动，旧记录不动
+    copy_paths_to_new(&old_install_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)
         .map_err(|e| {
             let _ = std::fs::remove_dir_all(&new_install_path);
-            if bak_path.exists() {
-                let _ = std::fs::rename(&bak_path, &old_install_path);
-            }
             e
         })?;
+
+    // 5.5 压缩备份旧目录为 {old_ver}.bak.zip（已有同名先删），成功后删除旧目录。
+    //     压缩失败回滚：删除新目录、旧目录保留（zip 未生成则无害）。
+    if old_install_path.exists() {
+        if bak_zip_path.exists() {
+            std::fs::remove_file(&bak_zip_path)
+                .map_err(|e| anyhow::anyhow!("清理旧备份失败: {}", e))?;
+        }
+        zip_dir(&old_install_path, &bak_zip_path)
+            .map_err(|e| anyhow::anyhow!("压缩备份旧目录失败: {}", e))
+            .map_err(|e| {
+                let _ = std::fs::remove_dir_all(&new_install_path);
+                e
+            })?;
+        // 删除旧目录失败不阻塞（zip 已生成，可视为备份完成；残留目录后续可手动清理）
+        if let Err(e) = std::fs::remove_dir_all(&old_install_path) {
+            tracing::warn!(path = %old_install_path.display(), err = %e, "删除旧安装目录失败（.bak.zip 已生成）");
+        }
+    }
 
     // 6. 记录合并：删旧记录，生成新记录（继承 config/auto_start/startup_order/port）
     let new_installed_id = uuid::Uuid::new_v4().to_string();
@@ -333,13 +338,13 @@ async fn do_upgrade(
         category: software.category.clone(),
     };
 
-    // remove_installed 会删除旧安装目录（旧目录已改名 .bak，此时路径不存在，不误删备份）
+    // remove_installed 会删除旧安装目录（旧目录已压缩删除，此时路径不存在，不误删 .bak.zip 备份）
     let old_removed = manager
         .remove_installed(installed_id)
         .map_err(|e| anyhow::anyhow!("删除旧记录失败: {}", e))?;
     let _ = old_removed;
 
-    // add_installed 失败时回滚：恢复旧记录，新目录保持已装状态、.bak 保留（旧目录待升级成功后再清理）
+    // add_installed 失败时回滚：恢复旧记录，新目录保持已装状态、.bak.zip 保留（zip 备份不删除）
     manager
         .add_installed(new_record)
         .map_err(|e| {
@@ -360,11 +365,11 @@ async fn do_upgrade(
     Ok(())
 }
 
-/// 从备份目录复制 data_dirs（目录递归）+ config_file_path 指向的文件到新目录。
+/// 从源目录复制 data_dirs（目录递归）+ config_file_path 指向的文件到新目录。
 /// 目标父目录不存在则创建；跳过源不存在的路径。
 /// data_dirs 可能返回绝对路径（旧 install_path 内），先归一化为相对路径再映射到新目录。
 fn copy_paths_to_new(
-    bak_path: &std::path::Path,
+    src_path: &std::path::Path,
     old_install_path: &std::path::Path,
     new_install_path: &std::path::Path,
     data_dirs: &[std::path::PathBuf],
@@ -372,7 +377,7 @@ fn copy_paths_to_new(
 ) -> anyhow::Result<()> {
     for rel in data_dirs {
         let rel = rel.strip_prefix(old_install_path).unwrap_or(rel);
-        let src = bak_path.join(rel);
+        let src = src_path.join(rel);
         if src.exists() {
             let dst = new_install_path.join(rel);
             if let Some(parent) = dst.parent() {
@@ -386,7 +391,7 @@ fn copy_paths_to_new(
     if let Some(rel) = config_file_path {
         // 与 data_dirs 一致：绝对路径（旧 install_path 内）先归一化为相对路径，否则 join 静默失效
         let rel = rel.strip_prefix(old_install_path).unwrap_or(rel);
-        let src = bak_path.join(rel);
+        let src = src_path.join(rel);
         if src.exists() {
             let dst = new_install_path.join(rel);
             if let Some(parent) = dst.parent() {
@@ -416,6 +421,49 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> anyhow::R
             std::fs::copy(&from, &to)
                 .map_err(|e| anyhow::anyhow!("复制文件失败 {}: {}", to.display(), e))?;
         }
+    }
+    Ok(())
+}
+
+/// 递归压缩目录为 zip 压缩包（Deflated）。zip 内条目为相对路径，统一 `/` 分隔。
+/// 空目录跳过（备份目录树由文件承载，空目录无保留价值）。
+fn zip_dir(src: &std::path::Path, dst_zip: &std::path::Path) -> std::io::Result<()> {
+    let file = std::fs::File::create(dst_zip)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path == src || path.is_dir() {
+            continue;
+        }
+        let rel = path.strip_prefix(src).unwrap_or(path);
+        let name = rel.to_string_lossy().replace('\\', "/");
+        zip.start_file(&name, opts)?;
+        std::io::copy(&mut std::fs::File::open(path)?, &mut zip)?;
+    }
+    zip.finish()?;
+    Ok(())
+}
+
+/// 解压 zip 到 dst_dir（完整目录树）。跳过目录条目；覆盖写（以解压文件为准）。
+fn unzip_to(zip_path: &std::path::Path, dst_dir: &std::path::Path) -> std::io::Result<()> {
+    let file = std::fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        if file.is_dir() {
+            continue;
+        }
+        let Some(rel) = file.enclosed_name() else {
+            continue;
+        };
+        let outpath = dst_dir.join(rel);
+        if let Some(parent) = outpath.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&outpath)?;
+        std::io::copy(&mut file, &mut out)?;
     }
     Ok(())
 }
@@ -1844,23 +1892,23 @@ pub fn check_upgrades(manager: State<'_, Arc<SoftwareManager>>) -> Vec<crate::mo
     compute_upgrades(&installed, &catalog)
 }
 
-/// 扫描 install_path（apps/<key>/<cur>）所在 <key> 目录下的 *.bak 子目录，
-/// 返回第一个去 `.bak` 后缀的目录名作为回滚目标版本；无备份返回 None。
-/// 供 check_upgrades 填充 rollback_to（升级后同 key 会保留 <old_ver>.bak）。
+/// 扫描 install_path（apps/<key>/<cur>）所在 <key> 目录下的 *.bak.zip 文件，
+/// 返回去 `.bak.zip` 后缀的文件名作为回滚目标版本；无备份返回 None。
+/// 供 check_upgrades 填充 rollback_to（升级后同 key 会保留 <old_ver>.bak.zip）。
 fn scan_rollback_backup(install_path: &str) -> Option<String> {
     let dir = crate::utils::paths::resolve_install_path(install_path);
     let key_dir = dir.parent()?;
     std::fs::read_dir(key_dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
-        if !e.path().is_dir() {
+        if !e.path().is_file() {
             return None;
         }
         let name = e.file_name().to_string_lossy().into_owned();
-        name.strip_suffix(".bak").map(|s| s.to_string())
+        name.strip_suffix(".bak.zip").map(|s| s.to_string())
     })
 }
 
-/// 一键回滚：把升级时保留的 <old_ver>.bak 备份恢复为当前运行版本，
-/// 当前版本目录改名为 <cur>.off 保留。同 key 记录保持一条，字段（version/name/install_path）回退到旧版。
+/// 一键回滚：把升级时保留的 <old_ver>.bak.zip 解压恢复为旧版本目录，
+/// 当前版本目录直接删除。同 key 记录保持一条，字段（version/name/install_path）回退到旧版。
 #[tauri::command]
 pub async fn rollback_software(
     manager: State<'_, Arc<SoftwareManager>>,
@@ -1871,29 +1919,23 @@ pub async fn rollback_software(
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
     oplog!("rollback", &software.name);
 
-    // 1. 解析 key、当前版本目录与同 key 的 .bak 备份
+    // 1. 解析 key、当前版本目录与同 key 的 .bak.zip 备份
     let key = software.key.clone();
-    let cur_version = software.version.clone();
     let key_dir = crate::utils::paths::apps_dir().join(&key);
     let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
-    let cur_dir_name = old_install_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
 
     let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
         .map_err(|e| format!("读取目录失败: {}", e))?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().is_file())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_suffix(".bak")
+            name.strip_suffix(".bak.zip")
                 .map(|v| (v.to_string(), e.path()))
         })
         .collect();
     baks.sort_by(|a, b| crate::commands::software::compare_versions(&a.0, &b.0));
-    let (old_ver, bak_path) = baks
+    let (old_ver, bak_zip_path) = baks
         .pop()
         .ok_or_else(|| "无可用回滚备份".to_string())?;
 
@@ -1921,18 +1963,18 @@ pub async fn rollback_software(
         lifecycle::unregister(&software.id);
     }
 
-    // 3. 目录互换：当前版本 → <cur>.off 保留，备份 .bak → 原目录名
-    if old_install_path.exists() && !cur_dir_name.is_empty() {
-        let off_path = key_dir.join(format!("{}.off", cur_dir_name));
-        if off_path.exists() {
-            std::fs::remove_dir_all(&off_path)
-                .map_err(|e| format!("清理旧 .off 目录失败: {}", e))?;
-        }
-        std::fs::rename(&old_install_path, &off_path)
-            .map_err(|e| format!("移动当前版本目录失败: {}", e))?;
+    // 3. 删当前版本目录 → 解压 .bak.zip 恢复旧版本目录
+    let restore_path = key_dir.join(&old_ver);
+    if old_install_path.exists() {
+        std::fs::remove_dir_all(&old_install_path)
+            .map_err(|e| format!("删除当前版本目录失败: {}", e))?;
     }
-    std::fs::rename(&bak_path, &key_dir.join(&old_ver))
-        .map_err(|e| format!("恢复备份目录失败: {}", e))?;
+    if restore_path.exists() {
+        std::fs::remove_dir_all(&restore_path)
+            .map_err(|e| format!("清理旧版本目录失败: {}", e))?;
+    }
+    unzip_to(&bak_zip_path, &restore_path)
+        .map_err(|e| format!("解压恢复备份失败: {}", e))?;
 
     // 4. 更新记录：version/name/install_path 回退到旧版，其余字段保持
     let catalog = manager.get_catalog();
@@ -2101,6 +2143,60 @@ mod tests {
         super::copy_paths_to_new(&bak, &old_install_path, &new, &data_dirs, &config).unwrap();
 
         assert!(new.join("conf").join("nginx.conf").exists());
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn zip_dir_unzip_to_roundtrip() {
+        // 临时目录写 2 层文件 → 压缩 → 解压到另一临时目录 → 断言内容与相对路径一致
+        let tmp = std::env::temp_dir().join(format!("opx_zip_rt_{}", uuid::Uuid::new_v4()));
+        let src = tmp.join("src");
+        let dst = tmp.join("dst");
+        std::fs::create_dir_all(src.join("sub/dir")).unwrap();
+        std::fs::write(src.join("root.txt"), b"root").unwrap();
+        std::fs::write(src.join("sub/dir/deep.txt"), b"deep middleware").unwrap();
+        std::fs::write(src.join("sub/a.txt"), b"a").unwrap();
+
+        let zip_path = tmp.join("backup.bak.zip");
+        super::zip_dir(&src, &zip_path).unwrap();
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+        // 断言相对路径（/ 分隔，无绝对路径/.. ）
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(names.contains(&"root.txt".to_string()));
+        assert!(names.contains(&"sub/dir/deep.txt".to_string()));
+        assert!(names.contains(&"sub/a.txt".to_string()));
+        assert!(names.iter().all(|n| !n.starts_with('/') && !n.contains("..")));
+
+        super::unzip_to(&zip_path, &dst).unwrap();
+        assert_eq!(std::fs::read(dst.join("root.txt")).unwrap(), b"root");
+        assert_eq!(std::fs::read(dst.join("sub/dir/deep.txt")).unwrap(), b"deep middleware");
+        assert_eq!(std::fs::read(dst.join("sub/a.txt")).unwrap(), b"a");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// 模拟软件目录：<apps_dir>/<key>/<cur> + <key>/<old>.bak.zip
+    fn make_apps_layout(tmp: &std::path::Path, key: &str, cur: &str, old: &str) {
+        let apps = tmp.join("apps");
+        let cur_dir = apps.join(key).join(cur);
+        std::fs::create_dir_all(&cur_dir).unwrap();
+        std::fs::write(cur_dir.join("f.txt"), b"x").unwrap();
+        // 旧版本备份 zip：内容即一个文件
+        let src = tmp.join("oldsrc");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("old.txt"), b"old").unwrap();
+        super::zip_dir(&src, &apps.join(key).join(format!("{}.bak.zip", old))).unwrap();
+    }
+
+    #[test]
+    fn scan_rollback_backup_sees_bak_zip() {
+        let tmp = std::env::temp_dir().join(format!("opx_scan_rt_{}", uuid::Uuid::new_v4()));
+        make_apps_layout(&tmp, "mysql", "8.0.36", "5.7.44");
+        let install_path = tmp.join("apps/mysql/8.0.36").to_string_lossy().into_owned();
+        // paths::resolve_install_path 对绝对路径直接返回
+        assert_eq!(super::scan_rollback_backup(&install_path).as_deref(), Some("5.7.44"));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
