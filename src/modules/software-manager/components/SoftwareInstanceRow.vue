@@ -31,6 +31,15 @@
     </div>
 
     <div class="card-actions">
+      <button
+        v-if="upgradeTo"
+        class="btn primary"
+        :disabled="actingStates?.[software.id] != null"
+        :title="t('upgradeHint')"
+        @click="$emit('upgrade')"
+      >
+        <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
+      </button>
       <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
         <Icon icon="mdi:play" /> {{ $t('start') }}
       </button>
@@ -72,6 +81,7 @@ const { t, te } = useI18n()
 const props = defineProps<{
   software: InstalledSoftware
   actingStates?: Record<string, 'start' | 'stop'>
+  upgradeTo?: string | null
 }>()
 
 defineEmits<{
@@ -83,6 +93,7 @@ defineEmits<{
   log: []
   backup: []
   reset: []
+  upgrade: []
 }>()
 
 const categoryClass = computed(() => {

@@ -100,6 +100,14 @@ export interface InstalledSoftwareList {
   software: InstalledSoftware[]
 }
 
+/// 可升级信息（check_upgrades 返回）
+export interface UpgradeInfo {
+  key: string
+  name: string
+  current_version: string
+  target_version?: string | null
+}
+
 export interface InstallParams {
   key: string
   version: string

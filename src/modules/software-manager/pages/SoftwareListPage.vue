@@ -48,6 +48,7 @@
             :key="item.id"
             :software="mergeStatus(item)"
             :acting-states="actingStates"
+            :upgrade-to="upgradeMap[item.key]"
             @start="onStart(item)"
             @stop="onStop(item)"
             @config="onConfig(item)"
@@ -56,6 +57,7 @@
             @log="onLog(item)"
             @backup="onBackup(item)"
             @reset="onReset(item)"
+            @upgrade="onUpgrade(item)"
           />
         </div>
       </div>
@@ -97,6 +99,24 @@
       @close="backupTarget = null"
     />
   </div>
+
+  <!-- 右下角浮动进度通知容器（Teleport 到 body 确保 fixed 相对窗口） -->
+  <Teleport to="body">
+    <div v-if="installStore.activeTasks.length" class="progress-panel">
+      <div class="progress-panel-header" @click="allCollapsed = !allCollapsed">
+        <Icon icon="mdi:download" class="text-primary" />
+        <span>{{ $t('downloading') }} ({{ installStore.activeTasks.length }})</span>
+        <Icon :icon="allCollapsed ? 'mdi:chevron-up' : 'mdi:chevron-down'" class="text-muted-foreground ml-auto" />
+      </div>
+      <div v-show="!allCollapsed" class="progress-panel-body">
+        <InstallProgressDialog
+          v-for="task in installStore.activeTasks"
+          :key="task.id"
+          :task="task"
+        />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -113,8 +133,11 @@ import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
 import LogViewerDialog from '../components/LogViewerDialog.vue'
 import BackupRestoreDialog from '../components/BackupRestoreDialog.vue'
+import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
+import { useInstallStore } from '../stores/install'
 import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
+import type { UpgradeInfo } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
 useI18n()
@@ -131,7 +154,56 @@ const backupTarget = ref<InstalledSoftware | null>(null)
 const backupInitialTab = ref<'snapshots' | 'reset'>('snapshots')
 // 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
 const actingStates = ref<Record<string, 'start' | 'stop'>>({})
+const installStore = useInstallStore()
+// key → 目标升级版本（无可升级则无该 key）
+const upgradeMap = ref<Record<string, string>>({})
+const allCollapsed = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function applyUpgrades(list: UpgradeInfo[]) {
+  const map: Record<string, string> = {}
+  for (const u of list) {
+    if (u.target_version) map[u.key] = u.target_version
+  }
+  upgradeMap.value = map
+}
+
+/** 内置检测先行返回；随后并行在线刷新，失败静默回退 */
+async function loadUpgrades() {
+  try {
+    const list = await invoke<UpgradeInfo[]>('check_upgrades')
+    applyUpgrades(list)
+    refreshUpgrades(list.map((u) => u.key))
+  } catch (e) {
+    console.error('check_upgrades failed:', e)
+  }
+}
+
+async function refreshUpgrades(keys: string[]) {
+  const uniq = [...new Set(keys)]
+  await Promise.allSettled(
+    uniq.map((k) => invoke('fetch_remote_versions_for', { key: k })),
+  )
+  try {
+    applyUpgrades(await invoke<UpgradeInfo[]>('check_upgrades'))
+  } catch (e) {
+    console.error('refresh upgrades failed:', e)
+  }
+}
+
+/** 一键升级：安装 catalog 中的目标版本（新旧并存，不自动启动） */
+async function onUpgrade(item: InstalledSoftware) {
+  const target = upgradeMap.value[item.key]
+  if (!target) return
+  try {
+    const installId = (await invoke('install_software', {
+      params: { key: item.key, version: target, mirror_index: 0, set_as_default_jre: false },
+    })) as string
+    installStore.createTask(installId, item.key, `${item.name} → ${target}`)
+  } catch (e) {
+    console.error('upgrade failed:', e)
+  }
+}
 
 interface Group {
   category: string
@@ -319,7 +391,9 @@ function onUninstalled() {
 
 onMounted(async () => {
   await lifecycleStore.initListener()
+  await installStore.initEvents()
   await loadInstalled()
+  loadUpgrades()
   // 30s 兜底轮询（事件丢失时仍能同步状态）
   pollTimer = setInterval(loadInstalled, 30_000)
 })
@@ -396,5 +470,45 @@ onBeforeUnmount(() => {
   .instance-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* 右下角浮动进度面板 */
+.progress-panel {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  width: 360px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.progress-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-muted);
+}
+.progress-panel-header svg {
+  width: 16px;
+  height: 16px;
+}
+.ml-auto {
+  margin-left: auto;
+}
+.progress-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  max-height: 360px;
+  overflow-y: auto;
 }
 </style>
