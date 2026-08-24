@@ -129,9 +129,17 @@ fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
                 let block = nginx_conf::generate_server_block(site);
                 std::fs::write(&conf_path, block)?;
             } // 手写模式（custom_conf=true）→ 跳过，保留源码视图写入的内容
-        } else if conf_path.exists() {
-            // 停用态：改为 .disabled（保留内容，nginx 不加载）
-            std::fs::rename(&conf_path, &disabled_path)?;
+        } else {
+            // 停用态：改为 .disabled（nginx 不加载）
+            if conf_path.exists() {
+                std::fs::rename(&conf_path, &disabled_path)?;
+            }
+            // ponytail: 表单模式 → 停用态也随表单重建 .disabled，
+            // 避免站点停用时编辑（如切换 SSL/路由）后配置残留旧内容，下次启用备份失效
+            if !site.custom_conf && disabled_path.exists() {
+                let block = nginx_conf::generate_server_block(site);
+                std::fs::write(&disabled_path, block)?;
+            }
         }
     }
     Ok(())
@@ -408,4 +416,49 @@ pub fn unlock_site_conf(
     }
 
     regenerate(&sm, &wm, true)
+}
+
+/// 生成自签 HTTPS 证书（纯 Rust rcgen，规避 Windows nginx 包无 openssl CLI）
+/// 写入 <nginx>/sites-data/certs/<domain>.crt / .key，返回相对路径供 ssl 配置使用
+#[tauri::command]
+pub fn generate_self_signed_cert(
+    sm: State<'_, Arc<SoftwareManager>>,
+    domain: String,
+) -> Result<(String, String), String> {
+    let d = domain.trim().to_string();
+    if d.is_empty() || d.contains('/') || d.contains('\\') || d.contains(char::is_whitespace) {
+        return Err("ERR_CERT_DOMAIN:域名不合法".to_string());
+    }
+
+    let nginx = resolve_nginx(&sm)?;
+    let certs_dir = PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
+    std::fs::create_dir_all(&certs_dir).map_err(|e| format!("创建证书目录失败: {e}"))?;
+
+    // rcgen 生成自签 X.509：SAN=domain，CN=domain
+    let mut params = rcgen::CertificateParams::new(vec![d.clone()])
+        .map_err(|e| format!("证书参数错误: {e}"))?;
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, &d);
+    let key_pair = rcgen::KeyPair::generate().map_err(|e| format!("密钥生成失败: {e}"))?;
+    let cert = params
+        .self_signed(&key_pair)
+        .map_err(|e| format!("证书生成失败: {e}"))?;
+
+    let file_base = sanitize_cert_name(&d);
+    let rel = |ext: &str| format!("sites-data/certs/{file_base}.{ext}");
+    std::fs::write(certs_dir.join(format!("{file_base}.crt")), cert.pem())
+        .map_err(|e| format!("证书写入失败: {e}"))?;
+    std::fs::write(certs_dir.join(format!("{file_base}.key")), key_pair.serialize_pem())
+        .map_err(|e| format!("私钥写入失败: {e}"))?;
+
+    Ok((rel("crt"), rel("key")))
+}
+
+fn sanitize_cert_name(s: &str) -> String {
+    let c: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect();
+    if c.is_empty() { "cert".to_string() } else { c }
 }

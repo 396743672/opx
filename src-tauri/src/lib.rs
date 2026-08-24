@@ -261,6 +261,7 @@ pub fn run() {
             commands::website::get_site_conf,
             commands::website::set_site_conf,
             commands::website::unlock_site_conf,
+            commands::website::generate_self_signed_cert,
             commands::springboot::list_springboot_apps,
             commands::springboot::create_springboot_app,
             commands::springboot::update_springboot_app,

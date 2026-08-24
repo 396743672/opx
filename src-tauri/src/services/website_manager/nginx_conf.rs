@@ -16,6 +16,9 @@ pub fn site_conf_filename(site: &Site) -> String {
 }
 
 /// 生成单个站点的 nginx server 块（保存到 conf/sites/<name_port_id>.conf）
+/// 相对路径（sites-data/...）统一写成 `../sites-data/...`：nginx 把 conf 内的相对路径
+/// 以 conf/ 目录为基准解析，`../` 上跳一级即 nginx 根目录，证书/静态目录都在根下，
+/// 这样无需写死安装路径，也避免 `\` 被 nginx 当转义符。
 pub fn generate_server_block(site: &Site) -> String {
     let server_name = site
         .server_name
@@ -26,23 +29,107 @@ pub fn generate_server_block(site: &Site) -> String {
 
     let mut out = String::new();
     out.push_str("server {\n");
-    out.push_str(&format!("    listen {};\n", site.listen));
+    // SSL 主块端口：统一用标准 443（https 默认），80 由下方跳转块占用；
+    // 不依赖 site.listen，用户无需为 https 改端口
+    if site.ssl.enabled {
+        out.push_str("    listen 443 ssl;\n");
+        if let Some(c) = &site.ssl.cert_path {
+            out.push_str(&format!("    ssl_certificate {};\n", to_conf_rel(c)));
+        }
+        if let Some(k) = &site.ssl.key_path {
+            out.push_str(&format!("    ssl_certificate_key {};\n", to_conf_rel(k)));
+        }
+        out.push_str("    ssl_protocols TLSv1.2 TLSv1.3;\n");
+        out.push_str("    ssl_session_cache shared:SSL:10m;\n");
+    } else {
+        out.push_str(&format!("    listen {};\n", site.listen));
+    }
     out.push_str(&format!("    server_name {};\n", server_name));
+
+    // 收集所有 upstream 块（多后端 location）
+    let short_id: String = site.id.chars().take(8).collect();
+    let mut emitted_upstreams: Vec<String> = Vec::new();
     for loc in &site.locations {
-        out.push_str(&generate_location(loc));
+        if loc.kind == LocationKind::Proxy {
+            let addrs: Vec<&str> = loc
+                .upstreams
+                .iter()
+                .map(|t| t.addr.trim())
+                .filter(|a| !a.is_empty())
+                .collect();
+            if addrs.len() > 1 {
+                let name = format!("site_{}_{}", short_id, sanitize_path(&loc.path));
+                if !emitted_upstreams.contains(&name) {
+                    let mut b = format!("upstream {} {{\n", name);
+                    for addr in &addrs {
+                        b.push_str(&format!("    server {};\n", addr));
+                    }
+                    b.push_str("}\n");
+                    out.push_str(&b);
+                    emitted_upstreams.push(name);
+                }
+            }
+        }
+    }
+
+    for loc in &site.locations {
+        out.push_str(&generate_location(loc, &short_id));
     }
     out.push_str("}\n");
+
+    // 启用 SSL 时只保留用户配置端口的 http→https 跳转（不硬编码 80，避免与外部占用冲突）
+    if site.ssl.enabled && site.listen != 443 && site.listen != 0 {
+        out.push_str("server {\n");
+        out.push_str(&format!("    listen {};\n", site.listen));
+        out.push_str(&format!("    server_name {};\n", server_name));
+        out.push_str("    return 301 https://$host$request_uri;\n");
+        out.push_str("}\n");
+    }
+
     out
 }
 
-fn generate_location(loc: &Location) -> String {
+fn sanitize_path(path: &str) -> String {
+    let s: String = path
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let s = s.trim_matches('_');
+    if s.is_empty() { "root".to_string() } else { s.to_string() }
+}
+
+/// 证书/私钥路径写进 conf：ssl_certificate/key 的路径以 conf/ 为基准（实测），
+/// 相对路径（sites-data/...）需加 `../` 上跳一级到 nginx 根。
+/// 绝对路径（盘符或 `/` 开头）原样转正斜杠（nginx 会把 `\` 当转义符）。
+/// NOTE: root/alias 的基准是 prefix，不能加 `../`，见 [`to_root`]。
+fn to_conf_rel(p: &str) -> String {
+    let p = p.replace('\\', "/");
+    let is_abs = p.starts_with('/') || (p.len() > 2 && p.as_bytes()[1] == b':');
+    if is_abs {
+        return p;
+    }
+    let p = p.trim_start_matches('/');
+    if p.starts_with("../") {
+        p.to_string()
+    } else {
+        format!("../{}", p)
+    }
+}
+
+/// root 指令路径：nginx 以其 prefix（nginx 根目录）为基准，保持相对即可；
+/// 实测含 `..` 的 root 会导致 500（rewrite cycle）。仅统一正斜杠防转义。
+fn to_root(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+fn generate_location(loc: &Location, short_id: &str) -> String {
     let mut s = format!("    location {} {{\n", loc.path);
     match loc.kind {
         LocationKind::Static => {
             if let Some(root) = &loc.root {
-                // nginx 用正斜杠；含空格加引号，避免 Windows 路径转义问题
-                // ponytail: 存相对路径（sites-data/{name}/{path}），nginx 按安装目录解析
-                s.push_str(&format!("        root \"{}\";\n", root.replace('\\', "/")));
+                // root 基准是 nginx prefix，保持相对路径即可（不加 ../，nginx 对含 .. 的 root 会 500）
+                // ponytail: 存相对路径（sites-data/{name}/{path}），生成时仅统一正斜杠
+                s.push_str(&format!("        root \"{}\";\n", to_root(root)));
             }
             s.push_str("        index index.html;\n");
             if loc.spa_fallback {
@@ -50,17 +137,38 @@ fn generate_location(loc: &Location) -> String {
             }
         }
         LocationKind::Proxy => {
-            if let Some(target) = &loc.target {
-                if !target.trim().is_empty() {
-                    s.push_str(&format!("        proxy_pass {};\n", target));
-                    s.push_str("        proxy_http_version 1.1;\n");
-                    s.push_str("        proxy_set_header Host $host;\n");
-                    s.push_str("        proxy_set_header X-Real-IP $remote_addr;\n");
-                    s.push_str("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
-                    s.push_str("        proxy_set_header X-Forwarded-Proto $scheme;\n");
-                    // WebSocket / 长连接支持（$connection_upgrade 由主配置 map 提供）
-                    s.push_str("        proxy_set_header Upgrade $http_upgrade;\n");
-                    s.push_str("        proxy_set_header Connection $connection_upgrade;\n");
+            let subpath = loc
+                .proxy_subpath
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let upstream_count = loc
+                .upstreams
+                .iter()
+                .filter(|t| !t.addr.trim().is_empty())
+                .count();
+            let proxy_target: Option<String> = if upstream_count > 1 {
+                Some(format!("http://site_{}_{}", short_id, sanitize_path(&loc.path)))
+            } else {
+                loc.target.clone()
+            };
+            if let Some(base) = proxy_target {
+                let base = match subpath {
+                    Some(sp) => format!("{}{}", base.trim_end_matches('/'), sp),
+                    None => base,
+                };
+                s.push_str(&format!("        proxy_pass {};\n", base));
+                s.push_str("        proxy_http_version 1.1;\n");
+                s.push_str("        proxy_set_header Host $host;\n");
+                s.push_str("        proxy_set_header X-Real-IP $remote_addr;\n");
+                s.push_str("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+                s.push_str("        proxy_set_header X-Forwarded-Proto $scheme;\n");
+                s.push_str("        proxy_set_header Upgrade $http_upgrade;\n");
+                s.push_str("        proxy_set_header Connection $connection_upgrade;\n");
+                for h in &loc.proxy_headers {
+                    if !h.name.trim().is_empty() {
+                        s.push_str(&format!("        proxy_set_header {} {};\n", h.name, h.value));
+                    }
                 }
             }
         }
@@ -129,4 +237,113 @@ pub fn ensure_common_settings(nginx_conf: &str) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::website::{
+        Location, LocationKind, ProxyHeader, Site, SslConfig, StaticSource, UpstreamTarget,
+    };
+
+    fn proxy_loc() -> Location {
+        Location {
+            path: "/api".into(),
+            kind: LocationKind::Proxy,
+            source: None,
+            root: None,
+            spa_fallback: false,
+            target: Some("http://127.0.0.1:8080".into()),
+            upstreams: vec![],
+            proxy_headers: vec![ProxyHeader { name: "X-Auth".into(), value: "token".into() }],
+            proxy_subpath: Some("/upstream/api".into()),
+        }
+    }
+
+    fn base_site() -> Site {
+        Site {
+            id: "abcdef1234567890".into(),
+            name: "demo".into(),
+            server_name: Some("demo.local".into()),
+            listen: 8080,
+            ssl: SslConfig::default(),
+            enabled: true,
+            locations: vec![],
+            custom_conf: false,
+        }
+    }
+
+    #[test]
+    fn multiple_upstream_generates_upstream_block() {
+        let mut s = base_site();
+        s.locations = vec![Location {
+            upstreams: vec![
+                UpstreamTarget { addr: "127.0.0.1:8081".into() },
+                UpstreamTarget { addr: "127.0.0.1:8082".into() },
+            ],
+            target: None,
+            proxy_subpath: None,
+            ..proxy_loc()
+        }];
+        let out = super::generate_server_block(&s);
+        assert!(out.contains("upstream site_abcdef12_api {"), "{}", out);
+        assert!(out.contains("server 127.0.0.1:8081;"));
+        assert!(out.contains("server 127.0.0.1:8082;"));
+        assert!(out.contains("proxy_pass http://site_abcdef12_api;"));
+        assert!(!out.contains("/upstream/api"));
+    }
+
+    #[test]
+    fn subpath_and_headers_applied() {
+        let mut s = base_site();
+        s.locations = vec![proxy_loc()];
+        let out = super::generate_server_block(&s);
+        assert!(out.contains("proxy_pass http://127.0.0.1:8080/upstream/api;"), "{}", out);
+        assert!(out.contains("proxy_set_header X-Auth token;"));
+    }
+
+    #[test]
+    fn ssl_enabled_adds_ssl_listen_and_redirect() {
+        let mut s = base_site();
+        s.listen = 81; // SSL 主块固定 443，不依赖该端口
+        s.ssl = SslConfig {
+            enabled: true,
+            cert_path: Some("sites-data/certs/demo.crt".into()),
+            key_path: Some("sites-data/certs/demo.key".into()),
+        };
+        let out = super::generate_server_block(&s);
+        assert!(out.contains("listen 443 ssl;"), "{}", out);
+        assert!(out.contains("ssl_certificate ../sites-data/certs/demo.crt;"));
+        assert!(out.contains("ssl_certificate_key ../sites-data/certs/demo.key;"));
+        assert!(!out.contains("listen 80;")); // 不硬编码 80，避免外部占用冲突
+        assert!(out.contains("listen 81;")); // 仅保留用户配置端口的 http→https 跳转
+        assert!(out.contains("return 301 https://$host$request_uri;"));
+    }
+
+    #[test]
+    fn ssl_disabled_no_redirect_block() {
+        let s = base_site();
+        let out = super::generate_server_block(&s);
+        assert!(!out.contains(" ssl;"), "{}", out);
+        assert!(!out.contains("return 301"));
+    }
+
+    #[test]
+    fn root_kept_relative_without_dotdot() {
+        // root 基准是 nginx prefix，须保持相对路径；nginx 对含 ../ 的 root 会 500
+        let mut s = base_site();
+        s.locations = vec![Location {
+            path: "/".into(),
+            kind: LocationKind::Static,
+            source: Some(StaticSource::Dir),
+            root: Some("sites-data/demo/root".into()),
+            spa_fallback: true,
+            target: None,
+            upstreams: vec![],
+            proxy_headers: vec![],
+            proxy_subpath: None,
+        }];
+        let out = super::generate_server_block(&s);
+        assert!(out.contains("root \"sites-data/demo/root\";"), "{}", out);
+        assert!(!out.contains("../"), "{}", out);
+    }
 }
