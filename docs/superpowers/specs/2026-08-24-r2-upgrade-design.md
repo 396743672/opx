@@ -53,24 +53,24 @@ pub struct UpgradeInfo {
 `upgrade_software` 流程（一次命令，进度经 installStore 面板）：
 1. 目标版本 = 命令内按 catalog 计算（高于当前版本的最高版本）。
 2. **若实例运行中 → 先停止**（lifecycle 停止，等待完成）。
-3. **备份**：旧目录 `apps/{key}/{old_ver}` 重命名为 `apps/{key}/{old_ver}.bak`（若已存在同名 `.bak` 先删除，仅保留一份备份）。
-4. **安装新版**：下载并解压新版到 `apps/{key}/{new_ver}`，执行 `post_install`（复用 installer 的下载/校验/解压流程）。
-5. **自动迁移数据/配置**：从 `.bak` 复制用户数据到新版目录——`provider.data_dirs()`（默认 `data/`）、`provider.config_file_path()` 指向的文件、以及各软件保留的站点/数据区（nginx：`conf/sites/` + `sites-data/`）。
+3. **安装新版**：下载并解压新版到 `apps/{key}/{new_ver}`，执行 `post_install`（复用 installer 的下载/校验/解压流程）。
+4. **自动迁移数据/配置**：从旧目录 `apps/{key}/{old_ver}` 复制用户数据到新版目录——`provider.data_dirs()`（默认 `data/`）、`provider.config_file_path()` 指向的文件、以及各软件保留的站点/数据区（nginx：`conf/sites/` + `sites-data/`）。
+5. **压缩备份旧目录**：把旧目录整体压缩为 `apps/{key}/{old_ver}.bak.zip`（zip，deflate），然后删除旧目录——避免磁盘双倍占用（用户明确要求备份为压缩包）。
 6. **记录合并**：删除旧 `InstalledSoftware` 记录；新记录（installer 生成）的 `config`、`auto_start_on_app_start`、`startup_order`、`port` 继承自旧记录（保留用户端口与启动设置）。
-7. **不自动启动**；旧目录 `.bak` 保留在磁盘供回滚（列表不再出现，可手动删除）。
-8. 完成后列表刷新（一条记录：新版本），不再有"Nginx 1.31.2 + 1.31.4 两条"。
+7. **不自动启动**；`{old_ver}.bak.zip` 保留在磁盘供回滚，单个文件、省空间。
+8. 完成后列表刷新（一条记录：新版本）。
 
 ### 4.5 回滚（`rollback_software`）
 
-升级后同 key 存在 `<old_ver>.bak` 备份时，行内出现「回滚」按钮，调 `rollback_software(installed_id)`，与升级对称：
-1. 检测到 `apps/{key}/*.bak` 存在（取第一个，解析旧版本），否则报"无可回滚备份"。
+升级后同 key 存在 `{old_ver}.bak.zip` 备份时，行内出现「回滚」按钮，调 `rollback_software(installed_id)`，与升级对称：
+1. 检测到 `apps/{key}/*.bak.zip` 存在（解析旧版本），否则报"无可回滚备份"。
 2. 若实例运行中 → `lifecycle::stop_one(pid)` 停止。
-3. 当前新版目录 rename 为 `apps/{key}/{cur}.off`（保留，不覆盖要恢复的 `.bak`）。
-4. `.bak` → rename 回 `apps/{key}/{old_ver}`。
+3. 删除当前新版目录 `apps/{key}/{cur}`。
+4. 解压 `{old_ver}.bak.zip` → `apps/{key}/{old_ver}`（zip 解压，重建目录）。
 5. installed 记录 version/install_path/name 更新为旧版（config 保留）。
 6. 不自动启动；完成后列表刷新为一条旧版本记录。
 
-前端：`UpgradeInfo` 增加 `rollback_to: Option<String>`（检测到 `.bak` 时填旧版本；由 `check_upgrades` 填充），有值时行内显示「可回滚 vX」按钮。
+前端：`UpgradeInfo` 增加 `rollback_to: Option<String>`（检测到 `*.bak.zip` 时填旧版本；由 `check_upgrades` 填充），有值时行内显示「可回滚 vX」按钮。
 
 ### 5. UI（`SoftwareListPage` + `SoftwareInstanceRow`）
 
@@ -99,7 +99,7 @@ pub struct UpgradeInfo {
 
 - `compare_versions` 单测：跨大版本（5.7.44 vs 8.0.36）、同版本、前缀（1.31.2 vs 1.31）、非数字字段（v1 vs v2）。
 - `check_upgrades` / `compute_upgrades` 用构造 catalog 数据验证返回 target 取最高。
-- `upgrade_software` 的纯逻辑部分抽函数测：备份目录改名（已存在 .bak 先删）、数据迁移复制路径集合（provider 声明的 data_dirs + config + nginx 站点区）。
+- `upgrade_software` 的纯逻辑部分抽函数测：备份 zip 压缩/解压 roundtrip、数据迁移复制路径集合（provider 声明的 data_dirs + config + nginx 站点区）、回滚检测 `*.bak.zip`。
 
 ## 不做（YAGNI）
 
