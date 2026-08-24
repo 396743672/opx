@@ -60,6 +60,18 @@ pub struct UpgradeInfo {
 7. **不自动启动**；旧目录 `.bak` 保留在磁盘供回滚（列表不再出现，可手动删除）。
 8. 完成后列表刷新（一条记录：新版本），不再有"Nginx 1.31.2 + 1.31.4 两条"。
 
+### 4.5 回滚（`rollback_software`）
+
+升级后同 key 存在 `<old_ver>.bak` 备份时，行内出现「回滚」按钮，调 `rollback_software(installed_id)`，与升级对称：
+1. 检测到 `apps/{key}/*.bak` 存在（取第一个，解析旧版本），否则报"无可回滚备份"。
+2. 若实例运行中 → `lifecycle::stop_one(pid)` 停止。
+3. 当前新版目录 rename 为 `apps/{key}/{cur}.off`（保留，不覆盖要恢复的 `.bak`）。
+4. `.bak` → rename 回 `apps/{key}/{old_ver}`。
+5. installed 记录 version/install_path/name 更新为旧版（config 保留）。
+6. 不自动启动；完成后列表刷新为一条旧版本记录。
+
+前端：`UpgradeInfo` 增加 `rollback_to: Option<String>`（检测到 `.bak` 时填旧版本；由 `check_upgrades` 填充），有值时行内显示「可回滚 vX」按钮。
+
 ### 5. UI（`SoftwareListPage` + `SoftwareInstanceRow`）
 
 - `SoftwareInstanceRow` 增加可选 prop：可升级目标版本。
@@ -95,4 +107,3 @@ pub struct UpgradeInfo {
 - 多版本并存的列表管理——升级即替换，列表保持一条。
 - 全局「检查更新」聚合页或批量升级——首版只做行内一键。
 - 升级完成后自动启动新版——明确不启动。
-- 升级冲突回滚一键恢复 UI——旧目录 `.bak` 保留，手动恢复。
