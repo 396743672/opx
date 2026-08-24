@@ -91,6 +91,8 @@ export default {
   importConfigConfirm: 'This will replace all software configs. Current config will be backed up. Continue?',
   exportSuccess: 'Config exported',
   importSuccess: 'Config imported',
+  upgradeTo: 'Upgrade to {v}',
+  upgradeHint: 'Install a newer version from catalog (keeps old version, does not auto-start)',
 
   // Software categories (SoftwareListPage group titles)
   database: 'Database',

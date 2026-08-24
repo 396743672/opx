@@ -91,6 +91,8 @@ export default {
   importConfigConfirm: '将替换所有软件配置，当前配置将自动备份。确定继续？',
   exportSuccess: '配置已导出',
   importSuccess: '配置已导入',
+  upgradeTo: '升级到 {v}',
+  upgradeHint: '安装 catalog 中的更高版本（新旧并存，不自动启动）',
 
   // 软件分类（SoftwareListPage 分组标题）
   database: '数据库',
