@@ -123,6 +123,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -159,6 +160,7 @@ const installStore = useInstallStore()
 const upgradeMap = ref<Record<string, string>>({})
 const allCollapsed = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let completedUnlisten: UnlistenFn | null = null
 
 function applyUpgrades(list: UpgradeInfo[]) {
   const map: Record<string, string> = {}
@@ -397,6 +399,14 @@ onMounted(async () => {
   loadUpgrades()
   // 30s 兜底轮询（事件丢失时仍能同步状态）
   pollTimer = setInterval(loadInstalled, 30_000)
+  // 升级/安装完成时自动刷新已装列表与可升级徽标（与 RepositoryPage 模式一致）
+  completedUnlisten = await listen('install-progress', (event) => {
+    const payload = event.payload as any
+    if (payload.phase === 'completed') {
+      loadInstalled()
+      loadUpgrades()
+    }
+  })
 })
 
 // 监听 lifecycle store 状态变更：当状态转为 Starting/Stopping/Stopped/Error/Running
@@ -427,6 +437,10 @@ onBeforeUnmount(() => {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
+  }
+  if (completedUnlisten) {
+    completedUnlisten()
+    completedUnlisten = null
   }
 })
 </script>
