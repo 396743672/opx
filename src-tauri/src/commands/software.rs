@@ -1518,3 +1518,46 @@ pub async fn reset_instance(
 ) -> Result<(), String> {
     backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
 }
+
+/// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
+/// 任一段含非数字时退化为字符串比较（v1 < v2）。
+fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let ap: Vec<&str> = a.split('.').collect();
+    let bp: Vec<&str> = b.split('.').collect();
+    for i in 0..ap.len().min(bp.len()) {
+        match (ap[i].parse::<u64>(), bp[i].parse::<u64>()) {
+            (Ok(x), Ok(y)) if x != y => return x.cmp(&y),
+            (Ok(_), Ok(_)) => {}
+            _ => return a.cmp(b),
+        }
+    }
+    ap.len().cmp(&bp.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_versions;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn version_cross_major() {
+        assert_eq!(compare_versions("5.7.44", "8.0.36"), Ordering::Less);
+    }
+    #[test]
+    fn version_equal() {
+        assert_eq!(compare_versions("8.0.36", "8.0.36"), Ordering::Equal);
+    }
+    #[test]
+    fn version_prefix_longer_is_greater() {
+        assert_eq!(compare_versions("1.31.2", "1.31"), Ordering::Greater);
+    }
+    #[test]
+    fn version_numeric_segment() {
+        assert_eq!(compare_versions("7.4.9", "7.10.0"), Ordering::Less);
+    }
+    #[test]
+    fn version_non_numeric_falls_back_to_string() {
+        assert_eq!(compare_versions("v1", "v2"), Ordering::Less);
+    }
+}
