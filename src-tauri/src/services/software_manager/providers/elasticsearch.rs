@@ -117,11 +117,23 @@ impl SoftwareProvider for ElasticsearchProvider {
     }
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
-        // ES 8.x 需要 JDK 17+：复用用户已配 JDK（ES_JAVA_HOME）。
-        let jdk = ctx
-            .jdk_install_path
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动"))?;
+        // ES 8.x 需要 JDK 17+，且必须是完整 JDK（含 jdk.attach 模块，供
+        // org.elasticsearch.entitlement 使用）。ES 发行版自带完整 JDK（<install>/jdk），
+        // 优先用它；配置里所选 JRE（缺 jdk.attach）会被忽略，否则启动即报
+        // "Module jdk.attach not found"（boot layer 阶段失败）。
+        let jdk = {
+            let bundled = PathBuf::from(&ctx.install_path).join("jdk");
+            let java_bin = if cfg!(windows) { "bin/java.exe" } else { "bin/java" };
+            if bundled.join(java_bin).exists() {
+                bundled.to_string_lossy().to_string()
+            } else if let Some(p) = ctx.jdk_install_path.as_deref() {
+                p.to_string()
+            } else {
+                return Err(anyhow::anyhow!(
+                    "未找到 ES 内置 JDK 或已安装的完整 JDK，请先安装 JDK 后再启动"
+                ));
+            }
+        };
 
         let port = config_u64(&ctx.config, "port", 9200);
         let transport_port = config_u64(&ctx.config, "transport_port", 9300);
@@ -156,11 +168,15 @@ impl SoftwareProvider for ElasticsearchProvider {
         };
 
         let mut env_vars = std::collections::BTreeMap::new();
-        env_vars.insert("ES_JAVA_HOME".to_string(), jdk.to_string());
+        env_vars.insert("ES_JAVA_HOME".to_string(), jdk);
         env_vars.insert(
             "ES_JAVA_OPTS".to_string(),
             format!("-Xms{heap} -Xmx{heap}"),
         );
+        // 本机无 AWS 凭证时 S3RepositoryPlugin 会打印一大段 region 解析失败的
+        // stacktrace（INFO 级噪音）。预设 region 让默认 provider chain 首项成功，
+        // 使启动日志保持干净；不配 S3 快照仓库时该值无实际作用。
+        env_vars.insert("AWS_REGION".to_string(), "us-east-1".to_string());
 
         Ok(StartCommand {
             program: bin.to_string(),
@@ -299,6 +315,8 @@ mod tests {
 
     fn test_install_path() -> String {
         let p = std::env::temp_dir().join("opx_test_elasticsearch");
+        // 清理历史测试可能留下的 jdk/（self-contained 测试不应被污染）
+        let _ = std::fs::remove_dir_all(p.join("jdk"));
         let _ = std::fs::create_dir_all(&p);
         p.to_string_lossy().to_string()
     }
@@ -377,6 +395,35 @@ mod tests {
             }
             _ => panic!("expected Tcp health check"),
         }
+    }
+
+    #[test]
+    fn start_command_prefers_bundled_jdk() {
+        let p = ElasticsearchProvider::new();
+        // 用独立临时目录，避免在共享 test_install_path 下留下 jdk/ 污染其他测试
+        let install_path = std::env::temp_dir()
+            .join("opx_test_es_bundled")
+            .to_string_lossy()
+            .to_string();
+        // 模拟 ES 发行版自带完整 JDK（<install>/jdk，含 jdk.attach 模块）
+        let bundled_bin = PathBuf::from(&install_path).join("jdk").join("bin");
+        std::fs::create_dir_all(&bundled_bin).unwrap();
+        std::fs::write(bundled_bin.join("java.exe"), "").unwrap();
+
+        let ctx = StartContext {
+            installed_id: "es-1".to_string(),
+            install_path: install_path.clone(),
+            version: "8.19.0".to_string(),
+            config: test_config(),
+            custom_start_command: None,
+            init_password: None,
+            // 配置里选了 JRE 也会被忽略，ES_JAVA_HOME 优先指向自带完整 JDK
+            jdk_install_path: Some("D:\\jre-25".to_string()),
+            mysql_install_path: None,
+        };
+        let cmd = p.start_command(&ctx).expect("start_command ok");
+        let expected = PathBuf::from(&install_path).join("jdk").to_string_lossy().to_string();
+        assert_eq!(cmd.env_vars.get("ES_JAVA_HOME"), Some(&expected));
     }
 
     #[test]
