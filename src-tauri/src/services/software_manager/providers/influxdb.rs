@@ -22,6 +22,35 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
 
 pub struct InfluxdbProvider;
 
+/// 从 GitHub Releases JSON 解析 InfluxDB v2 正式版本 tag（`v2.9.1` → `2.9.1`）。
+/// 仅保留主版本 2 的纯数字三段版本，跳过 v1/v3 与预发布。
+fn parse_influx_releases(releases: &[serde_json::Value]) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for r in releases {
+        if r.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let tag = match r.get("tag_name").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let ver = tag.strip_prefix('v').unwrap_or(&tag).to_string();
+        if !ver.starts_with("2.") {
+            continue;
+        }
+        let is_pure_version = regex::Regex::new(r"^\d+\.\d+\.\d+$")
+            .expect("valid regex")
+            .is_match(&ver);
+        if !is_pure_version {
+            continue;
+        }
+        if !versions.contains(&ver) {
+            versions.push(ver);
+        }
+    }
+    versions
+}
+
 impl InfluxdbProvider {
     pub fn new() -> Self {
         Self
@@ -87,6 +116,73 @@ impl SoftwareProvider for InfluxdbProvider {
             versions,
             default_version: version,
         }
+    }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // InfluxDB GitHub Releases。仅取 v2 系列（v3 是 influxdb3 全新架构，与当前 influxd provider 不兼容）。
+        // tag 形如 `v2.9.1` → 去 v 前缀；跳过 v1/v3 与 beta/rc。
+        let url = "https://api.github.com/repos/influxdata/influxdb/releases?per_page=30";
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(url)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[influxdb] GitHub API 返回 {}", resp.status());
+            return None;
+        }
+        let releases: Vec<serde_json::Value> = resp.json().ok()?;
+        let versions = parse_influx_releases(&releases);
+        if versions.is_empty() {
+            return None;
+        }
+        #[cfg(windows)]
+        let (url_part, format) = (
+            |v: &str| format!("influxdb2-{v}-windows_amd64.zip"),
+            ArchiveFormat::Zip,
+        );
+        #[cfg(target_os = "linux")]
+        let (url_part, format) = (
+            |v: &str| format!("influxdb2-{v}_linux_amd64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+        #[cfg(target_os = "macos")]
+        let (url_part, format) = (
+            |v: &str| format!("influxdb2-{v}_darwin_amd64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        let (url_part, format) = (
+            |v: &str| format!("influxdb2-{v}_linux_amd64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+
+        Some(
+            versions
+                .into_iter()
+                .map(|v| CatalogVersion {
+                    version: v.clone(),
+                    mirrors: vec![MirrorSource {
+                        name: "i18n:influxdbOfficial".to_string(),
+                        url: format!(
+                            "https://download.influxdata.com/influxdb/releases/{}",
+                            url_part(&v)
+                        ),
+                        builtin: None,
+                    }],
+                    archive: ArchiveInfo {
+                        format: format.clone(),
+                        size: None,
+                        sha256: None,
+                    },
+                })
+                .collect(),
+        )
     }
 
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
@@ -223,6 +319,28 @@ impl SoftwareProvider for InfluxdbProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release(tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease })
+    }
+
+    #[test]
+    fn parse_influx_releases_keeps_only_v2_pure_versions() {
+        let releases = vec![
+            release("v3.10.0", false),
+            release("v2.9.1", false),
+            release("v2.9.0", false),
+            release("v1.12.4", false),
+            release("v2.10.0-rc1", false),
+            release("v2.11.0", true),
+        ];
+        let vs = parse_influx_releases(&releases);
+        assert!(vs.contains(&"2.9.1".to_string()));
+        assert!(vs.contains(&"2.9.0".to_string()));
+        for bad in ["3.10.0", "1.12.4", "2.10.0-rc1", "2.11.0"] {
+            assert!(!vs.contains(&bad.to_string()), "should skip {bad}");
+        }
+    }
 
     fn test_config() -> serde_json::Value {
         serde_json::json!({

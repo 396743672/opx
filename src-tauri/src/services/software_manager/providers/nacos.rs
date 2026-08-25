@@ -28,6 +28,32 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
 
 pub struct NacosProvider;
 
+/// 从 GitHub Releases JSON 解析 Nacos 正式版本 tag。
+/// 跳过预发布（prerelease=true）、BETA、带日期后缀（3.2.1-2026.04.03）、
+/// bugfix（3.1.0-bugfix）等非纯数字 X.Y.Z 版本。
+fn parse_nacos_releases(releases: &[serde_json::Value]) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for r in releases {
+        if r.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let tag = match r.get("tag_name").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let is_pure_version = regex::Regex::new(r"^\d+\.\d+\.\d+$")
+            .expect("valid regex")
+            .is_match(&tag);
+        if !is_pure_version {
+            continue;
+        }
+        if !versions.contains(&tag) {
+            versions.push(tag);
+        }
+    }
+    versions
+}
+
 impl NacosProvider { pub fn new() -> Self { Self } }
 
 impl Default for NacosProvider { fn default() -> Self { Self::new() } }
@@ -67,6 +93,44 @@ impl SoftwareProvider for NacosProvider {
             versions,
             default_version: "2.5.3".to_string(),
         }
+    }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // Nacos GitHub Releases，tag 即版本号（如 2.5.3 / 3.2.3），过滤预发布/日期后缀。
+        let url = "https://api.github.com/repos/alibaba/nacos/releases?per_page=30";
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(url)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[nacos] GitHub API 返回 {}", resp.status());
+            return None;
+        }
+        let releases: Vec<serde_json::Value> = resp.json().ok()?;
+        let versions = parse_nacos_releases(&releases);
+        if versions.is_empty() {
+            return None;
+        }
+        Some(
+            versions
+                .into_iter()
+                .map(|v| CatalogVersion {
+                    version: v.clone(),
+                    mirrors: vec![MirrorSource {
+                        name: "i18n:nacosOfficial".to_string(),
+                        url: format!("https://github.com/alibaba/nacos/releases/download/{v}/nacos-server-{v}.zip"),
+                        builtin: None,
+                    }],
+                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                })
+                .collect(),
+        )
     }
 
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> { Ok(()) }
@@ -390,5 +454,33 @@ impl SoftwareProvider for NacosProvider {
     }
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease })
+    }
+
+    #[test]
+    fn parse_nacos_releases_keeps_only_pure_versions() {
+        let releases = vec![
+            release("3.3.0-BETA", true),
+            release("2.5.3", false),
+            release("3.2.3", false),
+            release("3.2.1-2026.04.03", false),
+            release("3.1.0-bugfix", false),
+            release("3.1.2", false),
+        ];
+        let vs = parse_nacos_releases(&releases);
+        assert!(vs.contains(&"2.5.3".to_string()));
+        assert!(vs.contains(&"3.2.3".to_string()));
+        assert!(vs.contains(&"3.1.2".to_string()));
+        for bad in ["3.3.0-BETA", "3.2.1-2026.04.03", "3.1.0-bugfix"] {
+            assert!(!vs.contains(&bad.to_string()), "should skip {bad}");
+        }
+    }
 }
 
