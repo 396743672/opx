@@ -91,6 +91,27 @@ fn patch_kafka_run_class(home: &Path) -> Result<()> {
 
 pub struct KafkaProvider;
 
+/// 从 Apache archive 索引页 HTML 解析 Kafka 版本目录（`href="3.9.2/"` 形式）。
+/// 仅保留主版本 >= 3 的纯数字三/四段版本（Kafka 3.x/4.x 统一用 kafka_2.13 命名，
+/// 2.x 及更早是 2.11/2.12 命名，URL 构造会 404，直接排除）。
+fn parse_archive_versions(html: &str) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for cap in regex::Regex::new(r#"href="(\d+\.\d+\.\d+)/""#)
+        .expect("valid regex")
+        .captures_iter(html)
+    {
+        let v = cap[1].to_string();
+        let major: u32 = v.split('.').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        if major < 3 {
+            continue;
+        }
+        if !versions.contains(&v) {
+            versions.push(v);
+        }
+    }
+    versions
+}
+
 impl KafkaProvider {
     pub fn new() -> Self {
         Self
@@ -137,6 +158,47 @@ impl SoftwareProvider for KafkaProvider {
             versions,
             default_version: version,
         }
+    }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // 爬 Apache archive 索引页，解析所有已发布版本目录（3.x/4.x 统一为 kafka_2.13-{v}.tgz 命名）。
+        let url = "https://archive.apache.org/dist/kafka/";
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(url)
+            .header("User-Agent", "OPX")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[kafka] archive 目录返回 {}", resp.status());
+            return None;
+        }
+        let html = resp.text().ok()?;
+        let versions = parse_archive_versions(&html);
+        if versions.is_empty() {
+            return None;
+        }
+        Some(
+            versions
+                .into_iter()
+                .map(|v| CatalogVersion {
+                    version: v.clone(),
+                    mirrors: vec![MirrorSource {
+                        name: "i18n:kafkaOfficial".to_string(),
+                        url: format!("{url}{v}/kafka_2.13-{v}.tgz"),
+                        builtin: None,
+                    }],
+                    archive: ArchiveInfo {
+                        format: ArchiveFormat::TarGz,
+                        size: None,
+                        sha256: None,
+                    },
+                })
+                .collect(),
+        )
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
@@ -516,6 +578,26 @@ set KAFKA_JMX_OPTS=x\r\n";
             }
             _ => panic!("expected Tcp health check"),
         }
+    }
+
+    #[test]
+    fn parse_archive_versions_extracts_stable_versions() {
+        let html = r#"
+<a href="../">Parent Directory</a>
+<a href="2.8.0/">2.8.0/</a>
+<a href="3.9.2/">3.9.2/</a>
+<a href="4.0.0/">4.0.0/</a>
+<a href="4.3.1-site/">4.3.1-site/</a>
+<a href="3.10.0-rc/">3.10.0-rc/</a>
+"#;
+        let vs = parse_archive_versions(html);
+        assert!(vs.contains(&"3.9.2".to_string()));
+        assert!(vs.contains(&"4.0.0".to_string()));
+        // 跳过 2.x（kafka_2.13 命名不存在，URL 会 404）
+        assert!(!vs.contains(&"2.8.0".to_string()));
+        // 跳过非发行目录（site / rc / parent）
+        assert!(!vs.contains(&"4.3.1-site".to_string()));
+        assert!(!vs.contains(&"3.10.0-rc".to_string()));
     }
 
     #[test]

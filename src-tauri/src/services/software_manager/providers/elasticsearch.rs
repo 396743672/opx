@@ -29,6 +29,30 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
 
 pub struct ElasticsearchProvider;
 
+/// 从 Maven Central maven-metadata.xml 解析 Elasticsearch 版本（`<version>x.y.z</version>` 形式）。
+/// 仅保留主版本 >= 8 的纯数字三段式发行版本（8.x/9.x 延续当前架构且下载 URL 命名稳定；
+/// 跳过 8 之前的远古版本与含 -alpha/-beta/-rc/-snapshot 后缀的预发布）。
+fn parse_maven_versions(xml: &str) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for cap in regex::Regex::new(r"<version>([^<]+)</version>")
+        .expect("valid regex")
+        .captures_iter(xml)
+    {
+        let v = cap[1].to_string();
+        if v.contains('-') {
+            continue;
+        }
+        let major: u32 = v.split('.').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        if major < 8 {
+            continue;
+        }
+        if !versions.contains(&v) {
+            versions.push(v);
+        }
+    }
+    versions
+}
+
 impl ElasticsearchProvider {
     pub fn new() -> Self {
         Self
@@ -94,6 +118,71 @@ impl SoftwareProvider for ElasticsearchProvider {
             versions,
             default_version: version,
         }
+    }
+
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // 爬 Maven Central metadata，解析 Elasticsearch 正式版本（跳过 alpha/beta/rc/snapshot）。
+        let url = "https://repo1.maven.org/maven2/org/elasticsearch/elasticsearch/maven-metadata.xml";
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(url)
+            .header("User-Agent", "OPX")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[elasticsearch] Maven metadata 返回 {}", resp.status());
+            return None;
+        }
+        let xml = resp.text().ok()?;
+        let versions = parse_maven_versions(&xml);
+        if versions.is_empty() {
+            return None;
+        }
+        #[cfg(windows)]
+        let (url_part, format) = (
+            |v: &str| format!("elasticsearch-{v}-windows-x86_64.zip"),
+            ArchiveFormat::Zip,
+        );
+        #[cfg(target_os = "linux")]
+        let (url_part, format) = (
+            |v: &str| format!("elasticsearch-{v}-linux-x86_64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+        #[cfg(target_os = "macos")]
+        let (url_part, format) = (
+            |v: &str| format!("elasticsearch-{v}-darwin-x86_64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        let (url_part, format) = (
+            |v: &str| format!("elasticsearch-{v}-linux-x86_64.tar.gz"),
+            ArchiveFormat::TarGz,
+        );
+
+        Some(
+            versions
+                .into_iter()
+                .map(|v| CatalogVersion {
+                    version: v.clone(),
+                    mirrors: vec![MirrorSource {
+                        name: "i18n:elasticsearchOfficial".to_string(),
+                        url: format!(
+                            "https://artifacts.elastic.co/downloads/elasticsearch/{}",
+                            url_part(&v)
+                        ),
+                        builtin: None,
+                    }],
+                    archive: ArchiveInfo {
+                        format: format.clone(),
+                        size: None,
+                        sha256: None,
+                    },
+                })
+                .collect(),
+        )
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
@@ -424,6 +513,39 @@ mod tests {
         let cmd = p.start_command(&ctx).expect("start_command ok");
         let expected = PathBuf::from(&install_path).join("jdk").to_string_lossy().to_string();
         assert_eq!(cmd.env_vars.get("ES_JAVA_HOME"), Some(&expected));
+    }
+
+    #[test]
+    fn parse_maven_versions_filters_prereleases() {
+        let xml = r#"
+<metadata>
+  <versioning>
+    <lastUpdated>20260825000000</lastUpdated>
+    <versions>
+      <version>7.17.30</version>
+      <version>8.19.0</version>
+      <version>8.19.1</version>
+      <version>9.0.0-beta1</version>
+      <version>9.0.0</version>
+      <version>9.1.0-rc1</version>
+      <version>9.2.0</version>
+      <version>9.3.0-SNAPSHOT</version>
+      <version>9.4.2-alpha1</version>
+    </versions>
+  </versioning>
+</metadata>
+"#;
+        let vs = parse_maven_versions(xml);
+        assert!(vs.contains(&"8.19.0".to_string()));
+        assert!(vs.contains(&"8.19.1".to_string()));
+        assert!(vs.contains(&"9.0.0".to_string()));
+        assert!(vs.contains(&"9.2.0".to_string()));
+        // 跳过 8 之前的版本（URL 命名不稳定且过时）
+        assert!(!vs.contains(&"7.17.30".to_string()));
+        // 跳过所有预发布/快照
+        for bad in ["9.0.0-beta1", "9.1.0-rc1", "9.3.0-SNAPSHOT", "9.4.2-alpha1"] {
+            assert!(!vs.contains(&bad.to_string()), "should skip {bad}");
+        }
     }
 
     #[test]
