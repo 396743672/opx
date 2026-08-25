@@ -1,6 +1,6 @@
 [package]
 name = "opx"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lightweight cross-platform operations management tool"
 authors = ["opx-dev"]
 license = "MIT"
