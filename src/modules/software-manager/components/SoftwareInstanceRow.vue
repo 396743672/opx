@@ -40,45 +40,47 @@
     </div>
 
     <div class="card-actions">
-      <button
-        v-if="upgradeTo"
-        class="btn primary"
-        :disabled="actingStates?.[software.id] != null"
-        :title="t('upgradeHint')"
-        @click="$emit('upgrade')"
-      >
-        <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
-      </button>
-      <button
-        v-if="rollbackTo"
-        class="btn"
-        :disabled="actingStates?.[software.id] != null"
-        :title="t('rollbackTo', { v: rollbackTo })"
-        @click="$emit('rollback')"
-      >
-        <Icon icon="mdi:history" /> {{ $t('rollbackTo', { v: rollbackTo }) }}
-      </button>
-      <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
-        <Icon icon="mdi:play" /> {{ $t('start') }}
-      </button>
-      <button class="btn" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
-        <Icon icon="mdi:stop" /> {{ $t('stop') }}
-      </button>
-      <button class="btn" :disabled="!canConfig" @click="$emit('config')">
-        <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
-      </button>
-      <button class="btn" :disabled="!canOps" :title="$t('logs')" @click="$emit('log')">
-        <Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}
-      </button>
-      <button class="btn" :disabled="!canOps" :title="$t('backup')" @click="$emit('backup')">
-        <Icon icon="mdi:backup-restore" /> {{ $t('backup') }}
-      </button>
-      <button class="btn danger" :disabled="!canOps" :title="$t('resetInstance')" @click="$emit('reset')">
-        <Icon icon="mdi:rotate-left" /> {{ $t('resetInstance') }}
-      </button>
-      <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
-        <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
-      </button>
+      <template v-if="!isRuntime">
+        <button
+          v-if="upgradeTo"
+          class="btn primary"
+          :disabled="actingStates?.[software.id] != null"
+          :title="t('upgradeHint')"
+          @click="$emit('upgrade')"
+        >
+          <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
+        </button>
+        <button
+          v-if="rollbackTo"
+          class="btn"
+          :disabled="actingStates?.[software.id] != null"
+          :title="t('rollbackTo', { v: rollbackTo })"
+          @click="$emit('rollback')"
+        >
+          <Icon icon="mdi:history" /> {{ $t('rollbackTo', { v: rollbackTo }) }}
+        </button>
+        <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
+          <Icon icon="mdi:play" /> {{ $t('start') }}
+        </button>
+        <button class="btn" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
+          <Icon icon="mdi:stop" /> {{ $t('stop') }}
+        </button>
+        <button class="btn" :disabled="!canConfig" @click="$emit('config')">
+          <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
+        </button>
+        <button class="btn" :disabled="!canOps" :title="$t('logs')" @click="$emit('log')">
+          <Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}
+        </button>
+        <button class="btn" :disabled="!canOps" :title="$t('backup')" @click="$emit('backup')">
+          <Icon icon="mdi:backup-restore" /> {{ $t('backup') }}
+        </button>
+        <button class="btn danger" :disabled="!canOps" :title="$t('resetInstance')" @click="$emit('reset')">
+          <Icon icon="mdi:rotate-left" /> {{ $t('resetInstance') }}
+        </button>
+        <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
+          <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
+        </button>
+      </template>
       <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
         <Icon icon="mdi:delete" /> {{ $t('uninstall') }}
       </button>
