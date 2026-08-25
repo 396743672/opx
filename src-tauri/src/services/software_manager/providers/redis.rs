@@ -269,6 +269,7 @@ impl SoftwareProvider for RedisProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

@@ -217,6 +217,15 @@ impl SoftwareProvider for Influxdb3Provider {
             // admin_token 为持久化配置（写入 admin-token.json 供 --admin-token-file 使用），
             // 不设 ephemeral（重启后仍需用同一 token 访问数据）。
             ephemeral_keys: vec![],
+            // 认证联动：auth_enabled=true 才显示 admin_token 且必填；false 时隐藏该字段。
+            field_rules: vec![crate::models::software::FieldRule {
+                field_key: "admin_token".to_string(),
+                visible_when: Some(crate::models::software::FieldCondition {
+                    key: "auth_enabled".to_string(),
+                    equals: serde_json::json!(true),
+                }),
+                required: true,
+            }],
         })
     }
 }

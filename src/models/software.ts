@@ -151,6 +151,21 @@ export interface ConfigSchema {
   /// 标记为 ephemeral 的字段 key 列表（如 MySQL 初始化密码）。
   /// 这些字段是敏感的一次性值，绝不写入配置文件 / installed.json；前端渲染为红色敏感字段。
   ephemeral_keys?: string[]
+  /// 字段显示/必填规则：如「auth_enabled=true 时才显示 admin_token 且必填」。
+  field_rules?: FieldRule[]
+}
+
+/// 字段规则：visible_when 满足时显示；required 时必填（非空）。
+export interface FieldRule {
+  field_key: string
+  visible_when?: FieldCondition | null
+  required: boolean
+}
+
+/// 条件：当 config 的 key 字段值等于 equals 时满足。
+export interface FieldCondition {
+  key: string
+  equals: any
 }
 
 export interface ConfigField {

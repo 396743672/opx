@@ -122,6 +122,7 @@ impl SoftwareProvider for MongoDbProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

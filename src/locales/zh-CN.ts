@@ -119,6 +119,7 @@ export default {
   presetRedisCache: '缓存优化',
   saveAndRestart: '保存并重启',
   configEditRestartHint: '配置改动需重启软件后生效',
+  configRequiredMissing: '请填写必填项：{field}',
   configEditSourceHint: '直接编辑配置文件源码，保存后生效',
 
   // StartupSettingsDialog

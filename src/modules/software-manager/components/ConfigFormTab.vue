@@ -4,7 +4,7 @@
     <div v-else-if="!schema" class="empty">{{ $t('noConfigSchema') }}</div>
     <div v-else class="form-grid">
       <div
-        v-for="field in schema.fields"
+        v-for="field in visibleFields"
         :key="field.key"
         class="field"
         :class="{ full: isPort(field) }"
@@ -166,7 +166,36 @@ const isInitialized = computed(
   () => (props.software.config as Record<string, any> | undefined)?.initialized === true,
 )
 
-defineExpose({ formData })
+// 字段规则：visible_when 满足才显示（如 auth_enabled=false 时隐藏认证字段）
+const visibleFields = computed<ConfigField[]>(() => {
+  const rules = props.schema?.field_rules ?? []
+  return (props.schema?.fields ?? []).filter((f) => {
+    const rule = rules.find((r) => r.field_key === f.key)
+    if (!rule?.visible_when) return true
+    const c = rule.visible_when
+    const cur = formData.value[c.key]
+    // Boolean 控件值可能为 true/false；equals 也传 true/false，严格比较
+    return cur === c.equals
+  })
+})
+
+// 必填校验：可见且 required 的字段非空
+function validateRequired(): string | null {
+  const rules = props.schema?.field_rules ?? []
+  for (const rule of rules) {
+    if (!rule.required) continue
+    // 隐藏字段不校验（不可见则无需填）
+    const field = visibleFields.value.find((f) => f.key === rule.field_key)
+    if (!field) continue
+    const v = formData.value[field.key]
+    if (v === undefined || v === null || v === '') {
+      return rule.field_key
+    }
+  }
+  return null
+}
+
+defineExpose({ formData, validateRequired })
 </script>
 
 <style scoped>

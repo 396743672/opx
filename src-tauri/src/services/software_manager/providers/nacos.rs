@@ -441,6 +441,7 @@ impl SoftwareProvider for NacosProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

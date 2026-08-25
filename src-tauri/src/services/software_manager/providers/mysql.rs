@@ -298,6 +298,7 @@ lower_case_table_names=1\n",
             ],
             // init_password 为一次性敏感字段：仅首次初始化消费，绝不写入 my.ini / installed.json
             ephemeral_keys: vec!["init_password".to_string()],
+            field_rules: vec![],
         })
     }
 

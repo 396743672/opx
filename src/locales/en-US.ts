@@ -119,6 +119,7 @@ export default {
   presetRedisCache: 'Cache opt',
   saveAndRestart: 'Save & Restart',
   configEditRestartHint: 'Config changes take effect after restart',
+  configRequiredMissing: 'Please fill in required field: {field}',
   configEditSourceHint: 'Edit config file source directly, takes effect after save',
 
   // StartupSettingsDialog

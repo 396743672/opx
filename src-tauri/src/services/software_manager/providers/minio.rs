@@ -228,6 +228,7 @@ impl SoftwareProvider for MinioProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

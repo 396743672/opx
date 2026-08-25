@@ -392,6 +392,7 @@ impl SoftwareProvider for KafkaProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

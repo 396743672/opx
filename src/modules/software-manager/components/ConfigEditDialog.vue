@@ -191,6 +191,12 @@ async function onSave(closeAfter?: boolean) {
   try {
     if (tab.value === 'form' && formTabRef.value) {
       const data: FormData = (formTabRef.value as any).formData
+      // 必填校验（field_rules.required）：缺失则中止并提示
+      const missing = (formTabRef.value as any).validateRequired?.() ?? null
+      if (missing) {
+        alert(t('configRequiredMissing', { field: t(fieldLabel(missing)) }))
+        return
+      }
       await invoke('write_config_form', {
         installedId: props.software.id,
         data,
@@ -215,6 +221,14 @@ async function onSave(closeAfter?: boolean) {
   } finally {
     saving.value = false
   }
+}
+
+// 字段 key → label_i18n（用于必填校验提示）
+function fieldLabel(key: string): string {
+  return (
+    schema.value?.fields.find((f) => f.key === key)?.label_i18n ??
+    key
+  )
 }
 
 // 把 ephemeral 字段（如 MySQL 初始化密码）从表单暂存到运行时 store（绝不持久化）
@@ -264,6 +278,12 @@ async function onSaveAndRestart() {
     // 内联保存逻辑（而非调用 onSave），确保 saving 在整个保存+重启流程中保持 true
     if (tab.value === 'form' && formTabRef.value) {
       const data: FormData = (formTabRef.value as any).formData
+      // 必填校验（field_rules.required）：缺失则中止并提示
+      const missing = (formTabRef.value as any).validateRequired?.() ?? null
+      if (missing) {
+        alert(t('configRequiredMissing', { field: t(fieldLabel(missing)) }))
+        return
+      }
       await invoke('write_config_form', {
         installedId: props.software.id,
         data,

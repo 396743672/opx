@@ -270,6 +270,29 @@ pub struct ConfigSchema {
     /// 前端将其渲染为红色敏感字段；后端 write_config_form / write_form_to_config 会跳过它们。
     #[serde(default)]
     pub ephemeral_keys: Vec<String>,
+    /// 字段显示/必填规则（如「auth_enabled=true 时才显示 admin_token 且必填」）。
+    /// 由 ConfigFormTab 渲染时应用。
+    #[serde(default)]
+    pub field_rules: Vec<FieldRule>,
+}
+
+/// 字段规则：当 visible_when 满足时显示，且 required 时必填。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldRule {
+    pub field_key: String,
+    /// 条件显示：None 表示始终显示。
+    #[serde(default)]
+    pub visible_when: Option<FieldCondition>,
+    /// 满足显示条件时是否必填（+ 非空校验）。
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// 条件：当 config 的 key 字段值等于 equals 时满足。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldCondition {
+    pub key: String,
+    pub equals: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

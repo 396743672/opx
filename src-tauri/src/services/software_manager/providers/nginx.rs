@@ -297,6 +297,7 @@ impl SoftwareProvider for NginxProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

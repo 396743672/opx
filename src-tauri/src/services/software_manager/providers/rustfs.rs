@@ -199,6 +199,7 @@ impl SoftwareProvider for RustfsProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 

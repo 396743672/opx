@@ -349,6 +349,7 @@ impl SoftwareProvider for ElasticsearchProvider {
                 },
             ],
             ephemeral_keys: vec![],
+            field_rules: vec![],
         })
     }
 
