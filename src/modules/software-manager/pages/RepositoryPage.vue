@@ -6,6 +6,16 @@
       :subtitle="$t('installNewSoftware')"
     >
       <template #actions>
+        <button
+          v-if="selectedCount > 0"
+          class="btn primary batch-install-btn"
+          :disabled="batchInstalling"
+          @click="batchInstall"
+        >
+          <Icon v-if="batchInstalling" icon="mdi:loading" class="spinning" />
+          <Icon v-else icon="mdi:download-multiple" />
+          {{ $t('batchInstall') }} ({{ selectedCount }})
+        </button>
       </template>
     </PageHeader>
 
@@ -18,44 +28,67 @@
     </div>
 
     <div v-else class="content">
-      <div
-        v-for="(entries, category) in catalogStore.groupedEntries"
-        :key="category"
-        class="category-section"
-        v-show="entries.length > 0"
-      >
-        <div class="category-title">
-          <Icon :icon="categoryIcon(category)" /> {{ categoryName(category) }}
+      <CategoryTabs v-model="activeCategory" :tabs="categoryTabs" />
+
+      <template v-if="activeCategory === 'all'">
+        <div
+          v-for="(entries, category) in catalogStore.groupedEntries"
+          :key="category"
+          class="category-section"
+          v-show="entries.length > 0"
+        >
+          <div class="category-title">
+            <Icon :icon="categoryIcon(category)" /> {{ categoryName(category) }}
+          </div>
+          <div class="sw-grid">
+            <SoftwareCard
+              v-for="entry in entries"
+              :key="entry.key"
+              :entry="entry"
+              :installed-version="getInstalledVersion(entry.key)"
+              :is-default-jre="entry.key === 'jre' && defaultJreId !== null"
+              :selectable="isSelectable(entry)"
+              :selected="selectedKeys.has(entry.key)"
+              @install="openInstall"
+              @toggle-select="toggleSelect(entry)"
+            />
+          </div>
         </div>
+
+        <div class="category-section">
+          <div class="category-title">
+            <Icon icon="mdi:plus-box" /> {{ $t('uploadCustom') }}
+          </div>
+          <div class="custom-card" @click="openCustomInstall">
+            <div class="sw-icon">
+              <Icon icon="mdi:upload" />
+            </div>
+            <div class="custom-body">
+              <h3>{{ $t('uploadCustom') }}</h3>
+              <p>{{ $t('supportedFormats') }}</p>
+            </div>
+            <button class="btn primary">
+              <Icon icon="mdi:upload" /> {{ $t('install') }}
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
         <div class="sw-grid">
           <SoftwareCard
-            v-for="entry in entries"
+            v-for="entry in activeEntries"
             :key="entry.key"
             :entry="entry"
             :installed-version="getInstalledVersion(entry.key)"
             :is-default-jre="entry.key === 'jre' && defaultJreId !== null"
+            :selectable="isSelectable(entry)"
+            :selected="selectedKeys.has(entry.key)"
             @install="openInstall"
+            @toggle-select="toggleSelect(entry)"
           />
         </div>
-      </div>
-
-      <div class="category-section">
-        <div class="category-title">
-          <Icon icon="mdi:plus-box" /> {{ $t('uploadCustom') }}
-        </div>
-        <div class="custom-card" @click="openCustomInstall">
-          <div class="sw-icon">
-            <Icon icon="mdi:upload" />
-          </div>
-          <div class="custom-body">
-            <h3>{{ $t('uploadCustom') }}</h3>
-            <p>{{ $t('supportedFormats') }}</p>
-          </div>
-          <button class="btn primary">
-            <Icon icon="mdi:upload" /> {{ $t('install') }}
-          </button>
-        </div>
-      </div>
+      </template>
     </div>
 
     <InstallDialog
@@ -102,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -110,6 +143,8 @@ import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareCard from '../components/SoftwareCard.vue'
+import CategoryTabs from '../components/CategoryTabs.vue'
+import type { CategoryTab } from '../components/CategoryTabs.vue'
 import InstallDialog from '../components/InstallDialog.vue'
 import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import CustomInstallDialog from '../components/CustomInstallDialog.vue'
@@ -130,6 +165,44 @@ const allCollapsed = ref(false)
 const installedList = ref<InstalledSoftware[]>([])
 const defaultJreId = ref<string | null>(null)
 
+// 批量选择安装状态
+const selectedKeys = ref<Set<string>>(new Set())
+const batchInstalling = ref(false)
+const selectedCount = computed(() => selectedKeys.value.size)
+
+// 分类 Tab：全部 + 各非空分类
+const activeCategory = ref<string>('all')
+
+const categoryTabs = computed<CategoryTab[]>(() => {
+  const all = catalogStore.groupedEntries
+  const total = Object.values(all).reduce((n, e) => n + e.length, 0)
+  const tabs: CategoryTab[] = [
+    { key: 'all', label: t('all'), icon: 'mdi:view-grid-outline', count: total },
+  ]
+  for (const [cat, entries] of Object.entries(all)) {
+    if (entries.length === 0) continue
+    const c = cat as SoftwareCategory
+    tabs.push({ key: cat, label: categoryName(c), icon: categoryIcon(c), count: entries.length })
+  }
+  return tabs
+})
+
+// 当前选中分类的条目；'all' 时返回空（由模板走全部分类小节）
+const activeEntries = computed<CatalogEntry[]>(() => {
+  if (activeCategory.value === 'all') return []
+  return catalogStore.groupedEntries[activeCategory.value as SoftwareCategory] ?? []
+})
+
+// 分类变化后当前分类消失则回落「全部」
+watch(
+  () => Object.keys(catalogStore.groupedEntries),
+  (keys) => {
+    if (activeCategory.value !== 'all' && !keys.includes(activeCategory.value)) {
+      activeCategory.value = 'all'
+    }
+  },
+)
+
 let completedUnlisten: UnlistenFn | null = null
 
 function getInstalledVersion(key: string): string | null {
@@ -137,11 +210,60 @@ function getInstalledVersion(key: string): string | null {
   return found ? found.version : null
 }
 
+/** 已安装及安装中的条目不可批量选择 */
+function isSelectable(entry: CatalogEntry): boolean {
+  return getInstalledVersion(entry.key) === null && !installStore.hasActiveTask(entry.key)
+}
+
+function toggleSelect(entry: CatalogEntry) {
+  const next = new Set(selectedKeys.value)
+  if (next.has(entry.key)) next.delete(entry.key)
+  else next.add(entry.key)
+  selectedKeys.value = next
+}
+
+/** 批量安装：每个选中条目用 catalog 默认版本 + 首个镜像源，逐条调用 install_software */
+async function batchInstall() {
+  const entries = Object.values(catalogStore.groupedEntries)
+    .flat()
+    .filter((e) => selectedKeys.value.has(e.key))
+  if (entries.length === 0) return
+  batchInstalling.value = true
+  try {
+    for (const entry of entries) {
+      const version =
+        entry.versions.find((v) => v.version === entry.default_version) ?? entry.versions[0]
+      if (!version) continue
+      try {
+        const installId = await invoke('install_software', {
+          params: {
+            key: entry.key,
+            version: version.version,
+            mirror_index: 0,
+            set_as_default_jre: false,
+          },
+        }) as string
+        installStore.createTask(installId, entry.key, `${entry.name} ${version.version}`)
+      } catch (e) {
+        console.error(`Failed to install ${entry.key}:`, e)
+      }
+    }
+  } finally {
+    batchInstalling.value = false
+    selectedKeys.value = new Set()
+  }
+}
+
 function categoryName(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Database) return t('categoryDatabase')
   if (cat === SoftwareCategory.Runtime) return t('categoryRuntime')
   if (cat === SoftwareCategory.Cache) return t('categoryCache')
   if (cat === SoftwareCategory.WebServer) return t('categoryWebServer')
+  if (cat === SoftwareCategory.Registry) return t('categoryRegistry')
+  if (cat === SoftwareCategory.Storage) return t('categoryStorage')
+  if (cat === SoftwareCategory.MessageQueue) return t('categoryMessageQueue')
+  if (cat === SoftwareCategory.Search) return t('categorySearch')
+  if (cat === SoftwareCategory.TimeSeries) return t('categoryTimeSeries')
   return cat
 }
 
@@ -150,6 +272,11 @@ function categoryIcon(cat: SoftwareCategory): string {
   if (cat === SoftwareCategory.Runtime) return 'mdi:play-circle'
   if (cat === SoftwareCategory.Cache) return 'mdi:database'
   if (cat === SoftwareCategory.WebServer) return 'mdi:web'
+  if (cat === SoftwareCategory.Registry) return 'mdi:hexagon-multiple'
+  if (cat === SoftwareCategory.Storage) return 'mdi:storage'
+  if (cat === SoftwareCategory.MessageQueue) return 'mdi:message-text-outline'
+  if (cat === SoftwareCategory.Search) return 'mdi:magnify'
+  if (cat === SoftwareCategory.TimeSeries) return 'mdi:chart-line'
   return 'mdi:package-variant-closed'
 }
 

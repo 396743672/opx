@@ -21,30 +21,68 @@
         <span v-if="software.pid" class="kv">
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
-        <span v-if="software.port" class="kv">
-          <Icon icon="mdi:lan" /> {{ $t('port') }} <b class="tnum">{{ software.port }}</b>
+        <span v-if="runtimePort" class="kv">
+          <Icon icon="mdi:lan" /> {{ $t('port') }}
+          <a
+            v-if="webUrl && canOpenWeb"
+            class="tnum web-open"
+            :href="webUrl"
+            target="_blank"
+            rel="noopener"
+            :title="$t('openInBrowser')"
+          >{{ runtimePort }} <Icon icon="mdi:open-in-new" /></a>
+          <b v-else class="tnum">{{ runtimePort }}</b>
         </span>
       </div>
       <div v-if="software.last_error" class="error-text">
-        <Icon icon="mdi:alert-circle" /> {{ software.last_error }}
+        <Icon icon="mdi:alert-circle" /> {{ translateError(software.last_error, t, te) }}
       </div>
     </div>
 
     <div class="card-actions">
-      <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
-        <Icon icon="mdi:play" /> {{ $t('start') }}
-      </button>
-      <button class="btn" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
-        <Icon icon="mdi:stop" /> {{ $t('stop') }}
-      </button>
-      <button class="btn" :disabled="!canConfig" @click="$emit('config')">
-        <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
-      </button>
-      <button class="btn ghost" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
-        <Icon icon="mdi:tune-vertical" />
-      </button>
+      <template v-if="!isRuntime">
+        <button
+          v-if="upgradeTo"
+          class="btn primary"
+          :disabled="actingStates?.[software.id] != null"
+          :title="t('upgradeHint')"
+          @click="$emit('upgrade')"
+        >
+          <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
+        </button>
+        <button
+          v-if="rollbackTo"
+          class="btn"
+          :disabled="actingStates?.[software.id] != null"
+          :title="t('rollbackTo', { v: rollbackTo })"
+          @click="$emit('rollback')"
+        >
+          <Icon icon="mdi:history" /> {{ $t('rollbackTo', { v: rollbackTo }) }}
+        </button>
+        <button class="btn" :class="{ primary: canStart }" :disabled="!canStart" @click="$emit('start')">
+          <Icon icon="mdi:play" /> {{ $t('start') }}
+        </button>
+        <button class="btn" :class="{ primary: canStop }" :disabled="!canStop" @click="$emit('stop')">
+          <Icon icon="mdi:stop" /> {{ $t('stop') }}
+        </button>
+        <button class="btn" :disabled="!canConfig" @click="$emit('config')">
+          <Icon icon="mdi:cog-outline" /> {{ $t('config') }}
+        </button>
+        <button class="btn" :disabled="!canOps" :title="$t('logs')" @click="$emit('log')">
+          <Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}
+        </button>
+        <button class="btn" :disabled="!canOps" :title="$t('backup')" @click="$emit('backup')">
+          <Icon icon="mdi:backup-restore" /> {{ $t('backup') }}
+        </button>
+        <button class="btn danger" :disabled="!canOps" :title="$t('resetInstance')" @click="$emit('reset')">
+          <Icon icon="mdi:rotate-left" /> {{ $t('resetInstance') }}
+        </button>
+        <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
+          <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
+        </button>
+      </template>
       <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
-        <Icon icon="mdi:delete" />
+        <Icon icon="mdi:delete" /> {{ $t('uninstall') }}
       </button>
     </div>
   </div>
@@ -52,13 +90,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
 import { InstalledSoftware, SoftwareStatus } from '@/models/software'
+import { translateError } from '@/utils/i18nError'
+
+const { t, te } = useI18n()
 
 const props = defineProps<{
   software: InstalledSoftware
   actingStates?: Record<string, 'start' | 'stop'>
+  upgradeTo?: string | null
+  rollbackTo?: string | null
 }>()
 
 defineEmits<{
@@ -67,6 +111,11 @@ defineEmits<{
   config: []
   'startup-settings': []
   uninstall: []
+  log: []
+  backup: []
+  reset: []
+  upgrade: []
+  rollback: []
 }>()
 
 const categoryClass = computed(() => {
@@ -74,6 +123,8 @@ const categoryClass = computed(() => {
     case 'jre':
       return 'runtime'
     case 'mysql':
+    case 'postgresql':
+    case 'mongodb':
       return 'database'
     case 'redis':
       return 'cache'
@@ -82,6 +133,8 @@ const categoryClass = computed(() => {
     case 'minio':
     case 'rustfs':
       return 'storage'
+    case 'nacos':
+      return 'registry'
     default:
       return 'custom'
   }
@@ -99,10 +152,61 @@ const categoryIcon = computed(() => {
       return 'mdi:web'
     case 'storage':
       return 'mdi:storage'
+    case 'registry':
+      return 'mdi:hexagon-multiple'
     default:
       return 'mdi:upload'
   }
 })
+
+// 运行端口：优先运行时字段，其次按软件从 config 取对应端口字段（默认值兜底）
+const runtimePort = computed(() => {
+  const s = props.software
+  const cfg = s.config || {}
+  if (s.port) return s.port
+  switch (s.key) {
+    case 'minio':
+      return cfg.console_port || 9001
+    case 'nacos':
+      return cfg.console_port || 8080
+    case 'nginx':
+      return cfg.listen || 80
+    case 'elasticsearch':
+      return cfg.port || 9200
+    case 'influxdb':
+      return cfg.port || 8086
+    default:
+      return cfg.port || 0
+  }
+})
+
+// 可网页访问的软件返回访问地址，否则 null（数据库/Kafka/JRE 等走非 HTTP 协议）
+const webUrl = computed(() => {
+  const s = props.software
+  const host = '127.0.0.1'
+  const port = runtimePort.value
+  switch (s.key) {
+    case 'elasticsearch':
+    case 'influxdb':
+    case 'nginx':
+    case 'minio':
+      return `http://${host}:${port}`
+    case 'nacos': {
+      const path = s.config?.context_path || '/nacos'
+      return `http://${host}:${port}${path}`
+    }
+  }
+  // 自定义软件：Http 健康检查的 url 即网页地址
+  const hc = s.custom_start_command?.health_check
+  if (s.custom_start_command && hc?.kind === 'Http' && hc.spec?.url) return hc.spec.url
+  return null
+})
+
+const canOpenWeb = computed(
+  () =>
+    props.software.status === SoftwareStatus.Running ||
+    props.software.status === SoftwareStatus.Starting,
+)
 
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
 const isRuntime = computed(() => props.software.key === 'jre' || props.software.key === 'jdk')
@@ -138,6 +242,9 @@ const canConfig = computed(
 )
 
 const canStartupSettings = computed(() => canConfig.value)
+
+// JRE/JDK 是运行时依赖，不支持日志/备份入口（与 isRuntime 一致）
+const canOps = computed(() => !isRuntime.value)
 
 const canUninstall = computed(
   () =>
@@ -215,6 +322,10 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
 }
+.card-icon.registry {
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
 .name {
   font-size: 14px;
   font-weight: 600;
@@ -281,6 +392,21 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 }
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+.web-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+.web-open:hover {
+  text-decoration: underline;
+}
+.web-open svg {
+  width: 11px;
+  height: 11px;
 }
 .card-actions {
   display: flex;

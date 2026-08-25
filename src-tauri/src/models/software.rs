@@ -43,6 +43,15 @@ pub enum SoftwareCategory {
     Runtime,
     Cache,
     WebServer,
+    Registry,
+    /// 对象存储（MinIO / RustFS 等，治理自 Database 迁移而来）
+    Storage,
+    /// 消息队列（Kafka 等）
+    MessageQueue,
+    /// 搜索（Elasticsearch 等）
+    Search,
+    /// 时序数据库（InfluxDB 等）
+    TimeSeries,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +134,98 @@ pub struct InstalledSoftware {
 
     #[serde(default)]
     pub custom_start_command: Option<CustomStartCommand>,
+
+    /// 软件分类（来自 catalog，用于栈候选等按类型过滤）；自定义软件为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<SoftwareCategory>,
+}
+
+// ===== C 扩展（日志查看器 + 备份/恢复）新增类型 =====
+
+/// 日志来源种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LogSourceKind {
+    /// 进程 stdout/stderr 重定向落盘（spawn_process 写入 <install_path>/logs/opx-<installed_id>.log）
+    StdoutRedirect,
+    /// provider 自带日志文件（如 MongoDB 的 data/mongod.log）
+    ProviderFile,
+}
+
+/// 单条日志来源（序列化给前端展示与选择）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogSource {
+    /// 日志文件绝对路径
+    pub path: String,
+    pub kind: LogSourceKind,
+    /// 是否结构化、可显示级别筛选（决策 6：仅结构化级别日志显示筛选）
+    pub has_levels: bool,
+    /// provider 提供的级别提取正则；None 时用 LogService 内置默认正则
+    pub level_pattern: Option<String>,
+    /// 展示名（如 nginx 的「访问日志」「错误日志」）；None 时前端回退通用标签
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// 读取日志返回的分块（前端轮询/分页消费）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogChunk {
+    /// 命中的日志行（已应用关键字/正则/级别过滤）
+    pub lines: Vec<String>,
+    /// 本块首行的字节偏移
+    pub start_offset: u64,
+    /// 本块末行之后的字节偏移（前端下次轮询/分页携带）
+    pub end_offset: u64,
+    /// 文件总字节数
+    pub total_bytes: u64,
+    /// 向前是否还有更早的历史（用于「加载更多历史」）
+    pub has_more: bool,
+    /// 因超过单次上限被截断（命中行多于 limit）
+    pub truncated: bool,
+}
+
+/// 备份快照元信息（持久化于 <app_data>/backups/<id>/manifest.json）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotMeta {
+    /// = 快照文件名去后缀（如 20260817_143000）
+    pub id: String,
+    /// RFC3339 创建时间
+    pub created_at: String,
+    /// 来源软件 key（如 "mysql"）
+    pub source_key: String,
+    /// 来源软件版本（如 "8.4.11"）
+    pub source_version: String,
+    /// 首数字段大版本；MinIO 等以非数字开头的版本无法解析时为 None
+    pub major_version: Option<u32>,
+    /// zip 文件字节大小
+    pub size_bytes: u64,
+    /// 快照格式（"zip"）
+    pub format: String,
+    /// 用户自定义名称（P1-B1）
+    pub name: Option<String>,
+    /// 用户自定义备注（P1-B1）
+    pub note: Option<String>,
+}
+
+/// 备份模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BackupMode {
+    /// 默认：先停服再备份（决策 2）
+    StopAndBackup,
+    /// 热备（提供警告）
+    Hot,
+}
+
+/// 软件升级检测结果：target_version 为比当前版本高的最高可用版本
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpgradeInfo {
+    pub key: String,
+    pub name: String,
+    pub current_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_version: Option<String>,
+    /// 同 key 存在 <ver>.bak 备份时填该旧版本（回滚目标）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,9 +291,17 @@ pub enum ConfigFieldType {
     Number,
     Port,
     Password,
-    Select { options: Vec<String> },
+    /// options 是选项值（存 config），labels 是对应显示文本（长度与 options 一致）。
+    /// 用于「值存稳定标识（如 installed_id）、显示友好名称」的场景（如 JDK 选择）。
+    /// labels 为空时前端直接显示 options 值，向后兼容。
+    Select {
+        options: Vec<String>,
+        #[serde(default)]
+        labels: Vec<String>,
+    },
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },
+    Boolean,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

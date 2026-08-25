@@ -20,7 +20,7 @@
       </div>
       <div v-if="app.pid">PID: {{ app.pid }}</div>
       <div v-if="app.start_time">{{ $t('startedAt') }}: {{ app.start_time }}</div>
-      <div v-if="app.last_error" class="text-red-500">{{ app.last_error }}</div>
+      <div v-if="app.last_error" class="text-red-500">{{ translateError(app.last_error, t, te) }}</div>
     </div>
 
     <div class="flex gap-2 flex-wrap">
@@ -61,6 +61,13 @@
         <Icon icon="mdi:package-up" /> {{ $t('replaceJar') }}
       </button>
       <button
+        class="btn"
+        :disabled="app.status === AppStatus.Starting || app.status === AppStatus.Stopping"
+        @click="$emit('replaceRestart', app.id)"
+      >
+        <Icon icon="mdi:package-up" /> {{ $t('replaceAndRestart') }}
+      </button>
+      <button
         v-if="app.status === AppStatus.Running && app.jdk_type !== 'jre'"
         class="btn"
         @click="$emit('monitor', app.id)"
@@ -83,8 +90,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { AppStatus, type SpringBootApp } from '@/models/springboot'
+import { translateError } from '@/utils/i18nError'
+
+const { t, te } = useI18n()
 
 const props = defineProps<{
   app: SpringBootApp
@@ -96,6 +107,7 @@ defineEmits<{
   restart: [id: string]
   config: [id: string]
   replace: [id: string]
+  replaceRestart: [id: string]
   monitor: [id: string]
   logs: [id: string]
   delete: [id: string]

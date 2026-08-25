@@ -12,6 +12,13 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Force the offline iconify entry for ALL imports of @iconify/vue
+      // so addCollection (in src/utils/icons.ts) and <Icon> (used by every
+      // .vue file) share the same module-local storage. The main entry's
+      // addCollection returns true but registers nothing and the <Icon>
+      // component falls back to the network API (unreachable here), leaving
+      // every icon blank. Fixed 2026-08-18.
+      "@iconify/vue": "@iconify/vue/offline",
     },
   },
 

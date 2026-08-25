@@ -35,10 +35,29 @@
             </div>
           </div>
 
-          <label class="flex items-center gap-2 mb-3 opacity-50 cursor-not-allowed">
-            <input type="checkbox" disabled />
-            <span class="text-sm">{{ $t('httpsReserved') }}</span>
-          </label>
+          <div class="mb-3 space-y-2">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="form.ssl.enabled" :disabled="!!site.custom_conf" />
+              <span class="text-sm">{{ $t('sslEnable') }}</span>
+            </label>
+            <template v-if="form.ssl.enabled">
+              <div class="flex gap-2">
+                <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
+                <button class="btn" :disabled="genning" @click="genCert">
+                  <Icon icon="mdi:shield-check-outline" /> {{ $t('genCert') }}
+                </button>
+              </div>
+              <div>
+                <label class="lbl">{{ $t('sslCertPath') }}</label>
+                <input v-model="form.ssl.cert_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.crt" />
+              </div>
+              <div>
+                <label class="lbl">{{ $t('sslKeyPath') }}</label>
+                <input v-model="form.ssl.key_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.key" />
+              </div>
+              <div class="hint">{{ $t('sslHint') }}</div>
+            </template>
+          </div>
 
           <label class="lbl">{{ $t('routeRules') }}</label>
           <LocationEditor v-model="form.locations" :site-id="form.id" :locked="!isNew" />
@@ -104,6 +123,30 @@ const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isN
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const form = ref<Site>(props.site)
+if (!form.value.ssl) {
+  form.value.ssl = { enabled: false, cert_path: null, key_path: null }
+}
+const genDomain = ref(props.site.server_name || '')
+const genning = ref(false)
+
+async function genCert() {
+  const d = genDomain.value.trim() || form.value.server_name?.trim() || ''
+  if (!d) {
+    saveError.value = t('sslDomainRequired')
+    return
+  }
+  genning.value = true
+  saveError.value = ''
+  try {
+    const [cert, key] = await invoke<string[]>('generate_self_signed_cert', { domain: d })
+    form.value.ssl.cert_path = cert
+    form.value.ssl.key_path = key
+  } catch (e) {
+    saveError.value = String(e)
+  } finally {
+    genning.value = false
+  }
+}
 const saving = ref(false)
 const saveError = ref('')
 const tab = ref<'form' | 'source'>('form')
@@ -168,18 +211,38 @@ async function doUnlock() {
 // 新建站点：从表单数据生成 nginx 配置预览，跳过后端读取（尚未落库）
 function generateNginxPreview(s: Site): string {
   const serverName = s.server_name?.trim() || '_'
+  const ssl = s.ssl?.enabled
   let out = `# 配置预览（来源于表单数据，保存后写入文件）\nserver {\n`
-  out += `    listen ${s.listen};\n`
+  out += ssl ? `    listen 443 ssl;\n` : `    listen ${s.listen};\n`
+  if (ssl && s.ssl?.cert_path) out += `    ssl_certificate ${s.ssl.cert_path};\n`
+  if (ssl && s.ssl?.key_path) out += `    ssl_certificate_key ${s.ssl.key_path};\n`
+  if (ssl) {
+    out += `    ssl_protocols TLSv1.2 TLSv1.3;\n`
+    out += `    ssl_session_cache shared:SSL:10m;\n`
+  }
   out += `    server_name ${serverName};\n`
   out += `\n`
+  const shortId = s.id.slice(0, 8)
   for (const loc of s.locations) {
-    out += `    ${genLocForPreview(loc)}\n`
+    out += `    ${genLocForPreview(loc, shortId)}\n`
   }
   out += `}\n`
+  if (ssl && s.listen !== 443) {
+      out += `server {\n`
+      out += `    listen ${s.listen};\n`
+      out += `    server_name ${serverName};\n`
+      out += `    return 301 https://$host$request_uri;\n`
+      out += `}\n`
+    }
   return out
 }
 
-function genLocForPreview(loc: SiteLocation): string {
+function sanitizePath(path: string): string {
+  const s = path.replace(/[^a-zA-Z0-9]/g, '_')
+  return s || 'root'
+}
+
+function genLocForPreview(loc: SiteLocation, shortId: string): string {
   if (loc.kind === 'Static') {
     const root = loc.root?.replace(/\\/g, '/') || ''
     let block = `location ${loc.path} {\n`
@@ -190,17 +253,25 @@ function genLocForPreview(loc: SiteLocation): string {
     return block
   }
   // Proxy
-  const target = loc.target?.trim()
+  const upstreams = (loc.upstreams || []).map((u) => u.addr.trim()).filter(Boolean)
+  const target =
+    upstreams.length > 1
+      ? `http://site_${shortId}_${sanitizePath(loc.path)}`
+      : loc.target?.trim()
   if (!target) return `# location ${loc.path} { proxy_pass … }  // 填写后端地址后生效`
+  const subpath = loc.proxy_subpath?.trim()
   let block = `location ${loc.path} {\n`
-  block += `        proxy_pass ${target};\n`
+  block += `        proxy_pass ${subpath ? `${target.replace(/\/$/, '')}${subpath}` : target};\n`
   block += `        proxy_http_version 1.1;\n`
-  block += `        proxy_set_header Host \$host;\n`
-  block += `        proxy_set_header X-Real-IP \$remote_addr;\n`
-  block += `        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n`
-  block += `        proxy_set_header X-Forwarded-Proto \$scheme;\n`
-  block += `        proxy_set_header Upgrade \$http_upgrade;\n`
-  block += `        proxy_set_header Connection \$connection_upgrade;\n`
+  block += `        proxy_set_header Host $host;\n`
+  block += `        proxy_set_header X-Real-IP $remote_addr;\n`
+  block += `        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n`
+  block += `        proxy_set_header X-Forwarded-Proto $scheme;\n`
+  block += `        proxy_set_header Upgrade $http_upgrade;\n`
+  block += `        proxy_set_header Connection $connection_upgrade;\n`
+  for (const h of loc.proxy_headers || []) {
+    if (h.name.trim()) block += `        proxy_set_header ${h.name} ${h.value};\n`
+  }
   block += `    }`
   return block
 }

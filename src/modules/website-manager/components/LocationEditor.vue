@@ -36,8 +36,35 @@
       </div>
 
       <div v-else class="space-y-1">
-        <input v-model="l.target" class="input w-full font-mono" placeholder="http://127.0.0.1:8080" />
+        <input v-model="l.target" class="input w-full font-mono" :placeholder="$t('proxyTarget')" />
         <div class="text-[11px] text-muted-foreground">{{ $t('proxyHint') }}</div>
+
+        <div class="border-t border-border pt-2 mt-2">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[11px] text-muted-foreground">{{ $t('upstreamTargets') }}</span>
+            <button class="btn sm" @click="addUpstream(l)"><Icon icon="mdi:plus" /> {{ $t('upstreamAdd') }}</button>
+          </div>
+          <div v-for="(u, ui) in l.upstreams || []" :key="ui" class="flex gap-1 items-center mb-1">
+            <input v-model="u.addr" class="input flex-1 font-mono" :placeholder="$t('upstreamAddr')" />
+            <button class="btn sm danger" @click="removeUpstream(l, ui)"><Icon icon="mdi:delete" /></button>
+          </div>
+          <div v-if="(l.upstreams?.length ?? 0) > 1" class="text-[11px] text-muted-foreground">{{ $t('upstreamHint') }}</div>
+        </div>
+
+        <input v-model="l.proxy_subpath" class="input w-full font-mono mt-2" :placeholder="$t('subPath')" />
+        <div class="text-[11px] text-muted-foreground">{{ $t('subPathHint') }}</div>
+
+        <div class="border-t border-border pt-2 mt-2">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[11px] text-muted-foreground">{{ $t('customHeaders') }}</span>
+            <button class="btn sm" @click="addHeader(l)"><Icon icon="mdi:plus" /> {{ $t('headerAdd') }}</button>
+          </div>
+          <div v-for="(h, hi) in l.proxy_headers || []" :key="hi" class="flex gap-1 items-center mb-1">
+            <input v-model="h.name" class="input w-2/5 font-mono" :placeholder="$t('headerName')" />
+            <input v-model="h.value" class="input flex-1 font-mono" :placeholder="$t('headerValue')" />
+            <button class="btn sm danger" @click="removeHeader(l, hi)"><Icon icon="mdi:delete" /></button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -71,11 +98,30 @@ const locked = props.locked ?? false
 const uploadError = ref('')
 
 function add() {
-  model.push({ path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null })
+  model.push({
+    path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null,
+    upstreams: [], proxy_headers: [], proxy_subpath: null,
+  })
   emit('update:modelValue', model)
 }
 function removeAt(i: number) {
   model.splice(i, 1)
+  emit('update:modelValue', model)
+}
+function addUpstream(l: SiteLocation) {
+  ;(l.upstreams ??= []).push({ addr: '' })
+  emit('update:modelValue', model)
+}
+function removeUpstream(l: SiteLocation, i: number) {
+  l.upstreams?.splice(i, 1)
+  emit('update:modelValue', model)
+}
+function addHeader(l: SiteLocation) {
+  ;(l.proxy_headers ??= []).push({ name: '', value: '' })
+  emit('update:modelValue', model)
+}
+function removeHeader(l: SiteLocation, i: number) {
+  l.proxy_headers?.splice(i, 1)
   emit('update:modelValue', model)
 }
 
@@ -105,5 +151,6 @@ async function upload(l: SiteLocation) {
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; }
 .input:focus { border-color: var(--color-primary); background: var(--color-card); }
 .btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
 .btn.danger { color: #e5484d; }
 </style>

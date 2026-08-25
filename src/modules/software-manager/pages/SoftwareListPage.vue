@@ -36,7 +36,8 @@
     </div>
 
     <div v-else class="content">
-      <div v-for="group in grouped" :key="group.category" class="category-section">
+      <CategoryTabs v-model="activeCategory" :tabs="categoryTabs" />
+      <div v-for="group in displayGroups" :key="group.category" class="category-section">
         <div class="category-title">
           <Icon :icon="group.icon" />
           {{ $t(group.label) }}
@@ -48,11 +49,18 @@
             :key="item.id"
             :software="mergeStatus(item)"
             :acting-states="actingStates"
+            :upgrade-to="upgradeMap[item.key]"
+            :rollback-to="rollbackMap[item.key]"
             @start="onStart(item)"
             @stop="onStop(item)"
             @config="onConfig(item)"
             @startup-settings="onStartupSettings(item)"
             @uninstall="onUninstall(item)"
+            @log="onLog(item)"
+            @backup="onBackup(item)"
+            @reset="onReset(item)"
+            @upgrade="onUpgrade(item)"
+            @rollback="onRollback(item)"
           />
         </div>
       </div>
@@ -79,26 +87,66 @@
       @close="uninstallTarget = null"
       @uninstalled="onUninstalled"
     />
+
+    <LogViewerDialog
+      v-if="logTarget"
+      :software="logTarget"
+      :instances="manageableInstances"
+      @close="logTarget = null"
+    />
+    <BackupRestoreDialog
+      v-if="backupTarget"
+      :software="backupTarget"
+      :instances="manageableInstances"
+      :initial-tab="backupInitialTab"
+      @close="backupTarget = null"
+    />
   </div>
+
+  <!-- 右下角浮动进度通知容器（Teleport 到 body 确保 fixed 相对窗口） -->
+  <Teleport to="body">
+    <div v-if="installStore.activeTasks.length" class="progress-panel">
+      <div class="progress-panel-header" @click="allCollapsed = !allCollapsed">
+        <Icon icon="mdi:download" class="text-primary" />
+        <span>{{ $t('downloading') }} ({{ installStore.activeTasks.length }})</span>
+        <Icon :icon="allCollapsed ? 'mdi:chevron-up' : 'mdi:chevron-down'" class="text-muted-foreground ml-auto" />
+      </div>
+      <div v-show="!allCollapsed" class="progress-panel-body">
+        <InstallProgressDialog
+          v-for="task in installStore.activeTasks"
+          :key="task.id"
+          :task="task"
+        />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareInstanceRow from '../components/SoftwareInstanceRow.vue'
+import CategoryTabs from '../components/CategoryTabs.vue'
+import type { CategoryTab } from '../components/CategoryTabs.vue'
 import ConfigEditDialog from '../components/ConfigEditDialog.vue'
 import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
+import LogViewerDialog from '../components/LogViewerDialog.vue'
+import BackupRestoreDialog from '../components/BackupRestoreDialog.vue'
+import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
+import { useInstallStore } from '../stores/install'
 import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
+import type { UpgradeInfo } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
-useI18n()
+const { t } = useI18n()
 
 const installed = ref<InstalledSoftware[]>([])
 const loading = ref(false)
@@ -106,9 +154,77 @@ const configTarget = ref<InstalledSoftware | null>(null)
 const startupTarget = ref<InstalledSoftware | null>(null)
 const customTarget = ref<InstalledSoftware | null>(null)
 const uninstallTarget = ref<InstalledSoftware | null>(null)
+const logTarget = ref<InstalledSoftware | null>(null)
+const backupTarget = ref<InstalledSoftware | null>(null)
+// 备份/恢复对话框初始 Tab：backup 按钮打开快照列表，reset 按钮直接定位到一键重置（Tab B）
+const backupInitialTab = ref<'snapshots' | 'reset'>('snapshots')
 // 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
 const actingStates = ref<Record<string, 'start' | 'stop'>>({})
+const installStore = useInstallStore()
+// key → 目标升级版本（无可升级则无该 key）
+const upgradeMap = ref<Record<string, string>>({})
+// key → 可回滚的旧版本（同 key 存在 <ver>.bak 备份时）
+const rollbackMap = ref<Record<string, string>>({})
+const allCollapsed = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let completedUnlisten: UnlistenFn | null = null
+
+function applyUpgrades(list: UpgradeInfo[]) {
+  const map: Record<string, string> = {}
+  const rb: Record<string, string> = {}
+  for (const u of list) {
+    if (u.target_version) map[u.key] = u.target_version
+    if (u.rollback_to) rb[u.key] = u.rollback_to
+  }
+  upgradeMap.value = map
+  rollbackMap.value = rb
+}
+
+/** 内置检测先行返回；随后并行在线刷新，失败静默回退 */
+async function loadUpgrades() {
+  try {
+    const list = await invoke<UpgradeInfo[]>('check_upgrades')
+    applyUpgrades(list)
+    refreshUpgrades(list.map((u) => u.key))
+  } catch (e) {
+    console.error('check_upgrades failed:', e)
+  }
+}
+
+async function refreshUpgrades(keys: string[]) {
+  const uniq = [...new Set(keys)]
+  await Promise.allSettled(
+    uniq.map((k) => invoke('fetch_remote_versions_for', { key: k })),
+  )
+  try {
+    applyUpgrades(await invoke<UpgradeInfo[]>('check_upgrades'))
+  } catch (e) {
+    console.error('refresh upgrades failed:', e)
+  }
+}
+
+/** 替换式升级：停旧→装新→迁移数据，列表保持一条记录（后端 upgrade_software） */
+async function onUpgrade(item: InstalledSoftware) {
+  if (installStore.hasActiveTask(item.key)) return // 该软件已有安装/升级任务防重
+  try {
+    const installId = (await invoke('upgrade_software', { installedId: item.id })) as string
+    installStore.createTask(installId, item.key, `升级 ${item.name}`)
+  } catch (e) {
+    console.error('upgrade failed:', e)
+  }
+}
+
+/** 一键回滚：恢复升级时保留的 .bak 备份（后端 rollback_software），完成后刷新列表与可升级徽标 */
+async function onRollback(item: InstalledSoftware) {
+  if (installStore.hasActiveTask(item.key)) return
+  try {
+    await invoke('rollback_software', { installedId: item.id })
+    loadInstalled()
+    loadUpgrades()
+  } catch (e) {
+    console.error('rollback failed:', e)
+  }
+}
 
 interface Group {
   category: string
@@ -124,6 +240,10 @@ const grouped = computed<Group[]>(() => {
     cache: { category: 'cache', label: 'cache', icon: 'mdi:lightning-bolt', items: [] },
     webserver: { category: 'webserver', label: 'webServer', icon: 'mdi:web', items: [] },
     storage: { category: 'storage', label: 'objectStorage', icon: 'mdi:storage', items: [] },
+    registry: { category: 'registry', label: 'registry', icon: 'mdi:hexagon-multiple', items: [] },
+    messagequeue: { category: 'messagequeue', label: 'messageQueue', icon: 'mdi:message-text-outline', items: [] },
+    search: { category: 'search', label: 'search', icon: 'mdi:magnify', items: [] },
+    timeseries: { category: 'timeseries', label: 'timeSeries', icon: 'mdi:chart-line', items: [] },
     custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
   }
   // JRE 也纳入管理页（提供卸载入口），放在 runtime 分组
@@ -133,15 +253,51 @@ const grouped = computed<Group[]>(() => {
     let g: keyof typeof groups
     if (sw.is_custom) g = 'custom'
     else if (sw.key === 'jre' || sw.key === 'jdk') g = 'runtime'
-    else if (sw.key === 'mysql') g = 'database'
+    else if (sw.key === 'mysql' || sw.key === 'postgresql' || sw.key === 'mongodb') g = 'database'
     else if (sw.key === 'redis') g = 'cache'
     else if (sw.key === 'nginx') g = 'webserver'
     else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
+    else if (sw.key === 'nacos') g = 'registry'
+    else if (sw.key === 'kafka') g = 'messagequeue'
+    else if (sw.key === 'elasticsearch') g = 'search'
+    else if (sw.key === 'influxdb') g = 'timeseries'
     else continue
     groups[g].items.push(sw)
   }
   return Object.values(groups).filter((g) => g.items.length > 0)
 })
+
+// 分类 Tab：全部 + 各非空分类
+const activeCategory = ref<string>('all')
+
+const categoryTabs = computed<CategoryTab[]>(() => {
+  const tabs: CategoryTab[] = [
+    { key: 'all', label: t('all'), icon: 'mdi:view-grid-outline', count: manageableInstances.value.length },
+  ]
+  for (const g of grouped.value) {
+    tabs.push({ key: g.category, label: t(g.label), icon: g.icon, count: g.items.length })
+  }
+  return tabs
+})
+
+// 当前选中的分类组；'all' 时返回全部分组（保持原分类小节布局）
+const displayGroups = computed(() => {
+  if (activeCategory.value === 'all') return grouped.value
+  const g = grouped.value.find((x) => x.category === activeCategory.value)
+  return g ? [g] : []
+})
+
+// 分组变化（如卸载/安装）后当前分类消失则回落「全部」
+watch(grouped, (val) => {
+  if (activeCategory.value !== 'all' && !val.some((g) => g.category === activeCategory.value)) {
+    activeCategory.value = 'all'
+  }
+})
+
+// 可运维实例（排除 JRE/JDK 运行时依赖，与 SoftwareInstanceRow.canOps 一致）
+const manageableInstances = computed(() =>
+  installed.value.filter((s) => s.key !== 'jre' && s.key !== 'jdk'),
+)
 
 function mergeStatus(item: InstalledSoftware): InstalledSoftware {
   const liveStatus = lifecycleStore.getStatus(item.id)
@@ -262,6 +418,20 @@ function onUninstall(item: InstalledSoftware) {
   uninstallTarget.value = item
 }
 
+function onLog(item: InstalledSoftware) {
+  logTarget.value = item
+}
+
+function onBackup(item: InstalledSoftware) {
+  backupInitialTab.value = 'snapshots'
+  backupTarget.value = item
+}
+
+function onReset(item: InstalledSoftware) {
+  backupInitialTab.value = 'reset'
+  backupTarget.value = item
+}
+
 function onUninstalled() {
   uninstallTarget.value = null
   loadInstalled()
@@ -269,9 +439,19 @@ function onUninstalled() {
 
 onMounted(async () => {
   await lifecycleStore.initListener()
+  await installStore.initEvents()
   await loadInstalled()
+  loadUpgrades()
   // 30s 兜底轮询（事件丢失时仍能同步状态）
   pollTimer = setInterval(loadInstalled, 30_000)
+  // 升级/安装完成时自动刷新已装列表与可升级徽标（与 RepositoryPage 模式一致）
+  completedUnlisten = await listen('install-progress', (event) => {
+    const payload = event.payload as any
+    if (payload.phase === 'completed') {
+      loadInstalled()
+      loadUpgrades()
+    }
+  })
 })
 
 // 监听 lifecycle store 状态变更：当状态转为 Starting/Stopping/Stopped/Error/Running
@@ -298,9 +478,14 @@ watch(
 
 onBeforeUnmount(() => {
   lifecycleStore.destroyListener()
+  installStore.cleanup()
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
+  }
+  if (completedUnlisten) {
+    completedUnlisten()
+    completedUnlisten = null
   }
 })
 </script>
@@ -346,5 +531,45 @@ onBeforeUnmount(() => {
   .instance-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* 右下角浮动进度面板 */
+.progress-panel {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  width: 360px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.progress-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-muted);
+}
+.progress-panel-header svg {
+  width: 16px;
+  height: 16px;
+}
+.ml-auto {
+  margin-left: auto;
+}
+.progress-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  max-height: 360px;
+  overflow-y: auto;
 }
 </style>

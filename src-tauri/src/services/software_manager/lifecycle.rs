@@ -114,14 +114,34 @@ fn resolve_program_path(program: &str, working_dir: &std::path::Path) -> PathBuf
     }
 }
 
-/// 用 StartCommand 构造并 spawn 子进程
-/// Windows 上设置 CREATE_NO_WINDOW flag 隐藏控制台窗口
+/// 计算 stdout/stderr 重定向落盘路径：<install_path>/logs/opx-<installed_id>.log
+/// 文件名用 installed_id 而非 pid：pid 在 spawn 前不可知，且 Windows 下 rename 打开中的文件会失败。
+/// install_path 取 StartCommand.working_dir 解析后的绝对路径（各 provider 的 working_dir 均为 install_path）。
+pub fn stdout_log_path(install_path: &std::path::Path, installed_id: &str) -> PathBuf {
+    // 防御性 sanitize：installed_id 可能含 / : 等非法文件名字符，
+    // 直接拼进文件名会造成路径穿越或 File::create 失败（Windows）。
+    // 仅保留字母数字与 - _，其余一律替换为下划线。
+    let safe_id: String = installed_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    install_path
+        .join("logs")
+        .join(format!("opx-{}.log", safe_id))
+}
+
+/// 用 StartCommand 构造并 spawn 子进程，将其 stdout+stderr 重定向到
+/// <install_path>/logs/opx-<installed_id>.log（installed_id 在 spawn 前即可确定）。
 ///
-/// 注：program 若为相对路径（如 "bin/mysqld.exe"），必须拼接 working_dir
-/// 得到绝对路径——Windows CreateProcessW 查找可执行文件时用的是父进程
-/// 工作目录，而非 Command::current_dir() 设置的子进程工作目录，相对路径
-/// 会报 "program not found"。
-pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
+/// 文件句柄通过 `Stdio::from(file)` 移交给子进程持有，父进程不保留副本，
+/// 进程退出后文件可读（Windows 下 rename 打开中的文件会失败，故文件名用 installed_id）。
+pub fn spawn_process(cmd: StartCommand, installed_id: &str) -> anyhow::Result<Child> {
     let program_path = resolve_program_path(&cmd.program, &cmd.working_dir);
 
     let mut command = Command::new(&program_path);
@@ -134,9 +154,20 @@ pub fn spawn_process(cmd: StartCommand) -> anyhow::Result<Child> {
     #[cfg(windows)]
     command.creation_flags(cmd.creation_flags);
 
+    // stdout/stderr 重定向到日志文件（先于 spawn 创建目录与文件）
+    let log_path = stdout_log_path(&cmd.working_dir, installed_id);
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| anyhow::anyhow!("创建日志文件失败 {}: {}", log_path.display(), e))?;
+    let log_file_stderr = log_file
+        .try_clone()
+        .map_err(|e| anyhow::anyhow!("克隆日志文件句柄失败: {}", e))?;
+
     let child = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_stderr))
         .spawn()?;
     Ok(child)
 }
@@ -240,6 +271,34 @@ pub(crate) fn wipe_data_dir_if_nonempty(data_dir: &std::path::Path) -> anyhow::R
     std::fs::remove_dir_all(data_dir)?;
     std::fs::create_dir_all(data_dir)?;
     Ok(true)
+}
+
+/// 一键重置：对每个数据目录重建空态（保留目录本身，清空其下所有内容）。
+///
+/// 护栏：
+/// - 目录必须位于 `install_path` 下（拒绝安装根/意外路径，防误删）
+/// - 存在但不是目录（如误用成文件/安装根）→ 拦截返回 `Err`
+///
+/// 复用 `wipe_data_dir_if_nonempty` 的「非空才删、删后重建」语义。
+pub(crate) fn reset_data_dirs(dirs: &[PathBuf], install_path: &std::path::Path) -> anyhow::Result<()> {
+    for dir in dirs {
+        // 护栏：必须在 install_path 下，避免误删安装根或系统目录
+        if !dir.starts_with(install_path) {
+            return Err(anyhow::anyhow!(
+                "数据目录不在安装目录下，拒绝重置: {}",
+                dir.display()
+            ));
+        }
+        // 存在但不是目录：可能是误用（路径指向安装根或文件），先拦截避免误删
+        if dir.exists() && !dir.is_dir() {
+            return Err(anyhow::anyhow!(
+                "数据路径存在但不是目录，无法安全重置: {}",
+                dir.display()
+            ));
+        }
+        wipe_data_dir_if_nonempty(dir)?;
+    }
+    Ok(())
 }
 
 // —— 状态转换校验 ——
@@ -524,4 +583,35 @@ pub fn stop_all_on_exit(app: &AppHandle) {
         );
     }
     let _ = app.emit("stop-complete", ());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stdout_log_path;
+    use std::path::Path;
+
+    #[test]
+    fn test_stdout_log_path_shape() {
+        let id = "9f1c2b3a-4d5e-6f70-8a9b-0c1d2e3f4a5b";
+        let p = stdout_log_path(Path::new("/opt/opx/inst1"), id);
+        let fname = p.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(fname, format!("opx-{}.log", id));
+        // 路径应包含 logs 目录组件（跨平台）
+        let has_logs = p.components().any(|c| c.as_os_str() == "logs");
+        assert!(has_logs, "stdout 落盘路径应包含 logs 目录组件");
+    }
+
+    /// 预期：installed_id 若含非法文件名字符（/ : 等），落盘文件名必须被 sanitize，
+    /// 否则 Windows 上 File::create 会失败、或造成路径穿越。
+    /// 当前实现未 sanitize => 该断言预期失败（installed_id 实际为 UUID，故为防御性 P2）。
+    #[test]
+    fn test_stdout_log_path_sanitizes_illegal_chars() {
+        let p = stdout_log_path(Path::new("/opt/opx/inst1"), "a/b:c");
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(
+            !name.contains('/') && !name.contains('\\') && !name.contains(':'),
+            "stdout_log_path 必须对 installed_id 做文件名 sanitize，当前文件名: {}",
+            name
+        );
+    }
 }

@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <div class="overlay" @click.self="$emit('close')">
+  <div class="overlay">
     <div class="dialog narrow">
       <div class="dialog-head">
         <div class="dialog-title">

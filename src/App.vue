@@ -21,6 +21,9 @@
     @cancel="showCloseDialog = false"
   />
   <StopProgressDialog v-if="showStopProgress" />
+  <ErrorDialog v-if="lifecycleStore.errorMessage" />
+  <ConfirmDialog />
+  <ToastHost />
 </template>
 
 <script setup lang="ts">
@@ -29,14 +32,19 @@ import { Icon } from '@iconify/vue'
 import MainLayout from '@/layouts/MainLayout.vue'
 import CloseDialog from '@/components/CloseDialog.vue'
 import StopProgressDialog from '@/components/StopProgressDialog.vue'
+import ErrorDialog from '@/components/ErrorDialog.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ToastHost from '@/components/ToastHost.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
+import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
+const lifecycleStore = useLifecycleStore()
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)
@@ -51,6 +59,7 @@ const defaultChoice = computed<'tray' | 'exit'>(() =>
 
 let unlistenClose: UnlistenFn | null = null
 let unlistenStopComplete: UnlistenFn | null = null
+let unlistenTrayStop: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -139,12 +148,23 @@ onMounted(async () => {
     }, 600)
   })
 
+  // 托盘菜单点击「运行中软件」→ 停止该软件（复用现有 stop_software 命令）
+  unlistenTrayStop = await listen<string>('tray-software-stop', (e) => {
+    const installedId = e.payload
+    if (installedId) {
+      invoke('stop_software', { installedId }).catch(() => {
+        // 停止失败时以后端 emit 的 software-status-changed Error 事件为准，此处静默
+      })
+    }
+  })
+
   window.clearTimeout(bootTimeout)
 })
 
 onUnmounted(() => {
   unlistenClose?.()
   unlistenStopComplete?.()
+  unlistenTrayStop?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

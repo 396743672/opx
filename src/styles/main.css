@@ -289,9 +289,17 @@ body {
   transform: scale(0.97);
 }
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+  background: var(--color-muted);
+  border-color: var(--color-border);
+  color: var(--color-muted-foreground);
+}
+.btn.ghost:disabled {
+  opacity: 0.5;
+  background: var(--color-muted);
+  border-color: var(--color-border);
 }
 .btn.primary {
   background: var(--color-primary);

@@ -1,0 +1,537 @@
+use anyhow::Result;
+use std::path::{Path, PathBuf};
+
+use crate::models::software::{
+    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
+    ConfigSchema, HealthCheckSpec, LogSource, LogSourceKind, MirrorSource, SoftwareCategory,
+};
+
+use super::{
+    ConfigContext, DataDirContext, FirstRunInit, HealthContext, InstallContext, LogContext,
+    SoftwareProvider, StartCommand, StartContext, default_log_sources, resolve_data_dir,
+};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(not(windows))]
+const CREATE_NO_WINDOW: u32 = 0;
+
+fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
+    c.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
+    c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+
+/// Kafka 官方 .tgz 解压后通常带一层顶层目录（如 `kafka_2.13-3.9.2/`），
+/// 需定位真正的 Kafka home（含 bin/windows/kafka-server-start.bat）。
+/// 顶层即含则用之，否则扫描直接子目录；找不到报清晰错误，避免 spawn 时
+/// 得到难以排查的 "系统找不到指定的路径"。
+fn resolve_kafka_home(install_path: &str) -> Result<PathBuf> {
+    let start_script = if cfg!(windows) {
+        "bin/windows/kafka-server-start.bat"
+    } else {
+        "bin/kafka-server-start.sh"
+    };
+    let root = Path::new(install_path);
+    if root.join(start_script).exists() {
+        return Ok(root.to_path_buf());
+    }
+    for e in std::fs::read_dir(root)?.flatten() {
+        let p = e.path();
+        if p.is_dir() && p.join(start_script).exists() {
+            return Ok(p);
+        }
+    }
+    anyhow::bail!(
+        "未找到 Kafka 启动脚本（{}），安装目录结构异常: {}",
+        start_script,
+        install_path
+    )
+}
+
+/// Kafka KRaft 单节点固定 cluster id（22 字符 base64url，解码为 16 字节合法格式）。
+/// 本地单机开发足够；若未来支持多节点集群，需改为按集群随机生成。
+const DEFAULT_CLUSTER_ID: &str = "MkU3OEVBNTcwNTJENDM2Qk";
+
+/// Kafka 官方 `kafka-run-class.bat` 会把 `libs/` 下每个 jar 的全路径拼进 CLASSPATH，
+/// 在深目录（如 <app>/apps/kafka/3.9.2/kafka_2.13-3.9.2，120+ jar）下易使最终
+/// java 命令行超出 cmd 的 8191 字符限制（报 "输入行太长"/"命令语法不正确"）。
+/// 安装后把整段逐 jar 拼接替换为通配符 `%BASE_DIR%\libs\*`（Java 6+ 支持 classpath 通配符）。
+fn patch_kafka_run_class(home: &Path) -> Result<()> {
+    let path = home.join("bin").join("windows").join("kafka-run-class.bat");
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    const START: &str = "rem Classpath addition for kafka-core dependencies";
+    const END: &str = "rem JMX settings";
+    let start = content.find(START);
+    let end = content.find(END);
+    let (Some(start), Some(end)) = (start, end) else {
+        return Ok(());
+    };
+    if end <= start {
+        return Ok(());
+    }
+    let patched = format!(
+        "{}\nrem opx: replace per-jar classpath with wildcard to avoid the 8191-char cmd line limit\nset \"CLASSPATH=%BASE_DIR%\\libs\\*\"\n\n{}",
+        &content[..start],
+        &content[end..]
+    );
+    if patched != content {
+        std::fs::write(&path, patched)?;
+    }
+    Ok(())
+}
+
+pub struct KafkaProvider;
+
+impl KafkaProvider {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for KafkaProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SoftwareProvider for KafkaProvider {
+    fn key(&self) -> &str {
+        "kafka"
+    }
+
+    fn catalog_entry(&self) -> CatalogEntry {
+        // Kafka 官方包为 .tgz，跨平台（含 bin/kafka-server-start.sh 与 bin/windows/kafka-server-start.bat）。
+        let version = "3.9.2".to_string();
+        let url =
+            "https://archive.apache.org/dist/kafka/3.9.2/kafka_2.13-3.9.2.tgz".to_string();
+        let versions = vec![CatalogVersion {
+            version: version.clone(),
+            mirrors: vec![MirrorSource {
+                name: "i18n:kafkaOfficial".to_string(),
+                url,
+                builtin: None,
+            }],
+            archive: ArchiveInfo {
+                format: ArchiveFormat::TarGz,
+                size: None,
+                sha256: None,
+            },
+        }];
+
+        CatalogEntry {
+            key: "kafka".to_string(),
+            name: "Kafka".to_string(),
+            description: "分布式消息队列（Apache Kafka）".to_string(),
+            description_i18n: Some("catalogDesc.kafka".to_string()),
+            category: SoftwareCategory::MessageQueue,
+            icon: "mdi:message-text-outline".to_string(),
+            versions,
+            default_version: version,
+        }
+    }
+
+    fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // 预创建默认日志目录，并写入默认 server.properties（启动时会按 config 覆写）。
+        let home = resolve_kafka_home(&ctx.install_path)?;
+        let config_dir = home.join("config");
+        std::fs::create_dir_all(&config_dir)?;
+        let log_dir = home.join("data").join("kafka-logs");
+        std::fs::create_dir_all(&log_dir)?;
+        let props = format!(
+            "# Generated by opx - Kafka (default)\n\
+             process.roles=broker,controller\n\
+             node.id=1\n\
+             controller.quorum.voters=1@localhost:9093\n\
+             listeners=CONTROLLER://:9093,PLAINTEXT://:9092\n\
+             inter.broker.listener.name=PLAINTEXT\n\
+             advertised.listeners=PLAINTEXT://localhost:9092\n\
+             controller.listener.names=CONTROLLER\n\
+             listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL\n\
+             log.dirs={log_dir}\n\
+             num.partitions=1\n\
+             default.replication.factor=1\n\
+             offsets.topic.replication.factor=1\n\
+             transaction.state.log.replication.factor=1\n\
+             transaction.state.log.min.isr=1\n\
+             auto.create.topics.enable=true\n\
+             delete.topic.enable=true\n",
+            log_dir = log_dir.to_string_lossy().replace('\\', "/"),
+        );
+        std::fs::write(config_dir.join("server.properties"), props)?;
+        // 深目录下官方 classpath 逐 jar 拼接会超 cmd 行长限制，安装后改为通配符。
+        patch_kafka_run_class(&home)?;
+        Ok(())
+    }
+
+    fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
+        // Kafka 是 Java 应用：需要已安装 JDK，脚本前台启动。
+        let jdk = ctx
+            .jdk_install_path
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动"))?;
+
+        let port = config_u64(&ctx.config, "port", 9092);
+        let heap = config_str(&ctx.config, "heap", "1g");
+        // 官方 .tgz 解压后带一层顶层目录（kafka_2.13-3.9.2/），先定位真实 Kafka home。
+        let home = resolve_kafka_home(&ctx.install_path)?;
+        // 启动时幂等自愈：深目录下官方 classpath 逐 jar 拼接会超 cmd 行长限制，
+        // 已安装（未重跑 post_install）的 Kafka 在此补齐通配符补丁。
+        patch_kafka_run_class(&home)?;
+        let log_dirs =
+            resolve_data_dir(&ctx.config, "log_dirs", "data/kafka-logs", &ctx.install_path);
+        // KRaft 单节点：controller 监听端口固定为 broker 端口 + 1（默认 9093）。
+        let controller_port = port + 1;
+
+        // 按 config 生成 config/server.properties（覆盖 post_install 的默认值）。
+        // .properties 不被 config_editor 支持，故由 Provider 自行生成（与 MinIO/RustFS 范式一致）。
+        // Kafka 3.9 已移除 ZooKeeper 模式，此处为 KRaft 单节点（broker+controller 合一）配置。
+        let config_dir = home.join("config");
+        std::fs::create_dir_all(&config_dir)?;
+        let props = format!(
+            "# Generated by opx - Kafka\n\
+             process.roles=broker,controller\n\
+             node.id=1\n\
+             controller.quorum.voters=1@localhost:{controller_port}\n\
+             listeners=CONTROLLER://:{controller_port},PLAINTEXT://:{port}\n\
+             inter.broker.listener.name=PLAINTEXT\n\
+             advertised.listeners=PLAINTEXT://localhost:{port}\n\
+             controller.listener.names=CONTROLLER\n\
+             listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL\n\
+             log.dirs={log_dirs}\n\
+             num.partitions=1\n\
+             default.replication.factor=1\n\
+             offsets.topic.replication.factor=1\n\
+             transaction.state.log.replication.factor=1\n\
+             transaction.state.log.min.isr=1\n\
+             auto.create.topics.enable=true\n\
+             delete.topic.enable=true\n",
+            controller_port = controller_port,
+            port = port,
+            // .properties 中反斜杠会被 Java 当作转义符（\t→tab 等），Windows 路径必须用正斜杠
+            log_dirs = log_dirs.to_string_lossy().replace('\\', "/"),
+        );
+        std::fs::write(config_dir.join("server.properties"), props)?;
+
+        let bin = if cfg!(windows) {
+            "bin/windows/kafka-server-start.bat"
+        } else {
+            "bin/kafka-server-start.sh"
+        };
+
+        let mut env_vars = std::collections::BTreeMap::new();
+        env_vars.insert("JAVA_HOME".to_string(), jdk.to_string());
+        env_vars.insert(
+            "KAFKA_HEAP_OPTS".to_string(),
+            format!("-Xms{heap} -Xmx{heap}"),
+        );
+
+        // KRaft 首次启动前必须格式化 log 目录（生成 meta.properties），否则直接启动失败。
+        // 未格式化时注入 first_run_init，由 do_start_software 同步执行
+        // `kafka-storage format`（成功后置 config.initialized=true，后续跳过）。
+        let first_run_init = if !log_dirs.join("meta.properties").exists() {
+            let storage_script = if cfg!(windows) {
+                "bin/windows/kafka-storage.bat"
+            } else {
+                "bin/kafka-storage.sh"
+            };
+            Some(Box::new(FirstRunInit {
+                init_command: StartCommand {
+                    program: storage_script.to_string(),
+                    args: vec![
+                        "format".to_string(),
+                        "-t".to_string(),
+                        DEFAULT_CLUSTER_ID.to_string(),
+                        "-c".to_string(),
+                        "config/server.properties".to_string(),
+                    ],
+                    env_vars: env_vars.clone(),
+                    working_dir: home.clone(),
+                    creation_flags: CREATE_NO_WINDOW,
+                    first_run_init: None,
+                },
+                temp_secret_output: None,
+            }))
+        } else {
+            None
+        };
+
+        Ok(StartCommand {
+            program: bin.to_string(),
+            args: vec!["config/server.properties".to_string()],
+            env_vars,
+            working_dir: home,
+            creation_flags: CREATE_NO_WINDOW,
+            first_run_init,
+        })
+    }
+
+    fn health_check(&self, ctx: &HealthContext) -> HealthCheckSpec {
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(if ctx.port > 0 { ctx.port } else { 9092 });
+        HealthCheckSpec::Tcp {
+            port,
+            timeout_ms: 1000,
+        }
+    }
+
+    fn config_schema(&self) -> Option<ConfigSchema> {
+        Some(ConfigSchema {
+            fields: vec![
+                ConfigField {
+                    key: "port".to_string(),
+                    label_i18n: "configField.kafkaPort".to_string(),
+                    field_type: ConfigFieldType::Port,
+                    default_value: serde_json::json!(9092),
+                    section: None,
+                    description_i18n: Some("configField.kafkaPortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "heap".to_string(),
+                    label_i18n: "configField.kafkaHeap".to_string(),
+                    field_type: ConfigFieldType::Size {
+                        units: vec!["m".to_string(), "g".to_string()],
+                    },
+                    default_value: serde_json::json!("1g"),
+                    section: None,
+                    description_i18n: Some("configField.kafkaHeapDesc".to_string()),
+                },
+                ConfigField {
+                    key: "log_dirs".to_string(),
+                    label_i18n: "configField.kafkaLogDirs".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!("data/kafka-logs"),
+                    section: None,
+                    description_i18n: Some("configField.kafkaLogDirsDesc".to_string()),
+                },
+                ConfigField {
+                    key: "jdk".to_string(),
+                    label_i18n: "configField.kafkaJdk".to_string(),
+                    // options/labels 由 get_config_schema 命令层动态填充（已装 JDK/JRE）
+                    field_type: ConfigFieldType::Select {
+                        options: vec![],
+                        labels: vec![],
+                    },
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.kafkaJdkDesc".to_string()),
+                },
+            ],
+            ephemeral_keys: vec![],
+        })
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        let mut sources = default_log_sources(ctx);
+        // Kafka 的 log4j 相对 logs/ 写在工作目录（真实 home）下。
+        let home = resolve_kafka_home(&ctx.install_path)
+            .unwrap_or_else(|_| PathBuf::from(&ctx.install_path));
+        let file = home.join("logs").join("server.log");
+        sources.push(LogSource {
+            path: file.to_string_lossy().to_string(),
+            kind: LogSourceKind::ProviderFile,
+            has_levels: true,
+            level_pattern: None,
+            label: None,
+        });
+        sources
+    }
+
+    fn data_dirs(&self, ctx: &DataDirContext) -> Vec<PathBuf> {
+        vec![resolve_data_dir(
+            &ctx.config,
+            "log_dirs",
+            "data/kafka-logs",
+            &ctx.install_path,
+        )]
+    }
+
+    fn min_jdk_version(&self) -> Option<u32> {
+        // Kafka 3.x 需要 JDK 11+
+        Some(11)
+    }
+
+    fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
+        // .properties 不被 config_editor 支持，配置由 start_command 自行生成
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> serde_json::Value {
+        serde_json::json!({
+            "port": 9092,
+            "heap": "1g",
+            "log_dirs": "data/kafka-logs",
+            "jdk": "",
+        })
+    }
+
+    fn test_install_path() -> String {
+        let p = std::env::temp_dir().join("opx_test_kafka");
+        let _ = std::fs::create_dir_all(&p);
+        p.to_string_lossy().to_string()
+    }
+
+    /// 模拟官方 .tgz 解压结构：install_path 下多一层 `kafka_2.13-3.9.2/`。
+    fn prepare_kafka_layout(install_path: &str) {
+        let dirs = [
+            "kafka_2.13-3.9.2/bin/windows",
+            "kafka_2.13-3.9.2/bin",
+        ];
+        for d in dirs {
+            let _ = std::fs::create_dir_all(PathBuf::from(install_path).join(d));
+        }
+        for f in [
+            "kafka_2.13-3.9.2/bin/windows/kafka-server-start.bat",
+            "kafka_2.13-3.9.2/bin/windows/kafka-storage.bat",
+            "kafka_2.13-3.9.2/bin/kafka-server-start.sh",
+            "kafka_2.13-3.9.2/bin/kafka-storage.sh",
+        ] {
+            let _ = std::fs::write(PathBuf::from(install_path).join(f), "");
+        }
+    }
+
+    #[test]
+    fn key_and_category() {
+        let p = KafkaProvider::new();
+        assert_eq!(p.key(), "kafka");
+        assert_eq!(p.catalog_entry().category, SoftwareCategory::MessageQueue);
+    }
+
+    #[test]
+    fn config_file_path_is_none() {
+        let p = KafkaProvider::new();
+        let ctx = ConfigContext {
+            install_path: test_install_path(),
+            version: "3.9.2".to_string(),
+            config: test_config(),
+        };
+        assert!(p.config_file_path(&ctx).is_none());
+    }
+
+    #[test]
+    fn min_jdk_version_is_11() {
+        assert_eq!(KafkaProvider::new().min_jdk_version(), Some(11));
+    }
+
+    #[test]
+    fn start_command_generates_server_properties() {
+        let p = KafkaProvider::new();
+        let install_path = test_install_path();
+        prepare_kafka_layout(&install_path);
+        let ctx = StartContext {
+            installed_id: "kafka-1".to_string(),
+            install_path: install_path.clone(),
+            version: "3.9.2".to_string(),
+            config: test_config(),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+        let cmd = p.start_command(&ctx).expect("start_command ok");
+        #[cfg(windows)]
+        assert_eq!(cmd.program, "bin/windows/kafka-server-start.bat");
+        #[cfg(not(windows))]
+        assert_eq!(cmd.program, "bin/kafka-server-start.sh");
+        assert_eq!(cmd.args, vec!["config/server.properties".to_string()]);
+        assert_eq!(cmd.env_vars.get("JAVA_HOME"), Some(&"C:\\jdk-17".to_string()));
+        assert!(cmd.env_vars.get("KAFKA_HEAP_OPTS").map(|s| s.contains("-Xmx1g")).unwrap_or(false));
+
+        // 嵌套目录被解析：working_dir 指向真实 home（kafka_2.13-3.9.2）
+        let home = PathBuf::from(&install_path).join("kafka_2.13-3.9.2");
+        assert_eq!(cmd.working_dir, home);
+        // 未格式化时注入首启格式化命令
+        assert!(cmd.first_run_init.is_some());
+
+        let props = std::fs::read_to_string(home.join("config").join("server.properties"))
+            .expect("server.properties written");
+        assert!(props.contains("process.roles=broker,controller"));
+        assert!(props.contains("controller.quorum.voters=1@localhost:9093"));
+        assert!(props.contains("listeners=CONTROLLER://:9093,PLAINTEXT://:9092"));
+        assert!(props.contains("log.dirs="));
+        assert!(props.contains("num.partitions=1"));
+    }
+
+    #[test]
+    fn resolve_home_finds_nested_dir() {
+        let install_path = test_install_path();
+        prepare_kafka_layout(&install_path);
+        let home = resolve_kafka_home(&install_path).expect("resolved");
+        assert_eq!(home, PathBuf::from(&install_path).join("kafka_2.13-3.9.2"));
+    }
+
+    #[test]
+    fn patch_kafka_run_class_rewrites_classpath_to_wildcard() {
+        let home = std::env::temp_dir().join("opx_test_kafka_patch");
+        let bin = home.join("bin").join("windows");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = "\
+@echo off\r\n\
+setlocal enabledelayedexpansion\r\n\
+call :concat \"%BASE_DIR%\\libs\\a.jar\"\r\n\
+rem Classpath addition for kafka-core dependencies\r\n\
+for %%i in (\"%BASE_DIR%\\core\\build\\libs\\*.jar\") do call :concat \"%%i\"\r\n\
+rem Classpath addition for core\r\n\
+for %%i in (\"%BASE_DIR%\\core\\build\\libs\\kafka_%SCALA_BINARY_VERSION%*.jar\") do call :concat \"%%i\"\r\n\
+rem JMX settings\r\n\
+set KAFKA_JMX_OPTS=x\r\n";
+        std::fs::write(bin.join("kafka-run-class.bat"), script).unwrap();
+        patch_kafka_run_class(&home).unwrap();
+        let out = std::fs::read_to_string(bin.join("kafka-run-class.bat")).unwrap();
+        assert!(out.contains("set \"CLASSPATH=%BASE_DIR%\\libs\\*\""));
+        assert!(!out.contains("Classpath addition"));
+        assert!(out.contains("rem JMX settings"));
+    }
+
+    #[test]
+    fn health_check_is_tcp_9092() {
+        let p = KafkaProvider::new();
+        let hc = p.health_check(&HealthContext {
+            installed_id: "kafka-1".to_string(),
+            install_path: test_install_path(),
+            port: 0,
+            config: test_config(),
+        });
+        match hc {
+            HealthCheckSpec::Tcp { port, timeout_ms } => {
+                assert_eq!(port, 9092);
+                assert_eq!(timeout_ms, 1000);
+            }
+            _ => panic!("expected Tcp health check"),
+        }
+    }
+
+    #[test]
+    fn start_command_errors_without_jdk() {
+        let p = KafkaProvider::new();
+        let ctx = StartContext {
+            installed_id: "kafka-1".to_string(),
+            install_path: test_install_path(),
+            version: "3.9.2".to_string(),
+            config: test_config(),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: None,
+            mysql_install_path: None,
+        };
+        let err = p.start_command(&ctx).unwrap_err();
+        assert!(err.to_string().contains("请先安装 JDK"));
+    }
+}

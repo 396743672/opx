@@ -33,3 +33,4 @@ design-mockup.html
 /.claude/
 src-tauri/data/
 opx_0.1.0_x64-portable.zip
+src-tauri/vcrun.bat

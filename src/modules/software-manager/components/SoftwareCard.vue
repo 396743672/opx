@@ -1,5 +1,16 @@
 <template>
-  <div class="sw-card">
+  <div class="sw-card" :class="{ selected }">
+    <div
+      v-if="selectable"
+      class="select-check"
+      :class="{ on: selected }"
+      role="checkbox"
+      :aria-checked="selected"
+      @click.stop="$emit('toggle-select')"
+      :title="selected ? $t('deselect') : $t('selectForBatch')"
+    >
+      <Icon v-if="selected" icon="mdi:check" />
+    </div>
     <div class="sw-card-top">
       <div class="sw-icon">
         <Icon :icon="entry.icon" />
@@ -45,10 +56,15 @@ const props = defineProps<{
   entry: CatalogEntry
   installedVersion: string | null
   isDefaultJre: boolean
+  /** 是否显示批量选择复选框（已安装/安装中不可选） */
+  selectable?: boolean
+  /** 是否处于批量选择勾选态 */
+  selected?: boolean
 }>()
 
 defineEmits<{
   install: [entry: CatalogEntry]
+  'toggle-select': []
 }>()
 
 const installStore = useInstallStore()
@@ -58,6 +74,7 @@ const isInstalling = computed(() => installStore.hasActiveTask(props.entry.key))
 
 <style scoped>
 .sw-card {
+  position: relative;
   border: 1px solid var(--color-border);
   background: var(--color-card);
   border-radius: var(--radius-lg);
@@ -70,6 +87,38 @@ const isInstalling = computed(() => installStore.hasActiveTask(props.entry.key))
 }
 .sw-card:hover {
   border-color: color-mix(in oklch, var(--color-primary) 40%, var(--color-border));
+}
+.sw-card.selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.select-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-card);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary-foreground);
+  transition: all 0.15s;
+  z-index: 1;
+}
+.select-check:hover {
+  border-color: var(--color-primary);
+}
+.select-check.on {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.select-check svg {
+  width: 14px;
+  height: 14px;
 }
 .sw-card-top {
   display: flex;

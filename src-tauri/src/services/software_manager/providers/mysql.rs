@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
 };
 
 use super::{
-    ConfigContext, FirstRunInit, HealthContext, InstallContext, SoftwareProvider, StartCommand,
-    StartContext, WorkingDirContext,
+    ConfigContext, FirstRunInit, HealthContext, InstallContext, LogContext, SoftwareProvider,
+    StartCommand, StartContext, WorkingDirContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -271,6 +271,7 @@ lower_case_table_names=1\n",
                             "utf8".to_string(),
                             "latin1".to_string(),
                         ],
+                        labels: vec![],
                     },
                     default_value: serde_json::json!("utf8mb4"),
                     section: Some("[mysqld]".to_string()),
@@ -298,6 +299,15 @@ lower_case_table_names=1\n",
             // init_password 为一次性敏感字段：仅首次初始化消费，绝不写入 my.ini / installed.json
             ephemeral_keys: vec!["init_password".to_string()],
         })
+    }
+
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        // C 扩展：stdout 为结构化级别日志，启用级别筛选下拉
+        let mut sources = default_log_sources(ctx);
+        for s in &mut sources {
+            s.has_levels = true;
+        }
+        sources
     }
 
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {

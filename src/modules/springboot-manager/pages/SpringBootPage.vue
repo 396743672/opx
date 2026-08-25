@@ -96,6 +96,7 @@
         @restart="id => handleAction('restart', id)"
         @config="handleConfig"
         @replace="handleReplace"
+        @replaceRestart="handleReplaceRestart"
         @monitor="handleMonitor"
         @logs="handleLogs"
         @delete="handleDelete"
@@ -187,6 +188,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { toast } from '@/composables/useToast'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AppCard from '../components/AppCard.vue'
@@ -379,6 +381,22 @@ async function handleReplace(id: string) {
   })
   if (selected && typeof selected === 'string') {
     await store.replaceJar(id, selected)
+    await store.fetchApps()
+  }
+}
+
+async function handleReplaceRestart(id: string) {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: 'JAR', extensions: ['jar'] }],
+  })
+  if (selected && typeof selected === 'string') {
+    try {
+      await store.replaceJarAndRestart(id, selected)
+      toast(t('replaceRestartSuccess'), 'ok')
+    } catch (e) {
+      toast(String(e), 'err')
+    }
     await store.fetchApps()
   }
 }

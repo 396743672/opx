@@ -109,3 +109,39 @@ pub fn merge_versions(
     }
     merged
 }
+
+/// 以 builtin 为底，用 cache 补齐。
+/// - 同 key：metadata 用 builtin（代码真相，避免旧缓存覆盖过期字段），
+///   versions 合并 builtin 静态版本 + cache 动态版本（merge_versions 去重）。
+///   这样 JDK/JRE 动态拉取的版本不会因 builtin 覆盖而丢失（回归修复）。
+/// - cache 独有 key：直接加入（远程 catalog.json 合并历史）。
+/// - builtin 独有 key：保留（修复「新增内置 provider 后旧缓存不失效」的根因）。
+pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
+    let cache = match cache {
+        Some(c) => c,
+        None => return builtin,
+    };
+    let mut builtin_map: HashMap<String, _> = builtin
+        .entries
+        .into_iter()
+        .map(|e| (e.key.clone(), e))
+        .collect();
+    for cache_entry in cache.entries {
+        match builtin_map.get_mut(&cache_entry.key) {
+            Some(builtin_entry) => {
+                // 合并版本：builtin 静态优先，cache 动态追加（同版本去重）
+                let cache_versions = Some(cache_entry.versions);
+                let merged = merge_versions(builtin_entry.versions.clone(), cache_versions);
+                builtin_entry.versions = merged;
+            }
+            None => {
+                builtin_map.insert(cache_entry.key.clone(), cache_entry);
+            }
+        }
+    }
+    Catalog {
+        entries: builtin_map.into_values().collect(),
+        updated_at: builtin.updated_at,
+    }
+}
+

@@ -58,6 +58,10 @@ export const useSpringBootStore = defineStore('springboot', () => {
     return await invoke<ReplaceResult>('replace_springboot_jar', { id, newJarPath })
   }
 
+  async function replaceJarAndRestart(id: string, newJarPath: string): Promise<ReplaceResult> {
+    return await invoke<ReplaceResult>('replace_springboot_jar_and_restart', { id, newJarPath })
+  }
+
   async function fetchJvmMetrics(id: string): Promise<JvmInfo | null> {
     return await invoke<JvmInfo | null>('get_springboot_jvm_metrics', { id })
   }
@@ -94,7 +98,7 @@ export const useSpringBootStore = defineStore('springboot', () => {
   return {
     apps, groups, loading, jdkList, dependencyCandidates,
     fetchApps, fetchGroups, createApp, updateApp, deleteApp,
-    startApp, stopApp, restartApp, replaceJar,
+    startApp, stopApp, restartApp, replaceJar, replaceJarAndRestart,
     fetchJvmMetrics, fetchJdkList, fetchDependencyCandidates,
     getRecommendedOpts, readJarPort, saveGroups,
     getGlobalEnvVars, setGlobalEnvVars,

@@ -1,7 +1,10 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::{CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec};
+use crate::models::software::{
+    CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec, LogSource,
+    LogSourceKind,
+};
 
 pub mod mysql;
 pub mod jre;
@@ -10,6 +13,12 @@ pub mod redis;
 pub mod nginx;
 pub mod minio;
 pub mod rustfs;
+pub mod postgresql;
+pub mod mongodb;
+pub mod nacos;
+pub mod kafka;
+pub mod elasticsearch;
+pub mod influxdb;
 pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
@@ -46,6 +55,33 @@ pub trait SoftwareProvider: Send + Sync {
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
         PathBuf::from(&ctx.install_path)
     }
+
+    // ===== C 扩展：日志来源 / 数据目录 / 级别正则（默认实现，新 provider 零改动即获得能力）=====
+
+    /// 日志来源列表。默认仅 StdoutRedirect（spawn_process 落盘文件存在时返回）。
+    /// provider 可覆盖以追加自带日志文件（如 MongoDB 的 data/mongod.log）。
+    fn log_sources(&self, ctx: &LogContext) -> Vec<LogSource> {
+        default_log_sources(ctx)
+    }
+
+    /// 需要备份/重置的数据目录。默认 [<install_path>/data]。
+    /// 数据目录来自配置（非默认 <install_path>/data）的 provider 应覆盖此方法。
+    fn data_dirs(&self, ctx: &DataDirContext) -> Vec<PathBuf> {
+        default_data_dirs(ctx)
+    }
+
+    /// 结构化日志的级别提取正则；默认 None → LogService 用内置默认正则。
+    /// 返回 Some(pattern) 时优先使用该正则做级别匹配。
+    fn log_level_pattern(&self) -> Option<String> {
+        None
+    }
+
+    /// 该软件所需的最低 JDK 主版本（仅 Java 中间件需要，如 Kafka=11、ES=17）。
+    /// 默认 None 表示不需要 JDK（如 InfluxDB 等原生二进制）。
+    /// 命令层 `fill_jdk_options` 据此过滤不兼容的已装 JDK/JRE。
+    fn min_jdk_version(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub struct InstallContext {
@@ -78,6 +114,11 @@ pub struct StartContext {
     /// 首次初始化密码（如 MySQL 初始化 root 密码）。来自 start_software 命令的可选参数，
     /// 仅在未初始化时由 provider 消费一次，绝不持久化到 installed.json / 配置文件。
     pub init_password: Option<String>,
+    /// 已安装 JDK 的 install_path（如 Nacos 等 Java 软件启动用）。None 表示无 JDK 或软件不需要。
+    pub jdk_install_path: Option<String>,
+    /// 已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时，用其 mysql.exe 建库建表）。
+    /// None 表示无 MySQL 或软件不需要。
+    pub mysql_install_path: Option<String>,
 }
 
 /// 健康检查上下文
@@ -101,7 +142,69 @@ pub struct WorkingDirContext {
     pub version: String,
 }
 
+// ===== C 扩展：日志来源 / 数据目录 上下文与默认实现 =====
+
+/// 传给 `log_sources` 的上下文（由命令层从 InstalledSoftware 构造）
+pub struct LogContext {
+    pub installed_id: String,
+    pub install_path: String, // 已 resolve 的绝对路径
+    pub version: String,
+    pub config: serde_json::Value,
+    pub pid: Option<u32>,
+}
+
+/// 传给 `data_dirs` 的上下文（由命令层从 InstalledSoftware 构造）
+pub struct DataDirContext {
+    pub install_path: String,
+    pub version: String,
+    pub config: serde_json::Value,
+}
+
+/// 默认日志来源：仅 StdoutRedirect（基于 spawn_process 落盘的日志）。
+/// 要求 <install_path>/logs/opx-<installed_id>.log 存在；不存在时返回空 vec（决策：仅展示运行实例）。
+pub fn default_log_sources(ctx: &LogContext) -> Vec<LogSource> {
+    let p = Path::new(&ctx.install_path)
+        .join("logs")
+        .join(format!("opx-{}.log", ctx.installed_id));
+    if p.exists() {
+        vec![LogSource {
+            path: p.to_string_lossy().to_string(),
+            kind: LogSourceKind::StdoutRedirect,
+            has_levels: false, // 通用 stdout 默认无级别
+            level_pattern: None,
+            label: None,
+        }]
+    } else {
+        vec![]
+    }
+}
+
+/// 默认数据目录：<install_path>/data
+pub fn default_data_dirs(ctx: &DataDirContext) -> Vec<PathBuf> {
+    vec![Path::new(&ctx.install_path).join("data")]
+}
+
+/// 从 config 解析绝对 data 目录（与 provider.start_command 的解析逻辑保持一致）。
+/// 绝对路径原样返回；相对路径按 install_path 拼接。
+pub(crate) fn resolve_data_dir(config: &serde_json::Value, key: &str, default: &str, install_path: &str) -> PathBuf {
+    let raw = config
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default);
+    if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        let clean = raw
+            .strip_prefix("./")
+            .or_else(|| raw.strip_prefix(".\\"))
+            .unwrap_or(raw);
+        Path::new(install_path).join(clean)
+    }
+}
+
 /// 启动命令（provider 返回，由 lifecycle 执行 spawn）
+#[derive(Debug)]
 pub struct StartCommand {
     pub program: String,
     pub args: Vec<String>,
@@ -112,12 +215,14 @@ pub struct StartCommand {
 }
 
 /// 首次启动前执行的初始化命令（如 mysqld --initialize-insecure）
+#[derive(Debug)]
 pub struct FirstRunInit {
     pub init_command: StartCommand,
     pub temp_secret_output: Option<TempSecretSpec>,
 }
 
 /// 临时密码提取方式
+#[derive(Debug)]
 pub enum TempSecretSpec {
     FromStdoutRegex(String),
     FromLogFile { path: PathBuf, regex: String },
@@ -183,5 +288,11 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(nginx::NginxProvider::new()),
         Box::new(minio::MinioProvider::new()),
         Box::new(rustfs::RustfsProvider::new()),
+        Box::new(postgresql::PostgreSqlProvider::new()),
+        Box::new(mongodb::MongoDbProvider::new()),
+        Box::new(nacos::NacosProvider::new()),
+        Box::new(kafka::KafkaProvider::new()),
+        Box::new(elasticsearch::ElasticsearchProvider::new()),
+        Box::new(influxdb::InfluxdbProvider::new()),
     ]
 }
