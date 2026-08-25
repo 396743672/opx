@@ -270,6 +270,7 @@ export default {
   noSpringbootAppsDesc: 'Click "Add Application" to register your first app',
   select: 'Select',
   noLogs: 'No logs',
+  noMatches: 'No matches',
   autoScroll: 'Auto Scroll',
   manualScroll: 'Manual',
   clear: 'Clear',

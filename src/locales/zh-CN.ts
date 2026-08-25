@@ -270,6 +270,7 @@ export default {
   noSpringbootAppsDesc: '点击"添加应用"注册第一个 Spring Boot 应用',
   select: '请选择',
   noLogs: '暂无日志',
+  noMatches: '无匹配结果',
   autoScroll: '自动滚动',
   manualScroll: '手动',
   clear: '清空',
