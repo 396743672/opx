@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
-use crate::models::software::{Catalog, CatalogVersion};
+use crate::models::software::{Catalog, CatalogEntry, CatalogVersion};
 use crate::utils::paths;
 
 use super::providers::all_providers;
@@ -65,18 +65,21 @@ pub fn merge_catalogs(builtin: Catalog, remote: Option<Catalog>) -> Catalog {
         None => return builtin,
     };
 
-    let mut builtin_map: HashMap<String, _> = builtin
-        .entries
-        .into_iter()
-        .map(|e| (e.key.clone(), e))
-        .collect();
+    // 以 builtin 顺序为骨架，保持卡片/列表位置稳定（前端渲染依赖稳定顺序）。
+    let mut entries: Vec<CatalogEntry> = builtin.entries;
+    let mut builtin_keys: HashSet<String> = entries.iter().map(|e| e.key.clone()).collect();
 
     for remote_entry in remote.entries {
-        builtin_map.insert(remote_entry.key.clone(), remote_entry);
+        if let Some(b) = entries.iter_mut().find(|e| e.key == remote_entry.key) {
+            *b = remote_entry;
+        } else if !builtin_keys.contains(&remote_entry.key) {
+            builtin_keys.insert(remote_entry.key.clone());
+            entries.push(remote_entry);
+        }
     }
 
     Catalog {
-        entries: builtin_map.into_values().collect(),
+        entries,
         updated_at: remote.updated_at,
     }
 }
@@ -121,13 +124,13 @@ pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
         Some(c) => c,
         None => return builtin,
     };
-    let mut builtin_map: HashMap<String, _> = builtin
-        .entries
-        .into_iter()
-        .map(|e| (e.key.clone(), e))
-        .collect();
+
+    // 以 builtin 顺序为骨架，保持位置稳定；cache 独有 key 追加到尾部。
+    let mut entries: Vec<CatalogEntry> = builtin.entries;
+    let mut builtin_keys: HashSet<String> = entries.iter().map(|e| e.key.clone()).collect();
+
     for cache_entry in cache.entries {
-        match builtin_map.get_mut(&cache_entry.key) {
+        match entries.iter_mut().find(|e| e.key == cache_entry.key) {
             Some(builtin_entry) => {
                 // 合并版本：builtin 静态优先，cache 动态追加（同版本去重）
                 let cache_versions = Some(cache_entry.versions);
@@ -135,13 +138,104 @@ pub fn merge_with_builtin(builtin: Catalog, cache: Option<Catalog>) -> Catalog {
                 builtin_entry.versions = merged;
             }
             None => {
-                builtin_map.insert(cache_entry.key.clone(), cache_entry);
+                if !builtin_keys.contains(&cache_entry.key) {
+                    builtin_keys.insert(cache_entry.key.clone());
+                    entries.push(cache_entry);
+                }
             }
         }
     }
+
     Catalog {
-        entries: builtin_map.into_values().collect(),
+        entries,
         updated_at: builtin.updated_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(key: &str) -> CatalogEntry {
+        CatalogEntry {
+            key: key.to_string(),
+            name: key.to_string(),
+            description: String::new(),
+            description_i18n: None,
+            category: crate::models::software::SoftwareCategory::Database,
+            icon: String::new(),
+            versions: vec![],
+            default_version: String::new(),
+        }
+    }
+
+    #[test]
+    fn merge_with_builtin_keeps_builtin_order_and_appends_new() {
+        let builtin = Catalog {
+            entries: vec![entry("mysql"), entry("redis"), entry("nginx")],
+            updated_at: None,
+        };
+        // 缓存顺序与 builtin 不同、且包含 builtin 没有的 key
+        let cache = Catalog {
+            entries: vec![
+                {
+                    let mut e = entry("nginx"); // 已存在，合并版本（空，不影响顺序）
+                    e.versions = vec![CatalogVersion {
+                        version: "1.31.2".into(),
+                        mirrors: vec![],
+                        archive: crate::models::software::ArchiveInfo {
+                            format: crate::models::software::ArchiveFormat::Zip,
+                            size: None,
+                            sha256: None,
+                        },
+                    }];
+                    e
+                },
+                entry("custom_extra"),
+                entry("redis"),
+            ],
+            updated_at: None,
+        };
+        let merged = merge_with_builtin(builtin, Some(cache));
+        let keys: Vec<&str> = merged.entries.iter().map(|e| e.key.as_str()).collect();
+        // builtin 顺序保持，cache 独有 key 追加尾部
+        assert_eq!(keys, vec!["mysql", "redis", "nginx", "custom_extra"]);
+        // 合并后 nginx 带动态版本
+        let nginx = merged.entries.iter().find(|e| e.key == "nginx").unwrap();
+        assert_eq!(nginx.versions[0].version, "1.31.2");
+    }
+
+    #[test]
+    fn merge_catalogs_keeps_builtin_order_and_appends_new() {
+        let builtin = Catalog {
+            entries: vec![entry("kafka"), entry("nacos")],
+            updated_at: None,
+        };
+        let remote = Catalog {
+            entries: vec![
+                entry("nacos"), // 已存在 → 原位替换
+                {
+                    let mut e = entry("kafka");
+                    e.versions = vec![CatalogVersion {
+                        version: "4.3.1".into(),
+                        mirrors: vec![],
+                        archive: crate::models::software::ArchiveInfo {
+                            format: crate::models::software::ArchiveFormat::TarGz,
+                            size: None,
+                            sha256: None,
+                        },
+                    }];
+                    e
+                },
+                entry("influxdb_custom"),
+            ],
+            updated_at: None,
+        };
+        let merged = merge_catalogs(builtin, Some(remote));
+        let keys: Vec<&str> = merged.entries.iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(keys, vec!["kafka", "nacos", "influxdb_custom"]);
+        let kafka = merged.entries.iter().find(|e| e.key == "kafka").unwrap();
+        assert_eq!(kafka.versions[0].version, "4.3.1");
     }
 }
 
