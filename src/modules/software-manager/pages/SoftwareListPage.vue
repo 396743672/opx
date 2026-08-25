@@ -142,7 +142,7 @@ import BackupRestoreDialog from '../components/BackupRestoreDialog.vue'
 import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
 import { useInstallStore } from '../stores/install'
-import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
+import { SoftwareCategory, SoftwareStatus, type InstalledSoftware } from '@/models/software'
 import type { UpgradeInfo } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
@@ -246,22 +246,26 @@ const grouped = computed<Group[]>(() => {
     timeseries: { category: 'timeseries', label: 'timeSeries', icon: 'mdi:chart-line', items: [] },
     custom: { category: 'custom', label: 'custom', icon: 'mdi:upload', items: [] },
   }
-  // JRE 也纳入管理页（提供卸载入口），放在 runtime 分组
+  // 后端 list_installed_software 已为每个已装软件附加 catalog category，
+  // 这里按 category 归组即可——新增软件只需在 catalog 中标好分类，无需改本映射。
+  const CATEGORY_TO_GROUP: Partial<Record<SoftwareCategory, keyof typeof groups>> = {
+    [SoftwareCategory.Runtime]: 'runtime',
+    [SoftwareCategory.Database]: 'database',
+    [SoftwareCategory.Cache]: 'cache',
+    [SoftwareCategory.WebServer]: 'webserver',
+    [SoftwareCategory.Storage]: 'storage',
+    [SoftwareCategory.Registry]: 'registry',
+    [SoftwareCategory.MessageQueue]: 'messagequeue',
+    [SoftwareCategory.Search]: 'search',
+    [SoftwareCategory.TimeSeries]: 'timeseries',
+  }
   const list = [...installed.value]
   list.sort((a, b) => a.key.localeCompare(b.key) || a.version.localeCompare(b.version))
   for (const sw of list) {
-    let g: keyof typeof groups
-    if (sw.is_custom) g = 'custom'
-    else if (sw.key === 'jre' || sw.key === 'jdk') g = 'runtime'
-    else if (sw.key === 'mysql' || sw.key === 'postgresql' || sw.key === 'mongodb') g = 'database'
-    else if (sw.key === 'redis') g = 'cache'
-    else if (sw.key === 'nginx') g = 'webserver'
-    else if (sw.key === 'minio' || sw.key === 'rustfs') g = 'storage'
-    else if (sw.key === 'nacos') g = 'registry'
-    else if (sw.key === 'kafka') g = 'messagequeue'
-    else if (sw.key === 'elasticsearch') g = 'search'
-    else if (sw.key === 'influxdb' || sw.key === 'influxdb3') g = 'timeseries'
-    else continue
+    // 自定义软件无 catalog 分类；其余按 category 归组（未知分类丢到 custom 保持可见）
+    const g = sw.is_custom || !sw.category
+      ? 'custom'
+      : (CATEGORY_TO_GROUP[sw.category] ?? 'custom')
     groups[g].items.push(sw)
   }
   return Object.values(groups).filter((g) => g.items.length > 0)
