@@ -214,6 +214,7 @@ export default {
     kafka: '分布式消息队列（Apache Kafka）',
     elasticsearch: '分布式搜索与分析引擎',
     influxdb: '时序数据库（InfluxDB v2）',
+    influxdb3: '时序数据库（InfluxDB 3 Core，新架构）',
   },
 
   // SpringBoot
@@ -544,6 +545,8 @@ export default {
     esJdkDesc: '启动 Elasticsearch 用的 JDK/JRE（需 JDK 17+，需先安装）',
     influxdbPort: 'HTTP 端口',
     influxdbPortDesc: 'InfluxDB HTTP API 监听端口（默认 8086）',
+    influxdb3DataDir: '数据目录',
+    influxdb3DataDirDesc: '相对 install_path 的时序数据目录（InfluxDB 3 Core）',
     influxdbBoltPath: 'Bolt 文件路径',
     influxdbBoltPathDesc: '相对 install_path 的 bolt 数据库文件路径',
     influxdbEnginePath: 'Engine 目录',

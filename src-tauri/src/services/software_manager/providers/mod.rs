@@ -19,6 +19,7 @@ pub mod nacos;
 pub mod kafka;
 pub mod elasticsearch;
 pub mod influxdb;
+pub mod influxdb3;
 pub mod custom_templates;
 
 pub trait SoftwareProvider: Send + Sync {
@@ -294,5 +295,6 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(kafka::KafkaProvider::new()),
         Box::new(elasticsearch::ElasticsearchProvider::new()),
         Box::new(influxdb::InfluxdbProvider::new()),
+        Box::new(influxdb3::Influxdb3Provider::new()),
     ]
 }

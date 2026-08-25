@@ -214,6 +214,7 @@ export default {
     kafka: 'Distributed message queue (Apache Kafka)',
     elasticsearch: 'Distributed search & analytics engine',
     influxdb: 'Time series database (InfluxDB v2)',
+    influxdb3: 'Time series database (InfluxDB 3 Core, new architecture)',
   },
 
   // SpringBoot
@@ -544,6 +545,8 @@ export default {
     esJdkDesc: 'JDK/JRE used to start Elasticsearch (needs JDK 17+, install first)',
     influxdbPort: 'HTTP Port',
     influxdbPortDesc: 'InfluxDB HTTP API listen port (default 8086)',
+    influxdb3DataDir: 'Data Directory',
+    influxdb3DataDirDesc: 'Time series data directory relative to install_path (InfluxDB 3 Core)',
     influxdbBoltPath: 'Bolt File Path',
     influxdbBoltPathDesc: 'Bolt database file path relative to install_path',
     influxdbEnginePath: 'Engine Directory',
