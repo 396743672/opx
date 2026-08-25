@@ -28,18 +28,56 @@
     </div>
 
     <div v-else class="content">
-      <div
-        v-for="(entries, category) in catalogStore.groupedEntries"
-        :key="category"
-        class="category-section"
-        v-show="entries.length > 0"
-      >
-        <div class="category-title">
-          <Icon :icon="categoryIcon(category)" /> {{ categoryName(category) }}
+      <CategoryTabs v-model="activeCategory" :tabs="categoryTabs" />
+
+      <template v-if="activeCategory === 'all'">
+        <div
+          v-for="(entries, category) in catalogStore.groupedEntries"
+          :key="category"
+          class="category-section"
+          v-show="entries.length > 0"
+        >
+          <div class="category-title">
+            <Icon :icon="categoryIcon(category)" /> {{ categoryName(category) }}
+          </div>
+          <div class="sw-grid">
+            <SoftwareCard
+              v-for="entry in entries"
+              :key="entry.key"
+              :entry="entry"
+              :installed-version="getInstalledVersion(entry.key)"
+              :is-default-jre="entry.key === 'jre' && defaultJreId !== null"
+              :selectable="isSelectable(entry)"
+              :selected="selectedKeys.has(entry.key)"
+              @install="openInstall"
+              @toggle-select="toggleSelect(entry)"
+            />
+          </div>
         </div>
+
+        <div class="category-section">
+          <div class="category-title">
+            <Icon icon="mdi:plus-box" /> {{ $t('uploadCustom') }}
+          </div>
+          <div class="custom-card" @click="openCustomInstall">
+            <div class="sw-icon">
+              <Icon icon="mdi:upload" />
+            </div>
+            <div class="custom-body">
+              <h3>{{ $t('uploadCustom') }}</h3>
+              <p>{{ $t('supportedFormats') }}</p>
+            </div>
+            <button class="btn primary">
+              <Icon icon="mdi:upload" /> {{ $t('install') }}
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
         <div class="sw-grid">
           <SoftwareCard
-            v-for="entry in entries"
+            v-for="entry in activeEntries"
             :key="entry.key"
             :entry="entry"
             :installed-version="getInstalledVersion(entry.key)"
@@ -50,25 +88,7 @@
             @toggle-select="toggleSelect(entry)"
           />
         </div>
-      </div>
-
-      <div class="category-section">
-        <div class="category-title">
-          <Icon icon="mdi:plus-box" /> {{ $t('uploadCustom') }}
-        </div>
-        <div class="custom-card" @click="openCustomInstall">
-          <div class="sw-icon">
-            <Icon icon="mdi:upload" />
-          </div>
-          <div class="custom-body">
-            <h3>{{ $t('uploadCustom') }}</h3>
-            <p>{{ $t('supportedFormats') }}</p>
-          </div>
-          <button class="btn primary">
-            <Icon icon="mdi:upload" /> {{ $t('install') }}
-          </button>
-        </div>
-      </div>
+      </template>
     </div>
 
     <InstallDialog
@@ -115,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -123,6 +143,8 @@ import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareCard from '../components/SoftwareCard.vue'
+import CategoryTabs from '../components/CategoryTabs.vue'
+import type { CategoryTab } from '../components/CategoryTabs.vue'
 import InstallDialog from '../components/InstallDialog.vue'
 import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import CustomInstallDialog from '../components/CustomInstallDialog.vue'
@@ -147,6 +169,39 @@ const defaultJreId = ref<string | null>(null)
 const selectedKeys = ref<Set<string>>(new Set())
 const batchInstalling = ref(false)
 const selectedCount = computed(() => selectedKeys.value.size)
+
+// 分类 Tab：全部 + 各非空分类
+const activeCategory = ref<string>('all')
+
+const categoryTabs = computed<CategoryTab[]>(() => {
+  const all = catalogStore.groupedEntries
+  const total = Object.values(all).reduce((n, e) => n + e.length, 0)
+  const tabs: CategoryTab[] = [
+    { key: 'all', label: t('all'), icon: 'mdi:view-grid-outline', count: total },
+  ]
+  for (const [cat, entries] of Object.entries(all)) {
+    if (entries.length === 0) continue
+    const c = cat as SoftwareCategory
+    tabs.push({ key: cat, label: categoryName(c), icon: categoryIcon(c), count: entries.length })
+  }
+  return tabs
+})
+
+// 当前选中分类的条目；'all' 时返回空（由模板走全部分类小节）
+const activeEntries = computed<CatalogEntry[]>(() => {
+  if (activeCategory.value === 'all') return []
+  return catalogStore.groupedEntries[activeCategory.value as SoftwareCategory] ?? []
+})
+
+// 分类变化后当前分类消失则回落「全部」
+watch(
+  () => Object.keys(catalogStore.groupedEntries),
+  (keys) => {
+    if (activeCategory.value !== 'all' && !keys.includes(activeCategory.value)) {
+      activeCategory.value = 'all'
+    }
+  },
+)
 
 let completedUnlisten: UnlistenFn | null = null
 

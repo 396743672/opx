@@ -36,7 +36,8 @@
     </div>
 
     <div v-else class="content">
-      <div v-for="group in grouped" :key="group.category" class="category-section">
+      <CategoryTabs v-model="activeCategory" :tabs="categoryTabs" />
+      <div v-for="group in displayGroups" :key="group.category" class="category-section">
         <div class="category-title">
           <Icon :icon="group.icon" />
           {{ $t(group.label) }}
@@ -130,6 +131,8 @@ import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SoftwareInstanceRow from '../components/SoftwareInstanceRow.vue'
+import CategoryTabs from '../components/CategoryTabs.vue'
+import type { CategoryTab } from '../components/CategoryTabs.vue'
 import ConfigEditDialog from '../components/ConfigEditDialog.vue'
 import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
@@ -143,7 +146,7 @@ import { SoftwareStatus, type InstalledSoftware } from '@/models/software'
 import type { UpgradeInfo } from '@/models/software'
 
 const lifecycleStore = useLifecycleStore()
-useI18n()
+const { t } = useI18n()
 
 const installed = ref<InstalledSoftware[]>([])
 const loading = ref(false)
@@ -262,6 +265,33 @@ const grouped = computed<Group[]>(() => {
     groups[g].items.push(sw)
   }
   return Object.values(groups).filter((g) => g.items.length > 0)
+})
+
+// 分类 Tab：全部 + 各非空分类
+const activeCategory = ref<string>('all')
+
+const categoryTabs = computed<CategoryTab[]>(() => {
+  const tabs: CategoryTab[] = [
+    { key: 'all', label: t('all'), icon: 'mdi:view-grid-outline', count: manageableInstances.value.length },
+  ]
+  for (const g of grouped.value) {
+    tabs.push({ key: g.category, label: t(g.label), icon: g.icon, count: g.items.length })
+  }
+  return tabs
+})
+
+// 当前选中的分类组；'all' 时返回全部分组（保持原分类小节布局）
+const displayGroups = computed(() => {
+  if (activeCategory.value === 'all') return grouped.value
+  const g = grouped.value.find((x) => x.category === activeCategory.value)
+  return g ? [g] : []
+})
+
+// 分组变化（如卸载/安装）后当前分类消失则回落「全部」
+watch(grouped, (val) => {
+  if (activeCategory.value !== 'all' && !val.some((g) => g.category === activeCategory.value)) {
+    activeCategory.value = 'all'
+  }
 })
 
 // 可运维实例（排除 JRE/JDK 运行时依赖，与 SoftwareInstanceRow.canOps 一致）
