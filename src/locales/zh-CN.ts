@@ -561,6 +561,8 @@ export default {
     influxdbAdminUserDesc: '首次初始化用的管理员用户名（仅一次性，不保存）',
     influxdbAdminPassword: '管理员密码',
     influxdbAdminPasswordDesc: '首次初始化用的管理员密码（仅一次性，不保存）',
+    influxdbAdminToken: '连接 Token',
+    influxdbAdminTokenDesc: '首次 onboarding 使用的 API Token（不填用默认，初始化后回写到此供连接使用）',
   },
 
   // C 扩展：日志查看器 + 备份/恢复

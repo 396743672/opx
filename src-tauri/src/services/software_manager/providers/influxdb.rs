@@ -7,8 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, DataDirContext, HealthContext, InstallContext, SoftwareProvider, StartCommand,
-    StartContext, resolve_data_dir,
+    ConfigContext, DataDirContext, HealthContext, InstallContext, PostStartHttpInit,
+    SoftwareProvider, StartCommand, StartContext, resolve_data_dir,
 };
 
 #[cfg(windows)]
@@ -220,9 +220,58 @@ impl SoftwareProvider for InfluxdbProvider {
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
             creation_flags: CREATE_NO_WINDOW,
-            // T5（首次初始化 influx setup）采用设计 §8 推荐方案 (c)：P0 先保证 influxd 启动且 /ping 通过，
-            // first_run_init 留待后续扩展 init_secrets 通道后再实现；管理员凭据此时由用户手动 CLI 完成。
+            // InfluxDB 2 的 /api/v2 端点总是需要 token（auth-enabled 仅影响 1.x 兼容 API）。
+            // 认证/初始化由 post_start_http_init 在健康检查通过后自动 onboarding 完成，
+            // 生成的 admin 用户/org/bucket/token 回写到 config 供前端展示。
             first_run_init: None,
+        })
+    }
+
+    fn post_start_http_init(&self, ctx: &HealthContext) -> Option<PostStartHttpInit> {
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(if ctx.port > 0 { ctx.port } else { 8086 });
+        let url = format!("http://127.0.0.1:{}/api/v2/setup", port);
+
+        // 凭据：用户配置优先，缺省用内置默认（onboarding 一次后写入 bolt，重启保留）。
+        let admin_user = match ctx.config.get("admin_user").and_then(|v| v.as_str()) {
+            Some(u) if !u.is_empty() => u.to_string(),
+            _ => "admin".to_string(),
+        };
+        let admin_password = match ctx.config.get("admin_password").and_then(|v| v.as_str()) {
+            Some(u) if u.len() >= 8 => u.to_string(),
+            _ => "opx-admin-123456".to_string(),
+        };
+        // 用户可自定义 token；未填则用内置默认（回写 config 后前端可见，连接即用此 token）。
+        let token = match ctx.config.get("admin_token").and_then(|v| v.as_str()) {
+            Some(u) if !u.is_empty() => u.to_string(),
+            _ => "opx-influxdb-token".to_string(),
+        };
+        let org = "opx".to_string();
+        let bucket = "opx".to_string();
+
+        Some(PostStartHttpInit {
+            url: url.clone(),
+            // 幂等探测：GET /api/v2/setup，若 allowed=false 说明已 onboarding，跳过。
+            probe_url: Some(url),
+            probe_done_marker: r#""allowed":false"#.to_string(),
+            body: serde_json::json!({
+                "username": admin_user,
+                "password": admin_password,
+                "org": org,
+                "bucket": bucket,
+                "token": token,
+            }),
+            // 回写：token/org/bucket 让前端展示连接信息；并保留可能生成的 run-time 字段。
+            config_fields: vec![
+                ("admin_user".to_string(), serde_json::json!(admin_user)),
+                ("admin_token".to_string(), serde_json::json!(token)),
+                ("org".to_string(), serde_json::json!(org)),
+                ("bucket".to_string(), serde_json::json!(bucket)),
+            ],
         })
     }
 
@@ -291,8 +340,17 @@ impl SoftwareProvider for InfluxdbProvider {
                     section: None,
                     description_i18n: Some("configField.influxdbAdminPasswordDesc".to_string()),
                 },
+                ConfigField {
+                    key: "admin_token".to_string(),
+                    label_i18n: "configField.influxdbAdminToken".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.influxdbAdminTokenDesc".to_string()),
+                },
             ],
-            // admin_user/admin_password 为一次性凭据，不落盘。
+            // admin_user/admin_password/admin_token 为初始化凭据/连接 token。
+            // token 会回写 config（供前端展示连接信息），不断增加落盘压力可忽略。
             ephemeral_keys: vec!["admin_user".to_string(), "admin_password".to_string()],
         })
     }

@@ -83,6 +83,28 @@ pub trait SoftwareProvider: Send + Sync {
     fn min_jdk_version(&self) -> Option<u32> {
         None
     }
+
+    /// 服务健康后的一次性 HTTP 初始化（如 InfluxDB 2 onboarding：创建 admin/org/bucket/token）。
+    /// 返回 Some(request) 时，命令层在健康检查通过后执行一次，成功后写 config.initialized=true。
+    /// 默认 None 表示无需 post-start 初始化。
+    fn post_start_http_init(&self, _ctx: &HealthContext) -> Option<PostStartHttpInit> {
+        None
+    }
+}
+
+/// post-start 初始化：HTTP 请求描述（服务已启动、健康检查通过后由命令层执行）。
+#[derive(Debug, Clone)]
+pub struct PostStartHttpInit {
+    pub url: String,
+    /// 幂等探测：GET 该 URL 判定是否已完成（如 InfluxDB /api/v2/setup 返回 {allowed:...}）。
+    /// None 表示无需探测，直接执行。
+    pub probe_url: Option<String>,
+    /// 探测响应体包含此子串则认为已完成（跳过初始化）。
+    pub probe_done_marker: String,
+    /// 初始化请求体（POST）。
+    pub body: serde_json::Value,
+    /// 初始化成功后回写到 config 的字段（如 admin_token），供前端后续使用。
+    pub config_fields: Vec<(String, serde_json::Value)>,
 }
 
 pub struct InstallContext {

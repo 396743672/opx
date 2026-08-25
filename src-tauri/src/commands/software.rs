@@ -669,6 +669,54 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
         .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
 }
 
+/// 执行 post-start HTTP 初始化（如 InfluxDB 2 onboarding）。
+/// 返回 Ok(true) 表示本次执行完成；Ok(false) 表示状态已满足无需执行（幂等跳过）。
+/// 探针：先 GET probe_url，响应包含 probe_done_marker 则已初始化，跳过；否则 POST body。
+fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result<bool> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| anyhow::anyhow!("HTTP client 构建失败: {}", e))?;
+
+    // 1. 幂等探测
+    if let Some(probe_url) = &ps.probe_url {
+        if let Ok(resp) = client
+            .get(probe_url)
+            .header("User-Agent", "OPX")
+            .send()
+        {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text() {
+                    if text.contains(&ps.probe_done_marker) {
+                        return Ok(false); // 已初始化，跳过
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 执行初始化
+    let resp = client
+        .post(&ps.url)
+        .header("User-Agent", "OPX")
+        .header("Content-Type", "application/json")
+        .json(&ps.body)
+        .send()
+        .map_err(|e| anyhow::anyhow!("post-start init 请求失败: {}", e))?;
+    // 2xx（包含 201 Onboarding 完成）视为成功；4xx conflict（已 onboarding）视为跳过
+    if resp.status().is_success() {
+        return Ok(true);
+    }
+    if resp.status().as_u16() == 409 {
+        return Ok(false); // InfluxDB: onboarding already completed
+    }
+    anyhow::bail!(
+        "post-start init 返回 {}: {}",
+        resp.status(),
+        resp.text().unwrap_or_default()
+    )
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -948,11 +996,20 @@ pub async fn do_start_software(
         provider.health_check(&hctx)
     };
 
+    // post-start 一次性 HTTP 初始化（如 InfluxDB 2 onboarding）。
+    // 在闭包 move 前从 provider 计算好，随闭包传入健康检查通过后执行。
+    let post_start = if software.is_custom {
+        None
+    } else {
+        provider.post_start_http_init(&hctx)
+    };
+
     let manager_clone = manager.clone();
     let app_clone = app.clone();
     let installed_id_clone = installed_id.to_string();
     let pid_for_check = pid;
     let init_sql_path_for_cleanup = init_sql_path.clone();
+    let post_start_for_check = post_start;
     tokio::spawn(async move {
         // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
         let pid_alive = tokio::task::spawn_blocking(move || {
@@ -1007,6 +1064,59 @@ pub async fn do_start_software(
                     None,
                 );
                 tracing::info!(installed_id = %installed_id_clone, "software healthy");
+
+                // post-start 一次性初始化（InfluxDB 2 onboarding 等）：
+                // 健康检查通过 → 服务已就绪 → 执行 HTTP 初始化 → 成功后写 config.initialized=true
+                // 与 config 回写字段（如 admin_token）。幂等依据探针（allowed=false 则跳过）。
+                if let Some(ps) = &post_start_for_check {
+                    let ps = ps.clone();
+                    let config_fields = ps.config_fields.clone();
+                    let manager_ps = manager_clone.clone();
+                    let installed_ps = installed_id_clone.clone();
+                    let onb = tokio::task::spawn_blocking(move || {
+                        run_post_start_http_init(&ps)
+                    })
+                    .await;
+                    match onb {
+                        Ok(Ok(true)) => {
+                            // 回写 config（initialized + 额外字段）
+                            let cur_cfg = manager_ps
+                                .find_installed(&installed_ps)
+                                .map(|s| s.config.clone());
+                            if let Some(cfg) = cur_cfg {
+                                let mut new_cfg = cfg;
+                                if let Some(obj) = new_cfg.as_object_mut() {
+                                    obj.insert("initialized".to_string(), serde_json::json!(true));
+                                    for (k, v) in &config_fields {
+                                        obj.insert(k.clone(), v.clone());
+                                    }
+                                }
+                                let _ = manager_ps.update_config(&installed_ps, new_cfg);
+                            }
+                            tracing::info!(
+                                installed_id = %installed_ps,
+                                "post-start init succeeded"
+                            );
+                        }
+                        Ok(Ok(false)) => {
+                            tracing::info!(
+                                installed_id = %installed_ps,
+                                "post-start init skipped (already done)"
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            // 初始化失败不阻塞运行；记录日志，用户可稍后手动处理。
+                            tracing::error!(
+                                installed_id = %installed_ps,
+                                error = %e,
+                                "post-start init failed (non-fatal)"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("post-start init join failed: {}", e);
+                        }
+                    }
+                }
             }
             health_check::HealthCheckResult::Timeout => {
                 // 关键：健康检查失败必须清理子进程树，否则残留僵尸软件（如 nginx）累积

@@ -561,6 +561,8 @@ export default {
     influxdbAdminUserDesc: 'Admin username for first-time init (one-time, not saved)',
     influxdbAdminPassword: 'Admin Password',
     influxdbAdminPasswordDesc: 'Admin password for first-time init (one-time, not saved)',
+    influxdbAdminToken: 'Connection Token',
+    influxdbAdminTokenDesc: 'API token for first-time onboarding (default if empty; written back here after init for connecting)',
   },
 
   // C Extension: Log Viewer + Backup/Restore
