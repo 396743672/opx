@@ -30,6 +30,7 @@ export default {
   name: 'Name',
   version: 'Version',
   port: 'Port',
+  openInBrowser: 'Open in browser',
   action: 'Action',
   description: 'Description',
 

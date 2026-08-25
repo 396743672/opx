@@ -30,6 +30,7 @@ export default {
   name: '名称',
   version: '版本',
   port: '端口',
+  openInBrowser: '在浏览器打开',
   action: '操作',
   description: '描述',
 

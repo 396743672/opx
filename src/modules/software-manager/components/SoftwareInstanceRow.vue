@@ -21,8 +21,17 @@
         <span v-if="software.pid" class="kv">
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
-        <span v-if="software.port" class="kv">
-          <Icon icon="mdi:lan" /> {{ $t('port') }} <b class="tnum">{{ software.port }}</b>
+        <span v-if="runtimePort" class="kv">
+          <Icon icon="mdi:lan" /> {{ $t('port') }}
+          <a
+            v-if="webUrl && canOpenWeb"
+            class="tnum web-open"
+            :href="webUrl"
+            target="_blank"
+            rel="noopener"
+            :title="$t('openInBrowser')"
+          >{{ runtimePort }} <Icon icon="mdi:open-in-new" /></a>
+          <b v-else class="tnum">{{ runtimePort }}</b>
         </span>
       </div>
       <div v-if="software.last_error" class="error-text">
@@ -147,6 +156,55 @@ const categoryIcon = computed(() => {
       return 'mdi:upload'
   }
 })
+
+// 运行端口：优先运行时字段，其次按软件从 config 取对应端口字段（默认值兜底）
+const runtimePort = computed(() => {
+  const s = props.software
+  const cfg = s.config || {}
+  if (s.port) return s.port
+  switch (s.key) {
+    case 'minio':
+      return cfg.console_port || 9001
+    case 'nacos':
+      return cfg.console_port || 8080
+    case 'nginx':
+      return cfg.listen || 80
+    case 'elasticsearch':
+      return cfg.port || 9200
+    case 'influxdb':
+      return cfg.port || 8086
+    default:
+      return cfg.port || 0
+  }
+})
+
+// 可网页访问的软件返回访问地址，否则 null（数据库/Kafka/JRE 等走非 HTTP 协议）
+const webUrl = computed(() => {
+  const s = props.software
+  const host = '127.0.0.1'
+  const port = runtimePort.value
+  switch (s.key) {
+    case 'elasticsearch':
+    case 'influxdb':
+    case 'nginx':
+    case 'minio':
+      return `http://${host}:${port}`
+    case 'nacos': {
+      const path = s.config?.context_path || '/nacos'
+      return `http://${host}:${port}${path}`
+    }
+  }
+  // 自定义软件：Http 健康检查的 url 即网页地址
+  const hc = s.custom_start_command?.health_check
+  if (s.custom_start_command && hc?.kind === 'Http' && hc.spec?.url) return hc.spec.url
+  return null
+})
+
+const canOpenWeb = computed(
+  () =>
+    props.software.status === SoftwareStatus.Running ||
+    props.software.status === SoftwareStatus.Starting,
+)
 
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
 const isRuntime = computed(() => props.software.key === 'jre' || props.software.key === 'jdk')
@@ -332,6 +390,21 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 }
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+.web-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+.web-open:hover {
+  text-decoration: underline;
+}
+.web-open svg {
+  width: 11px;
+  height: 11px;
 }
 .card-actions {
   display: flex;
