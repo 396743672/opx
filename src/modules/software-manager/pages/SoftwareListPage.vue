@@ -260,7 +260,7 @@ const grouped = computed<Group[]>(() => {
     else if (sw.key === 'nacos') g = 'registry'
     else if (sw.key === 'kafka') g = 'messagequeue'
     else if (sw.key === 'elasticsearch') g = 'search'
-    else if (sw.key === 'influxdb') g = 'timeseries'
+    else if (sw.key === 'influxdb' || sw.key === 'influxdb3') g = 'timeseries'
     else continue
     groups[g].items.push(sw)
   }

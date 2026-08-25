@@ -175,6 +175,8 @@ const runtimePort = computed(() => {
       return cfg.port || 9200
     case 'influxdb':
       return cfg.port || 8086
+    case 'influxdb3':
+      return cfg.port || 8181
     default:
       return cfg.port || 0
   }
@@ -188,6 +190,7 @@ const webUrl = computed(() => {
   switch (s.key) {
     case 'elasticsearch':
     case 'influxdb':
+    case 'influxdb3':
     case 'nginx':
     case 'minio':
       return `http://${host}:${port}`

@@ -20,6 +20,17 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
 
+fn config_bool(c: &serde_json::Value, key: &str, default: bool) -> bool {
+    c.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
+    c.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
 /// InfluxDB 3 Core（influxdb3）：Rust 重写的新架构时序数据库。
 /// 与 InfluxDB 2.x（influxd）是两个独立产品，不共享二进制/配置/数据，
 /// 故单独一个 provider（key=influxdb3），互不干扰。
@@ -100,18 +111,36 @@ impl SoftwareProvider for Influxdb3Provider {
         std::fs::create_dir_all(&data_dir)?;
 
         let bin = if cfg!(windows) { "influxdb3.exe" } else { "influxdb3" };
-        // 本地单机零认证：object-store=file 持久化到 data_dir；--without-auth 禁用 HTTP 鉴权
-        // （否则 /health 及查询接口返回 401）。
+        // 认证开关：
+        // - auth_enabled=false（默认）：--without-auth 本地零认证，/health 返回 200。
+        // - auth_enabled=true：--admin-token-file 携带 token，同时 --disable-authz health,ping
+        //   放行健康检查（否则 /health 返回 401，opx 无法判定存活）；数据写入/查询需带 token。
         // 注意 http-bind 须用 127.0.0.1 显式 IPv4（仅 ":port" 会绑定到 IPv6 链路本地地址，
         // 导致 health_check 的 127.0.0.1 连不上）。
-        let args = vec![
+        let mut args = vec![
             "serve".to_string(),
             "--object-store=file".to_string(),
             format!("--data-dir={}", data_dir.to_string_lossy()),
             "--node-id=opx-node".to_string(),
             format!("--http-bind=127.0.0.1:{}", port),
-            "--without-auth".to_string(),
         ];
+        if config_bool(&ctx.config, "auth_enabled", false) {
+            let token = config_str(&ctx.config, "admin_token", "");
+            if token.is_empty() {
+                return Err(anyhow::anyhow!("启用认证前请先配置管理员 Token（admin_token）"));
+            }
+            // token 文件格式与 `influxdb3 create token --offline` 产出一致：
+            // {"token":"<value>","name":"_admin"}。每次启动重写，保证与配置同步。
+            let token_file = data_dir.join("admin-token.json");
+            std::fs::write(
+                &token_file,
+                serde_json::json!({ "token": token, "name": "_admin" }).to_string(),
+            )?;
+            args.push(format!("--admin-token-file={}", token_file.to_string_lossy()));
+            args.push("--disable-authz=health,ping".to_string());
+        } else {
+            args.push("--without-auth".to_string());
+        }
 
         Ok(StartCommand {
             program: bin.to_string(),
@@ -168,7 +197,25 @@ impl SoftwareProvider for Influxdb3Provider {
                     section: None,
                     description_i18n: Some("configField.influxdb3DataDirDesc".to_string()),
                 },
+                ConfigField {
+                    key: "auth_enabled".to_string(),
+                    label_i18n: "configField.influxdb3AuthEnabled".to_string(),
+                    field_type: ConfigFieldType::Boolean,
+                    default_value: serde_json::json!(false),
+                    section: None,
+                    description_i18n: Some("configField.influxdb3AuthEnabledDesc".to_string()),
+                },
+                ConfigField {
+                    key: "admin_token".to_string(),
+                    label_i18n: "configField.influxdb3AdminToken".to_string(),
+                    field_type: ConfigFieldType::Password,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.influxdb3AdminTokenDesc".to_string()),
+                },
             ],
+            // admin_token 为持久化配置（写入 admin-token.json 供 --admin-token-file 使用），
+            // 不设 ephemeral（重启后仍需用同一 token 访问数据）。
             ephemeral_keys: vec![],
         })
     }
@@ -217,6 +264,41 @@ mod tests {
         assert!(cmd.args.iter().any(|a| a.contains("--http-bind=127.0.0.1:8181")));
         assert!(cmd.args.iter().any(|a| a.contains("--object-store=file")));
         assert!(cmd.args.iter().any(|a| a == "--without-auth"));
+    }
+
+    #[test]
+    fn start_command_with_auth_writes_token_file_and_disables_health_authz() {
+        let p = Influxdb3Provider::new();
+        let install_path = test_install_path();
+        let _ = std::fs::create_dir_all(&install_path);
+        let ctx = StartContext {
+            installed_id: "influxdb3-1".to_string(),
+            install_path: install_path.clone(),
+            version: "3.11.2".to_string(),
+            config: serde_json::json!({
+                "port": 8181,
+                "data_dir": "data",
+                "auth_enabled": true,
+                "admin_token": "apiv3_test-token",
+            }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: None,
+            mysql_install_path: None,
+        };
+        let cmd = p.start_command(&ctx).expect("start_command ok");
+        // 开启认证 → 不再 --without-auth，改用 --admin-token-file，并放行 health/ping
+        assert!(!cmd.args.iter().any(|a| a == "--without-auth"));
+        assert!(cmd.args.iter().any(|a| a.starts_with("--admin-token-file=")));
+        assert!(cmd.args.iter().any(|a| a == "--disable-authz=health,ping"));
+        // token 文件已写入数据目录且格式正确
+        let token_file = std::path::Path::new(&install_path)
+            .join("data")
+            .join("admin-token.json");
+        let content = std::fs::read_to_string(&token_file).expect("token file written");
+        let v: serde_json::Value = serde_json::from_str(&content).expect("valid json");
+        assert_eq!(v["token"], "apiv3_test-token");
+        assert_eq!(v["name"], "_admin");
     }
 
     #[test]
