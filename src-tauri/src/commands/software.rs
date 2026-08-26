@@ -2026,7 +2026,9 @@ fn compute_upgrades(installed: &[InstalledSoftware], catalog: &Catalog) -> Vec<c
     use crate::models::software::UpgradeInfo;
     let mut out = Vec::new();
     for sw in installed {
-        if sw.is_custom {
+        if sw.is_custom
+            || sw.category == Some(crate::models::software::SoftwareCategory::Runtime)
+        {
             continue;
         }
         let Some(entry) = catalog.entries.iter().find(|e| e.key == sw.key) else {
