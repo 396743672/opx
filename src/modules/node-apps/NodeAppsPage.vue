@@ -41,9 +41,9 @@
         <div class="actions">
           <button class="btn btn-sm" :disabled="a.status === 'running'" @click="start(a)">{{ $t('start') }}</button>
           <button class="btn btn-sm" :disabled="a.status !== 'running'" @click="stop(a)">{{ $t('stop') }}</button>
-          <button class="btn btn-sm" @click="openEdit(a)">{{ $t('edit') }}</button>
+          <button class="btn btn-sm" :disabled="a.status === 'running'" @click="openEdit(a)">{{ $t('edit') }}</button>
           <button class="btn btn-sm" @click="showLog(a)"><Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}</button>
-          <button class="btn btn-sm danger" @click="remove(a)">{{ $t('delete') }}</button>
+          <button class="btn btn-sm danger" :disabled="a.status === 'running'" @click="remove(a)">{{ $t('delete') }}</button>
         </div>
       </div>
     </div>
@@ -144,6 +144,7 @@ const form = ref({
   startup_order: 0,
 })
 const installedNodes = ref<InstalledSoftware[]>([])
+const entryChanged = ref(false)
 
 // 预设模板：一键填充常用启动参数（入口仍由用户选择）
 const PRESETS = [
@@ -188,6 +189,7 @@ async function remove(a: NodeApp) {
 }
 
 function openEdit(a?: NodeApp) {
+  entryChanged.value = false
   editTarget.value = a ?? {
     id: '',
     name: '',
@@ -217,7 +219,12 @@ function openEdit(a?: NodeApp) {
 
 async function browse() {
   const r = await open({ filters: [{ name: 'JS', extensions: ['js', 'mjs', 'cjs', 'ts'] }] })
-  if (typeof r === 'string') form.value.entry_path = r
+  if (typeof r === 'string') {
+    // 编辑已有应用并更换入口：先提示新文件将替换运行目录中的历史文件
+    if (editTarget.value?.id && !confirm(t('replaceEntryConfirm'))) return
+    form.value.entry_path = r
+    entryChanged.value = true
+  }
 }
 
 async function save() {
@@ -238,9 +245,8 @@ async function save() {
           : null
       })
       .filter((x): x is [string, string] => x !== null)
-    const params = {
+    const base = {
       name: form.value.name.trim(),
-      entry_path: form.value.entry_path.trim(),
       node_installed_id: form.value.node_installed_id || '',
       args: form.value.argsText.split('\n').map((s) => s.trim()).filter(Boolean),
       env_vars,
@@ -248,9 +254,12 @@ async function save() {
       startup_order: form.value.startup_order,
     }
     if (editTarget.value?.id) {
-      await invoke('update_node_app', { id: editTarget.value.id, params })
+      await invoke('update_node_app', {
+        id: editTarget.value.id,
+        params: { ...base, entry_path: entryChanged.value ? form.value.entry_path.trim() : null },
+      })
     } else {
-      await invoke('add_node_app', { params })
+      await invoke('add_node_app', { params: { ...base, entry_path: form.value.entry_path.trim() } })
     }
     editTarget.value = null
     await load()

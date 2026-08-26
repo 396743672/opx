@@ -16,6 +16,7 @@ export default {
   autoSelect: 'Auto select',
   presets: 'Presets',
   confirmDeleteNodeApp: 'Delete this Node app? This cannot be undone.',
+  replaceEntryConfirm: 'The new file will replace the historical entry file in the app directory. Continue?',
   settings: 'Settings',
 
   // common

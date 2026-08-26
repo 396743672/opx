@@ -49,6 +49,25 @@ impl NodeAppManager {
         Ok(())
     }
 
+    /// 把源入口文件复制到应用运行目录 <app_data>/node-apps/{id}/app.js（统一文件名，覆盖旧版），
+    /// 返回相对路径 `node-apps/{id}/app.js`。
+    fn copy_entry_to_appdir(src: &Path, app_id: &str) -> Result<String, String> {
+        if !src.exists() {
+            return Err(format!("入口文件不存在: {}", src.display()));
+        }
+        let app_dir = paths::data_dir().join("node-apps").join(app_id);
+        fs::create_dir_all(&app_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+        fs::copy(src, app_dir.join("app.js")).map_err(|e| format!("复制入口文件失败: {}", e))?;
+        Ok(format!("node-apps/{}/app.js", app_id))
+    }
+
+    /// 把存储的相对入口路径解析为绝对路径（供前端展示 / 启动使用）
+    fn resolve_app_entry(app: &mut NodeApp) {
+        app.entry_path = paths::resolve_data_path(&app.entry_path)
+            .to_string_lossy()
+            .into_owned();
+    }
+
     pub fn list(&self) -> Vec<NodeApp> {
         let mut inner = self.inner.lock().unwrap();
         for a in inner.apps.iter_mut() {
@@ -62,7 +81,7 @@ impl NodeAppManager {
                 }
             }
         }
-        let apps = inner.apps.clone();
+        let mut apps = inner.apps.clone();
         // 锁内直接写盘（避免经 self.save 二次加锁死锁）
         if let Some(parent) = inner.data_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -70,11 +89,24 @@ impl NodeAppManager {
         if let Ok(content) = serde_json::to_string_pretty(&inner.apps) {
             let _ = fs::write(&inner.data_path, content);
         }
+        drop(inner);
+        for a in apps.iter_mut() {
+            Self::resolve_app_entry(a);
+        }
         apps
     }
 
     pub fn get(&self, id: &str) -> Option<NodeApp> {
-        self.inner.lock().unwrap().apps.iter().find(|a| a.id == id).cloned()
+        let mut app = self
+            .inner
+            .lock()
+            .unwrap()
+            .apps
+            .iter()
+            .find(|a| a.id == id)
+            .cloned()?;
+        Self::resolve_app_entry(&mut app);
+        Some(app)
     }
 
     pub fn create(&self, payload: CreateNodeAppParams) -> Result<NodeApp, String> {
@@ -82,14 +114,12 @@ impl NodeAppManager {
         if name.is_empty() {
             return Err("名称不能为空".to_string());
         }
-        let entry = payload.entry_path.trim().to_string();
-        if entry.is_empty() || !Path::new(&entry).exists() {
-            return Err("入口文件不存在".to_string());
-        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let entry_rel = Self::copy_entry_to_appdir(Path::new(&payload.entry_path), &id)?;
         let app = NodeApp {
-            id: uuid::Uuid::new_v4().to_string(),
+            id,
             name,
-            entry_path: entry,
+            entry_path: entry_rel,
             node_installed_id: payload.node_installed_id,
             args: payload.args,
             env_vars: payload.env_vars,
@@ -114,6 +144,9 @@ impl NodeAppManager {
             .iter_mut()
             .find(|a| a.id == id)
             .ok_or_else(|| "未找到应用".to_string())?;
+        if app.status == NodeAppStatus::Running {
+            return Err("运行中的应用不可修改配置".to_string());
+        }
         if let Some(v) = params.name {
             let v = v.trim().to_string();
             if v.is_empty() {
@@ -123,11 +156,9 @@ impl NodeAppManager {
         }
         if let Some(v) = params.entry_path {
             let v = v.trim().to_string();
-            if !v.is_empty() && !Path::new(&v).exists() {
-                return Err("入口文件不存在".to_string());
-            }
             if !v.is_empty() {
-                app.entry_path = v;
+                // 重新上传入口：复制覆盖运行目录中的 app.js（存的相对路径不变）
+                Self::copy_entry_to_appdir(Path::new(&v), &app.id)?;
             }
         }
         if let Some(v) = params.node_installed_id {
@@ -153,11 +184,22 @@ impl NodeAppManager {
 
     pub fn delete(&self, id: &str) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        let running = inner
+            .apps
+            .iter()
+            .any(|a| a.id == id && a.status == NodeAppStatus::Running);
+        if running {
+            drop(inner);
+            return false;
+        }
         let before = inner.apps.len();
         inner.apps.retain(|a| a.id != id);
         let removed = inner.apps.len() != before;
         drop(inner);
         if removed {
+            // 删除应用运行目录（入口 JS 等）
+            let dir = paths::data_dir().join("node-apps").join(id);
+            let _ = fs::remove_dir_all(&dir);
             let _ = self.save();
         }
         removed

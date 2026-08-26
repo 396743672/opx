@@ -16,6 +16,7 @@ export default {
   autoSelect: '自动选择',
   presets: '预设模板',
   confirmDeleteNodeApp: '确定删除该 Node 应用？此操作不可撤销。',
+  replaceEntryConfirm: '将用新文件替换运行目录中的历史入口文件，是否继续？',
   settings: '系统设置',
 
   // 通用
