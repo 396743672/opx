@@ -118,46 +118,19 @@ defineEmits<{
   rollback: []
 }>()
 
-const categoryClass = computed(() => {
-  switch (props.software.key) {
-    case 'jre':
-      return 'runtime'
-    case 'mysql':
-    case 'postgresql':
-    case 'mongodb':
-      return 'database'
-    case 'redis':
-      return 'cache'
-    case 'nginx':
-      return 'webserver'
-    case 'minio':
-    case 'rustfs':
-      return 'storage'
-    case 'nacos':
-      return 'registry'
-    default:
-      return 'custom'
-  }
-})
+const CATEGORY_CLASS: Record<string, string> = {
+  Database: 'database',
+  Runtime: 'runtime',
+  Cache: 'cache',
+  WebServer: 'webserver',
+  Storage: 'storage',
+  Registry: 'registry',
+}
 
-const categoryIcon = computed(() => {
-  switch (categoryClass.value) {
-    case 'runtime':
-      return 'mdi:language-java'
-    case 'database':
-      return 'mdi:database'
-    case 'cache':
-      return 'mdi:lightning-bolt'
-    case 'webserver':
-      return 'mdi:web'
-    case 'storage':
-      return 'mdi:storage'
-    case 'registry':
-      return 'mdi:hexagon-multiple'
-    default:
-      return 'mdi:upload'
-  }
-})
+const categoryClass = computed(() => CATEGORY_CLASS[props.software.category ?? ''] ?? 'custom')
+
+// 图标：优先 catalog 软件专属图标（与软件仓库一致）；自定义软件回退为上传图标
+const categoryIcon = computed(() => props.software.icon || 'mdi:upload')
 
 // 运行端口：优先运行时字段，其次按软件从 config 取对应端口字段（默认值兜底）
 const runtimePort = computed(() => {

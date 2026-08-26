@@ -135,6 +135,10 @@ pub struct InstalledSoftware {
     #[serde(default)]
     pub custom_start_command: Option<CustomStartCommand>,
 
+    /// 软件图标（来自 catalog，软件专属；自定义软件为空占位）
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+
     /// 软件分类（来自 catalog，用于栈候选等按类型过滤）；自定义软件为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<SoftwareCategory>,

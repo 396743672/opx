@@ -117,14 +117,17 @@ pub async fn list_installed_software(
 ) -> Result<Vec<InstalledSoftware>, String> {
     let catalog = manager.get_catalog();
     let mut list = manager.get_installed();
-    // 为每个已装软件附加 catalog 分类（自定义软件无对应 entry，保持 None）
+    // 为每个已装软件附加 catalog 分类与图标（自定义软件无对应 entry，保持默认）
     for sw in list.iter_mut() {
-        if sw.category.is_none() {
-            sw.category = catalog
-                .entries
-                .iter()
-                .find(|e| e.key == sw.key)
-                .map(|e| e.category.clone());
+        if sw.category.is_none() || sw.icon.is_empty() {
+            if let Some(e) = catalog.entries.iter().find(|e| e.key == sw.key) {
+                if sw.category.is_none() {
+                    sw.category = Some(e.category.clone());
+                }
+                if sw.icon.is_empty() {
+                    sw.icon = e.icon.clone();
+                }
+            }
         }
     }
     Ok(list)
@@ -335,6 +338,7 @@ async fn do_upgrade(
         last_stopped_at: None,
         last_error: None,
         custom_start_command: None,
+        icon: String::new(),
         category: software.category.clone(),
     };
 
@@ -2148,6 +2152,7 @@ mod tests {
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
+        icon: String::new(),
             category: None,
         }
     }

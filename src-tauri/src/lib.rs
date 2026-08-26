@@ -386,6 +386,7 @@ mod tests {
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
+            icon: String::new(),
             category: None,
         }
     }
