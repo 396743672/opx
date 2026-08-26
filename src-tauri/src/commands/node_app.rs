@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::State;
@@ -88,7 +88,7 @@ pub async fn read_node_app_log(
     id: String,
 ) -> Result<Vec<String>, String> {
     let app = manager.get(&id).ok_or_else(|| "未找到应用".to_string())?;
-    let p = Path::new(&app.log_path);
+    let p = crate::utils::paths::resolve_data_path(&app.log_path);
     if app.log_path.is_empty() || !p.exists() {
         return Ok(vec![]);
     }

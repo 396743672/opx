@@ -84,18 +84,6 @@ impl NodeAppManager {
         Ok(Self::entry_rel(name))
     }
 
-    /// 把存储的相对路径解析为绝对路径（供前端展示 / 启动使用）
-    fn resolve_app_paths(app: &mut NodeApp) {
-        app.entry_path = paths::resolve_data_path(&app.entry_path)
-            .to_string_lossy()
-            .into_owned();
-        if !app.log_path.is_empty() {
-            app.log_path = paths::resolve_data_path(&app.log_path)
-                .to_string_lossy()
-                .into_owned();
-        }
-    }
-
     pub fn list(&self) -> Vec<NodeApp> {
         let mut inner = self.inner.lock().unwrap();
         for a in inner.apps.iter_mut() {
@@ -109,7 +97,7 @@ impl NodeAppManager {
                 }
             }
         }
-        let mut apps = inner.apps.clone();
+        let apps = inner.apps.clone();
         // 锁内直接写盘（避免经 self.save 二次加锁死锁）
         if let Some(parent) = inner.data_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -118,23 +106,12 @@ impl NodeAppManager {
             let _ = fs::write(&inner.data_path, content);
         }
         drop(inner);
-        for a in apps.iter_mut() {
-            Self::resolve_app_paths(a);
-        }
         apps
     }
 
     pub fn get(&self, id: &str) -> Option<NodeApp> {
-        let mut app = self
-            .inner
-            .lock()
-            .unwrap()
-            .apps
-            .iter()
-            .find(|a| a.id == id)
-            .cloned()?;
-        Self::resolve_app_paths(&mut app);
-        Some(app)
+        // 返回相对路径（前端展示用；启动/读取时由调用方解析为绝对）
+        self.inner.lock().unwrap().apps.iter().find(|a| a.id == id).cloned()
     }
 
     pub fn create(&self, payload: CreateNodeAppParams) -> Result<NodeApp, String> {
@@ -264,7 +241,7 @@ impl NodeAppManager {
     /// 用指定 node.exe 启动应用（stdout/stderr 重定向到 <app_data>/node-logs/<id>.log）
     pub fn start(&self, app_id: &str, node_exe: &Path) -> Result<(), String> {
         let app = self.get(app_id).ok_or_else(|| "未找到应用".to_string())?;
-        let entry = Path::new(&app.entry_path);
+        let entry = paths::resolve_data_path(&app.entry_path);
         if !entry.exists() {
             return Err(format!("入口文件不存在: {}", app.entry_path));
         }
@@ -278,7 +255,7 @@ impl NodeAppManager {
         }
 
         let mut cmd = Command::new(node_exe);
-        cmd.arg(entry);
+        cmd.arg(&entry);
         for a in &app.args {
             cmd.arg(a);
         }
