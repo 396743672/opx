@@ -151,6 +151,15 @@ pub enum LogSourceKind {
     ProviderFile,
 }
 
+/// 历史归档日志描述（同目录/日期目录下滚动压缩的旧日志，时间倒序）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArchiveLog {
+    /// 归档文件绝对路径
+    pub path: String,
+    /// 展示标签（如 "2026-08-24" / "info.2026-08-26.0.log.gz"）
+    pub label: String,
+}
+
 /// 单条日志来源（序列化给前端展示与选择）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogSource {
@@ -164,6 +173,9 @@ pub struct LogSource {
     /// 展示名（如 nginx 的「访问日志」「错误日志」）；None 时前端回退通用标签
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// 历史归档（时间倒序，最新在前）。空 = 无归档。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub archives: Vec<ArchiveLog>,
 }
 
 /// 读取日志返回的分块（前端轮询/分页消费）
@@ -181,6 +193,9 @@ pub struct LogChunk {
     pub has_more: bool,
     /// 因超过单次上限被截断（命中行多于 limit）
     pub truncated: bool,
+    /// 当前实际读取的历史归档索引（0=主文件）。前端下次请求携带它实现无缝续接。
+    #[serde(default)]
+    pub archive_index: usize,
 }
 
 /// 备份快照元信息（持久化于 <app_data>/backups/<id>/manifest.json）

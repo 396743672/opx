@@ -196,6 +196,7 @@ pub fn default_log_sources(ctx: &LogContext) -> Vec<LogSource> {
             has_levels: false, // 通用 stdout 默认无级别
             level_pattern: None,
             label: None,
+            archives: vec![],
         }]
     } else {
         vec![]

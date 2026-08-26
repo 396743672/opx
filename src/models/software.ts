@@ -251,6 +251,16 @@ export interface LogSource {
   level_pattern: string | null
   /** 展示名（如「访问日志」「错误日志」）；null 时前端用通用标签 */
   label?: string | null
+  /** 历史归档（时间倒序，最新在前）；空 = 无归档 */
+  archives?: ArchiveLog[]
+}
+
+/** 历史归档日志描述（同目录/日期目录下滚动压缩的旧日志） */
+export interface ArchiveLog {
+  /** 归档文件绝对路径 */
+  path: string
+  /** 展示标签（如 "2026-08-24" / "info.2026-08-26.0.log.gz"） */
+  label: string
 }
 
 /** 读取日志返回的分块（前端轮询/分页消费） */
@@ -267,6 +277,8 @@ export interface LogChunk {
   has_more: boolean
   /** 因超过单次上限被截断（命中行多于 limit） */
   truncated: boolean
+  /** 当前实际读取的历史归档索引（0=主文件） */
+  archive_index?: number
 }
 
 /** 备份模式 */

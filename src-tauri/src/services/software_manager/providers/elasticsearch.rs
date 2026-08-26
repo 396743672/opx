@@ -364,6 +364,7 @@ impl SoftwareProvider for ElasticsearchProvider {
             has_levels: true,
             level_pattern: None,
             label: None,
+            archives: vec![],
         });
         sources
     }

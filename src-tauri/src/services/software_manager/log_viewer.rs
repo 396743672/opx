@@ -123,6 +123,7 @@ pub fn read_log(
             total_bytes: 0,
             has_more: false,
             truncated: false,
+            archive_index: 0,
         });
     }
     let total = std::fs::metadata(path)?.len();
@@ -246,6 +247,7 @@ fn read_backward_filtered(
         total_bytes: total,
         has_more,
         truncated,
+        archive_index: 0,
     })
 }
 
@@ -293,6 +295,7 @@ fn read_since(
         total_bytes: total,
         has_more: from_byte > 0,
         truncated,
+        archive_index: 0,
     })
 }
 

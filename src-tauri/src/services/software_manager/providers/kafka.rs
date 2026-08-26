@@ -408,6 +408,7 @@ impl SoftwareProvider for KafkaProvider {
             has_levels: true,
             level_pattern: None,
             label: None,
+            archives: vec![],
         });
         sources
     }

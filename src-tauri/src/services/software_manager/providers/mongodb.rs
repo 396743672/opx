@@ -139,6 +139,7 @@ impl SoftwareProvider for MongoDbProvider {
                 has_levels: true,
                 level_pattern: None,
                 label: None,
+                archives: vec![],
             });
         }
         sources

@@ -312,6 +312,7 @@ impl SoftwareProvider for NginxProvider {
                 has_levels: false, // JSON 访问日志无级别
                 level_pattern: None,
                 label: Some("访问日志".into()),
+                archives: vec![],
             },
             LogSource {
                 path: logs.join("error.log").to_string_lossy().to_string(),
@@ -319,6 +320,7 @@ impl SoftwareProvider for NginxProvider {
                 has_levels: true, // error.log 含 [error]/[notice] 等标记
                 level_pattern: None,
                 label: Some("错误日志".into()),
+                archives: vec![],
             },
         ]
     }
