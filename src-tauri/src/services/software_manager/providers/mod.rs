@@ -190,14 +190,15 @@ pub fn default_log_sources(ctx: &LogContext) -> Vec<LogSource> {
         .join("logs")
         .join(format!("opx-{}.log", ctx.installed_id));
     if p.exists() {
-        vec![LogSource {
+        let src = LogSource {
             path: p.to_string_lossy().to_string(),
             kind: LogSourceKind::StdoutRedirect,
             has_levels: false, // 通用 stdout 默认无级别
             level_pattern: None,
             label: None,
             archives: vec![],
-        }]
+        };
+        vec![crate::services::software_manager::log_viewer::attach_archives(src)]
     } else {
         vec![]
     }

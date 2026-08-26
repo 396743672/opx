@@ -305,24 +305,23 @@ impl SoftwareProvider for NginxProvider {
         // nginx daemon off 正常无 stdout，控制台 tab 永远为空，故不引入 StdoutRedirect，
         // 只提供访问日志（JSON）与错误日志。
         let logs = Path::new(&ctx.install_path).join("logs");
-        vec![
-            LogSource {
-                path: logs.join("access.log").to_string_lossy().to_string(),
-                kind: LogSourceKind::ProviderFile,
-                has_levels: false, // JSON 访问日志无级别
-                level_pattern: None,
-                label: Some("访问日志".into()),
-                archives: vec![],
-            },
-            LogSource {
-                path: logs.join("error.log").to_string_lossy().to_string(),
-                kind: LogSourceKind::ProviderFile,
-                has_levels: true, // error.log 含 [error]/[notice] 等标记
-                level_pattern: None,
-                label: Some("错误日志".into()),
-                archives: vec![],
-            },
-        ]
+        let access = crate::services::software_manager::log_viewer::attach_archives(LogSource {
+            path: logs.join("access.log").to_string_lossy().to_string(),
+            kind: LogSourceKind::ProviderFile,
+            has_levels: false, // JSON 访问日志无级别
+            level_pattern: None,
+            label: Some("访问日志".into()),
+            archives: vec![],
+        });
+        let error = crate::services::software_manager::log_viewer::attach_archives(LogSource {
+            path: logs.join("error.log").to_string_lossy().to_string(),
+            kind: LogSourceKind::ProviderFile,
+            has_levels: true, // error.log 含 [error]/[notice] 等标记
+            level_pattern: None,
+            label: Some("错误日志".into()),
+            archives: vec![],
+        });
+        vec![access, error]
     }
 
     fn config_file_path(&self, ctx: &ConfigContext) -> Option<PathBuf> {

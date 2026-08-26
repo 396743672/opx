@@ -358,14 +358,14 @@ impl SoftwareProvider for ElasticsearchProvider {
         let file = PathBuf::from(&ctx.install_path)
             .join("logs")
             .join("elasticsearch.log");
-        sources.push(LogSource {
+        sources.push(crate::services::software_manager::log_viewer::attach_archives(LogSource {
             path: file.to_string_lossy().to_string(),
             kind: LogSourceKind::ProviderFile,
             has_levels: true,
             level_pattern: None,
             label: None,
             archives: vec![],
-        });
+        }));
         sources
     }
 

@@ -1847,6 +1847,7 @@ pub async fn read_log(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
     source_index: usize,
+    archive_index: Option<usize>,
     offset: Option<u64>,
     before: Option<bool>,
     limit: Option<u64>,
@@ -1856,6 +1857,7 @@ pub async fn read_log(
 ) -> Result<LogChunk, String> {
     let limit = limit.map(|l| l as usize).unwrap_or(2000);
     let before = before.unwrap_or(false);
+    let archive_index = archive_index.unwrap_or(0);
     log_viewer::read_log(
         &manager,
         &installed_id,
@@ -1866,6 +1868,7 @@ pub async fn read_log(
         keyword.as_deref(),
         regex,
         level.as_deref(),
+        archive_index,
     )
     .map_err(|e| e.to_string())
 }

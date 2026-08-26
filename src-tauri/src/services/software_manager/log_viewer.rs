@@ -9,7 +9,7 @@
 //! - `offset == Some(o), before == true` → 历史模式，读取字节 `o` 之前（朝文件头）的 `limit` 行。
 
 use std::io::{BufRead, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
 
@@ -188,6 +188,7 @@ pub fn read_log(
     keyword: Option<&str>,
     regex: bool,
     level: Option<&str>,
+    archive_index: usize,
 ) -> anyhow::Result<LogChunk> {
     let sources = list_log_sources(manager, installed_id)?;
     let source = sources
@@ -239,10 +240,7 @@ pub fn read_log(
             let (mut reader, total) = open_reader(&path)?;
             read_backward_filtered(&mut reader, total, total, limit, &filter)
         }
-        Some(o) if before => {
-            let (mut reader, total) = open_reader(&path)?;
-            read_backward_filtered(&mut reader, total, o, limit, &filter)
-        }
+        Some(o) if before => read_log_archive_mode(&path, &source.archives, archive_index, o, limit, &filter),
         Some(o) => {
             let (mut reader, total) = open_reader(&path)?;
             read_since(&mut reader, total, o, limit, &filter)
@@ -259,6 +257,58 @@ pub fn download_log(source_path: &str, dest_path: &str) -> anyhow::Result<()> {
     std::fs::copy(src, Path::new(dest_path))
         .map_err(|e| anyhow::anyhow!("复制日志失败 {} -> {}: {}", source_path, dest_path, e))?;
     Ok(())
+}
+
+/// 为单个日志源附加历史归档（provider 复用入口）
+pub fn attach_archives(mut s: LogSource) -> LogSource {
+    s.archives = collect_archives(Path::new(&s.path));
+    s
+}
+
+/// 历史翻页的跨文件续接：在 `archive_index` 对应文件内从 `from_byte` 向前回溯；
+/// 到文件头且有更旧归档时自动切到更旧归档的尾部继续读，实现无缝续接。
+fn read_log_archive_mode(
+    path: &Path,
+    archives: &[ArchiveLog],
+    archive_index: usize,
+    from_byte: u64,
+    limit: usize,
+    filter: &LineFilter,
+) -> anyhow::Result<LogChunk> {
+    let cur_path = if archive_index == 0 {
+        path.to_path_buf()
+    } else {
+        let a = archives
+            .get(archive_index - 1)
+            .ok_or_else(|| anyhow::anyhow!("归档索引越界: {}", archive_index))?;
+        PathBuf::from(&a.path)
+    };
+    let (mut reader, total) = open_reader(&cur_path)?;
+    let mut chunk = read_backward_filtered(&mut reader, total, from_byte.min(total), limit, filter)?;
+    chunk.archive_index = archive_index;
+    // 当前文件已展露到头部（from_byte==0），且有更旧档 → 无缝切换到下一个归档
+    let at_head = from_byte == 0 || chunk.start_offset == 0;
+    if at_head && archive_index < archives.len() {
+        let nxt = &archives[archive_index];
+        let npath = PathBuf::from(&nxt.path);
+        let (mut nr, ntotal) = open_reader(&npath)?;
+        let mut nchunk = read_backward_filtered(&mut nr, ntotal, ntotal, limit, filter)?;
+        nchunk.archive_index = archive_index + 1;
+        let mut lines = nchunk.lines.clone();
+        lines.extend(chunk.lines);
+        return Ok(LogChunk {
+            lines,
+            start_offset: nchunk.start_offset,
+            end_offset: nchunk.end_offset,
+            total_bytes: nchunk.total_bytes,
+            has_more: nchunk.has_more || (archive_index + 1 < archives.len()),
+            truncated: nchunk.truncated || chunk.truncated,
+            archive_index: archive_index + 1,
+        });
+    }
+    chunk.has_more = chunk.has_more || (chunk.start_offset == 0 && archive_index < archives.len());
+    chunk.archive_index = archive_index;
+    Ok(chunk)
 }
 
 /// 从 `from_byte` 向前（朝文件头）回溯，收集末尾 `limit` 个「匹配」行。
@@ -515,6 +565,39 @@ mod tests {
         std::fs::remove_file(&p).unwrap();
         let non_empty: usize = chunk.lines.iter().filter(|l| !l.is_empty()).count();
         assert_eq!(non_empty, 3, "gz 归档应能读出行");
+    }
+
+    #[test]
+    fn test_read_backward_cross_archive_switch() {
+        let base = std::env::temp_dir().join(format!("opx_qa_xa_{}", unique_suffix()));
+        std::fs::create_dir_all(&base).unwrap();
+        let primary = base.join("info.log");
+        std::fs::write(&primary, b"P0\nP1\n").unwrap();
+        let gz_path = base.join("info.2026-08-24.0.log.gz");
+        {
+            let file = std::fs::File::create(&gz_path).unwrap();
+            let mut enc = {
+                let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+                std::io::Write::write_all(&mut e, b"O0\nO1\n").unwrap();
+                e
+            };
+            enc.finish().unwrap();
+        }
+        let archives = collect_archives(&primary);
+        assert_eq!(archives.len(), 1, "应有 1 个归档");
+        let filter = LineFilter {
+            keyword: None,
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        // 从主文件头（from_byte=0）继续往前翻 → 应切到归档尾部
+        let chunk = read_log_archive_mode(&primary, &archives, 0, 0, 40, &filter).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(chunk.archive_index, 1, "应切到 index=1 归档");
+        let joint: String = chunk.lines.concat();
+        assert!(joint.contains("O0"), "应读到归档旧行, got {:?}", chunk.lines);
+        assert!(joint.contains("O1"), "应读到归档旧行");
     }
 
     #[test]

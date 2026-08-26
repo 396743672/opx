@@ -402,14 +402,14 @@ impl SoftwareProvider for KafkaProvider {
         let home = resolve_kafka_home(&ctx.install_path)
             .unwrap_or_else(|_| PathBuf::from(&ctx.install_path));
         let file = home.join("logs").join("server.log");
-        sources.push(LogSource {
+        sources.push(crate::services::software_manager::log_viewer::attach_archives(LogSource {
             path: file.to_string_lossy().to_string(),
             kind: LogSourceKind::ProviderFile,
             has_levels: true,
             level_pattern: None,
             label: None,
             archives: vec![],
-        });
+        }));
         sources
     }
 

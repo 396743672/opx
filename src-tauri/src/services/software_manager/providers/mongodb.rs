@@ -133,14 +133,14 @@ impl SoftwareProvider for MongoDbProvider {
         // MongoDB 自带结构化日志：data/mongod.log
         let mongo_log = Path::new(&ctx.install_path).join("data").join("mongod.log");
         if mongo_log.exists() {
-            sources.push(LogSource {
+            sources.push(crate::services::software_manager::log_viewer::attach_archives(LogSource {
                 path: mongo_log.to_string_lossy().to_string(),
                 kind: LogSourceKind::ProviderFile,
                 has_levels: true,
                 level_pattern: None,
                 label: None,
                 archives: vec![],
-            });
+            }));
         }
         sources
     }
