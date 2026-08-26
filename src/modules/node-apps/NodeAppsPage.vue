@@ -22,28 +22,51 @@
       </button>
     </div>
 
-    <div v-else class="grid">
+    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div
         v-for="a in apps"
         :key="a.id"
-        class="card"
-        :class="{ err: a.status === 'error' }"
+        class="rounded-lg border border-border bg-card p-4 shadow-card"
+        :class="{ 'border-red-500': a.status === 'error' }"
       >
-        <div class="card-top">
-          <div class="name">{{ a.name }}</div>
-          <StatusBadge :status="nodeStatus(a.status)" :error="a.last_error" />
+        <div class="flex items-center justify-between mb-2">
+          <div class="font-semibold flex items-center gap-2">
+            <Icon icon="mdi:language-javascript" class="text-green-500" />
+            {{ a.name }}
+          </div>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium" :class="statusClass(a.status)">
+            {{ $t(statusLabel(a.status)) }}
+          </span>
         </div>
-        <div class="entry mono">{{ a.entry_path }}</div>
-        <div class="meta">
-          <span v-if="a.pid" class="kv"><Icon icon="mdi:identifier" /> PID {{ a.pid }}</span>
-          <span v-if="a.auto_start" class="kv"><Icon icon="mdi:power" /> {{ $t('autoStartOnAppStart') }}</span>
+
+        <div class="text-xs text-muted-foreground space-y-0.5 mb-3 font-mono">
+          <div class="flex items-center gap-3">
+            <span v-if="a.pid" class="flex items-center gap-1"><Icon icon="mdi:identifier" /> PID {{ a.pid }}</span>
+            <span v-if="a.auto_start" class="flex items-center gap-1"><Icon icon="mdi:power" /> {{ $t('autoStartOnAppStart') }}</span>
+          </div>
+          <div>{{ a.entry_path }}</div>
+          <div v-if="a.last_error" class="text-red-500">{{ a.last_error }}</div>
         </div>
-        <div class="actions">
-          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status === 'running'" @click="start(a)">{{ $t('start') }}</button>
-          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status !== 'running'" @click="stop(a)">{{ $t('stop') }}</button>
-          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status === 'running'" @click="openEdit(a)">{{ $t('edit') }}</button>
-          <button class="btn btn-sm" @click="showLog(a)"><Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}</button>
-          <button class="btn btn-sm danger" :disabled="!!acting[a.id] || a.status === 'running'" @click="remove(a)">{{ $t('delete') }}</button>
+
+        <div class="flex gap-2 flex-wrap">
+          <button
+            v-if="a.status !== 'running'"
+            class="btn primary"
+            :disabled="!!acting[a.id]"
+            @click="start(a)"
+          >
+            <Icon icon="mdi:play" /> {{ $t('start') }}
+          </button>
+          <button v-else class="btn" :disabled="!!acting[a.id]" @click="stop(a)">
+            <Icon icon="mdi:stop" /> {{ $t('stop') }}
+          </button>
+          <button class="btn" :disabled="!!acting[a.id] || a.status === 'running'" @click="openEdit(a)">
+            <Icon icon="mdi:pencil" /> {{ $t('edit') }}
+          </button>
+          <button class="btn" @click="showLog(a)"><Icon icon="mdi:file-document-outline" /> {{ $t('viewLogs') }}</button>
+          <button class="btn danger" :disabled="!!acting[a.id] || a.status === 'running'" @click="remove(a)">
+            <Icon icon="mdi:delete" /> {{ $t('delete') }}
+          </button>
         </div>
       </div>
     </div>
@@ -121,10 +144,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
-import StatusBadge from '@/modules/software-manager/components/StatusBadge.vue'
-import type { NodeApp, NodeAppStatus } from '@/models/node-app'
+import type { NodeApp } from '@/models/node-app'
 import type { InstalledSoftware } from '@/models/software'
-import { SoftwareStatus } from '@/models/software'
 
 const { t } = useI18n()
 
@@ -286,10 +307,25 @@ async function showLog(a: NodeApp) {
   logLines.value = await invoke<string[]>('read_node_app_log', { id: a.id })
 }
 
-function nodeStatus(s: NodeAppStatus): SoftwareStatus {
-  if (s === 'running') return SoftwareStatus.Running
-  if (s === 'error') return SoftwareStatus.Error
-  return SoftwareStatus.Stopped
+function statusClass(s: string): string {
+  const map: Record<string, string> = {
+    running: 'bg-green-100 text-green-700',
+    stopped: 'bg-muted text-muted-foreground',
+    error: 'bg-red-100 text-red-700',
+    starting: 'bg-amber-100 text-amber-700',
+    stopping: 'bg-amber-100 text-amber-700',
+  }
+  return map[s] ?? 'bg-muted text-muted-foreground'
+}
+function statusLabel(s: string): string {
+  const map: Record<string, string> = {
+    running: 'running',
+    stopped: 'stopped',
+    error: 'error',
+    starting: 'starting',
+    stopping: 'stopping',
+  }
+  return map[s] ?? 'unknown'
 }
 
 onMounted(() => {
@@ -307,15 +343,6 @@ onBeforeUnmount(() => {
 .empty { padding: 48px; text-align: center; color: var(--color-muted-foreground); }
 .empty-icon { font-size: 40px; opacity: 0.5; }
 .empty p { margin: 8px 0 16px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.card { border: 1px solid var(--color-border); border-radius: 10px; padding: 14px; background: var(--color-card); }
-.card.err { border-color: var(--color-danger, red); }
-.card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
-.name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.entry { font-size: 12px; color: var(--color-muted-foreground); word-break: break-all; margin-bottom: 6px; }
-.meta { display: flex; gap: 12px; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 10px; }
-.kv { display: inline-flex; align-items: center; gap: 4px; }
-.actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: oklch(0 0 0 / 0.4); }
 .dialog { width: 460px; max-width: 92vw; max-height: 85vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); padding: 16px; }
 .log-dialog { width: 720px; }
@@ -335,10 +362,12 @@ onBeforeUnmount(() => {
 .fld { display: inline-flex; align-items: center; gap: 6px; }
 .fld span { margin: 0; }
 .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
-.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); white-space: nowrap; }
 .btn:hover { background: var(--color-muted); }
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
-.btn.danger { color: var(--color-danger, red); }
+.btn.primary:hover { background: color-mix(in oklch, var(--color-primary) 88%, var(--color-background)); }
+.btn.danger { background: var(--color-destructive); color: white; border-color: var(--color-destructive); }
+.btn.danger:hover { opacity: 0.9; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-sm { height: 26px; padding: 0 9px; font-size: 12px; }
 .logbox { background: #0d1117; color: #58a6ff; font-family: ui-monospace, monospace; font-size: 12px; padding: 12px; overflow-y: auto; max-height: 55vh; border-radius: 6px; }
