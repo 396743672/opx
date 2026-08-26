@@ -6,8 +6,23 @@
           <h2>{{ $t('viewLogs') }} - {{ appName }}</h2>
           <div class="flex items-center gap-2">
             <input v-model="keyword" class="search-input" :placeholder="$t('keyword')" />
+            <label class="chk"><input type="checkbox" v-model="useRegex" /> {{ $t('useRegex') }}</label>
+            <select
+              v-if="showLevel"
+              v-model="level"
+              class="level-sel"
+              :disabled="onlyErrors"
+              @change="onLevelChange"
+            >
+              <option value="">{{ $t('levelAll') }}</option>
+              <option v-for="lv in levelOptions" :key="lv" :value="lv">{{ lv }}</option>
+            </select>
+            <label class="chk"><input type="checkbox" v-model="onlyErrors" /> {{ $t('onlyErrors') }}</label>
             <label class="chk"><input type="checkbox" v-model="realtime" @change="onRealtimeToggle" /> {{ $t('realtime') }}</label>
             <label class="chk"><input type="checkbox" v-model="autoScroll" /> {{ $t('autoScroll') }}</label>
+            <button class="btn" :disabled="!sources.length || downloading" @click="download">
+              <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
+            </button>
             <button class="btn" @click="loadTail"><Icon icon="mdi:refresh" /> {{ $t('refresh') }}</button>
             <button class="btn" @click="$emit('close')"><Icon icon="mdi:close" /></button>
           </div>
@@ -55,7 +70,11 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
+import { useI18n } from 'vue-i18n'
 import type { LogSource } from '@/models/software'
+
+const { t } = useI18n()
 
 const props = defineProps<{ appId: string; appName: string; logPath?: string }>()
 defineEmits<{ close: [] }>()
@@ -65,6 +84,10 @@ const activeSource = ref(0)
 const lines = ref<string[]>([])
 const error = ref('')
 const keyword = ref('')
+const useRegex = ref(false)
+const level = ref('')
+const onlyErrors = ref(false)
+const downloading = ref(false)
 const realtime = ref(true)
 const autoScroll = ref(true)
 const loading = ref(false)
@@ -79,6 +102,13 @@ const logBox = ref<HTMLElement | null>(null)
 
 const TAIL_LIMIT = 2000
 const MAX_BUFFER = 20000
+
+const levelOptions = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'FATAL', 'PANIC', 'CRITICAL', 'NOTICE']
+const showLevel = computed(() => sources.value[activeSource.value]?.has_levels ?? false)
+const effectiveLevel = computed(() => (onlyErrors.value ? 'ERROR' : level.value || null))
+function onLevelChange() {
+  if (level.value) onlyErrors.value = false
+}
 
 // 搜索过滤：保留稳定原始索引作 key，避免过滤时行错位闪烁
 const filtered = computed(() => {
@@ -162,6 +192,8 @@ async function loadTail() {
       before: false,
       limit: TAIL_LIMIT,
       keyword: keyword.value.trim() || null,
+      regex: useRegex.value,
+      level: effectiveLevel.value,
     })
     if (lastEndOffset === null) {
       lines.value = chunk.lines
@@ -196,6 +228,8 @@ async function loadHistory() {
       before: true,
       limit: TAIL_LIMIT,
       keyword: keyword.value.trim() || null,
+      regex: useRegex.value,
+      level: effectiveLevel.value,
     })
     lines.value = [...chunk.lines, ...lines.value]
     startOffset.value = chunk.start_offset
@@ -206,6 +240,26 @@ async function loadHistory() {
     error.value = '无法读取日志: ' + (typeof e === 'string' ? e : (e?.message || ''))
   } finally {
     loadingHistory.value = false
+  }
+}
+
+async function download() {
+  if (!sources.value.length) return
+  downloading.value = true
+  try {
+    const src = sources.value[activeSource.value]
+    const base = src.path.split(/[\\/]/).pop() ?? 'log.txt'
+    const dest = await save({ defaultPath: base, title: t('backupDownload') })
+    if (!dest) return
+    await invoke('download_springboot_log', {
+      appId: props.appId,
+      sourceIndex: activeSource.value,
+      destPath: dest,
+    })
+  } catch (e: any) {
+    error.value = '下载失败: ' + (typeof e === 'string' ? e : (e?.message || ''))
+  } finally {
+    downloading.value = false
   }
 }
 
@@ -292,6 +346,11 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   outline: none;
 }
 .search-input:focus { border-color: var(--color-primary); }
+.level-sel {
+  height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px;
+  border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); outline: none;
+}
+.level-sel:focus { border-color: var(--color-primary); }
 .chk {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 12px; color: var(--color-muted-foreground);

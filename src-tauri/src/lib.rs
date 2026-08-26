@@ -274,6 +274,7 @@ pub fn run() {
             commands::springboot::read_jar_port,
             commands::springboot::list_springboot_log_sources,
             commands::springboot::read_springboot_log,
+            commands::springboot::download_springboot_log,
             commands::springboot::export_springboot_config,
             commands::springboot::import_springboot_config,
             commands::stack::list_stacks,

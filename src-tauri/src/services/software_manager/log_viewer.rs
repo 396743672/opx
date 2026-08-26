@@ -306,12 +306,32 @@ pub(crate) fn read_springboot_chunk(
     before: bool,
     limit: usize,
     keyword: Option<&str>,
+    regex: bool,
+    level: Option<&str>,
 ) -> anyhow::Result<LogChunk> {
+    let kw = keyword.filter(|s| !s.is_empty());
+    let re_filter = if regex {
+        kw.map(|k| {
+            regex::Regex::new(k).map_err(|e| anyhow::anyhow!("正则编译失败: {}", e))
+        })
+        .transpose()?
+    } else {
+        None
+    };
+    let lv = level.filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let level_re = if lv.is_some() {
+        Some(
+            regex::Regex::new(DEFAULT_LEVEL_REGEX)
+                .map_err(|e| anyhow::anyhow!("级别正则编译失败: {}", e))?,
+        )
+    } else {
+        None
+    };
     let filter = LineFilter {
-        keyword: keyword.filter(|s| !s.is_empty()),
-        regex: None,
-        level: None,
-        level_regex: None,
+        keyword: kw,
+        regex: re_filter,
+        level: lv,
+        level_regex: level_re,
     };
     match offset {
         None => {

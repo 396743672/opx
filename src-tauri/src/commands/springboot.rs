@@ -307,6 +307,8 @@ pub async fn read_springboot_log(
     before: Option<bool>,
     limit: Option<u64>,
     keyword: Option<String>,
+    regex: Option<bool>,
+    level: Option<String>,
 ) -> Result<LogChunk, String> {
     let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
     let abs = crate::utils::paths::resolve_data_path(&app.log_path);
@@ -330,8 +332,34 @@ pub async fn read_springboot_log(
         before,
         limit,
         keyword.as_deref(),
+        regex.unwrap_or(false),
+        level.as_deref(),
     )
     .map_err(|e| e.to_string())
+}
+
+/// 下载（拷贝）应用指定日志源到用户选择路径
+#[tauri::command]
+pub async fn download_springboot_log(
+    manager: State<'_, Arc<SpringBootManager>>,
+    app_id: String,
+    source_index: usize,
+    dest_path: String,
+) -> Result<(), String> {
+    let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
+    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let dir = if abs.is_file() {
+        abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
+    } else {
+        abs
+    };
+    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let source = sources
+        .get(source_index)
+        .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
+    std::fs::copy(&source.path, &dest_path)
+        .map_err(|e| format!("复制日志失败 {} -> {}: {}", source.path, dest_path, e))?;
+    Ok(())
 }
 
 /// 导出应用（按分组过滤）到 zip 文件，不含日志目录
