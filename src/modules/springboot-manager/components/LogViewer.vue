@@ -2,32 +2,12 @@
   <Teleport to="body">
     <div class="dialog-overlay">
       <div class="dialog-panel">
-        <div class="dialog-hd">
-          <h2>{{ $t('viewLogs') }} - {{ appName }}</h2>
-          <div class="flex items-center gap-2">
-            <input v-model="keyword" class="search-input" :placeholder="$t('keyword')" />
-            <input v-model="fromAt" type="datetime-local" class="search-input time" :title="$t('fromTime')" />
-            <input v-model="toAt" type="datetime-local" class="search-input time" :title="$t('toTime')" />
-            <label class="chk"><input type="checkbox" v-model="useRegex" /> {{ $t('useRegex') }}</label>
-            <select
-              v-if="showLevel"
-              v-model="level"
-              class="level-sel"
-              :disabled="onlyErrors"
-              @change="onLevelChange"
-            >
-              <option value="">{{ $t('levelAll') }}</option>
-              <option v-for="lv in levelOptions" :key="lv" :value="lv">{{ lv }}</option>
-            </select>
-            <label class="chk"><input type="checkbox" v-model="onlyErrors" /> {{ $t('onlyErrors') }}</label>
-            <label class="chk"><input type="checkbox" v-model="realtime" @change="onRealtimeToggle" /> {{ $t('realtime') }}</label>
-            <label class="chk"><input type="checkbox" v-model="autoScroll" /> {{ $t('autoScroll') }}</label>
-            <button class="btn" :disabled="!sources.length || downloading" @click="download">
-              <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
-            </button>
-            <button class="btn" @click="loadTail"><Icon icon="mdi:refresh" /> {{ $t('refresh') }}</button>
-            <button class="btn" @click="$emit('close')"><Icon icon="mdi:close" /></button>
+        <div class="dialog-head">
+          <div class="dialog-title">
+            <Icon icon="mdi:file-document-outline" />
+            {{ $t('viewLogs') }} - {{ appName }}
           </div>
+          <button class="dialog-close" @click="$emit('close')"><Icon icon="mdi:close" /></button>
         </div>
 
         <!-- 源 tab（按 level 多源） -->
@@ -45,10 +25,35 @@
           </button>
         </div>
 
+        <!-- 过滤工具栏（与软件日志查看器排版一致） -->
+        <div class="filters">
+          <input v-model="keyword" class="input" :placeholder="$t('keyword')" />
+          <input v-model="fromAt" type="datetime-local" class="input time" :title="$t('fromTime')" />
+          <input v-model="toAt" type="datetime-local" class="input time" :title="$t('toTime')" />
+          <label class="chk"><input type="checkbox" v-model="useRegex" /> {{ $t('useRegex') }}</label>
+          <select
+            v-if="showLevel"
+            v-model="level"
+            class="select"
+            :disabled="onlyErrors"
+            @change="onLevelChange"
+          >
+            <option value="">{{ $t('levelAll') }}</option>
+            <option v-for="lv in levelOptions" :key="lv" :value="lv">{{ lv }}</option>
+          </select>
+          <label class="chk"><input type="checkbox" v-model="onlyErrors" /> {{ $t('onlyErrors') }}</label>
+          <label class="chk"><input type="checkbox" v-model="realtime" @change="onRealtimeToggle" /> {{ $t('realtime') }}</label>
+          <label class="chk"><input type="checkbox" v-model="autoScroll" /> {{ $t('autoScroll') }}</label>
+          <button class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
+            <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
+          </button>
+          <button class="btn btn-sm" @click="loadTail"><Icon icon="mdi:refresh" /> {{ $t('refresh') }}</button>
+        </div>
+
         <div class="log-box" ref="logBox" @scroll.passive="onScroll">
-          <div v-if="error" class="p-4 text-red-400 font-sans">{{ error }}</div>
-          <div v-else-if="!sources.length && !loading" class="p-4 text-gray-500 font-sans">{{ $t('noLogs') }}</div>
-          <div v-else-if="loading" class="p-4 text-gray-500 font-sans">{{ $t('loading') }}</div>
+          <div v-if="error && !sources.length" class="log-placeholder">{{ error }}</div>
+          <div v-else-if="!sources.length && !loading" class="log-placeholder">{{ $t('noLogs') }}</div>
+          <div v-else-if="loading" class="log-placeholder">{{ $t('loading') }}</div>
           <template v-else>
             <button
               v-if="hasMore"
@@ -58,10 +63,15 @@
             >
               ↑ {{ $t('loadEarlier') }}
             </button>
-            <div v-if="filtered.length === 0" class="p-4 text-gray-500 font-sans">{{ $t('noMatches') }}</div>
+            <div v-if="filtered.length === 0" class="log-placeholder">{{ $t('noMatches') }}</div>
             <div v-for="item in filtered" :key="item.idx" class="log-line" v-html="highlight(item.raw)"></div>
-            <div v-if="truncated" class="p-2 text-xs text-gray-400 font-sans">{{ $t('logTruncated') }}</div>
+            <div v-if="truncated" class="log-note">{{ $t('logTruncated') }}</div>
           </template>
+        </div>
+
+        <div class="dialog-footer">
+          <span v-if="error && sources.length" class="meta err">{{ error }}</span>
+          <button class="btn" @click="$emit('close')">{{ $t('close') }}</button>
         </div>
       </div>
     </div>
@@ -69,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -98,6 +108,7 @@ const autoScroll = ref(true)
 const loading = ref(false)
 const loadingHistory = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
+let filterDebounce: ReturnType<typeof setTimeout> | null = null
 let lastEndOffset: number | null = null
 const startOffset = ref(0)
 const archiveIndex = ref(0)
@@ -255,6 +266,15 @@ async function loadTail() {
   }
 }
 
+// 过滤条件变化：重置并重新 tail（与软件日志查看器一致）
+function reloadTail() {
+  lastEndOffset = null
+  archiveIndex.value = 0
+  hasMore.value = false
+  lines.value = []
+  loadTail()
+}
+
 async function loadHistory() {
   if (!hasMore.value) return
   loadingHistory.value = true
@@ -316,12 +336,19 @@ async function selectSource(idx: number) {
   if (realtime.value) startPolling()
 }
 
+// 过滤条件（关键字/正则/级别/仅错误）变化 → 防抖后重新读取
+watch([keyword, useRegex, level, onlyErrors], () => {
+  if (filterDebounce) clearTimeout(filterDebounce)
+  filterDebounce = setTimeout(() => reloadTail(), 300)
+})
+
 async function firstLoad() {
   await loadSources()
 }
 onMounted(firstLoad)
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  if (filterDebounce) clearTimeout(filterDebounce)
   if (watchId.value != null) invoke('unwatch_log_file', { id: watchId.value }).catch(() => {})
   if (unlistenFn.value) unlistenFn.value()
 })
@@ -334,16 +361,25 @@ onBeforeUnmount(() => {
   background: oklch(0 0 0 / 0.5);
 }
 .dialog-panel {
-  width: 90vw; max-width: 900px; max-height: 80vh;
+  width: 90vw; max-width: 900px; height: 86vh;
   border-radius: 10px; border: 1px solid var(--color-border);
   background: var(--color-card); box-shadow: var(--shadow-popover);
   display: flex; flex-direction: column; overflow: hidden;
 }
-.dialog-hd {
+.dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 20px; border-bottom: 1px solid var(--color-border);
 }
-.dialog-hd h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.dialog-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 600;
+}
+.dialog-close {
+  width: 28px; height: 28px;
+  border: none; background: transparent;
+  color: var(--color-muted-foreground); border-radius: 4px; cursor: pointer;
+}
+.dialog-close:hover { background: var(--color-muted); color: var(--color-foreground); }
 .source-tabs {
   display: flex; gap: 4px; padding: 8px 12px 0;
   border-bottom: 1px solid var(--color-border);
@@ -363,39 +399,24 @@ onBeforeUnmount(() => {
   background: color-mix(in oklch, var(--color-primary) 15%, transparent);
   color: var(--color-primary);
 }
-.log-box {
-  background: #0d1117; color: #58a6ff;
-  font-family: ui-monospace, monospace; font-size: 12px;
-  padding: 16px; overflow-y: auto; flex: 1; min-height: 50vh;
-  white-space: pre-wrap; word-break: break-all;
+.filters {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
 }
-.log-line { line-height: 1.4; }
-.log-line .hl {
-  background: rgba(255, 200, 0, 0.35);
-  color: #ffd54a;
-  border-radius: 2px;
-  padding: 0 1px;
-}
-.history-btn {
-  display: inline-block; margin-bottom: 8px;
-  padding: 4px 10px; border-radius: 6px;
-  cursor: pointer; font-size: 12px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card); color: var(--color-foreground);
-}
-.search-input {
+.input {
   height: 28px; padding: 0 10px; width: 180px;
   border-radius: 6px; font-size: 12px;
   border: 1px solid var(--color-border);
   background: var(--color-card); color: var(--color-foreground);
   outline: none;
 }
-.search-input:focus { border-color: var(--color-primary); }
-.level-sel {
+.input.time { width: 150px; }
+.input:focus { border-color: var(--color-primary); }
+.select {
   height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px;
   border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); outline: none;
 }
-.level-sel:focus { border-color: var(--color-primary); }
+.select:focus { border-color: var(--color-primary); }
 .chk {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 12px; color: var(--color-muted-foreground);
@@ -409,4 +430,38 @@ onBeforeUnmount(() => {
   color: var(--color-foreground);
 }
 .btn:hover { background: var(--color-muted); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-sm { height: 26px; padding: 0 8px; font-size: 12px; }
+.log-box {
+  background: #0d1117; color: #58a6ff;
+  font-family: ui-monospace, monospace; font-size: 12px;
+  padding: 16px; overflow-y: auto; flex: 1; min-height: 0;
+  white-space: pre-wrap; word-break: break-all;
+}
+.log-line { line-height: 1.4; }
+.log-line .hl {
+  background: rgba(255, 200, 0, 0.35);
+  color: #ffd54a; border-radius: 2px; padding: 0 1px;
+}
+.history-btn {
+  display: inline-block; margin-bottom: 8px;
+  padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; font-size: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card); color: var(--color-foreground);
+}
+.log-placeholder {
+  padding: 12px; text-align: center; color: var(--color-muted-foreground); font-size: 13px;
+}
+.log-note {
+  font-size: 11px; color: var(--color-muted-foreground); padding: 6px 0;
+}
+.dialog-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 10px 12px; border-top: 1px solid var(--color-border);
+}
+.meta {
+  font-size: 12px; color: var(--color-muted-foreground);
+}
+.meta.err { color: var(--color-danger, red); }
 </style>
