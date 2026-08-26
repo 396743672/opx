@@ -49,23 +49,51 @@ impl NodeAppManager {
         Ok(())
     }
 
-    /// 把源入口文件复制到应用运行目录 <app_data>/node-apps/{id}/app.js（统一文件名，覆盖旧版），
-    /// 返回相对路径 `node-apps/{id}/app.js`。
-    fn copy_entry_to_appdir(src: &Path, app_id: &str) -> Result<String, String> {
+    /// 校验并规范化名称（非空 + 无路径非法字符），用于目录/入口命名
+    fn sanitize_name(name: &str) -> Result<String, String> {
+        let t = name.trim().to_string();
+        if t.is_empty() {
+            return Err("名称不能为空".to_string());
+        }
+        if t.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+            return Err("名称包含非法字符（/\\:*?\"<>|）".to_string());
+        }
+        Ok(t)
+    }
+
+    /// 入口文件相对路径：`node-apps/{name}/{name}.js`（目录与文件名均与应用名一致）
+    fn entry_rel(name: &str) -> String {
+        format!("node-apps/{}/{}.js", name, name)
+    }
+
+    /// 日志相对路径：`node-apps/{name}/logs/console.log`
+    fn log_rel(name: &str) -> String {
+        format!("node-apps/{}/logs/console.log", name)
+    }
+
+    /// 把源入口文件复制到应用运行目录 <app_data>/node-apps/{name}/{name}.js（覆盖旧版），
+    /// 返回相对路径。
+    fn copy_entry_to_appdir(src: &Path, name: &str) -> Result<String, String> {
         if !src.exists() {
             return Err(format!("入口文件不存在: {}", src.display()));
         }
-        let app_dir = paths::data_dir().join("node-apps").join(app_id);
+        let app_dir = paths::data_dir().join("node-apps").join(name);
         fs::create_dir_all(&app_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-        fs::copy(src, app_dir.join("app.js")).map_err(|e| format!("复制入口文件失败: {}", e))?;
-        Ok(format!("node-apps/{}/app.js", app_id))
+        fs::copy(src, app_dir.join(format!("{}.js", name)))
+            .map_err(|e| format!("复制入口文件失败: {}", e))?;
+        Ok(Self::entry_rel(name))
     }
 
-    /// 把存储的相对入口路径解析为绝对路径（供前端展示 / 启动使用）
-    fn resolve_app_entry(app: &mut NodeApp) {
+    /// 把存储的相对路径解析为绝对路径（供前端展示 / 启动使用）
+    fn resolve_app_paths(app: &mut NodeApp) {
         app.entry_path = paths::resolve_data_path(&app.entry_path)
             .to_string_lossy()
             .into_owned();
+        if !app.log_path.is_empty() {
+            app.log_path = paths::resolve_data_path(&app.log_path)
+                .to_string_lossy()
+                .into_owned();
+        }
     }
 
     pub fn list(&self) -> Vec<NodeApp> {
@@ -91,7 +119,7 @@ impl NodeAppManager {
         }
         drop(inner);
         for a in apps.iter_mut() {
-            Self::resolve_app_entry(a);
+            Self::resolve_app_paths(a);
         }
         apps
     }
@@ -105,17 +133,21 @@ impl NodeAppManager {
             .iter()
             .find(|a| a.id == id)
             .cloned()?;
-        Self::resolve_app_entry(&mut app);
+        Self::resolve_app_paths(&mut app);
         Some(app)
     }
 
     pub fn create(&self, payload: CreateNodeAppParams) -> Result<NodeApp, String> {
-        let name = payload.name.trim().to_string();
-        if name.is_empty() {
-            return Err("名称不能为空".to_string());
+        let name = Self::sanitize_name(&payload.name)?;
+        {
+            let inner = self.inner.lock().unwrap();
+            if inner.apps.iter().any(|a| a.name == name) {
+                return Err("应用名称已存在，请更换名称".to_string());
+            }
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let entry_rel = Self::copy_entry_to_appdir(Path::new(&payload.entry_path), &id)?;
+        let entry_rel = Self::copy_entry_to_appdir(Path::new(&payload.entry_path), &name)?;
+        let log_path = Self::log_rel(&name);
         let app = NodeApp {
             id,
             name,
@@ -128,7 +160,7 @@ impl NodeAppManager {
             status: NodeAppStatus::Stopped,
             pid: None,
             last_error: None,
-            log_path: String::new(),
+            log_path,
         };
         let mut inner = self.inner.lock().unwrap();
         inner.apps.push(app.clone());
@@ -139,26 +171,47 @@ impl NodeAppManager {
 
     pub fn update(&self, id: &str, params: UpdateNodeAppParams) -> Result<NodeApp, String> {
         let mut inner = self.inner.lock().unwrap();
-        let app = inner
+        let idx = inner
             .apps
-            .iter_mut()
-            .find(|a| a.id == id)
+            .iter()
+            .position(|a| a.id == id)
             .ok_or_else(|| "未找到应用".to_string())?;
-        if app.status == NodeAppStatus::Running {
+        // 名称唯一校验（在取得可变借用前，避免借用冲突）
+        let mut rename_to: Option<String> = None;
+        if let Some(v) = params.name {
+            let nn = Self::sanitize_name(&v)?;
+            if nn != inner.apps[idx].name {
+                let conflict = inner
+                    .apps
+                    .iter()
+                    .enumerate()
+                    .any(|(i, x)| i != idx && x.name == nn);
+                if conflict {
+                    return Err("应用名称已存在，请更换名称".to_string());
+                }
+                rename_to = Some(nn);
+            }
+        }
+        if inner.apps[idx].status == NodeAppStatus::Running {
             return Err("运行中的应用不可修改配置".to_string());
         }
-        if let Some(v) = params.name {
-            let v = v.trim().to_string();
-            if v.is_empty() {
-                return Err("名称不能为空".to_string());
+
+        let app = inner.apps.get_mut(idx).unwrap();
+        if let Some(nn) = rename_to {
+            let old_dir = paths::data_dir().join("node-apps").join(&app.name);
+            let new_dir = paths::data_dir().join("node-apps").join(&nn);
+            if old_dir.exists() {
+                let _ = fs::rename(&old_dir, &new_dir);
             }
-            app.name = v;
+            app.name = nn;
+            app.entry_path = Self::entry_rel(&app.name);
+            app.log_path = Self::log_rel(&app.name);
         }
         if let Some(v) = params.entry_path {
             let v = v.trim().to_string();
             if !v.is_empty() {
-                // 重新上传入口：复制覆盖运行目录中的 app.js（存的相对路径不变）
-                Self::copy_entry_to_appdir(Path::new(&v), &app.id)?;
+                // 重新上传入口：复制覆盖运行目录中的入口文件（存的相对路径不变）
+                Self::copy_entry_to_appdir(Path::new(&v), &app.name)?;
             }
         }
         if let Some(v) = params.node_installed_id {
@@ -184,6 +237,7 @@ impl NodeAppManager {
 
     pub fn delete(&self, id: &str) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        let rm_name = inner.apps.iter().find(|a| a.id == id).map(|a| a.name.clone());
         let running = inner
             .apps
             .iter()
@@ -197,9 +251,11 @@ impl NodeAppManager {
         let removed = inner.apps.len() != before;
         drop(inner);
         if removed {
-            // 删除应用运行目录（入口 JS 等）
-            let dir = paths::data_dir().join("node-apps").join(id);
-            let _ = fs::remove_dir_all(&dir);
+            // 删除应用运行目录（入口 JS / 日志 等）
+            if let Some(n) = rm_name {
+                let dir = paths::data_dir().join("node-apps").join(n);
+                let _ = fs::remove_dir_all(&dir);
+            }
             let _ = self.save();
         }
         removed
@@ -232,7 +288,8 @@ impl NodeAppManager {
         for (k, v) in &app.env_vars {
             cmd.env(k, v);
         }
-        let log_path = paths::data_dir().join("node-logs").join(format!("{}.log", app.id));
+        let log_rel = Self::log_rel(&app.name);
+        let log_path = paths::resolve_data_path(&log_rel);
         if let Some(parent) = log_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -248,7 +305,7 @@ impl NodeAppManager {
             a.pid = Some(pid);
             a.status = NodeAppStatus::Running;
             a.last_error = None;
-            a.log_path = log_path.to_string_lossy().into_owned();
+            a.log_path = log_rel;
         }
         drop(inner);
         let _ = self.save();

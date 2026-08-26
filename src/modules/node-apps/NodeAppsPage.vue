@@ -48,8 +48,8 @@
       </div>
     </div>
 
-    <!-- 添加 / 编辑 -->
-    <div v-if="editTarget !== null" class="overlay" @click.self="editTarget = null">
+    <!-- 添加 / 编辑（仅可通过关闭按钮关闭） -->
+    <div v-if="editTarget !== null" class="overlay">
       <div class="dialog">
         <div class="head">
           <b>{{ editTarget.id ? $t('editNodeApp') : $t('addNodeApp') }}</b>
@@ -57,7 +57,7 @@
         </div>
         <div class="field">
           <label>{{ $t('nodeAppName') }}</label>
-          <input v-model="form.name" class="input" :placeholder="'my-service'" />
+          <input v-model="form.name" class="input" :placeholder="$t('nodeAppName')" :title="$t('nodeAppNameHint')" />
         </div>
         <div class="field">
           <label>{{ $t('entryPath') }}</label>
@@ -100,8 +100,8 @@
       </div>
     </div>
 
-    <!-- 日志查看 -->
-    <div v-if="logApp" class="overlay" @click.self="logApp = null">
+    <!-- 日志查看（仅可通过关闭按钮关闭） -->
+    <div v-if="logApp" class="overlay">
       <div class="dialog log-dialog">
         <div class="head"><b>{{ $t('logs') }} - {{ logApp.name }}</b><button class="close" @click="logApp = null"><Icon icon="mdi:close" /></button></div>
         <div class="logbox">

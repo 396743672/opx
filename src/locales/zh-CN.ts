@@ -11,6 +11,7 @@ export default {
   editNodeApp: '编辑应用',
   noNodeApps: '还没有 Node 应用，点击「添加应用」注册第一个',
   nodeAppName: '应用名称',
+  nodeAppNameHint: '名称将作为入口文件名与运行目录名（如 demo → node-apps/demo/demo.js），且不可与现有应用重名',
   entryPath: 'JS 入口文件',
   nodeVersion: 'Node 版本',
   autoSelect: '自动选择',

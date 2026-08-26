@@ -11,6 +11,7 @@ export default {
   editNodeApp: 'Edit App',
   noNodeApps: 'No Node apps yet. Click "Add App" to register the first one',
   nodeAppName: 'App Name',
+  nodeAppNameHint: 'Name is used as entry filename & dir (e.g. demo → node-apps/demo/demo.js) and must be unique',
   entryPath: 'JS Entry File',
   nodeVersion: 'Node Version',
   autoSelect: 'Auto select',
