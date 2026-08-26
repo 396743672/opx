@@ -62,7 +62,7 @@
         <div class="field">
           <label>{{ $t('entryPath') }}</label>
           <div class="row">
-            <input v-model="form.entry_path" class="input" :placeholder="$t('jarPath')" />
+            <input v-model="form.entry_path" class="input" :placeholder="$t('entryPath')" />
             <button class="btn" @click="browse"><Icon icon="mdi:folder-open" /> {{ $t('browse') }}</button>
           </div>
         </div>
