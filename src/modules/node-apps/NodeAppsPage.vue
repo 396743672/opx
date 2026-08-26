@@ -67,8 +67,27 @@
           </div>
         </div>
         <div class="field">
+          <label>{{ $t('nodeVersion') }}</label>
+          <select v-model="form.node_installed_id" class="input">
+            <option value="">{{ $t('autoSelect') }}</option>
+            <option v-for="n in installedNodes" :key="n.id" :value="n.id">{{ n.name }} {{ n.version }}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>{{ $t('presets') }}</label>
+          <div class="preset-row">
+            <button v-for="p in PRESETS" :key="p.label" class="btn btn-sm" @click="applyPreset(p)">
+              <Icon icon="mdi:auto-fix" /> {{ p.label }}
+            </button>
+          </div>
+        </div>
+        <div class="field">
           <label>{{ $t('startArgs') }}</label>
           <textarea v-model="form.argsText" class="input ta" rows="2" :placeholder="$t('programArgsHint')"></textarea>
+        </div>
+        <div class="field">
+          <label>{{ $t('environmentVariables') }}</label>
+          <textarea v-model="form.envText" class="input ta" rows="3" :placeholder="'PORT=3000\nDB_URL=mysql://...'"></textarea>
         </div>
         <div class="row-chk">
           <label class="chk"><input type="checkbox" v-model="form.auto_start" /> {{ $t('autoStartOnAppStart') }}</label>
@@ -104,6 +123,7 @@ import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/modules/software-manager/components/StatusBadge.vue'
 import type { NodeApp, NodeAppStatus } from '@/models/node-app'
+import type { InstalledSoftware } from '@/models/software'
 import { SoftwareStatus } from '@/models/software'
 
 const { t } = useI18n()
@@ -117,16 +137,31 @@ const logLines = ref<string[]>([])
 const form = ref({
   name: '',
   entry_path: '',
+  node_installed_id: '',
   argsText: '',
+  envText: '',
   auto_start: false,
   startup_order: 0,
 })
+const installedNodes = ref<InstalledSoftware[]>([])
+
+// 预设模板：一键填充常用启动参数（入口仍由用户选择）
+const PRESETS = [
+  { label: 'HTTP 服务', args: '--port 3000' },
+  { label: 'Express 服务', args: '--port 3000' },
+  { label: 'TS 即时运行', args: '--import tsx' },
+]
+function applyPreset(p: (typeof PRESETS)[number]) {
+  form.value.argsText = (form.value.argsText ? form.value.argsText + '\n' : '') + p.args
+}
 let timer: ReturnType<typeof setInterval> | null = null
 
 async function load() {
   loading.value = true
   try {
     apps.value = await invoke<NodeApp[]>('list_node_apps')
+    const list = await invoke<InstalledSoftware[]>('list_installed_software')
+    installedNodes.value = list.filter((s) => s.key === 'node')
   } catch (e: any) {
     console.error('load node apps failed:', e)
   } finally {
@@ -157,6 +192,7 @@ function openEdit(a?: NodeApp) {
     id: '',
     name: '',
     entry_path: '',
+    node_installed_id: '',
     args: [],
     env_vars: [],
     auto_start: false,
@@ -170,11 +206,13 @@ function openEdit(a?: NodeApp) {
     ? {
         name: a.name,
         entry_path: a.entry_path,
+        node_installed_id: a.node_installed_id,
         argsText: a.args.join('\n'),
+        envText: a.env_vars.map(([k, v]) => `${k}=${v}`).join('\n'),
         auto_start: a.auto_start,
         startup_order: a.startup_order,
       }
-    : { name: '', entry_path: '', argsText: '', auto_start: false, startup_order: 0 }
+    : { name: '', entry_path: '', node_installed_id: '', argsText: '', envText: '', auto_start: false, startup_order: 0 }
 }
 
 async function browse() {
@@ -189,10 +227,23 @@ async function save() {
   }
   saving.value = true
   try {
+    const env_vars: [string, string][] = form.value.envText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const idx = line.indexOf('=')
+        return idx > 0
+          ? ([line.slice(0, idx).trim(), line.slice(idx + 1).trim()] as [string, string])
+          : null
+      })
+      .filter((x): x is [string, string] => x !== null)
     const params = {
       name: form.value.name.trim(),
       entry_path: form.value.entry_path.trim(),
+      node_installed_id: form.value.node_installed_id || '',
       args: form.value.argsText.split('\n').map((s) => s.trim()).filter(Boolean),
+      env_vars,
       auto_start: form.value.auto_start,
       startup_order: form.value.startup_order,
     }
@@ -254,6 +305,7 @@ onBeforeUnmount(() => {
 .field { margin-bottom: 10px; }
 .field label, .fld span { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
 .row { display: flex; gap: 6px; }
+.preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .input { width: 100%; height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; }
 .input.ta { height: auto; padding: 6px 10px; font-family: ui-monospace, monospace; font-size: 12px; }
 .input.num { width: 72px; }

@@ -24,6 +24,9 @@ pub struct NodeApp {
     pub name: String,
     /// JS 入口文件绝对路径（如 /path/app.js）
     pub entry_path: String,
+    /// 使用的 Node 实例 installed_id（空 = 自动选择已装 Node）
+    #[serde(default)]
+    pub node_installed_id: String,
     /// 额外启动参数
     #[serde(default)]
     pub args: Vec<String>,
@@ -53,6 +56,9 @@ pub struct NodeApp {
 pub struct CreateNodeAppParams {
     pub name: String,
     pub entry_path: String,
+    /// 指定 Node 实例 installed_id（空 = 自动）
+    #[serde(default)]
+    pub node_installed_id: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -68,6 +74,8 @@ pub struct CreateNodeAppParams {
 pub struct UpdateNodeAppParams {
     pub name: Option<String>,
     pub entry_path: Option<String>,
+    #[serde(default)]
+    pub node_installed_id: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
     #[serde(default)]

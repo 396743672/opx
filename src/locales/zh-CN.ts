@@ -12,6 +12,9 @@ export default {
   noNodeApps: '还没有 Node 应用，点击「添加应用」注册第一个',
   nodeAppName: '应用名称',
   entryPath: 'JS 入口文件',
+  nodeVersion: 'Node 版本',
+  autoSelect: '自动选择',
+  presets: '预设模板',
   confirmDeleteNodeApp: '确定删除该 Node 应用？此操作不可撤销。',
   settings: '系统设置',
 

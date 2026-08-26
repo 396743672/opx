@@ -12,6 +12,9 @@ export default {
   noNodeApps: 'No Node apps yet. Click "Add App" to register the first one',
   nodeAppName: 'App Name',
   entryPath: 'JS Entry File',
+  nodeVersion: 'Node Version',
+  autoSelect: 'Auto select',
+  presets: 'Presets',
   confirmDeleteNodeApp: 'Delete this Node app? This cannot be undone.',
   settings: 'Settings',
 

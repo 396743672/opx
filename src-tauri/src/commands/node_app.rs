@@ -9,10 +9,15 @@ use crate::models::node_app::{
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
 
-/// 解析已安装 Node.js 的 node.exe（优先第一个存在的安装）
-pub fn resolve_node_exe(sw_mgr: &SoftwareManager) -> Option<PathBuf> {
+/// 解析 Node.js 的 node.exe：node_id 非空时限定该实例，否则取第一个已装
+pub fn resolve_node_exe(sw_mgr: &SoftwareManager, node_id: Option<&str>) -> Option<PathBuf> {
     for sw in sw_mgr.get_installed() {
         if sw.key == "node" {
+            if let Some(id) = node_id {
+                if !id.is_empty() && sw.id != id {
+                    continue;
+                }
+            }
             let abs = crate::utils::paths::resolve_install_path(&sw.install_path);
             let exe = abs.join(if cfg!(windows) { "node.exe" } else { "node" });
             if exe.exists() {
@@ -61,7 +66,9 @@ pub async fn start_node_app(
     software: State<'_, Arc<SoftwareManager>>,
     id: String,
 ) -> Result<(), String> {
-    let exe = resolve_node_exe(&software)
+    let app = manager.get(&id).ok_or_else(|| "未找到应用".to_string())?;
+    let nid = app.node_installed_id.clone();
+    let exe = resolve_node_exe(&software, if nid.is_empty() { None } else { Some(&nid) })
         .ok_or_else(|| "未找到已安装的 Node.js 运行时，请先安装 Node".to_string())?;
     manager.start(&id, &exe)
 }

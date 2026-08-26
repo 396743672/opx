@@ -90,6 +90,7 @@ impl NodeAppManager {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             entry_path: entry,
+            node_installed_id: payload.node_installed_id,
             args: payload.args,
             env_vars: payload.env_vars,
             auto_start: payload.auto_start,
@@ -127,6 +128,9 @@ impl NodeAppManager {
             if !v.is_empty() {
                 app.entry_path = v;
             }
+        }
+        if let Some(v) = params.node_installed_id {
+            app.node_installed_id = v;
         }
         if let Some(v) = params.args {
             app.args = v;

@@ -78,7 +78,7 @@ pub fn run() {
             let node_mgr = std::sync::Arc::new(
                 crate::services::node_app_manager::NodeAppManager::new(),
             );
-            if let Some(exe) = crate::commands::node_app::resolve_node_exe(&software_mgr) {
+            if let Some(exe) = crate::commands::node_app::resolve_node_exe(&software_mgr, None) {
                 node_mgr.auto_start_all(&exe);
             }
             app.manage(node_mgr);
