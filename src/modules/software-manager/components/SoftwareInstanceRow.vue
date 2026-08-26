@@ -125,6 +125,9 @@ const CATEGORY_CLASS: Record<string, string> = {
   WebServer: 'webserver',
   Storage: 'storage',
   Registry: 'registry',
+  MessageQueue: 'messagequeue',
+  Search: 'search',
+  TimeSeries: 'timeseries',
 }
 
 const categoryClass = computed(() => CATEGORY_CLASS[props.software.category ?? ''] ?? 'custom')
@@ -301,6 +304,18 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .card-icon.registry {
   background: color-mix(in oklch, var(--color-primary) 14%, transparent);
   color: var(--color-primary);
+}
+.card-icon.messagequeue {
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
+.card-icon.search {
+  background: color-mix(in oklch, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+.card-icon.timeseries {
+  background: color-mix(in oklch, var(--color-info) 14%, transparent);
+  color: var(--color-info);
 }
 .name {
   font-size: 14px;
