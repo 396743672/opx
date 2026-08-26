@@ -664,7 +664,6 @@ export default {
   startupReport: '启动报告',
   lastRunReport: '最近一次启动报告',
   totalElapsed: '整组耗时',
-  p2Reserved: '（预留，后续版本实现）',
   selectFile: '选择文件',
   importStackTitle: '导入服务组',
   templateDevEnv: '联调环境（MySQL+Redis+Nginx）',

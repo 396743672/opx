@@ -85,22 +85,6 @@
       @close="logTarget = null"
     />
 
-    <!-- P2 预留（R11 栈级自启 / R12 模板 / R13 启动报告），本期仅 UI 占位，逻辑 TODO(P2) -->
-    <div class="p2-block">
-      <div class="p2-title">
-        <Icon icon="mdi:flask-outline" /> {{ $t('stackAutoStart') }} /
-        {{ $t('stackTemplates') }} / {{ $t('startupReport') }}
-        <span class="p2-tag">{{ $t('p2Reserved') }}</span>
-      </div>
-      <div class="p2-row">
-        <label class="p2-toggle">
-          <input type="checkbox" disabled />
-          {{ $t('stackAutoStart') }}
-        </label>
-        <button class="p2-btn" disabled>{{ $t('stackTemplates') }}</button>
-        <button class="p2-btn" disabled>{{ $t('startupReport') }}</button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -400,47 +384,6 @@ function statusClass(s?: StackMemberStatus): string {
 .st-pending > .mc-bottom .status-dot,
 .st-pending.status-dot {
   background: var(--color-muted-foreground);
-}
-
-.p2-block {
-  margin-top: 16px;
-  border: 1px dashed var(--color-border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  opacity: 0.75;
-}
-.p2-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.p2-tag {
-  font-size: 10px;
-  color: var(--color-muted-foreground);
-  font-weight: 400;
-}
-.p2-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12px;
-}
-.p2-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.p2-btn {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  color: var(--color-foreground);
-  cursor: not-allowed;
 }
 
 /* 成员操作：端口 / 日志 */
