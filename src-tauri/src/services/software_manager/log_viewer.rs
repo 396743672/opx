@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
 
-use crate::models::software::{ArchiveLog, LogChunk, LogSource};
+use crate::models::software::{ArchiveLog, LogChunk, LogSource, LogSourceKind};
 use crate::services::software_manager::providers::{all_providers, LogContext};
 use crate::services::software_manager::SoftwareManager;
 
@@ -263,6 +263,93 @@ pub fn download_log(source_path: &str, dest_path: &str) -> anyhow::Result<()> {
 pub fn attach_archives(mut s: LogSource) -> LogSource {
     s.archives = collect_archives(Path::new(&s.path));
     s
+}
+
+/// 按 level 拆分发现 SpringBoot 日志源：logs/*.log 各为源，归档含同目录与日期子目录。
+pub fn collect_springboot_sources(logs_dir: &Path) -> Vec<LogSource> {
+    let mut out: Vec<LogSource> = Vec::new();
+    if !logs_dir.is_dir() {
+        return out;
+    }
+    let Ok(rd) = std::fs::read_dir(logs_dir) else { return out };
+    let mut files: Vec<_> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().map_or(false, |x| x == "log"))
+        .collect();
+    files.sort();
+    for f in files {
+        let Some(stem) = f.file_stem().and_then(|s| s.to_str()) else { continue };
+        // 仅识别常见 level 文件，避免把无关 .log 也当源
+        if !["debug", "info", "error", "warn", "trace", "console"].iter().any(|l| *l == stem) {
+            continue;
+        }
+        let src = LogSource {
+            path: f.to_string_lossy().to_string(),
+            kind: LogSourceKind::ProviderFile,
+            has_levels: true,
+            level_pattern: None,
+            label: Some(stem.to_string()),
+            archives: vec![],
+        };
+        out.push(attach_archives(src));
+    }
+    out
+}
+
+/// SpringBoot 日志读取：tail/增量在主文件；历史走跨归档续接。keyword 做行过滤。
+pub(crate) fn read_springboot_chunk(
+    path: &Path,
+    archives: &[ArchiveLog],
+    archive_index: usize,
+    offset: Option<u64>,
+    before: bool,
+    limit: usize,
+    keyword: Option<&str>,
+) -> anyhow::Result<LogChunk> {
+    let filter = LineFilter {
+        keyword: keyword.filter(|s| !s.is_empty()),
+        regex: None,
+        level: None,
+        level_regex: None,
+    };
+    match offset {
+        None => {
+            if !path.exists() {
+                return Ok(LogChunk {
+                    lines: vec![],
+                    start_offset: 0,
+                    end_offset: 0,
+                    total_bytes: 0,
+                    has_more: false,
+                    truncated: false,
+                    archive_index: 0,
+                });
+            }
+            let (mut reader, total) = open_reader(path)?;
+            let mut c = read_backward_filtered(&mut reader, total, total, limit, &filter)?;
+            c.archive_index = 0;
+            Ok(c)
+        }
+        Some(o) if before => read_log_archive_mode(path, archives, archive_index, o, limit, &filter),
+        Some(o) => {
+            if !path.exists() {
+                return Ok(LogChunk {
+                    lines: vec![],
+                    start_offset: o,
+                    end_offset: o,
+                    total_bytes: 0,
+                    has_more: false,
+                    truncated: false,
+                    archive_index: 0,
+                });
+            }
+            let (mut reader, total) = open_reader(path)?;
+            let mut c = read_since(&mut reader, total, o, limit, &filter)?;
+            c.archive_index = 0;
+            Ok(c)
+        }
+    }
 }
 
 /// 历史翻页的跨文件续接：在 `archive_index` 对应文件内从 `from_byte` 向前回溯；
@@ -598,6 +685,31 @@ mod tests {
         let joint: String = chunk.lines.concat();
         assert!(joint.contains("O0"), "应读到归档旧行, got {:?}", chunk.lines);
         assert!(joint.contains("O1"), "应读到归档旧行");
+    }
+
+    #[test]
+    fn test_collect_springboot_sources_level_files() {
+        let base = std::env::temp_dir().join(format!("opx_qa_sb_{}", unique_suffix()));
+        let logs = base.join("logs");
+        std::fs::create_dir_all(&logs.join("2026-08-24")).unwrap();
+        std::fs::write(logs.join("debug.log"), b"d").unwrap();
+        std::fs::write(logs.join("info.log"), b"i").unwrap();
+        std::fs::write(logs.join("error.log"), b"e").unwrap();
+        std::fs::write(logs.join("info.2026-08-26.0.log.gz"), b"x").unwrap();
+        std::fs::write(logs.join("2026-08-24/error.2026-08-24.0.log.gz"), b"x").unwrap();
+        std::fs::write(logs.join("random.txt"), b"x").unwrap();
+
+        let sources = collect_springboot_sources(&logs);
+        std::fs::remove_dir_all(&base).unwrap();
+        let names: Vec<String> = sources.iter().map(|s| s.label.clone().unwrap_or_default()).collect();
+        assert!(names.contains(&"debug".to_string()), "含 debug 源, got {:?}", names);
+        assert!(names.contains(&"info".to_string()), "含 info 源");
+        assert!(names.contains(&"error".to_string()), "含 error 源");
+        assert!(!names.iter().any(|l| l.contains("random")), "非 *.log 忽略");
+        for s in &sources {
+            if s.label.as_deref() == Some("info") { assert!(!s.archives.is_empty(), "info 应有同目录归档"); }
+            if s.label.as_deref() == Some("error") { assert!(!s.archives.is_empty(), "error 应有日期子目录归档"); }
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::models::software::{LogChunk, LogSource};
 use crate::models::springboot::{
     AppGroup, CreateAppParams, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
     UpdateAppParams,
@@ -278,50 +279,59 @@ pub async fn read_jar_port(
     Ok(crate::services::springboot_manager::read_port_from_jar(&jar_path))
 }
 
-/// ponytail: tail -f 风格，前端传 offset 增量读取，首次传 0 读尾部 64KB
-#[derive(serde::Serialize)]
-pub struct LogChunk { pub lines: Vec<String>, pub offset: u64 }
-
+/// 获取应用的日志源（按 level 多源 + 日期目录归档）
 #[tauri::command]
-pub async fn read_springboot_log(path: String, offset: u64) -> Result<LogChunk, String> {
-    use std::io::{Read, Seek, SeekFrom};
-    // ponytail: 相对路径解析为绝对路径（log_path 在 apps.json 中存的是相对 data_dir 的路径）
-    let abs_path = crate::utils::paths::resolve_data_path(&path);
-    let p = abs_path.as_path();
-    // ponytail: 精确文件不存在时递归找最新 .log（Spring Boot 可能在子目录）
-    let p = if p.exists() { p.to_path_buf() } else if let Some(dir) = p.parent().filter(|d| d.exists()) {
-        let mut best: Option<(std::path::PathBuf, u64)> = None;
-        for entry in walkdir::WalkDir::new(dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
-            if entry.path().extension().and_then(|x| x.to_str()) == Some("log") {
-                let age = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
-                if best.as_ref().map_or(true, |&(_, a)| age < a) { best = Some((entry.path().to_path_buf(), age)); }
-            }
-        }
-        best.map(|(p, _)| p).unwrap_or_else(|| p.to_path_buf())
-    } else { p.to_path_buf() };
-    if !p.exists() { return Ok(LogChunk { lines: vec!["日志文件尚未生成".to_string()], offset: 0 }); }
-    let mut f = std::fs::File::open(&p).map_err(|e| format!("打开失败: {}", e))?;
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    if offset >= len { return Ok(LogChunk { lines: vec![], offset }); }
-    if offset == 0 {
-        // 首次：读尾部 64KB
-        let skip = len.saturating_sub(65536);
-        let mut buf = vec![0u8; (len - skip) as usize];
-        f.seek(SeekFrom::Start(skip)).map_err(|e| format!("seek: {}", e))?;
-        f.read_exact(&mut buf).map_err(|e| format!("read: {}", e))?;
-        let content = String::from_utf8_lossy(&buf);
-        let ls: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-        Ok(LogChunk { lines: ls, offset: len })
+pub async fn list_springboot_log_sources(
+    manager: State<'_, Arc<SpringBootManager>>,
+    app_id: String,
+) -> Result<Vec<LogSource>, String> {
+    let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
+    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let dir = if abs.is_file() {
+        abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
     } else {
-        // ponytail: 增量读取 ── 真正的 tail -f
-        f.seek(SeekFrom::Start(offset)).map_err(|e| format!("seek: {}", e))?;
-        let size = len - offset;
-        let mut buf = vec![0u8; size.min(65536) as usize];
-        f.read_exact(&mut buf).map_err(|e| format!("read: {}", e))?;
-        let content = String::from_utf8_lossy(&buf);
-        let ls: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-        Ok(LogChunk { lines: ls, offset: len })
-    }
+        abs
+    };
+    Ok(crate::services::software_manager::log_viewer::collect_springboot_sources(&dir))
+}
+
+/// 读取应用日志（tail / 增量 / 历史分页 + 关键字过滤 + 归档无缝续接）
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn read_springboot_log(
+    manager: State<'_, Arc<SpringBootManager>>,
+    app_id: String,
+    source_index: usize,
+    archive_index: Option<usize>,
+    offset: Option<u64>,
+    before: Option<bool>,
+    limit: Option<u64>,
+    keyword: Option<String>,
+) -> Result<LogChunk, String> {
+    let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
+    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let dir = if abs.is_file() {
+        abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
+    } else {
+        abs
+    };
+    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let source = sources
+        .get(source_index)
+        .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
+    let archive_index = archive_index.unwrap_or(0);
+    let limit = limit.map(|l| l as usize).unwrap_or(2000);
+    let before = before.unwrap_or(false);
+    crate::services::software_manager::log_viewer::read_springboot_chunk(
+        std::path::Path::new(&source.path),
+        &source.archives,
+        archive_index,
+        offset,
+        before,
+        limit,
+        keyword.as_deref(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 导出应用（按分组过滤）到 zip 文件，不含日志目录
