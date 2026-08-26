@@ -24,6 +24,9 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            // 日志文件监听后台线程（notify 实时推送增量）
+            crate::services::software_manager::log_watcher::LogWatcher::init(app.handle().clone());
+
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
                 // 初始化内置 zip manifest（resource_dir/software/manifest.json）
@@ -239,6 +242,8 @@ pub fn run() {
             commands::software::download_log,
             commands::software::export_combined_log,
             commands::software::search_all_logs,
+            commands::software::watch_log_file,
+            commands::software::unwatch_log_file,
             commands::software::create_snapshot,
             commands::software::list_snapshots,
             commands::software::restore_snapshot,

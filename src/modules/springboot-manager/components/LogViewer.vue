@@ -72,6 +72,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import type { LogSource } from '@/models/software'
@@ -174,6 +175,26 @@ function onScroll() {
   if (el.scrollTop + el.clientHeight < el.scrollHeight - 8) autoScroll.value = false
 }
 
+// notify 实时监听：注册当前源主文件，变化事件触发增量读取（轮询保留为兜底）
+const watchId = ref<number | null>(null)
+const unlistenFn = ref<UnlistenFn | null>(null)
+async function registerWatch(path: string) {
+  if (watchId.value != null) await invoke('unwatch_log_file', { id: watchId.value }).catch(() => {})
+  watchId.value = null
+  if (unlistenFn.value) {
+    unlistenFn.value()
+    unlistenFn.value = null
+  }
+  try {
+    watchId.value = await invoke<number>('watch_log_file', { path })
+    unlistenFn.value = await listen<{ id: number }>('log-file-changed', (e) => {
+      if (e.payload.id === watchId.value) loadTail()
+    })
+  } catch {
+    // 监听失败静默，轮询兜底
+  }
+}
+
 async function loadSources() {
   stopPolling()
   loading.value = true
@@ -188,6 +209,7 @@ async function loadSources() {
     sources.value = await invoke<LogSource[]>('list_springboot_log_sources', { appId: props.appId })
     if (sources.value.length) {
       await loadTail()
+      await registerWatch(sources.value[activeSource.value].path)
       if (realtime.value) startPolling()
     }
   } catch (e: any) {
@@ -289,6 +311,8 @@ async function selectSource(idx: number) {
   hasMore.value = false
   lines.value = []
   await loadTail()
+  const src = sources.value[idx]
+  if (src) await registerWatch(src.path)
   if (realtime.value) startPolling()
 }
 
@@ -296,7 +320,11 @@ async function firstLoad() {
   await loadSources()
 }
 onMounted(firstLoad)
-onBeforeUnmount(() => { if (timer) clearInterval(timer) })
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+  if (watchId.value != null) invoke('unwatch_log_file', { id: watchId.value }).catch(() => {})
+  if (unlistenFn.value) unlistenFn.value()
+})
 </script>
 
 <style scoped>

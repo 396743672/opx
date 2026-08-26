@@ -111,6 +111,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { Icon } from '@iconify/vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
@@ -205,12 +207,33 @@ async function loadSources() {
     sources.value = await ops.getLogSources(selectedId.value)
     if (sources.value.length > 0) {
       await tail()
+      await registerWatch(sources.value[activeSource.value].path)
       if (realtime.value) startPolling()
     }
   } catch (e) {
     errorMsg.value = String(e)
   } finally {
     loading.value = false
+  }
+}
+
+// notify 实时监听：注册当前源主文件，变化事件触发增量轮询（轮询保留为兜底）
+const watchId = ref<number | null>(null)
+const unlistenFn = ref<UnlistenFn | null>(null)
+async function registerWatch(path: string) {
+  if (watchId.value != null) await invoke('unwatch_log_file', { id: watchId.value }).catch(() => {})
+  watchId.value = null
+  if (unlistenFn.value) {
+    unlistenFn.value()
+    unlistenFn.value = null
+  }
+  try {
+    watchId.value = await invoke<number>('watch_log_file', { path })
+    unlistenFn.value = await listen<{ id: number }>('log-file-changed', (e) => {
+      if (e.payload.id === watchId.value) poll()
+    })
+  } catch {
+    // 监听失败静默，轮询继续兜底
   }
 }
 
@@ -301,10 +324,12 @@ async function loadHistory() {
   }
 }
 
-function selectSource(idx: number) {
+async function selectSource(idx: number) {
   if (activeSource.value === idx) return
   archiveIndex.value = 0
   activeSource.value = idx
+  const src = sources.value[idx]
+  if (src) await registerWatch(src.path)
 }
 
 function startPolling() {
@@ -437,6 +462,8 @@ onMounted(() => loadSources())
 onBeforeUnmount(() => {
   stopPolling()
   if (filterDebounce) clearTimeout(filterDebounce)
+  if (watchId.value != null) invoke('unwatch_log_file', { id: watchId.value }).catch(() => {})
+  if (unlistenFn.value) unlistenFn.value()
 })
 </script>
 

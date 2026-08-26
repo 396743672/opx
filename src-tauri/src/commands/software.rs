@@ -1928,6 +1928,19 @@ pub async fn search_all_logs(
     ))
 }
 
+/// 注册日志文件监听（notify），返回 watcher id（前端用于匹配事件）
+#[tauri::command]
+pub fn watch_log_file(path: String) -> Result<u64, String> {
+    crate::services::software_manager::log_watcher::LogWatcher::register(&path)
+        .ok_or_else(|| "日志监听启动失败".to_string())
+}
+
+/// 注销日志文件监听
+#[tauri::command]
+pub fn unwatch_log_file(id: u64) {
+    crate::services::software_manager::log_watcher::LogWatcher::unregister(id);
+}
+
 /// 创建快照（压缩 data_dirs → <app_data>/backups/<id>/<ts>.zip，并写 manifest）
 #[tauri::command]
 pub async fn create_snapshot(
