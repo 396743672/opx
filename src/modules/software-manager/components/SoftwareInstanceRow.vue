@@ -93,7 +93,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
-import { InstalledSoftware, SoftwareStatus } from '@/models/software'
+import { InstalledSoftware, SoftwareCategory, SoftwareStatus } from '@/models/software'
 import { translateError } from '@/utils/i18nError'
 
 const { t, te } = useI18n()
@@ -188,7 +188,7 @@ const canOpenWeb = computed(
 )
 
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
-const isRuntime = computed(() => props.software.key === 'jre' || props.software.key === 'jdk')
+const isRuntime = computed(() => props.software.category === SoftwareCategory.Runtime)
 
 const canStart = computed(
   () =>

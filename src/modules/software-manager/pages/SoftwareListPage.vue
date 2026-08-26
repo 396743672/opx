@@ -305,9 +305,9 @@ watch(grouped, (val) => {
   }
 })
 
-// 可运维实例（排除 JRE/JDK 运行时依赖，与 SoftwareInstanceRow.canOps 一致）
+// 可运维实例（排除 Runtime 类软件，与 SoftwareInstanceRow.canOps 一致）
 const manageableInstances = computed(() =>
-  installed.value.filter((s) => s.key !== 'jre' && s.key !== 'jdk'),
+  installed.value.filter((s) => s.category !== SoftwareCategory.Runtime),
 )
 
 function mergeStatus(item: InstalledSoftware): InstalledSoftware {
