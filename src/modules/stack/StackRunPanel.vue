@@ -39,6 +39,14 @@
           <span class="status-dot" :class="statusClass(runtimeOf(item.ref_id)?.status)"></span>
           <span class="status-text">{{ $t(statusLabel(runtimeOf(item.ref_id)?.status)) }}</span>
         </div>
+        <div class="mc-actions">
+          <button v-if="portOf(item)" class="mini-btn" @click="openPort(item)">
+            <Icon icon="mdi:open-in-new" /> {{ portOf(item) }}
+          </button>
+          <button class="mini-btn" @click="openLogs(item)">
+            <Icon icon="mdi:file-document-outline" /> {{ $t('viewLogs') }}
+          </button>
+        </div>
         <div v-if="runtimeOf(item.ref_id)?.message" class="mc-msg">
           {{ runtimeOf(item.ref_id)?.message }}
         </div>
@@ -48,6 +56,34 @@
         </div>
       </div>
     </div>
+
+    <!-- 最近一次启动报告 -->
+    <div v-if="report" class="report-block">
+      <div class="section-title">
+        <Icon icon="mdi:chart-timeline-variant" /> {{ $t('lastRunReport') }}
+        <span class="report-total">{{ $t('totalElapsed') }}: {{ fmtMs(report.total_elapsed_ms) }}</span>
+      </div>
+      <div v-for="m in report.members" :key="m.ref_id" class="report-row" :class="'r-' + m.status">
+        <span class="r-name">{{ nameOf(m.ref_id) }}</span>
+        <span class="r-bar"><i :style="{ width: pct(m) }"></i></span>
+        <span class="r-time">{{ fmtMs(m.elapsed_ms) }}</span>
+        <span v-if="m.message" class="r-msg">{{ m.message }}</span>
+      </div>
+    </div>
+
+    <!-- 日志查看弹窗 -->
+    <LogViewerDialog
+      v-if="logTarget?.kind === 'software'"
+      :software="logTarget.software"
+      @close="logTarget = null"
+    />
+    <LogViewer
+      v-else-if="logTarget?.kind === 'springboot'"
+      :app-id="logTarget.id"
+      :app-name="logTarget.name"
+      :log-path="logTarget.logPath"
+      @close="logTarget = null"
+    />
 
     <!-- P2 预留（R11 栈级自启 / R12 模板 / R13 启动报告），本期仅 UI 占位，逻辑 TODO(P2) -->
     <div class="p2-block">
@@ -69,10 +105,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Icon } from '@iconify/vue'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { useStackStore } from '@/stores/stack'
-import type { Stack, StackItem, StackMemberStatus, StackMemberRuntime } from '@/models/stack'
+import LogViewerDialog from '@/modules/software-manager/components/LogViewerDialog.vue'
+import LogViewer from '@/modules/springboot-manager/components/LogViewer.vue'
+import type { InstalledSoftware } from '@/models/software'
+import type {
+  Stack,
+  StackItem,
+  StackMemberReport,
+  StackMemberStatus,
+  StackMemberRuntime,
+} from '@/models/stack'
 
 const props = defineProps<{ stack: Stack }>()
 const store = useStackStore()
@@ -100,6 +146,64 @@ function resolveDep(refId: string): string {
 const runningCount = computed(
   () => runtime.value.filter((m) => m.status === 'running').length
 )
+
+// ===== 启动报告 + 端口/日志入口 =====
+type LogTarget =
+  | { kind: 'software'; software: InstalledSoftware }
+  | { kind: 'springboot'; id: string; name: string; logPath: string }
+  | null
+
+const logTarget = ref<LogTarget>(null)
+const report = computed(() => props.stack.last_run_report ?? null)
+
+function nameOf(refId: string): string {
+  const stackItem = props.stack.items.find((i) => i.ref_id === refId)
+  if (stackItem) return store.resolveName(stackItem)
+  return (
+    store.installedSoftware.find((s) => s.id === refId)?.name ??
+    store.springbootApps.find((a) => a.id === refId)?.name ??
+    refId
+  )
+}
+
+function portOf(item: StackItem): number | null {
+  if (item.ref_type === 'software') {
+    const sw = store.installedSoftware.find((s) => s.id === item.ref_id)
+    return sw?.port && sw.port > 0 ? sw.port : null
+  }
+  const a = store.springbootApps.find((x) => x.id === item.ref_id)
+  return a?.port ? a.port : null
+}
+
+async function openPort(item: StackItem) {
+  const p = portOf(item)
+  if (p) await openUrl(`http://127.0.0.1:${p}`)
+}
+
+function openLogs(item: StackItem) {
+  if (item.ref_type === 'software') {
+    const sw = store.installedSoftware.find((s) => s.id === item.ref_id)
+    if (sw) logTarget.value = { kind: 'software', software: sw }
+  } else {
+    const a = store.springbootApps.find((x) => x.id === item.ref_id)
+    if (a) logTarget.value = { kind: 'springboot', id: a.id, name: a.name, logPath: a.log_path }
+  }
+}
+
+function fmtMs(ms: number): string {
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
+  return ms + 'ms'
+}
+
+function reportMax(): number {
+  const r = report.value
+  if (!r || !r.members.length) return 1
+  return Math.max(...r.members.map((m) => m.elapsed_ms))
+}
+
+function pct(m: StackMemberReport): string {
+  return Math.round((m.elapsed_ms / reportMax()) * 100) + '%'
+}
 
 const overallStatus = computed<StackMemberStatus>(() => {
   if (runtime.value.length === 0) return 'pending'
@@ -337,5 +441,86 @@ function statusClass(s?: StackMemberStatus): string {
   background: var(--color-card);
   color: var(--color-foreground);
   cursor: not-allowed;
+}
+
+/* 成员操作：端口 / 日志 */
+.mc-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-primary);
+}
+.mini-btn:hover { background: var(--color-muted); }
+
+/* 最近一次启动报告 */
+.report-block {
+  margin-top: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-card);
+}
+.report-total {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+.report-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.r-name {
+  width: 120px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-muted);
+  overflow: hidden;
+}
+.r-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+.report-row.r-failed .r-bar i { background: var(--color-danger, red); }
+.report-row.r-stopped .r-bar i { background: var(--color-muted-foreground); }
+.r-time {
+  width: 64px;
+  flex: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted-foreground);
+}
+.r-msg {
+  flex: none;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-danger, red);
 }
 </style>

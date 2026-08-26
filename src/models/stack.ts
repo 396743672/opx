@@ -31,6 +31,23 @@ export interface Stack {
   managed_externals?: string[] | null
   /** 应用启动时是否自动拉起 */
   auto_start: boolean
+  /** 最近一次启动报告（可选） */
+  last_run_report?: StackRunReport | null
+}
+
+/** 最近一次栈启动报告 */
+export interface StackRunReport {
+  started_at: string
+  total_elapsed_ms: number
+  members: StackMemberReport[]
+}
+
+/** 单个成员启动耗时/结果 */
+export interface StackMemberReport {
+  ref_id: string
+  status: StackMemberStatus
+  elapsed_ms: number
+  message: string
 }
 
 /** 成员运行态（snake_case 序列化） */
