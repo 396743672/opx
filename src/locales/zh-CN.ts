@@ -33,6 +33,7 @@ export default {
   openInBrowser: '在浏览器打开',
   action: '操作',
   description: '描述',
+  docs: '官方文档',
 
   // 状态
   running: '运行中',

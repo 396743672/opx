@@ -33,6 +33,7 @@ export default {
   openInBrowser: 'Open in browser',
   action: 'Action',
   description: 'Description',
+  docs: 'Docs',
 
   // status
   running: 'Running',

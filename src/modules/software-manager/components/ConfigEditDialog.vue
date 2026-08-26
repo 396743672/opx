@@ -6,6 +6,9 @@
         <div class="dialog-title">
           <Icon icon="mdi:cog-outline" />
           {{ software.name }} {{ software.version }} {{ $t('config') }}
+          <button v-if="docUrl" class="btn btn-sm doc-btn" @click="openDoc">
+            <Icon icon="mdi:book-open-variant" /> {{ $t('docs') }}
+          </button>
         </div>
         <button class="dialog-close" @click="$emit('close')">
           <Icon icon="mdi:close" />
@@ -102,6 +105,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { useI18n } from 'vue-i18n'
 import ConfigFormTab from './ConfigFormTab.vue'
 import ConfigSourceTab from './ConfigSourceTab.vue'
@@ -114,6 +118,29 @@ const lifecycleStore = useLifecycleStore()
 
 const props = defineProps<{ software: InstalledSoftware }>()
 const emit = defineEmits<{ close: [] }>()
+
+// 官方文档外链：key → docs URL
+const DOC_URLS: Record<string, string> = {
+  mysql: 'https://dev.mysql.com/doc/refman/8.4/en/',
+  redis: 'https://redis.io/docs/latest/',
+  nginx: 'https://nginx.org/en/docs/',
+  minio: 'https://min.io/docs/minio/',
+  rustfs: 'https://github.com/influxdata/rustfs',
+  postgresql: 'https://www.postgresql.org/docs/current/',
+  mongodb: 'https://www.mongodb.com/docs/manual/',
+  nacos: 'https://nacos.io/docs/',
+  kafka: 'https://kafka.apache.org/documentation/',
+  elasticsearch: 'https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html',
+  influxdb: 'https://docs.influxdata.com/influxdb/v2/',
+  influxdb3: 'https://docs.influxdata.com/influxdb/v3/',
+  jre: 'https://adoptium.net/',
+  jdk: 'https://adoptium.net/',
+  node: 'https://nodejs.org/en/docs/',
+}
+const docUrl = computed(() => DOC_URLS[props.software.key] ?? null)
+function openDoc() {
+  if (docUrl.value) openUrl(docUrl.value).catch(() => {})
+}
 
 const tab = ref<'form' | 'source' | 'backups'>('form')
 const dirty = ref(false)
@@ -350,6 +377,10 @@ async function onSaveAndRestart() {
   font-weight: 600;
 }
 .dialog-title svg {
+  color: var(--color-primary);
+}
+.doc-btn {
+  margin-left: 8px;
   color: var(--color-primary);
 }
 .dialog-close {
