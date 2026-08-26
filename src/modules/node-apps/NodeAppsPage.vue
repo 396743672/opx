@@ -39,11 +39,11 @@
           <span v-if="a.auto_start" class="kv"><Icon icon="mdi:power" /> {{ $t('autoStartOnAppStart') }}</span>
         </div>
         <div class="actions">
-          <button class="btn btn-sm" :disabled="a.status === 'running'" @click="start(a)">{{ $t('start') }}</button>
-          <button class="btn btn-sm" :disabled="a.status !== 'running'" @click="stop(a)">{{ $t('stop') }}</button>
-          <button class="btn btn-sm" :disabled="a.status === 'running'" @click="openEdit(a)">{{ $t('edit') }}</button>
+          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status === 'running'" @click="start(a)">{{ $t('start') }}</button>
+          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status !== 'running'" @click="stop(a)">{{ $t('stop') }}</button>
+          <button class="btn btn-sm" :disabled="!!acting[a.id] || a.status === 'running'" @click="openEdit(a)">{{ $t('edit') }}</button>
           <button class="btn btn-sm" @click="showLog(a)"><Icon icon="mdi:file-document-outline" /> {{ $t('logs') }}</button>
-          <button class="btn btn-sm danger" :disabled="a.status === 'running'" @click="remove(a)">{{ $t('delete') }}</button>
+          <button class="btn btn-sm danger" :disabled="!!acting[a.id] || a.status === 'running'" @click="remove(a)">{{ $t('delete') }}</button>
         </div>
       </div>
     </div>
@@ -145,6 +145,7 @@ const form = ref({
 })
 const installedNodes = ref<InstalledSoftware[]>([])
 const entryChanged = ref(false)
+const acting = ref<Record<string, 'start' | 'stop'>>({})
 
 // 预设模板：一键填充常用启动参数（入口仍由用户选择）
 const PRESETS = [
@@ -171,16 +172,26 @@ async function load() {
 }
 
 async function start(a: NodeApp) {
+  acting.value[a.id] = 'start'
   try {
     await invoke('start_node_app', { id: a.id })
   } catch (e: any) {
     alert(String(e))
+  } finally {
+    delete acting.value[a.id]
+    await load()
   }
-  await load()
 }
 async function stop(a: NodeApp) {
-  await invoke('stop_node_app', { id: a.id })
-  await load()
+  acting.value[a.id] = 'stop'
+  try {
+    await invoke('stop_node_app', { id: a.id })
+  } catch (e: any) {
+    alert(String(e))
+  } finally {
+    delete acting.value[a.id]
+    await load()
+  }
 }
 async function remove(a: NodeApp) {
   if (!confirm(t('confirmDeleteNodeApp') + `「${a.name}」？`)) return
