@@ -71,6 +71,15 @@ export const useOpsStore = defineStore('software-ops', () => {
     return invoke('download_log', { installedId, sourceIndex, destPath })
   }
 
+  /** 合并导出：当前源 + 历史归档（旧→新）拼接为单一文件 */
+  async function exportCombinedLog(
+    installedId: string,
+    sourceIndex: number,
+    destPath: string,
+  ): Promise<void> {
+    return invoke('export_combined_log', { installedId, sourceIndex, destPath })
+  }
+
   // ===== 备份 / 恢复 / 重置 =====
 
   /** 创建快照（压缩 data_dirs → <app_data>/backups/<id>/<ts>.zip，并写 manifest），成功后刷新缓存 */
@@ -143,6 +152,7 @@ export const useOpsStore = defineStore('software-ops', () => {
     getLogSources,
     readLog,
     downloadLog,
+    exportCombinedLog,
     createSnapshot,
     listSnapshots,
     loadSnapshots,

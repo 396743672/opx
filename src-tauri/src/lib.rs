@@ -237,6 +237,7 @@ pub fn run() {
             commands::software::get_log_sources,
             commands::software::read_log,
             commands::software::download_log,
+            commands::software::export_combined_log,
             commands::software::create_snapshot,
             commands::software::list_snapshots,
             commands::software::restore_snapshot,

@@ -6,6 +6,8 @@
           <h2>{{ $t('viewLogs') }} - {{ appName }}</h2>
           <div class="flex items-center gap-2">
             <input v-model="keyword" class="search-input" :placeholder="$t('keyword')" />
+            <input v-model="fromAt" type="datetime-local" class="search-input time" :title="$t('fromTime')" />
+            <input v-model="toAt" type="datetime-local" class="search-input time" :title="$t('toTime')" />
             <label class="chk"><input type="checkbox" v-model="useRegex" /> {{ $t('useRegex') }}</label>
             <select
               v-if="showLevel"
@@ -88,6 +90,8 @@ const useRegex = ref(false)
 const level = ref('')
 const onlyErrors = ref(false)
 const downloading = ref(false)
+const fromAt = ref('')
+const toAt = ref('')
 const realtime = ref(true)
 const autoScroll = ref(true)
 const loading = ref(false)
@@ -110,13 +114,26 @@ function onLevelChange() {
   if (level.value) onlyErrors.value = false
 }
 
-// 搜索过滤：保留稳定原始索引作 key，避免过滤时行错位闪烁
+function parseLogTs(line: string): number | null {
+  const m = line.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
+  if (!m) return null
+  const d = new Date(`${m[1]}T${m[2]}`)
+  return isNaN(d.getTime()) ? null : d.getTime()
+}
+// 搜索过滤：关键字 + 时间范围（保留稳定原始索引作 key，避免过滤时行错位闪烁）
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return lines.value.map((raw, idx) => ({ raw, idx }))
+  const from = fromAt.value ? new Date(fromAt.value).getTime() : null
+  const to = toAt.value ? new Date(toAt.value).getTime() : null
   return lines.value
-    .map((raw, idx) => ({ raw, idx, lower: raw.toLowerCase() }))
-    .filter((x) => x.lower.includes(kw))
+    .map((raw, idx) => ({ raw, idx, lower: raw.toLowerCase(), ts: parseLogTs(raw) }))
+    .filter((x) => {
+      if (kw && !x.lower.includes(kw)) return false
+      if ((from != null || to != null) && x.ts == null) return false
+      if (from != null && x.ts! < from) return false
+      if (to != null && x.ts! > to) return false
+      return true
+    })
     .map(({ raw, idx }) => ({ raw, idx }))
 })
 

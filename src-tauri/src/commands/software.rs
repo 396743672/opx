@@ -1892,6 +1892,26 @@ pub async fn download_log(
     log_viewer::download_log(&source.path, &dest_path).map_err(|e| e.to_string())
 }
 
+/// 合并导出：当前日志源 + 历史归档（旧→新）拼接为单一文件
+#[tauri::command]
+pub async fn export_combined_log(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    source_index: usize,
+    dest_path: String,
+) -> Result<(), String> {
+    let sources = log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let source = sources
+        .get(source_index)
+        .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
+    log_viewer::export_combined_source(
+        std::path::Path::new(&source.path),
+        &source.archives,
+        &dest_path,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// 创建快照（压缩 data_dirs → <app_data>/backups/<id>/<ts>.zip，并写 manifest）
 #[tauri::command]
 pub async fn create_snapshot(

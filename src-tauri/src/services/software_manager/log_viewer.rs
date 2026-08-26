@@ -8,7 +8,7 @@
 //! - `offset == Some(o), before == false` → 增量模式，从字节 `o` 向前（朝 EOF）读取新行；
 //! - `offset == Some(o), before == true` → 历史模式，读取字节 `o` 之前（朝文件头）的 `limit` 行。
 
-use std::io::{BufRead, Read, Seek, SeekFrom};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
@@ -256,6 +256,38 @@ pub fn download_log(source_path: &str, dest_path: &str) -> anyhow::Result<()> {
     }
     std::fs::copy(src, Path::new(dest_path))
         .map_err(|e| anyhow::anyhow!("复制日志失败 {} -> {}: {}", source_path, dest_path, e))?;
+    Ok(())
+}
+
+/// 合并导出：把「历史归档（旧→新）+ 主文件」拼接为一个文件（.gz 归档解压后写入）。
+/// ponytail: 顺序固定为 旧→新；单文件按天归档，内存解压量可控。
+pub fn export_combined_source(
+    primary: &Path,
+    archives: &[ArchiveLog],
+    dest_path: &str,
+) -> anyhow::Result<()> {
+    let mut out = std::fs::File::create(dest_path)
+        .map_err(|e| anyhow::anyhow!("创建导出文件失败 {}: {}", dest_path, e))?;
+    let mut write_file = |p: &Path| -> anyhow::Result<()> {
+        if !p.exists() {
+            return Ok(());
+        }
+        let data = if p.to_string_lossy().to_lowercase().ends_with(".gz") {
+            decompress_gzip(p)?
+        } else {
+            std::fs::read(p)?
+        };
+        out.write_all(&data)?;
+        if !data.ends_with(b"\n") {
+            out.write_all(b"\n")?;
+        }
+        Ok(())
+    };
+    // 旧归档在前、主文件最后（时间正序）
+    for a in archives.iter().rev() {
+        write_file(Path::new(&a.path))?;
+    }
+    write_file(primary)?;
     Ok(())
 }
 

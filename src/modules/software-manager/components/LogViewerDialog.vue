@@ -25,6 +25,9 @@
           <button class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
             <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
           </button>
+          <button class="btn btn-sm" :disabled="!sources.length || exporting" @click="exportCombined">
+            <Icon icon="mdi:file-merge" /> {{ $t('exportCombined') }}
+          </button>
         </div>
 
         <!-- 日志源标签 -->
@@ -45,6 +48,8 @@
         <!-- 过滤工具栏 -->
         <div class="filters">
           <input v-model="keyword" class="input" :placeholder="$t('keyword')" />
+          <input v-model="fromAt" type="datetime-local" class="input time" :title="$t('fromTime')" />
+          <input v-model="toAt" type="datetime-local" class="input time" :title="$t('toTime')" />
           <label class="chk">
             <input type="checkbox" v-model="useRegex" /> {{ $t('useRegex') }}
           </label>
@@ -84,7 +89,7 @@
               ↑ {{ $t('loadEarlier') }}
             </button>
             <div
-              v-for="(line, idx) in lines"
+              v-for="(line, idx) in visibleLines"
               :key="idx"
               class="log-line"
               :class="lineClass(line)"
@@ -157,6 +162,9 @@ const autoScroll = ref(true)
 const loading = ref(false)
 const loadingHistory = ref(false)
 const downloading = ref(false)
+const exporting = ref(false)
+const fromAt = ref('')
+const toAt = ref('')
 const errorMsg = ref<string | null>(null)
 const logBody = ref<HTMLElement | null>(null)
 
@@ -165,6 +173,26 @@ let filterDebounce: ReturnType<typeof setTimeout> | null = null
 
 const showLevel = computed(() => sources.value[activeSource.value]?.has_levels ?? false)
 const effectiveLevel = computed(() => (onlyErrors.value ? 'ERROR' : level.value || null))
+
+// 时间范围过滤：作用于已加载缓存行（配合「加载更早」把历史载入），行首需带时间戳
+function parseLogTs(line: string): number | null {
+  const m = line.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
+  if (!m) return null
+  const d = new Date(`${m[1]}T${m[2]}`)
+  return isNaN(d.getTime()) ? null : d.getTime()
+}
+const visibleLines = computed(() => {
+  const from = fromAt.value ? new Date(fromAt.value).getTime() : null
+  const to = toAt.value ? new Date(toAt.value).getTime() : null
+  if (from == null && to == null) return lines.value
+  return lines.value.filter((l) => {
+    const ts = parseLogTs(l)
+    if (ts == null) return false // 无时间戳行不在时间过滤下展示
+    if (from != null && ts < from) return false
+    if (to != null && ts > to) return false
+    return true
+  })
+})
 
 async function loadSources() {
   stopPolling()
@@ -314,6 +342,22 @@ async function download() {
     errorMsg.value = String(e)
   } finally {
     downloading.value = false
+  }
+}
+
+async function exportCombined() {
+  if (!sources.value.length) return
+  exporting.value = true
+  try {
+    const src = sources.value[activeSource.value]
+    const base = ((src.path.split(/[\\/]/).pop() ?? 'log') + '.merged.log')
+    const dest = await save({ defaultPath: base, title: t('exportCombined') })
+    if (!dest) return
+    await ops.exportCombinedLog(selectedId.value, activeSource.value, dest)
+  } catch (e) {
+    errorMsg.value = String(e)
+  } finally {
+    exporting.value = false
   }
 }
 
