@@ -5,6 +5,14 @@ export default {
   softwareRepository: '软件仓库',
   websiteManagement: '网站管理',
   springBoot: '应用管理',
+  nodeApps: 'Node 应用',
+  nodeAppsDesc: '用 Node.js 运行时的 JS/TS 服务管理',
+  addNodeApp: '添加应用',
+  editNodeApp: '编辑应用',
+  noNodeApps: '还没有 Node 应用，点击「添加应用」注册第一个',
+  nodeAppName: '应用名称',
+  entryPath: 'JS 入口文件',
+  confirmDeleteNodeApp: '确定删除该 Node 应用？此操作不可撤销。',
   settings: '系统设置',
 
   // 通用

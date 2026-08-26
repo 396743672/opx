@@ -5,6 +5,14 @@ export default {
   softwareRepository: 'Software Repository',
   websiteManagement: 'Website Management',
   springBoot: 'SpringBoot',
+  nodeApps: 'Node Apps',
+  nodeAppsDesc: 'JS/TS services running on the Node.js runtime',
+  addNodeApp: 'Add App',
+  editNodeApp: 'Edit App',
+  noNodeApps: 'No Node apps yet. Click "Add App" to register the first one',
+  nodeAppName: 'App Name',
+  entryPath: 'JS Entry File',
+  confirmDeleteNodeApp: 'Delete this Node app? This cannot be undone.',
   settings: 'Settings',
 
   // common

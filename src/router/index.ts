@@ -36,6 +36,12 @@ const routes = [
     meta: { title: 'springBoot' },
   },
   {
+    path: '/node-apps',
+    name: 'node-apps',
+    component: () => import('@/modules/node-apps/NodeAppsPage.vue'),
+    meta: { title: 'nodeApps' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/modules/settings/pages/SettingsPage.vue'),

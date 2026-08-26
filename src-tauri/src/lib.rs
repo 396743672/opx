@@ -74,6 +74,14 @@ pub fn run() {
                 crate::services::springboot_manager::SpringBootManager::new(),
             );
             app.manage(springboot_mgr.clone());
+            // Node 应用管理：注册 State，并在启动时拉起 auto_start 的 Node 应用（用已装 Node）
+            let node_mgr = std::sync::Arc::new(
+                crate::services::node_app_manager::NodeAppManager::new(),
+            );
+            if let Some(exe) = crate::commands::node_app::resolve_node_exe(&software_mgr) {
+                node_mgr.auto_start_all(&exe);
+            }
+            app.manage(node_mgr);
             // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
             app.manage(std::sync::Arc::new(
                 crate::services::stack_manager::StackManager::new(software_mgr, springboot_mgr),
@@ -282,6 +290,13 @@ pub fn run() {
             commands::springboot::list_springboot_log_sources,
             commands::springboot::read_springboot_log,
             commands::springboot::download_springboot_log,
+            commands::node_app::list_node_apps,
+            commands::node_app::add_node_app,
+            commands::node_app::update_node_app,
+            commands::node_app::delete_node_app,
+            commands::node_app::start_node_app,
+            commands::node_app::stop_node_app,
+            commands::node_app::read_node_app_log,
             commands::springboot::export_springboot_config,
             commands::springboot::import_springboot_config,
             commands::stack::list_stacks,
