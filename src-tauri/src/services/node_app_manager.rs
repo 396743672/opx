@@ -102,6 +102,7 @@ impl NodeAppManager {
         };
         let mut inner = self.inner.lock().unwrap();
         inner.apps.push(app.clone());
+        drop(inner);
         let _ = self.save();
         Ok(app)
     }
@@ -145,6 +146,7 @@ impl NodeAppManager {
             app.startup_order = v;
         }
         let out = app.clone();
+        drop(inner);
         let _ = self.save();
         Ok(out)
     }
@@ -154,6 +156,7 @@ impl NodeAppManager {
         let before = inner.apps.len();
         inner.apps.retain(|a| a.id != id);
         let removed = inner.apps.len() != before;
+        drop(inner);
         if removed {
             let _ = self.save();
         }
@@ -205,6 +208,7 @@ impl NodeAppManager {
             a.last_error = None;
             a.log_path = log_path.to_string_lossy().into_owned();
         }
+        drop(inner);
         let _ = self.save();
         Ok(())
     }
@@ -221,6 +225,7 @@ impl NodeAppManager {
             a.pid = None;
             a.status = NodeAppStatus::Stopped;
         }
+        drop(inner);
         let _ = self.save();
         Ok(())
     }
