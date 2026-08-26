@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
@@ -79,6 +79,8 @@ fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
         return;
     };
     let mut registered: HashMap<String, u64> = HashMap::new(); // path → id
+    let mut last_emit: HashMap<String, Instant> = HashMap::new(); // path → 上次推送时间（节流）
+    const THROTTLE: Duration = Duration::from_millis(300);
 
     loop {
         // 处理控制命令（注册/注销）
@@ -98,14 +100,22 @@ fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
             }
         }
 
-        // 事件：命中已注册文件 → 推送前端
+        // 事件：命中已注册文件 → 节流后推送前端
         match ev_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(Ok(ev)) => {
+                let relevant = ev.kind.is_modify() || ev.kind.is_create();
+                if !relevant {
+                    continue;
+                }
                 for p in ev.paths {
                     let pstr = p.to_string_lossy().to_string();
-                    let relevant = ev.kind.is_modify() || ev.kind.is_create();
-                    if relevant {
-                        if let Some(id) = registered.get(&pstr).copied() {
+                    if let Some(id) = registered.get(&pstr).copied() {
+                        let due = last_emit
+                            .get(&pstr)
+                            .map(|t| t.elapsed() >= THROTTLE)
+                            .unwrap_or(true);
+                        if due {
+                            last_emit.insert(pstr.clone(), Instant::now());
                             let payload = serde_json::json!({ "id": id, "path": pstr });
                             let _ = app.emit("log-file-changed", payload);
                         }
