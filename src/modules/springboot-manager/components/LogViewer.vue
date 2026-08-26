@@ -70,7 +70,7 @@ const autoScroll = ref(true)
 const loading = ref(false)
 const loadingHistory = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
-let offset = 0
+let lastEndOffset: number | null = null
 const startOffset = ref(0)
 const archiveIndex = ref(0)
 const hasMore = ref(false)
@@ -78,6 +78,7 @@ const truncated = ref(false)
 const logBox = ref<HTMLElement | null>(null)
 
 const TAIL_LIMIT = 2000
+const MAX_BUFFER = 20000
 
 // 搜索过滤：保留稳定原始索引作 key，避免过滤时行错位闪烁
 const filtered = computed(() => {
@@ -132,7 +133,7 @@ async function loadSources() {
   error.value = ''
   sources.value = []
   activeSource.value = 0
-  offset = 0
+  lastEndOffset = null
   archiveIndex.value = 0
   hasMore.value = false
   lines.value = []
@@ -157,14 +158,20 @@ async function loadTail() {
       appId: props.appId,
       sourceIndex: activeSource.value,
       archiveIndex: 0,
-      offset: null,
+      offset: lastEndOffset, // 首次 null → tail 尾部；之后 end_offset → 仅读新增行（实时轮询增量）
       before: false,
       limit: TAIL_LIMIT,
       keyword: keyword.value.trim() || null,
     })
-    if (offset === 0) lines.value = chunk.lines
-    else lines.value.push(...chunk.lines)
-    offset = chunk.end_offset
+    if (lastEndOffset === null) {
+      lines.value = chunk.lines
+    } else if (chunk.lines.length) {
+      lines.value.push(...chunk.lines)
+      if (lines.value.length > MAX_BUFFER) {
+        lines.value = lines.value.slice(lines.value.length - MAX_BUFFER)
+      }
+    }
+    lastEndOffset = chunk.end_offset ?? lastEndOffset
     startOffset.value = chunk.start_offset
     hasMore.value = chunk.has_more
     truncated.value = chunk.truncated
@@ -206,7 +213,7 @@ async function selectSource(idx: number) {
   if (activeSource.value === idx) return
   stopPolling()
   activeSource.value = idx
-  offset = 0
+  lastEndOffset = null
   archiveIndex.value = 0
   hasMore.value = false
   lines.value = []
