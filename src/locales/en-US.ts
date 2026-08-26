@@ -186,6 +186,8 @@ export default {
   postgresqlOfficial: 'PostgreSQL Official',
   mongodbOfficial: 'MongoDB Official',
   nacosOfficial: 'Nacos Official',
+  nodejsOrg: 'nodejs.org Official',
+  npmmirror: 'npmmirror Mirror',
   builtinMissing: 'Builtin package missing, please reinstall the app',
   builtinCorrupted: 'Builtin package verification failed, file may be corrupted',
   retry: 'Retry',
@@ -216,6 +218,7 @@ export default {
     elasticsearch: 'Distributed search & analytics engine',
     influxdb: 'Time series database (InfluxDB v2)',
     influxdb3: 'Time series database (InfluxDB 3 Core, new architecture)',
+    node: 'JavaScript runtime (Node.js LTS)',
   },
 
   // SpringBoot

@@ -186,6 +186,8 @@ export default {
   postgresqlOfficial: 'PostgreSQL 官方',
   mongodbOfficial: 'MongoDB 官方',
   nacosOfficial: 'Nacos 官方',
+  nodejsOrg: 'nodejs.org 官方',
+  npmmirror: 'npmmirror 镜像',
   builtinMissing: '内置安装包缺失，请重新安装应用',
   builtinCorrupted: '内置安装包校验失败，文件可能损坏',
   retry: '重试',
@@ -216,6 +218,7 @@ export default {
     elasticsearch: '分布式搜索与分析引擎',
     influxdb: '时序数据库（InfluxDB v2）',
     influxdb3: '时序数据库（InfluxDB 3 Core，新架构）',
+    node: 'JavaScript 运行时（Node.js LTS）',
   },
 
   // SpringBoot
