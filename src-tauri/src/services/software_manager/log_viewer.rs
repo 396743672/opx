@@ -11,9 +11,88 @@
 use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::models::software::{LogChunk, LogSource};
+use flate2::read::MultiGzDecoder;
+
+use crate::models::software::{ArchiveLog, LogChunk, LogSource};
 use crate::services::software_manager::providers::{all_providers, LogContext};
 use crate::services::software_manager::SoftwareManager;
+
+/// 归档扫描上限（防海量文件拖慢「加载更早」）
+const MAX_ARCHIVES: usize = 40;
+
+/// 判定文件名是否为日志滚动归档：含数字日期片段或 .gz / 数字结尾。
+fn looks_like_archive(stem: &str) -> bool {
+    let lower = stem.to_lowercase();
+    lower.ends_with(".gz") || lower.ends_with(".log") || stem.chars().any(|c| c.is_ascii_digit())
+}
+
+/// 收集主文件的历史归档（同目录 + 一级日期子目录），时间倒序（靠字典序近似，最新在前）。
+/// 匹配规则：同源派生文件名（`{base}.` / `{base}-` / `{base}_` 前缀）且满足滚动特征。
+pub fn collect_archives(primary: &Path) -> Vec<ArchiveLog> {
+    let Some(dir) = primary.parent() else { return vec![] };
+    let Some(file_name) = primary.file_name().and_then(|s| s.to_str()) else { return vec![] };
+    let stem = file_name.strip_suffix(".gz").unwrap_or(file_name);
+    let base = stem.split_once('.').map(|(b, _)| b).unwrap_or(stem);
+    let mut found: Vec<ArchiveLog> = Vec::new();
+
+    let scan = |dir: &Path, found: &mut Vec<ArchiveLog>| {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_file() { continue; }
+            let Some(name) = p.file_name().and_then(|s| s.to_str()) else { continue };
+            if !looks_like_archive(name) { continue; }
+            if name == file_name { continue; }
+            let prefixes = [format!("{}.", base), format!("{}-", base), format!("{}_", base)];
+            if !prefixes.iter().any(|pre| name.starts_with(pre)) { continue; }
+            found.push(ArchiveLog {
+                path: p.to_string_lossy().to_string(),
+                label: name.to_string(),
+            });
+        }
+    };
+    scan(dir, &mut found);
+    // 一级日期子目录（应用日志形态 logs/<YYYY-MM-DD>/type.date.n.log.gz）
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let d = e.path();
+            if !d.is_dir() { continue; }
+            scan(&d, &mut found);
+        }
+    }
+    // 字典序倒排：框架上最新（日期更大）在前；同日前靠前
+    found.sort_by(|a, b| b.path.cmp(&a.path));
+    found.truncate(MAX_ARCHIVES);
+    found
+}
+
+/// 整体解压 .gz（日志按天归档，单文件体积可控）
+pub fn decompress_gzip(path: &Path) -> anyhow::Result<Vec<u8>> {
+    let f = std::fs::File::open(path)?;
+    let mut out = Vec::new();
+    let mut dec = MultiGzDecoder::new(f);
+    Read::read_to_end(&mut dec, &mut out)?;
+    Ok(out)
+}
+
+/// 组合 trait：统一普通文件与 .gz 内存 buffer 的随机访问读取
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek + ?Sized> ReadSeek for T {}
+
+/// 打开可随机访问的日志后端：普通文件按需 seek；.gz 解压到内存后经 Cursor seek。
+/// 返回 (reader, 解码后总字节数)。
+fn open_reader(path: &Path) -> anyhow::Result<(Box<dyn ReadSeek>, u64)> {
+    let lower = path.to_string_lossy().to_lowercase();
+    if lower.ends_with(".gz") {
+        let bytes = decompress_gzip(path)?;
+        let len = bytes.len() as u64;
+        Ok((Box::new(std::io::Cursor::new(bytes)), len))
+    } else {
+        let f = std::fs::File::open(path)?;
+        let len = f.metadata()?.len();
+        Ok((Box::new(f), len))
+    }
+}
 
 /// 级别过滤用的内置默认正则（决策 6 / 共享知识 §6.6）
 const DEFAULT_LEVEL_REGEX: &str =
@@ -126,8 +205,6 @@ pub fn read_log(
             archive_index: 0,
         });
     }
-    let total = std::fs::metadata(path)?.len();
-
     let kw = keyword.filter(|s| !s.is_empty());
     let re_filter = if regex {
         kw.map(|k| regex::Regex::new(k).map_err(|e| anyhow::anyhow!("正则编译失败: {}", e)))
@@ -158,9 +235,18 @@ pub fn read_log(
     };
 
     match offset {
-        None => read_backward_filtered(path, total, total, limit, &filter),
-        Some(o) if before => read_backward_filtered(path, total, o, limit, &filter),
-        Some(o) => read_since(path, total, o, limit, &filter),
+        None => {
+            let (mut reader, total) = open_reader(&path)?;
+            read_backward_filtered(&mut reader, total, total, limit, &filter)
+        }
+        Some(o) if before => {
+            let (mut reader, total) = open_reader(&path)?;
+            read_backward_filtered(&mut reader, total, o, limit, &filter)
+        }
+        Some(o) => {
+            let (mut reader, total) = open_reader(&path)?;
+            read_since(&mut reader, total, o, limit, &filter)
+        }
     }
 }
 
@@ -177,14 +263,13 @@ pub fn download_log(source_path: &str, dest_path: &str) -> anyhow::Result<()> {
 
 /// 从 `from_byte` 向前（朝文件头）回溯，收集末尾 `limit` 个「匹配」行。
 /// 用于 tail（from_byte = total）与历史分页（from_byte = 当前首行偏移）。
-fn read_backward_filtered(
-    path: &Path,
+fn read_backward_filtered<R: Read + Seek>(
+    reader: &mut R,
     total: u64,
     from_byte: u64,
     limit: usize,
     filter: &LineFilter,
 ) -> anyhow::Result<LogChunk> {
-    let mut file = std::fs::File::open(path)?;
     let mut remaining = from_byte.min(total);
     let chunk_size = 8192u64;
     // 从后往前读块，累积原始字节（块列表逆序后重组为正序）
@@ -194,8 +279,8 @@ fn read_backward_filtered(
         let take = remaining.min(chunk_size);
         let start = remaining - take;
         let mut buf = vec![0u8; take as usize];
-        file.seek(SeekFrom::Start(start))?;
-        file.read_exact(&mut buf)?;
+        reader.seek(SeekFrom::Start(start))?;
+        reader.read_exact(&mut buf)?;
         blocks.push(buf);
         remaining = start;
         // 估算已收集原始行数（数换行）。未过滤时收够即停；过滤时多读一些以提高命中率。
@@ -214,7 +299,7 @@ fn read_backward_filtered(
     for b in blocks.into_iter().rev() {
         all.extend_from_slice(&b);
     }
-    let content_start = from_byte - all.len() as u64;
+    let content_start = from_byte.saturating_sub(all.len() as u64);
     let text = decode_log_bytes(&all);
     let lines: Vec<&str> = text.split('\n').collect();
 
@@ -253,16 +338,15 @@ fn read_backward_filtered(
 
 /// 从字节 `from_byte` 向前（朝 EOF）读取匹配行，直到 EOF 或收满 `limit` 行。
 /// 用于实时增量轮询（前端携带上次的 end_offset）。
-fn read_since(
-    path: &Path,
+fn read_since<R: Read + Seek>(
+    reader: &mut R,
     total: u64,
     from_byte: u64,
     limit: usize,
     filter: &LineFilter,
 ) -> anyhow::Result<LogChunk> {
-    let mut file = std::fs::File::open(path)?;
-    file.seek(SeekFrom::Start(from_byte))?;
-    let mut reader = std::io::BufReader::new(file);
+    reader.seek(SeekFrom::Start(from_byte))?;
+    let mut reader = std::io::BufReader::new(&mut *reader);
     let mut lines: Vec<String> = Vec::new();
     let mut end_offset = from_byte;
     let mut truncated = false;
@@ -382,16 +466,68 @@ mod tests {
     }
 
     #[test]
-    fn test_read_since_basic() {
-        let p = tmp_file("since", b"a\nb\nc\n");
-        let total = fs::metadata(&p).unwrap().len();
+    fn test_collect_archives_finds_gz_and_date_subdirs() {
+        let base = std::env::temp_dir().join(format!("opx_qa_arch_{}", unique_suffix()));
+        let logs = base.join("logs");
+        std::fs::create_dir_all(&logs.join("2026-08-24")).unwrap();
+        let write = |rel: &str, body: &[u8]| {
+            let p = logs.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+        };
+        write("info.log", b"now");
+        write("info.2026-08-26.0.log.gz", b"x"); // 同目录 gz
+        write("info.2026-08-25.0.log.gz", b"x");
+        write("2026-08-24/info.2026-08-24.0.log.gz", b"x"); // 日期子目录
+        write("access.log-20260824.gz", b"x"); // logrotate 形态（不同 stem，应忽略）
+        write("readme.txt", b"x"); // 非日志，忽略
+
+        let primary = logs.join("info.log");
+        let archives = collect_archives(&primary);
+        std::fs::remove_dir_all(&base).unwrap();
+        let labels: Vec<String> = archives.iter().map(|a| a.label.clone()).collect();
+        assert!(!labels.is_empty(), "应识别到归档");
+        assert!(labels[0].contains("2026-08-26"), "最新在前, got {:?}", labels);
+        assert!(labels.iter().any(|l| l.contains("2026-08-25")));
+        assert!(labels.iter().any(|l| l.contains("2026-08-24")));
+        assert!(!labels.iter().any(|l| l.contains("access")), "非同 stem 滚动应忽略");
+    }
+
+    #[test]
+    fn test_read_backward_gz_tail() {
+        let p = std::env::temp_dir().join(format!("opx_qa_gz_{}.log.gz", unique_suffix()));
+        let content = b"L0\nL1\nL2\n";
+        let file = std::fs::File::create(&p).unwrap();
+        let mut enc = {
+            let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            std::io::Write::write_all(&mut e, content).unwrap();
+            e
+        };
+        enc.finish().unwrap();
+        let (mut reader, total) = open_reader(&p).unwrap();
         let filter = LineFilter {
             keyword: None,
             regex: None,
             level: None,
             level_regex: None,
         };
-        let chunk = read_since(&p, total, 0, 100, &filter).unwrap();
+        let chunk = read_backward_filtered(&mut reader, total, total, 100, &filter).unwrap();
+        std::fs::remove_file(&p).unwrap();
+        let non_empty: usize = chunk.lines.iter().filter(|l| !l.is_empty()).count();
+        assert_eq!(non_empty, 3, "gz 归档应能读出行");
+    }
+
+    #[test]
+    fn test_read_since_basic() {
+        let p = tmp_file("since", b"a\nb\nc\n");
+        let filter = LineFilter {
+            keyword: None,
+            regex: None,
+            level: None,
+            level_regex: None,
+        };
+        let (mut reader, total) = open_reader(&p).unwrap();
+        let chunk = read_since(&mut reader, total, 0, 100, &filter).unwrap();
         assert_eq!(chunk.lines.len(), 3);
         assert_eq!(chunk.start_offset, 0);
         let _ = fs::remove_file(&p);
@@ -401,14 +537,14 @@ mod tests {
     fn test_read_backward_tail_basic() {
         let content = b"L0\nL1\nL2\nL3\nL4\n";
         let p = tmp_file("tail", content);
-        let total = fs::metadata(&p).unwrap().len();
         let filter = LineFilter {
             keyword: None,
             regex: None,
             level: None,
             level_regex: None,
         };
-        let chunk = read_backward_filtered(&p, total, total, 100, &filter).unwrap();
+        let (mut reader, total) = open_reader(&p).unwrap();
+        let chunk = read_backward_filtered(&mut reader, total, total, 100, &filter).unwrap();
         assert_eq!(chunk.lines.iter().filter(|l| !l.is_empty()).count(), 5);
         assert_eq!(chunk.start_offset, 0);
         let _ = fs::remove_file(&p);
@@ -421,7 +557,6 @@ mod tests {
     fn test_read_backward_before_mode_offset() {
         let content = b"L0\nL1\nL2\nL3\nL4\n"; // 每行 3 字节，total = 15
         let p = tmp_file("before", content);
-        let total = fs::metadata(&p).unwrap().len();
         let filter = LineFilter {
             keyword: None,
             regex: None,
@@ -429,7 +564,8 @@ mod tests {
             level_regex: None,
         };
         // from_byte = 6（L2 起始），应返回 [0,6) 的 "L0","L1"，start_offset 正确应为 0
-        let chunk = read_backward_filtered(&p, total, 6, 100, &filter).unwrap();
+        let (mut reader, total) = open_reader(&p).unwrap();
+        let chunk = read_backward_filtered(&mut reader, total, 6, 100, &filter).unwrap();
         assert_eq!(chunk.lines.iter().filter(|l| !l.is_empty()).count(), 2);
         assert_eq!(
             chunk.start_offset, 0,
