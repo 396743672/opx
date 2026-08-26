@@ -635,7 +635,7 @@ mod tests {
         let p = std::env::temp_dir().join(format!("opx_qa_gz_{}.log.gz", unique_suffix()));
         let content = b"L0\nL1\nL2\n";
         let file = std::fs::File::create(&p).unwrap();
-        let mut enc = {
+        let enc = {
             let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::default());
             std::io::Write::write_all(&mut e, content).unwrap();
             e
@@ -663,7 +663,7 @@ mod tests {
         let gz_path = base.join("info.2026-08-24.0.log.gz");
         {
             let file = std::fs::File::create(&gz_path).unwrap();
-            let mut enc = {
+            let enc = {
                 let mut e = flate2::write::GzEncoder::new(file, flate2::Compression::default());
                 std::io::Write::write_all(&mut e, b"O0\nO1\n").unwrap();
                 e
