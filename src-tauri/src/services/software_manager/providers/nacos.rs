@@ -148,7 +148,8 @@ impl SoftwareProvider for NacosProvider {
             .join("target").join("nacos-server.jar");
         let working_dir = PathBuf::from(&ctx.install_path);
 
-        // 部署模式：standalone（默认）/ cluster（预留，暂未实现完整集群）
+        // 部署模式：standalone（默认）/ cluster（扩展点——前置置灰，不建实现）
+        // ponytail: cluster 扩展点 —— 后续按 nacos 官方多节点 RAFT 接入
         let mode = config_str(&ctx.config, "mode", "standalone");
         if mode != "standalone" {
             return Err(anyhow::anyhow!("集群模式暂未支持，请使用单机模式（standalone）"));
@@ -339,6 +340,8 @@ impl SoftwareProvider for NacosProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec!["standalone".to_string(), "cluster".to_string()],
                         labels: vec![],
+                        disabled_options: vec!["cluster".to_string()],
+                        disabled_hint_i18n: Some("configField.nacosModeClusterHint".to_string()),
                     },
                     default_value: serde_json::json!("standalone"),
                     section: None,
@@ -350,6 +353,8 @@ impl SoftwareProvider for NacosProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec!["embedded".to_string(), "mysql".to_string()],
                         labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("embedded"),
                     section: None,
@@ -401,7 +406,12 @@ impl SoftwareProvider for NacosProvider {
                     key: "jdk".to_string(),
                     label_i18n: "configField.nacosJdk".to_string(),
                     // options/labels 由 get_config_schema 命令层动态填充（已装 JDK/JRE）
-                    field_type: ConfigFieldType::Select { options: vec![], labels: vec![] },
+                    field_type: ConfigFieldType::Select {
+                        options: vec![],
+                        labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
+                    },
                     default_value: serde_json::json!(""),
                     section: None,
                     description_i18n: Some("configField.nacosJdkDesc".to_string()),
@@ -426,6 +436,8 @@ impl SoftwareProvider for NacosProvider {
                             "ai".to_string(),
                         ],
                         labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("all"),
                     section: None,

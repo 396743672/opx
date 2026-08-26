@@ -184,7 +184,7 @@ export type ConfigFieldType =
   | { type: 'Number' }
   | { type: 'Port' }
   | { type: 'Password' }
-  | { type: 'Select'; options: string[]; labels?: string[] }
+  | { type: 'Select'; options: string[]; labels?: string[]; disabled_options?: string[]; disabled_hint_i18n?: string }
   | { type: 'Size'; units: string[] }
   | { type: 'Boolean' }
 

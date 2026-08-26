@@ -385,6 +385,8 @@ impl SoftwareProvider for KafkaProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec![],
                         labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!(""),
                     section: None,

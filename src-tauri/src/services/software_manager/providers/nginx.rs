@@ -264,6 +264,8 @@ impl SoftwareProvider for NginxProvider {
                             "16".to_string(),
                         ],
                         labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
                     },
                     // auto = nginx 自动取 CPU 核数（最优），故默认 auto 即按当前系统 CPU 最优
                     default_value: serde_json::json!("auto"),
@@ -282,6 +284,8 @@ impl SoftwareProvider for NginxProvider {
                             "8192".to_string(),
                         ],
                         labels: vec![],
+                        disabled_options: vec![],
+                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("1024"),
                     section: None,

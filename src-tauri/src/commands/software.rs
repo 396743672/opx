@@ -1454,7 +1454,7 @@ fn fill_jdk_options(
         .collect();
     for field in &mut schema.fields {
         if field.key == "jdk" {
-            if let ConfigFieldType::Select { options, labels: lbls } = &mut field.field_type {
+            if let ConfigFieldType::Select { options, labels: lbls, .. } = &mut field.field_type {
                 *options = ids.clone();
                 *lbls = labels.clone();
                 // 默认选中第一个 JDK（若默认值为空）

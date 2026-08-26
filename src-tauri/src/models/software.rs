@@ -336,6 +336,12 @@ pub enum ConfigFieldType {
         options: Vec<String>,
         #[serde(default)]
         labels: Vec<String>,
+        /// 禁用的选项值（前置置灰，如 nacos cluster 扩展点）
+        #[serde(default)]
+        disabled_options: Vec<String>,
+        /// 禁用选项的提示 i18n key（hover 显示）
+        #[serde(default)]
+        disabled_hint_i18n: Option<String>,
     },
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },

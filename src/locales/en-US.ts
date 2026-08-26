@@ -515,6 +515,7 @@ export default {
     nacosConsolePortDesc: 'Separate console port in Nacos 3.x',
     nacosMode: 'Deploy Mode',
     nacosModeDesc: 'standalone / cluster',
+    nacosModeClusterHint: 'Cluster mode will be supported in a later version; please use standalone',
     nacosStorage: 'Storage Mode',
     nacosStorageDesc: 'embedded (Derby) / mysql',
     nacosMysqlHost: 'MySQL Host',

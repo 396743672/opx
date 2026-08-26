@@ -515,6 +515,7 @@ export default {
     nacosConsolePortDesc: 'Nacos 3.x 控制台独立端口',
     nacosMode: '部署模式',
     nacosModeDesc: 'standalone 单机 / cluster 集群',
+    nacosModeClusterHint: '集群模式将在后续版本支持，当前请使用单机模式（standalone）',
     nacosStorage: '数据库模式',
     nacosStorageDesc: 'embedded 嵌入式 / mysql 外部数据库',
     nacosMysqlHost: 'MySQL 地址',

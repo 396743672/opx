@@ -30,7 +30,13 @@
           :disabled="isEphemeral(field) && isInitialized"
         />
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
-          <option v-for="(opt, i) in selectOptions(field)" :key="opt" :value="opt">
+          <option
+            v-for="(opt, i) in selectOptions(field)"
+            :key="opt"
+            :value="opt"
+            :disabled="isDisabledOption(field, opt)"
+            :title="disabledHint(field, opt)"
+          >
             {{ selectLabels(field)?.[i] ?? opt }}
           </option>
         </select>
@@ -71,7 +77,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
+
+const { t } = useI18n()
 
 const props = defineProps<{ software: InstalledSoftware; schema: ConfigSchema | null }>()
 const emit = defineEmits<{ 'update:dirty': [boolean] }>()
@@ -130,6 +139,16 @@ function selectOptions(f: ConfigField): string[] {
 }
 function selectLabels(f: ConfigField): string[] | undefined {
   return f.field_type.type === 'Select' ? f.field_type.labels : undefined
+}
+
+// 禁用的选项（前置置灰，如 nacos cluster 扩展点）+ hover 提示
+function isDisabledOption(f: ConfigField, opt: string): boolean {
+  return f.field_type.type === 'Select' && (f.field_type.disabled_options ?? []).includes(opt)
+}
+function disabledHint(f: ConfigField, opt: string): string | undefined {
+  if (!isDisabledOption(f, opt)) return undefined
+  const key = f.field_type.type === 'Select' ? f.field_type.disabled_hint_i18n : undefined
+  return key ? t(key) : undefined
 }
 
 // Size 字段：值形如 "256mb"，拆成「数字 + 单位」编辑，单位只能从下拉里选（防手写单位出错）
