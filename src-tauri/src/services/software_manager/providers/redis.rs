@@ -97,7 +97,7 @@ impl SoftwareProvider for RedisProvider {
             description: "内存键值存储".to_string(),
             description_i18n: Some("catalogDesc.redis".to_string()),
             category: SoftwareCategory::Cache,
-            icon: "mdi:database".to_string(),
+            icon: "mdi:memory".to_string(),
             versions,
             default_version: "7.4.9".to_string(),
         }

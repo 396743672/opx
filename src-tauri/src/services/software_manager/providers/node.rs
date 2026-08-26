@@ -100,7 +100,7 @@ impl SoftwareProvider for NodeProvider {
             description: "JavaScript 运行时（Node.js LTS）".to_string(),
             description_i18n: Some("catalogDesc.node".to_string()),
             category: SoftwareCategory::Runtime,
-            icon: "mdi:language-nodejs".to_string(),
+            icon: "mdi:language-javascript".to_string(),
             versions,
             default_version: "22.14.0".to_string(),
         }

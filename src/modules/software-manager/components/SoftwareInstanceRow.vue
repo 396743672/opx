@@ -48,7 +48,7 @@
           :title="t('upgradeHint')"
           @click="$emit('upgrade')"
         >
-          <Icon icon="mdi:package-upgrade" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
+          <Icon icon="mdi:package-up" /> {{ $t('upgradeTo', { v: upgradeTo }) }}
         </button>
         <button
           v-if="rollbackTo"

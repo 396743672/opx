@@ -50,7 +50,7 @@ impl SoftwareProvider for PostgreSqlProvider {
             description: "关系型数据库".to_string(),
             description_i18n: Some("catalogDesc.postgresql".to_string()),
             category: SoftwareCategory::Database,
-            icon: "mdi:database".to_string(),
+            icon: "mdi:elephant".to_string(),
             versions,
             default_version: "16.4".to_string(),
         }
