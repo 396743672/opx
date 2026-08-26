@@ -34,7 +34,7 @@
             :key="idx"
             class="source-tab"
             :class="{ active: idx === activeSource }"
-            @click="activeSource = idx"
+            @click="selectSource(idx)"
           >
             <Icon :icon="s.kind === 'ProviderFile' ? 'mdi:file' : 'mdi:console'" />
             {{ s.label || (s.kind === 'ProviderFile' ? $t('fileLog') : $t('consoleLog')) }}
@@ -144,6 +144,7 @@ const activeSource = ref(0)
 const lines = ref<string[]>([])
 const startOffset = ref(0)
 const endOffset = ref(0)
+const archiveIndex = ref(0)
 const totalBytes = ref(0)
 const hasMore = ref(false)
 const truncated = ref(false)
@@ -252,6 +253,7 @@ async function loadHistory() {
     const chunk = await ops.readLog({
       installedId: selectedId.value,
       sourceIndex: activeSource.value,
+      archiveIndex: archiveIndex.value,
       offset: startOffset.value,
       before: true,
       limit: HISTORY_LIMIT,
@@ -261,6 +263,7 @@ async function loadHistory() {
     })
     lines.value = [...chunk.lines, ...lines.value]
     startOffset.value = chunk.start_offset
+    archiveIndex.value = chunk.archive_index ?? archiveIndex.value
     hasMore.value = chunk.has_more
     truncated.value = chunk.truncated
   } catch (e) {
@@ -268,6 +271,12 @@ async function loadHistory() {
   } finally {
     loadingHistory.value = false
   }
+}
+
+function selectSource(idx: number) {
+  if (activeSource.value === idx) return
+  archiveIndex.value = 0
+  activeSource.value = idx
 }
 
 function startPolling() {

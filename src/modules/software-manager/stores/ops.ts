@@ -41,6 +41,7 @@ export const useOpsStore = defineStore('software-ops', () => {
   async function readLog(params: {
     installedId: string
     sourceIndex: number
+    archiveIndex?: number
     offset?: number | null
     before?: boolean
     limit?: number
@@ -51,6 +52,7 @@ export const useOpsStore = defineStore('software-ops', () => {
     return invoke<LogChunk>('read_log', {
       installedId: params.installedId,
       sourceIndex: params.sourceIndex,
+      archiveIndex: params.archiveIndex ?? 0,
       offset: params.offset ?? null,
       before: params.before ?? false,
       limit: params.limit ?? 2000,
