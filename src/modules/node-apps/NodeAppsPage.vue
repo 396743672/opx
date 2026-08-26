@@ -153,7 +153,19 @@ async function remove(a: NodeApp) {
 }
 
 function openEdit(a?: NodeApp) {
-  editTarget.value = a ?? null
+  editTarget.value = a ?? {
+    id: '',
+    name: '',
+    entry_path: '',
+    args: [],
+    env_vars: [],
+    auto_start: false,
+    startup_order: 0,
+    status: 'stopped',
+    pid: null,
+    last_error: null,
+    log_path: '',
+  }
   form.value = a
     ? {
         name: a.name,
