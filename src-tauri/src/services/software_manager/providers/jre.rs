@@ -49,7 +49,7 @@ impl SoftwareProvider for JreProvider {
             description: "Java 运行时环境（Eclipse Temurin）".to_string(),
             description_i18n: Some("catalogDesc.jre".to_string()),
             category: SoftwareCategory::Runtime,
-            icon: "mdi:play-circle".to_string(),
+            icon: "mdi:language-java".to_string(),
             versions,
             default_version: "1.8".to_string(),
         }
