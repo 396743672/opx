@@ -62,6 +62,9 @@ pub struct Stack {
     /// 应用启动时是否自动拉起该服务组（默认 false）
     #[serde(default)]
     pub auto_start: bool,
+    /// 最近一次启动报告（持久化，供前端「启动报告」展示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_report: Option<StackRunReport>,
 }
 
 /// 成员运行态（不持久化）
@@ -81,6 +84,24 @@ pub enum StackMemberStatus {
 pub struct StackMemberRuntime {
     pub ref_id: String,
     pub status: StackMemberStatus,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// 最近一次栈启动报告
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StackRunReport {
+    pub started_at: String,
+    pub total_elapsed_ms: u64,
+    pub members: Vec<StackMemberReport>,
+}
+
+/// 单个成员启动耗时/结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StackMemberReport {
+    pub ref_id: String,
+    pub status: StackMemberStatus,
+    pub elapsed_ms: u64,
     #[serde(default)]
     pub message: String,
 }

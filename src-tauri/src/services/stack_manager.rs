@@ -28,8 +28,9 @@ use crate::commands::software as sw_commands;
 use crate::models::software::{SoftwareStatus};
 use crate::models::springboot::AppStatus;
 use crate::models::stack::{
-    CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberRuntime,
-    StackMemberStatus, StackStartPlan, StackStatusEvent, UpdateStackPayload,
+    CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberReport,
+    StackMemberRuntime, StackMemberStatus, StackRunReport, StackStartPlan,
+    StackStatusEvent, UpdateStackPayload,
 };
 use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
@@ -151,6 +152,7 @@ impl StackManager {
             updated_at: String::new(),
             managed_externals: None,
             auto_start: payload.auto_start,
+            last_run_report: None,
         };
         // 保存前环检测：存在环则拒绝写入
         let _ = Self::compute_plan(&stack)?;
@@ -325,6 +327,54 @@ impl StackManager {
 
     // ------------------------- 启动 / 停止 / 重启 -------------------------
 
+    /// 聚合启动报告（纯函数，便于单测）
+    pub fn build_run_report(
+        started_at: String,
+        total_elapsed_ms: u64,
+        members: Vec<(String, StackMemberStatus, u64, String)>,
+    ) -> StackRunReport {
+        StackRunReport {
+            started_at,
+            total_elapsed_ms,
+            members: members
+                .into_iter()
+                .map(|(ref_id, status, elapsed_ms, message)| StackMemberReport {
+                    ref_id,
+                    status,
+                    elapsed_ms,
+                    message,
+                })
+                .collect(),
+        }
+    }
+
+    /// 把本次启动结果写回栈记录并持久化（启动成功/失败回滚路径统一调用）
+    fn record_run_report(
+        &self,
+        stack_id: &str,
+        started_at: String,
+        total_elapsed_ms: u64,
+        member_status: &HashMap<String, StackMemberRuntime>,
+        t0: &HashMap<String, Instant>,
+    ) {
+        let members = member_status
+            .iter()
+            .map(|(ref_id, m)| {
+                let elapsed_ms = t0
+                    .get(ref_id)
+                    .map(|i| i.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
+                (ref_id.clone(), m.status, elapsed_ms, m.message.clone())
+            })
+            .collect();
+        let report = Self::build_run_report(started_at, total_elapsed_ms, members);
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(s) = inner.stacks.iter_mut().find(|s| s.id == stack_id) {
+            s.last_run_report = Some(report);
+        }
+        let _ = inner.save();
+    }
+
     /// 一键启动：逐批（layers 顺序）启动，批内并发；依赖就绪探测 + 重试 + 回滚。
     pub async fn start(&self, app: &AppHandle, id: &str) -> Result<StackStartPlan, String> {
         let stack = self
@@ -333,6 +383,11 @@ impl StackManager {
 
         // 运行前再次拓扑排序（双重保险）
         let plan = Self::compute_plan(&stack)?;
+
+        // 启动报告埋点：起始时刻 + 每成员 t0（启动发起时刻）
+        let started_at = Utc::now().to_rfc3339();
+        let start_instant = Instant::now();
+        let mut t0: HashMap<String, Instant> = HashMap::new();
 
         // 初始化成员运行态
         let mut member_status: HashMap<String, StackMemberRuntime> = HashMap::new();
@@ -368,6 +423,9 @@ impl StackManager {
         let external_deps = self.collect_external_deps(&stack);
         let mut managed_external: Vec<String> = Vec::new();
         if !external_deps.is_empty() {
+            for dep in &external_deps {
+                t0.insert(dep.clone(), Instant::now());
+            }
             for dep in &external_deps {
                 member_status.insert(
                     dep.clone(),
@@ -425,6 +483,13 @@ impl StackManager {
                     StackMemberStatus::Failed,
                     member_status.values().cloned().collect(),
                 );
+                self.record_run_report(
+                    &stack.id,
+                    started_at.clone(),
+                    start_instant.elapsed().as_millis() as u64,
+                    &member_status,
+                    &t0,
+                );
                 return Err(format!(
                     "外部依赖启动失败，已回滚本次拉起的依赖: {}",
                     err
@@ -436,6 +501,7 @@ impl StackManager {
             // 批内并发启动
             let mut futs = Vec::new();
             for ref_id in layer {
+                t0.insert(ref_id.clone(), Instant::now());
                 let item = stack
                     .items
                     .iter()
@@ -507,6 +573,13 @@ impl StackManager {
                     StackMemberStatus::Failed,
                     member_status.values().cloned().collect(),
                 );
+                self.record_run_report(
+                    &stack.id,
+                    started_at.clone(),
+                    start_instant.elapsed().as_millis() as u64,
+                    &member_status,
+                    &t0,
+                );
                 return Err(format!(
                     "栈启动失败，已回滚本次已启动成员: {}",
                     failure_msgs.join("; ")
@@ -514,6 +587,13 @@ impl StackManager {
             }
         }
 
+        self.record_run_report(
+            &stack.id,
+            started_at.clone(),
+            start_instant.elapsed().as_millis() as u64,
+            &member_status,
+            &t0,
+        );
         self.emit(
             app,
             &stack.id,
@@ -1084,6 +1164,7 @@ mod tests {
             updated_at: String::new(),
             managed_externals: None,
             auto_start: false,
+            last_run_report: None,
         }
     }
 
@@ -1179,6 +1260,24 @@ mod tests {
         let plan = StackManager::compute_plan(&stack).expect("空栈应为无环计划");
         assert!(plan.layers.is_empty(), "空栈应产生空分层");
         assert!(plan.cycle.is_none());
+    }
+
+    #[test]
+    fn test_build_run_report_aggregates_elapsed() {
+        let members = vec![
+            ("mysql".to_string(), StackMemberStatus::Running, 1200u64, String::new()),
+            ("redis".to_string(), StackMemberStatus::Running, 800u64, String::new()),
+            ("app".to_string(), StackMemberStatus::Failed, 3000u64, "port busy".to_string()),
+        ];
+        let report = StackManager::build_run_report(
+            "2026-08-26T00:00:00Z".to_string(),
+            5000u64,
+            members,
+        );
+        assert_eq!(report.total_elapsed_ms, 5000);
+        assert_eq!(report.members.len(), 3);
+        assert_eq!(report.members[2].status, StackMemberStatus::Failed);
+        assert_eq!(report.members[2].elapsed_ms, 3000);
     }
 
     #[test]
