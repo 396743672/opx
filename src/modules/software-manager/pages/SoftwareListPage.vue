@@ -12,8 +12,13 @@
         <button class="btn" @click="loadInstalled" :disabled="loading">
           <Icon icon="mdi:refresh" /> {{ $t('refresh') }}
         </button>
+        <button class="btn" @click="showLogSearch = true">
+          <Icon icon="mdi:magnify" /> {{ $t('globalLogSearch') }}
+        </button>
       </template>
     </PageHeader>
+
+    <GlobalLogSearchDialog v-if="showLogSearch" @close="showLogSearch = false" />
 
     <div v-if="loading && installed.length === 0">
       <EmptyState icon="mdi:loading" :title="$t('loading')" :description="''" />
@@ -138,6 +143,7 @@ import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
 import LogViewerDialog from '../components/LogViewerDialog.vue'
+import GlobalLogSearchDialog from '../components/GlobalLogSearchDialog.vue'
 import BackupRestoreDialog from '../components/BackupRestoreDialog.vue'
 import InstallProgressDialog from '../components/InstallProgressDialog.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
@@ -149,6 +155,7 @@ const lifecycleStore = useLifecycleStore()
 const { t } = useI18n()
 
 const installed = ref<InstalledSoftware[]>([])
+const showLogSearch = ref(false)
 const loading = ref(false)
 const configTarget = ref<InstalledSoftware | null>(null)
 const startupTarget = ref<InstalledSoftware | null>(null)

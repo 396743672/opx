@@ -574,6 +574,8 @@ export default {
   logs: '日志',
   backup: '备份',
   logViewer: '日志查看器',
+  globalLogSearch: '日志搜索',
+  matches: '条匹配',
   fromTime: '开始时间',
   toTime: '结束时间',
   exportCombined: '导出并合并归档',

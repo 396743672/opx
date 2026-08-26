@@ -164,6 +164,16 @@ pub struct ArchiveLog {
     pub label: String,
 }
 
+/// 全局日志搜索命中（search_all_logs 返回）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogHit {
+    pub installed_id: String,
+    pub software_name: String,
+    pub source_label: String,
+    pub file: String,
+    pub line: String,
+}
+
 /// 单条日志来源（序列化给前端展示与选择）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogSource {

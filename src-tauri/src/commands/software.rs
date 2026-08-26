@@ -1912,6 +1912,22 @@ pub async fn export_combined_log(
     .map_err(|e| e.to_string())
 }
 
+/// 全局日志关键字搜索（所有已装软件的日志源 + 归档）
+#[tauri::command]
+pub async fn search_all_logs(
+    manager: State<'_, Arc<SoftwareManager>>,
+    keyword: String,
+    per_source_limit: Option<usize>,
+    total_limit: Option<usize>,
+) -> Result<Vec<crate::models::software::LogHit>, String> {
+    Ok(log_viewer::search_all(
+        &manager,
+        &keyword,
+        per_source_limit.unwrap_or(50),
+        total_limit.unwrap_or(200),
+    ))
+}
+
 /// 创建快照（压缩 data_dirs → <app_data>/backups/<id>/<ts>.zip，并写 manifest）
 #[tauri::command]
 pub async fn create_snapshot(

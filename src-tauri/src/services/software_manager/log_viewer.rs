@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
 
-use crate::models::software::{ArchiveLog, LogChunk, LogSource, LogSourceKind};
+use crate::models::software::{ArchiveLog, LogChunk, LogHit, LogSource, LogSourceKind};
 use crate::services::software_manager::providers::{all_providers, LogContext};
 use crate::services::software_manager::SoftwareManager;
 
@@ -289,6 +289,58 @@ pub fn export_combined_source(
     }
     write_file(primary)?;
     Ok(())
+}
+
+/// 全局日志关键字搜索：遍历所有已装软件的日志源（主文件 + 归档），返回命中的行。
+/// ponytail: 逐文件整读匹配（按天归档/单文件体积可控），源码级每源限量、总量限量。
+pub fn search_all(
+    manager: &SoftwareManager,
+    keyword: &str,
+    per_source_limit: usize,
+    total_limit: usize,
+) -> Vec<LogHit> {
+    let kw = keyword.to_lowercase();
+    if kw.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<LogHit> = Vec::new();
+    for sw in manager.get_installed() {
+        let Ok(sources) = list_log_sources(manager, &sw.id) else { continue };
+        for src in sources {
+            let label = src.label.clone().unwrap_or_default();
+            let mut paths: Vec<String> = vec![src.path.clone()];
+            paths.extend(src.archives.iter().map(|a| a.path.clone()));
+            let mut src_hits = 0usize;
+            for p in paths {
+                if src_hits >= per_source_limit || out.len() >= total_limit {
+                    break;
+                }
+                let data = if p.to_lowercase().ends_with(".gz") {
+                    decompress_gzip(Path::new(&p)).unwrap_or_default()
+                } else {
+                    std::fs::read(&p).unwrap_or_default()
+                };
+                let text = decode_log_bytes(&data);
+                for line in text.lines() {
+                    if !line.to_lowercase().contains(&kw) {
+                        continue;
+                    }
+                    out.push(LogHit {
+                        installed_id: sw.id.clone(),
+                        software_name: sw.name.clone(),
+                        source_label: label.clone(),
+                        file: p.clone(),
+                        line: line.to_string(),
+                    });
+                    src_hits += 1;
+                    if src_hits >= per_source_limit || out.len() >= total_limit {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 为单个日志源附加历史归档（provider 复用入口）

@@ -574,6 +574,8 @@ export default {
   logs: 'Logs',
   backup: 'Backup',
   logViewer: 'Log Viewer',
+  globalLogSearch: 'Log Search',
+  matches: 'matches',
   fromTime: 'From',
   toTime: 'To',
   exportCombined: 'Export & merge archives',

@@ -265,6 +265,15 @@ export interface ArchiveLog {
   label: string
 }
 
+/** 全局日志搜索命中（search_all_logs 返回） */
+export interface LogHit {
+  installed_id: string
+  software_name: string
+  source_label: string
+  file: string
+  line: string
+}
+
 /** 读取日志返回的分块（前端轮询/分页消费） */
 export interface LogChunk {
   /** 命中的日志行（已应用关键字/正则/级别过滤） */
