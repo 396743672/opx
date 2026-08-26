@@ -12,7 +12,7 @@
           <div v-if="software.is_custom" class="tag custom">{{ $t('custom') }}</div>
         </div>
       </div>
-      <StatusBadge :status="software.status" :error="software.last_error" />
+      <StatusBadge v-if="!isRuntime" :status="software.status" :error="software.last_error" />
     </div>
 
     <div class="card-body">
