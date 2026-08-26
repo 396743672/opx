@@ -12,11 +12,39 @@
             <button class="btn" @click="$emit('close')"><Icon icon="mdi:close" /></button>
           </div>
         </div>
+
+        <!-- 源 tab（按 level 多源） -->
+        <div v-if="sources.length" class="source-tabs">
+          <button
+            v-for="(s, idx) in sources"
+            :key="idx"
+            class="source-tab"
+            :class="{ active: idx === activeSource }"
+            @click="selectSource(idx)"
+          >
+            <Icon icon="mdi:file" />
+            {{ s.label }}
+            <span v-if="s.has_levels" class="lvl-badge" :title="$t('level')">L</span>
+          </button>
+        </div>
+
         <div class="log-box" ref="logBox" @scroll.passive="onScroll">
           <div v-if="error" class="p-4 text-red-400 font-sans">{{ error }}</div>
-          <div v-else-if="lines.length === 0" class="p-4 text-gray-500 font-sans">{{ $t('noLogs') }}</div>
-          <div v-else-if="filtered.length === 0" class="p-4 text-gray-500 font-sans">{{ $t('noMatches') }}</div>
-          <div v-for="item in filtered" :key="item.idx" class="log-line" v-html="highlight(item.raw)"></div>
+          <div v-else-if="!sources.length && !loading" class="p-4 text-gray-500 font-sans">{{ $t('noLogs') }}</div>
+          <div v-else-if="loading" class="p-4 text-gray-500 font-sans">{{ $t('loading') }}</div>
+          <template v-else>
+            <button
+              v-if="hasMore"
+              class="history-btn"
+              :disabled="loadingHistory"
+              @click="loadHistory"
+            >
+              ↑ {{ $t('loadEarlier') }}
+            </button>
+            <div v-if="filtered.length === 0" class="p-4 text-gray-500 font-sans">{{ $t('noMatches') }}</div>
+            <div v-for="item in filtered" :key="item.idx" class="log-line" v-html="highlight(item.raw)"></div>
+            <div v-if="truncated" class="p-2 text-xs text-gray-400 font-sans">{{ $t('logTruncated') }}</div>
+          </template>
         </div>
       </div>
     </div>
@@ -27,18 +55,29 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import type { LogSource } from '@/models/software'
 
-const props = defineProps<{ appId: string; appName: string; logPath: string }>()
+const props = defineProps<{ appId: string; appName: string; logPath?: string }>()
 defineEmits<{ close: [] }>()
 
+const sources = ref<LogSource[]>([])
+const activeSource = ref(0)
 const lines = ref<string[]>([])
 const error = ref('')
 const keyword = ref('')
 const realtime = ref(true)
 const autoScroll = ref(true)
+const loading = ref(false)
+const loadingHistory = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 let offset = 0
+const startOffset = ref(0)
+const archiveIndex = ref(0)
+const hasMore = ref(false)
+const truncated = ref(false)
 const logBox = ref<HTMLElement | null>(null)
+
+const TAIL_LIMIT = 2000
 
 // 搜索过滤：保留稳定原始索引作 key，避免过滤时行错位闪烁
 const filtered = computed(() => {
@@ -53,11 +92,9 @@ const filtered = computed(() => {
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
-
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
-
 function highlight(raw: string): string {
   const escaped = escapeHtml(raw)
   const kw = keyword.value.trim()
@@ -76,32 +113,61 @@ function onRealtimeToggle() {
   if (realtime.value) startPolling()
   else stopPolling()
 }
-
 function startPolling() {
   if (timer) return
   timer = setInterval(loadTail, 2000)
 }
-
 function stopPolling() {
   if (timer) { clearInterval(timer); timer = null }
 }
-
-// 用户手动上翻/下滚时关闭自动跟随，避免新日志强制把视口拉回底部
 function onScroll() {
   const el = logBox.value
   if (!el) return
   if (el.scrollTop + el.clientHeight < el.scrollHeight - 8) autoScroll.value = false
 }
 
-async function loadTail() {
+async function loadSources() {
+  stopPolling()
+  loading.value = true
   error.value = ''
-  if (!props.logPath) { error.value = '日志路径未配置'; return }
+  sources.value = []
+  activeSource.value = 0
+  offset = 0
+  archiveIndex.value = 0
+  hasMore.value = false
+  lines.value = []
   try {
-    const chunk = await invoke<{ lines: string[], offset: number }>('read_springboot_log', { path: props.logPath, offset })
+    sources.value = await invoke<LogSource[]>('list_springboot_log_sources', { appId: props.appId })
+    if (sources.value.length) {
+      await loadTail()
+      if (realtime.value) startPolling()
+    }
+  } catch (e: any) {
+    error.value = '无法读取日志: ' + (typeof e === 'string' ? e : (e?.message || ''))
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadTail() {
+  if (!sources.value.length) return
+  error.value = ''
+  try {
+    const chunk = await invoke<any>('read_springboot_log', {
+      appId: props.appId,
+      sourceIndex: activeSource.value,
+      archiveIndex: 0,
+      offset: null,
+      before: false,
+      limit: TAIL_LIMIT,
+      keyword: keyword.value.trim() || null,
+    })
     if (offset === 0) lines.value = chunk.lines
     else lines.value.push(...chunk.lines)
-    offset = chunk.offset
-    // 自动跟随：勾选 autoScroll 时滚动到底（不依赖 watch——push 不触发 ref 替换 watch）
+    offset = chunk.end_offset
+    startOffset.value = chunk.start_offset
+    hasMore.value = chunk.has_more
+    truncated.value = chunk.truncated
     if (autoScroll.value) {
       await nextTick()
       if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
@@ -111,9 +177,45 @@ async function loadTail() {
   }
 }
 
-async function firstLoad() {
+async function loadHistory() {
+  if (!hasMore.value) return
+  loadingHistory.value = true
+  try {
+    const chunk = await invoke<any>('read_springboot_log', {
+      appId: props.appId,
+      sourceIndex: activeSource.value,
+      archiveIndex: archiveIndex.value,
+      offset: startOffset.value,
+      before: true,
+      limit: TAIL_LIMIT,
+      keyword: keyword.value.trim() || null,
+    })
+    lines.value = [...chunk.lines, ...lines.value]
+    startOffset.value = chunk.start_offset
+    archiveIndex.value = chunk.archive_index ?? archiveIndex.value
+    hasMore.value = chunk.has_more
+    truncated.value = chunk.truncated
+  } catch (e: any) {
+    error.value = '无法读取日志: ' + (typeof e === 'string' ? e : (e?.message || ''))
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+async function selectSource(idx: number) {
+  if (activeSource.value === idx) return
+  stopPolling()
+  activeSource.value = idx
+  offset = 0
+  archiveIndex.value = 0
+  hasMore.value = false
+  lines.value = []
   await loadTail()
-  startPolling()
+  if (realtime.value) startPolling()
+}
+
+async function firstLoad() {
+  await loadSources()
 }
 onMounted(firstLoad)
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
@@ -136,6 +238,25 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   padding: 14px 20px; border-bottom: 1px solid var(--color-border);
 }
 .dialog-hd h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.source-tabs {
+  display: flex; gap: 4px; padding: 8px 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.source-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border-radius: 6px 6px 0 0;
+  font-size: 12px; cursor: pointer;
+  color: var(--color-muted-foreground);
+  background: transparent; border: none;
+}
+.source-tab.active {
+  background: var(--color-muted); color: var(--color-primary); font-weight: 500;
+}
+.lvl-badge {
+  font-size: 9px; padding: 0 4px; border-radius: 999px;
+  background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+  color: var(--color-primary);
+}
 .log-box {
   background: #0d1117; color: #58a6ff;
   font-family: ui-monospace, monospace; font-size: 12px;
@@ -148,6 +269,13 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   color: #ffd54a;
   border-radius: 2px;
   padding: 0 1px;
+}
+.history-btn {
+  display: inline-block; margin-bottom: 8px;
+  padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; font-size: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card); color: var(--color-foreground);
 }
 .search-input {
   height: 28px; padding: 0 10px; width: 180px;
