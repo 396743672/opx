@@ -11,6 +11,7 @@ use crate::models::software::{
     SoftwareStatus, UninstallSafetyReport,
 };
 use crate::oplog;
+use crate::utils::topo::topo_layers;
 use crate::services::software_manager::{
     backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
     log_viewer, providers, uninstall_guard, SoftwareManager,
@@ -339,7 +340,8 @@ async fn do_upgrade(
         last_error: None,
         custom_start_command: None,
         icon: String::new(),
-        category: software.category.clone(),
+            category: software.category.clone(),
+            depends_on: vec![],
     };
 
     // remove_installed 会删除旧安装目录（旧目录已压缩删除，此时路径不存在，不误删 .bak.zip 备份）
@@ -574,6 +576,27 @@ pub async fn start_software(
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
+        // 依赖编排：先按拓扑序拉起未运行的依赖，再启动自身
+        if let Err(e) = ensure_dependencies(&manager_arc, &app_handle, &installed_id_for_task).await
+        {
+            tracing::warn!(error = %e, installed_id = %installed_id_for_task, "依赖编排失败");
+            let _ = manager_arc.update_runtime_fields(
+                &installed_id_for_task,
+                SoftwareStatus::Error,
+                None,
+                None,
+                None,
+                Some(format!("依赖编排失败：{}", e)),
+            );
+            lifecycle::emit_status_changed(
+                &app_handle,
+                &installed_id_for_task,
+                SoftwareStatus::Error,
+                None,
+                Some(format!("依赖编排失败：{}", e)),
+            );
+            return;
+        }
         let result = do_start_software(&manager_arc, &app_handle, &installed_id_for_task, init_password).await;
         if let Err(e) = result {
             let _ = manager_arc.update_runtime_fields(
@@ -600,6 +623,65 @@ pub async fn start_software(
     });
 
     Ok(())
+}
+
+/// 更新软件的依赖清单（需已安装的软件 id；自动去重、剔除自引用与不存在项）。
+#[tauri::command]
+pub async fn update_software_deps(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    depends_on: Vec<String>,
+) -> Result<InstalledSoftware, String> {
+    manager
+        .update_dependencies(&installed_id, depends_on)
+        .map_err(|e| e.to_string())?;
+    manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))
+}
+
+/// 解析某软件的依赖拓扑（分层 + 环检测），供前端依赖图/启动预览。返回被拉起的依赖顺序。
+#[tauri::command]
+pub async fn resolve_software_deps(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<serde_json::Value, String> {
+    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+    let software = manager_arc
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let deps_ids: Vec<String> = software.depends_on.clone();
+    let deps = |n: &str| -> Vec<String> {
+        manager_arc
+            .find_installed(n)
+            .map(|sw| sw.depends_on)
+            .unwrap_or_default()
+    };
+    let tiebreak: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    // 闭包展开
+    let mut visited: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = vec![installed_id.clone()];
+    while let Some(id) = stack.pop() {
+        if visited.contains(&id) {
+            continue;
+        }
+        visited.push(id.clone());
+        for dep in deps(&id) {
+            stack.push(dep);
+        }
+    }
+    let plan = crate::utils::topo::topo_layers(&visited, deps, &tiebreak);
+    let missing: Vec<String> = visited
+        .iter()
+        .filter(|id| id.as_str() != installed_id && manager_arc.find_installed(id).is_none())
+        .cloned()
+        .collect();
+    Ok(serde_json::json!({
+        "layers": plan.layers,
+        "cycle": plan.cycle,
+        "missing": missing,
+        "direct": deps_ids,
+    }))
 }
 
 /// 收集软件启动将监听的端口，用于启动前占用校验。
@@ -719,6 +801,90 @@ fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result
         resp.status(),
         resp.text().unwrap_or_default()
     )
+}
+
+/// 解析并拉起目标软件的依赖（拓扑序，最底层依赖先启动）。
+///
+/// 语义（与设计文档一致）：
+/// - 依赖须处于运行态：未运行（Stopped/Unknown/Error）则先自动启动；已运行跳过；
+/// - 依赖未安装 → 报错并列出缺失项；
+/// - 依赖成环 → 报错并返回环路径；
+/// - 依赖启动失败 → 中止本次启动链，已拉起的依赖保留运行（不回滚，避免误杀共享依赖）。
+///
+/// 返回本次已拉起的依赖 id 列表。
+async fn ensure_dependencies(
+    manager: &Arc<SoftwareManager>,
+    app: &AppHandle,
+    target_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    // 1. DFS 展开依赖闭包（含 target，用于环检测；visited 防环无限递归）
+    let mut visited: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = vec![target_id.to_string()];
+    while let Some(id) = stack.pop() {
+        if visited.contains(&id) {
+            continue;
+        }
+        visited.push(id.clone());
+        if let Some(sw) = manager.find_installed(&id) {
+            for dep in &sw.depends_on {
+                stack.push(dep.clone());
+            }
+        }
+    }
+
+    // 2. 拓扑分层 + 环检测（target 也纳入，确保 target→依赖成环能检出）
+    let deps = |n: &str| -> Vec<String> {
+        manager
+            .find_installed(n)
+            .map(|sw| sw.depends_on)
+            .unwrap_or_default()
+    };
+    let tiebreak: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let plan = topo_layers(&visited, deps, &tiebreak);
+    if let Some(cycle) = plan.cycle {
+        return Err(anyhow::anyhow!(
+            "检测到依赖环：{}",
+            cycle.join(" -> ")
+        ));
+    }
+
+    // 3. 校验依赖均已安装
+    let mut missing: Vec<String> = Vec::new();
+    for id in &visited {
+        if id.as_str() == target_id {
+            continue;
+        }
+        if manager.find_installed(id).is_none() {
+            missing.push(id.clone());
+        }
+    }
+    if !missing.is_empty() {
+        return Err(anyhow::anyhow!(
+            "依赖未安装：{}",
+            missing.join(", ")
+        ));
+    }
+
+    // 4. 逐层拉起未运行的依赖（layers[0] 为最底层）
+    let mut started: Vec<String> = Vec::new();
+    for layer in &plan.layers {
+        for dep_id in layer {
+            if dep_id.as_str() == target_id {
+                continue;
+            }
+            let sw = manager.find_installed(dep_id).ok_or_else(|| {
+                anyhow::anyhow!("依赖不存在：{}", dep_id)
+            })?;
+            if sw.status == SoftwareStatus::Running {
+                continue; // 已在运行，跳过
+            }
+            // 拉起依赖（递归，依赖的依赖也按自身 depends_on 编排）
+            do_start_software(manager, app, dep_id, None).await?;
+            started.push(dep_id.clone());
+        }
+    }
+
+    Ok(started)
 }
 
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
@@ -2205,6 +2371,7 @@ mod tests {
             custom_start_command: None,
         icon: String::new(),
             category: None,
+            depends_on: vec![],
         }
     }
 

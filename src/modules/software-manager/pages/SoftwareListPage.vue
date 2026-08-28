@@ -56,10 +56,12 @@
             :acting-states="actingStates"
             :upgrade-to="upgradeMap[item.key]"
             :rollback-to="rollbackMap[item.key]"
+            :deps-name-map="depsNameMap"
             @start="onStart(item)"
             @stop="onStop(item)"
             @config="onConfig(item)"
             @startup-settings="onStartupSettings(item)"
+            @deps="onDeps(item)"
             @uninstall="onUninstall(item)"
             @log="onLog(item)"
             @backup="onBackup(item)"
@@ -80,6 +82,12 @@
       v-if="startupTarget"
       :software="startupTarget"
       @close="onStartupSettingsClose"
+    />
+    <DependenciesDialog
+      v-if="depsTarget"
+      :software="depsTarget"
+      :all-software="installed"
+      @close="depsTarget = null"
     />
     <CustomStartCommandDialog
       v-if="customTarget"
@@ -140,6 +148,7 @@ import CategoryTabs from '../components/CategoryTabs.vue'
 import type { CategoryTab } from '../components/CategoryTabs.vue'
 import ConfigEditDialog from '../components/ConfigEditDialog.vue'
 import StartupSettingsDialog from '../components/StartupSettingsDialog.vue'
+import DependenciesDialog from '../components/DependenciesDialog.vue'
 import CustomStartCommandDialog from '../components/CustomStartCommandDialog.vue'
 import UninstallBlockedDialog from '../components/UninstallBlockedDialog.vue'
 import LogViewerDialog from '../components/LogViewerDialog.vue'
@@ -159,6 +168,7 @@ const showLogSearch = ref(false)
 const loading = ref(false)
 const configTarget = ref<InstalledSoftware | null>(null)
 const startupTarget = ref<InstalledSoftware | null>(null)
+const depsTarget = ref<InstalledSoftware | null>(null)
 const customTarget = ref<InstalledSoftware | null>(null)
 const uninstallTarget = ref<InstalledSoftware | null>(null)
 const logTarget = ref<InstalledSoftware | null>(null)
@@ -310,6 +320,13 @@ const manageableInstances = computed(() =>
   installed.value.filter((s) => s.category !== SoftwareCategory.Runtime),
 )
 
+// 软件 id → 显示名（卡片展示已配置依赖的友好名用）
+const depsNameMap = computed(() => {
+  const map: Record<string, string> = {}
+  for (const s of installed.value) map[s.id] = s.name
+  return map
+})
+
 function mergeStatus(item: InstalledSoftware): InstalledSoftware {
   const liveStatus = lifecycleStore.getStatus(item.id)
   const livePid = lifecycleStore.getPid(item.id)
@@ -418,6 +435,10 @@ function onConfig(item: InstalledSoftware) {
 
 function onStartupSettings(item: InstalledSoftware) {
   startupTarget.value = item
+}
+
+function onDeps(item: InstalledSoftware) {
+  depsTarget.value = item
 }
 
 function onStartupSettingsClose() {

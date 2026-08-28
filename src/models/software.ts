@@ -96,6 +96,7 @@ export interface InstalledSoftware {
   icon: string
   // 来自 catalog 的软件分类；自定义软件为 null
   category: SoftwareCategory | null
+  depends_on: string[]
 }
 
 export interface InstalledSoftwareList {

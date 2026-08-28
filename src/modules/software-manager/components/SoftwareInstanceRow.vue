@@ -33,6 +33,14 @@
           >{{ runtimePort }} <Icon icon="mdi:open-in-new" /></a>
           <b v-else class="tnum">{{ runtimePort }}</b>
         </span>
+        <span v-if="depsNames.length" class="kv">
+          <Icon icon="mdi:graph-outline" /> {{ $t('deps') }}
+          <span class="deps-list">
+            <span v-for="d in depsNames" :key="d" class="dep-chip">
+              <Icon icon="mdi:lan-connect" /> {{ d }}
+            </span>
+          </span>
+        </span>
       </div>
       <div v-if="software.last_error" class="error-text">
         <Icon icon="mdi:alert-circle" /> {{ translateError(software.last_error, t, te) }}
@@ -80,6 +88,9 @@
         <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
           <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
         </button>
+        <button class="btn" :disabled="!canStartupSettings" :title="$t('depsEdit')" @click="$emit('deps')">
+          <Icon icon="mdi:graph-outline" /> {{ $t('depsEdit') }}
+        </button>
       </template>
       <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
         <Icon icon="mdi:delete" /> {{ $t('uninstall') }}
@@ -103,6 +114,8 @@ const props = defineProps<{
   actingStates?: Record<string, 'start' | 'stop'>
   upgradeTo?: string | null
   rollbackTo?: string | null
+  /** 依赖 id → 显示名（用于展示已配置依赖友好名，缺省回退为 id） */
+  depsNameMap?: Record<string, string>
 }>()
 
 defineEmits<{
@@ -116,6 +129,7 @@ defineEmits<{
   reset: []
   upgrade: []
   rollback: []
+  deps: []
 }>()
 
 const CATEGORY_CLASS: Record<string, string> = {
@@ -189,6 +203,11 @@ const canOpenWeb = computed(
 
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
 const isRuntime = computed(() => props.software.category === SoftwareCategory.Runtime)
+
+// 已配置依赖的显示名列表（缺省回退为 id）
+const depsNames = computed(() =>
+  (props.software.depends_on ?? []).map((id) => props.depsNameMap?.[id] || id),
+)
 
 const canStart = computed(
   () =>
@@ -366,6 +385,26 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.deps-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.dep-chip svg {
+  width: 10px;
+  height: 10px;
 }
 .tag {
   font-size: 10px;

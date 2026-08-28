@@ -231,6 +231,8 @@ pub fn run() {
             commands::software::start_software,
             commands::software::stop_software,
             commands::software::restart_software,
+            commands::software::update_software_deps,
+            commands::software::resolve_software_deps,
             commands::software::get_software_status,
             commands::software::get_config_schema,
             commands::software::read_config_form,
@@ -411,6 +413,7 @@ mod tests {
             custom_start_command: None,
             icon: String::new(),
             category: None,
+            depends_on: vec![],
         }
     }
 

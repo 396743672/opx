@@ -142,6 +142,10 @@ pub struct InstalledSoftware {
     /// 软件分类（来自 catalog，用于栈候选等按类型过滤）；自定义软件为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<SoftwareCategory>,
+
+    /// 依赖的其他已装软件 id（启动时按拓扑序自动拉起，须处于运行态）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 // ===== C 扩展（日志查看器 + 备份/恢复）新增类型 =====

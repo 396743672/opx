@@ -309,6 +309,33 @@ impl SoftwareManager {
         Ok(())
     }
 
+    /// 更新软件依赖清单（depends_on）。自动去重、剔除自引用与不存在项之后保存。
+    pub fn update_dependencies(&self, installed_id: &str, deps: Vec<String>) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        // 有效依赖 id：必须已安装（先取集合，避免与 item 可变借用冲突）
+        let valid_ids: std::collections::HashSet<String> =
+            installed.software.iter().map(|s| s.id.clone()).collect();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        // 有效依赖：非自身、非空、必须已安装、去重
+        let mut cleaned: Vec<String> = Vec::new();
+        for d in deps {
+            if d == installed_id || d.is_empty() || !valid_ids.contains(&d) {
+                continue;
+            }
+            if !cleaned.contains(&d) {
+                cleaned.push(d);
+            }
+        }
+        item.depends_on = cleaned;
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+
     /// 获取所有 auto_start=true 的实例（按 startup_order 升序排序，返回时解析路径）
     pub fn list_auto_start(&self) -> Vec<InstalledSoftware> {
         let installed = self.installed.read().unwrap();
