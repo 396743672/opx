@@ -38,6 +38,16 @@ pub fn is_unexpected_exit(auto_restart: bool, running: bool, pid: Option<u32>, a
     auto_restart && running && pid.is_some() && !alive
 }
 
+/// 进程已被外部结束、但**未**开启自动重启：只需把陈旧状态纠正为 Error，不重启。
+pub fn is_dead_without_autorestart(
+    auto_restart: bool,
+    running: bool,
+    pid: Option<u32>,
+    alive: bool,
+) -> bool {
+    !auto_restart && running && pid.is_some() && !alive
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct Attempt {
     failures: u32,
@@ -112,6 +122,26 @@ async fn watch_software(
         let alive = running && sw.pid.map_or(false, health_check::is_process_alive);
         if running && alive {
             state.record_healthy(&key);
+            continue;
+        }
+        // 进程被外部结束但未开启自动重启：仅把陈旧状态纠正为 Error，避免 UI 长期显示「运行中」
+        if is_dead_without_autorestart(sw.auto_restart, running, sw.pid, alive) {
+            let msg = "进程已退出".to_string();
+            let _ = software.update_runtime_fields(
+                &sw.id,
+                SoftwareStatus::Error,
+                None,
+                None,
+                None,
+                Some(msg.clone()),
+            );
+            crate::services::software_manager::lifecycle::emit_status_changed(
+                app,
+                &sw.id,
+                SoftwareStatus::Error,
+                None,
+                Some(msg),
+            );
             continue;
         }
         if !is_unexpected_exit(sw.auto_restart, running, sw.pid, alive) {
@@ -323,6 +353,18 @@ mod tests {
         s.record_failure("software:a");
         s.record_failure("software:a");
         assert_eq!(s.failures("software:a"), 2);
+    }
+
+    #[test]
+    fn dead_without_autorestart_detected() {
+        // 未开自动重启 + 运行中 + 有 pid + 已死 → true
+        assert!(is_dead_without_autorestart(false, true, Some(1), false));
+        // 开了自动重启 → 走重启逻辑，不是本判定
+        assert!(!is_dead_without_autorestart(true, true, Some(1), false));
+        // 进程活着 / 无 pid / 非运行态 → false
+        assert!(!is_dead_without_autorestart(false, true, Some(1), true));
+        assert!(!is_dead_without_autorestart(false, true, None, false));
+        assert!(!is_dead_without_autorestart(false, false, Some(1), false));
     }
 
     #[test]
