@@ -359,6 +359,7 @@ export default {
   acmeDone: '证书已签发',
   certExpiresAt: '到期时间',
   acmeNeedToken: '请先在设置中配置 DNS 服务商 Token',
+  acmeNeedIssue: '请先申请证书再保存',
   routeRules: '路由规则',
   addRoute: '添加路由规则',
   routePath: '路径',

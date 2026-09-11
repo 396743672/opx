@@ -75,6 +75,7 @@
                 <div v-if="form.ssl.cert_expires_at" class="hint">
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
                 </div>
+                <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
                 <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
               </template>
               <div class="hint">{{ $t('sslHint') }}</div>
@@ -97,7 +98,7 @@
           <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
             class="btn primary"
-            :disabled="saving || (tab === 'form' && !!site.custom_conf)"
+            :disabled="saving || (tab === 'form' && (!!site.custom_conf || sslNeedIssue))"
             :title="tab === 'form' && site.custom_conf ? $t('customConfLocked') : ''"
             @click="save()"
           >
@@ -162,6 +163,11 @@ const hasDnsToken = computed(() => {
   return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
 })
 
+// ACME 未签发（无证书路径）时不允许保存：后端 regenerate 会写入脏内存态
+const sslNeedIssue = computed(
+  () => certSource.value === 'acme' && !form.value.ssl.cert_path
+)
+
 async function issueCert() {
   acmeBusy.value = true
   acmeStatus.value = t('acmeIssuing')
@@ -179,6 +185,7 @@ async function issueCert() {
     } catch {
       // 刷新失败不影响签发结果提示
     }
+    emit('saved')
   } catch (e) {
     acmeStatus.value = String(e)
   } finally {
@@ -241,6 +248,10 @@ function validateName(): boolean {
 
 async function save() {
   if (tab.value === 'form' && !validateName()) return
+  if (tab.value === 'form' && sslNeedIssue.value) {
+    saveError.value = t('acmeNeedIssue')
+    return
+  }
   saving.value = true
   try {
     if (tab.value === 'source') {
