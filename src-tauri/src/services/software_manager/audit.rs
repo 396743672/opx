@@ -154,6 +154,14 @@ fn csv_field(s: &str) -> String {
     }
 }
 
+/// 导出用时间格式：RFC3339 → `YYYY-MM-DD HH:MM:SS`（保留原始时区偏移，不做换算）。
+/// 无法解析时原样返回。
+fn fmt_ts(ts: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|_| ts.to_string())
+}
+
 /// 按过滤条件导出 CSV（UTF-8 BOM，便于 Excel 正确识别中文）到 dest_path。
 pub fn export_csv(
     days: u64,
@@ -166,7 +174,7 @@ pub fn export_csv(
     for e in q.entries {
         out.push_str(&format!(
             "{},{},{},{}\n",
-            csv_field(&e.ts),
+            csv_field(&fmt_ts(&e.ts)),
             csv_field(&e.action),
             csv_field(&e.target),
             csv_field(&e.detail)
@@ -262,6 +270,15 @@ mod tests {
         assert_eq!(csv_field("a,b"), "\"a,b\"");
         assert_eq!(csv_field("he said \"hi\""), "\"he said \"\"hi\"\"\"");
         assert_eq!(csv_field("l1\nl2"), "\"l1\nl2\"");
+    }
+
+    #[test]
+    fn fmt_ts_renders_standard_format_and_falls_back() {
+        // 保留原始时区偏移，不做换算
+        assert_eq!(fmt_ts("2026-09-11T12:39:28.558596100+08:00"), "2026-09-11 12:39:28");
+        assert_eq!(fmt_ts("2026-09-11T04:00:00Z"), "2026-09-11 04:00:00");
+        // 不可解析时原样返回
+        assert_eq!(fmt_ts("not-a-timestamp"), "not-a-timestamp");
     }
 
     #[test]
