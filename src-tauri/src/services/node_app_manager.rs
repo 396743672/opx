@@ -298,6 +298,14 @@ impl NodeAppManager {
 
     pub fn stop(&self, app_id: &str) -> Result<(), String> {
         let app = self.get(app_id).ok_or_else(|| "未找到应用".to_string())?;
+        // 先置 Stopping（进程随后可能死亡），避免看门狗把「已死但状态仍 Running」
+        // 误判为意外退出而重新拉起用户主动停止的应用（与 software/springboot 一致）
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
+                a.status = NodeAppStatus::Stopping;
+            }
+        }
         if let Some(pid) = app.pid {
             if health_check::is_process_alive(pid) {
                 lifecycle::stop_one(pid);
