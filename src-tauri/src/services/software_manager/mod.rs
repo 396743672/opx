@@ -292,12 +292,13 @@ impl SoftwareManager {
         Ok(())
     }
 
-    /// 更新启动设置（auto_start + startup_order）
+    /// 更新启动设置（auto_start + startup_order + auto_restart）
     pub fn update_startup_settings(
         &self,
         installed_id: &str,
         auto_start: bool,
         order: u32,
+        auto_restart: bool,
     ) -> Result<()> {
         let mut installed = self.installed.write().unwrap();
         let item = installed
@@ -307,6 +308,7 @@ impl SoftwareManager {
             .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
         item.auto_start_on_app_start = auto_start;
         item.startup_order = order;
+        item.auto_restart = auto_restart;
         Self::save_installed_list(&installed)?;
         Ok(())
     }

@@ -33,6 +33,22 @@
         </div>
       </div>
 
+      <div class="startup-row">
+        <div
+          class="toggle"
+          :class="{ off: !autoRestart }"
+          role="switch"
+          :aria-checked="autoRestart"
+          tabindex="0"
+          @click="autoRestart = !autoRestart"
+          @keydown.enter.prevent="autoRestart = !autoRestart"
+          @keydown.space.prevent="autoRestart = !autoRestart"
+        ></div>
+        <div class="label">
+          <div>{{ $t('autoRestart') }}</div>
+        </div>
+      </div>
+
       <div class="field">
         <label class="form-field-label">{{ $t('startupOrder') }}</label>
         <div class="order-input">
@@ -68,11 +84,13 @@ const emit = defineEmits<{ close: [] }>()
 
 const autoStart = ref(false)
 const order = ref(0)
+const autoRestart = ref(false)
 const saving = ref(false)
 
 onMounted(() => {
   autoStart.value = props.software.auto_start_on_app_start
   order.value = props.software.startup_order
+  autoRestart.value = props.software.auto_restart ?? false
 })
 
 async function onSave() {
@@ -82,6 +100,7 @@ async function onSave() {
       installedId: props.software.id,
       autoStart: autoStart.value,
       order: order.value,
+      autoRestart: autoRestart.value,
     })
     emit('close')
   } catch (e) {

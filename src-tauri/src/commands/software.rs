@@ -1956,18 +1956,19 @@ pub async fn list_custom_templates() -> Result<Vec<serde_json::Value>, String> {
         .collect())
 }
 
-/// 保存启动设置（auto_start + startup_order）
+/// 保存启动设置（auto_start + startup_order + auto_restart）
 #[tauri::command]
 pub async fn save_startup_settings(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
     auto_start: bool,
     order: u32,
+    auto_restart: bool,
 ) -> Result<(), String> {
     let name = manager.find_installed(&installed_id).map(|s| s.name).unwrap_or_default();
     oplog!("save_startup", &format!("{} ({})", name, installed_id));
     manager
-        .update_startup_settings(&installed_id, auto_start, order)
+        .update_startup_settings(&installed_id, auto_start, order, auto_restart)
         .map_err(|e| e.to_string())
 }
 
