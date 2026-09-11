@@ -41,20 +41,42 @@
               <span class="text-sm">{{ $t('sslEnable') }}</span>
             </label>
             <template v-if="form.ssl.enabled">
-              <div class="flex gap-2">
-                <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
-                <button class="btn" :disabled="genning" @click="genCert">
-                  <Icon icon="mdi:shield-check-outline" /> {{ $t('genCert') }}
-                </button>
-              </div>
               <div>
-                <label class="lbl">{{ $t('sslCertPath') }}</label>
-                <input v-model="form.ssl.cert_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.crt" />
+                <label class="lbl">{{ $t('certSource') }}</label>
+                <select v-model="certSource" class="input w-full" :disabled="!!site.custom_conf">
+                  <option value="self-signed">{{ $t('certSelfSigned') }}</option>
+                  <option value="acme">{{ $t('certAcme') }}</option>
+                </select>
               </div>
-              <div>
-                <label class="lbl">{{ $t('sslKeyPath') }}</label>
-                <input v-model="form.ssl.key_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.key" />
-              </div>
+              <template v-if="certSource === 'self-signed'">
+                <div class="flex gap-2">
+                  <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
+                  <button class="btn" :disabled="genning" @click="genCert">
+                    <Icon icon="mdi:shield-check-outline" /> {{ $t('genCert') }}
+                  </button>
+                </div>
+                <div>
+                  <label class="lbl">{{ $t('sslCertPath') }}</label>
+                  <input v-model="form.ssl.cert_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.crt" />
+                </div>
+                <div>
+                  <label class="lbl">{{ $t('sslKeyPath') }}</label>
+                  <input v-model="form.ssl.key_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.key" />
+                </div>
+              </template>
+              <template v-else>
+                <div class="flex items-center gap-2">
+                  <button class="btn primary" :disabled="acmeBusy" @click="issueCert">
+                    <Icon icon="mdi:certificate-outline" />
+                    {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
+                  </button>
+                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ acmeStatus }}</span>
+                </div>
+                <div v-if="form.ssl.cert_expires_at" class="hint">
+                  {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
+                </div>
+                <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
+              </template>
               <div class="hint">{{ $t('sslHint') }}</div>
             </template>
           </div>
@@ -111,21 +133,69 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
+import { useSettingsStore } from '@/stores/settings'
 import type { Site, SiteLocation } from '@/models/website'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
+const settingsStore = useSettingsStore()
 
 const form = ref<Site>(props.site)
 if (!form.value.ssl) {
   form.value.ssl = { enabled: false, cert_path: null, key_path: null, acme: false, cert_expires_at: null }
 }
+const certSource = ref<'self-signed' | 'acme'>(props.site.ssl?.acme ? 'acme' : 'self-signed')
+const acmeBusy = ref(false)
+const acmeStatus = ref('')
+let unlistenAcme: (() => void) | null = null
+
+const hasDnsToken = computed(() => {
+  const s = settingsStore.settings
+  if (!s) return true // 设置未加载完成时不误报
+  return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
+})
+
+async function issueCert() {
+  acmeBusy.value = true
+  acmeStatus.value = t('acmeIssuing')
+  try {
+    await invoke('issue_site_certificate', { siteId: props.site.id })
+    acmeStatus.value = t('acmeDone')
+    // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
+    try {
+      const list = await invoke<Site[]>('list_websites')
+      const fresh = list.find((s) => s.id === props.site.id)
+      if (fresh?.ssl) {
+        form.value.ssl = fresh.ssl
+        if (fresh.server_name) genDomain.value = fresh.server_name
+      }
+    } catch {
+      // 刷新失败不影响签发结果提示
+    }
+  } catch (e) {
+    acmeStatus.value = String(e)
+  } finally {
+    acmeBusy.value = false
+  }
+}
+
+onMounted(async () => {
+  unlistenAcme = await listen<{ domain: string; phase: string; message: string }>('acme-progress', (e) => {
+    if (e.payload.domain !== props.site.server_name) return
+    acmeStatus.value = e.payload.message || e.payload.phase
+  })
+})
+onUnmounted(() => {
+  unlistenAcme?.()
+})
+
 const genDomain = ref(props.site.server_name || '')
 const genning = ref(false)
 
@@ -180,6 +250,7 @@ async function save() {
       })
     } else {
       // 保存即生效：nginx 运行中时后端自动校验并 reload
+      form.value.ssl.acme = certSource.value === 'acme'
       await invoke('save_website', { site: form.value })
     }
     emit('saved')
