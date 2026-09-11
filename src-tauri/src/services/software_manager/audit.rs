@@ -106,6 +106,45 @@ pub fn query(days: u64, action: Option<&str>, keyword: Option<&str>, limit: usiz
     AuditQuery { entries, truncated }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ActionCount {
+    pub action: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditStats {
+    pub today: u64,
+    pub total: u64,
+    pub by_action: Vec<ActionCount>,
+    pub last_ts: Option<String>,
+}
+
+/// 统计最近 days 天：今日条数、总数、按 action 计数（降序，同数按 action 升序）、最近时间。
+pub fn stats(days: u64) -> AuditStats {
+    let all = read_days(days);
+    let today_prefix = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let today = all.iter().filter(|e| e.ts.starts_with(&today_prefix)).count() as u64;
+
+    let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for e in &all {
+        *counts.entry(e.action.clone()).or_insert(0) += 1;
+    }
+    let mut by_action: Vec<ActionCount> = counts
+        .into_iter()
+        .map(|(action, count)| ActionCount { action, count })
+        .collect();
+    by_action.sort_by(|a, b| b.count.cmp(&a.count).then(a.action.cmp(&b.action)));
+
+    let last_ts = all.iter().map(|e| e.ts.clone()).max();
+    AuditStats {
+        today,
+        total: all.len() as u64,
+        by_action,
+        last_ts,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +197,22 @@ mod tests {
         let q = query(1, Some("__qa_q_trunc"), Some(&u), 2);
         assert_eq!(q.entries.len(), 2);
         assert!(q.truncated);
+    }
+
+    #[test]
+    fn stats_counts_today_total_and_by_action() {
+        let u = uniq();
+        record("__qa_stats", &u, "");
+        record("__qa_stats", &u, "");
+        let s = stats(1);
+        assert!(s.total >= 2);
+        assert!(s.today >= 2);
+        let c = s
+            .by_action
+            .iter()
+            .find(|c| c.action == "__qa_stats")
+            .expect("action counted");
+        assert!(c.count >= 2);
+        assert!(s.last_ts.is_some());
     }
 }
