@@ -559,7 +559,7 @@ pub async fn start_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("start", &software.name);
+    oplog!("start", &software.name, &format!("{} ({})", software.version, software.id));
 
     lifecycle::validate_start_transition(software.status).map_err(|e| e.to_string())?;
 
@@ -1428,7 +1428,7 @@ pub async fn stop_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("stop", &software.name);
+    oplog!("stop", &software.name, &format!("{} ({})", software.version, software.id));
 
     lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
 
@@ -1552,7 +1552,7 @@ pub async fn restart_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("restart", &software.name);
+    oplog!("restart", &software.name, &format!("{} ({})", software.version, software.id));
 
     let should_stop = software.status == SoftwareStatus::Running
         || software.status == SoftwareStatus::Starting;
