@@ -15,12 +15,18 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
     }
 }
 
-/// 从 settings.json 读取设置（失败返回默认值）。
+/// 读取 settings.json；文件缺失或内容损坏时返回默认设置（并记录告警）。
 pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
     let path = crate::utils::paths::settings_path();
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).map_err(|e| e.to_string()),
-        Err(_) => Ok(Default::default()),
+    let Ok(s) = std::fs::read_to_string(&path) else {
+        return Ok(Default::default());
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "settings.json 解析失败，使用默认设置");
+            Ok(Default::default())
+        }
     }
 }
 

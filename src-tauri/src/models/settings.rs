@@ -68,3 +68,23 @@ impl Default for AppSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_deserialize_legacy_json_without_acme_fields() {
+        // 真实旧 settings.json 的形状（不含新增三字段）
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"https://mirrors.aliyun.com",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.dns_provider, "cloudflare");
+        assert!(s.cloudflare_api_token.is_empty());
+        assert!(!s.acme_use_staging);
+    }
+}
