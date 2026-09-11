@@ -684,6 +684,12 @@ pub async fn resolve_software_deps(
     }))
 }
 
+/// 读取最近一次启动编排报告（软件/Node/Stack 统一启动序列的结果）。
+#[tauri::command]
+pub fn get_last_startup_report() -> Option<crate::services::startup_bootstrap::StartupReport> {
+    crate::services::startup_bootstrap::read_startup_report()
+}
+
 /// 收集软件启动将监听的端口，用于启动前占用校验。
 /// 标准软件：取 config_schema 中 field_type=Port 的字段，从 config 读端口值（缺失回退字段默认值）。
 /// 自定义软件：从 custom_start_command 的健康检查规格推导（Tcp 端口 / Http url 端口）。

@@ -1,6 +1,7 @@
 pub mod node_app_manager;
 pub mod software_manager;
 pub mod stack_manager;
+pub mod startup_bootstrap;
 pub mod website_manager;
 pub mod springboot_manager;
 pub mod system_monitor;

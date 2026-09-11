@@ -100,6 +100,58 @@
       </div>
     </div>
 
+    <!-- 最近一次启动报告 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
+      <CardHeader icon="mdi:rocket-launch-outline" :title="$t('startupReport')" />
+      <div v-if="!startupReport" class="py-3 text-sm text-muted-foreground">
+        {{ $t('noStartupReport') }}
+      </div>
+      <template v-else>
+        <div class="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+          <span>{{ formatStartTime(startupReport.started_at) }}</span>
+          <span class="tnum">
+            {{ $t('totalElapsed', { ms: startupReport.total_elapsed_ms }) }}
+          </span>
+          <span
+            class="inline-flex items-center gap-1 text-xs font-medium"
+            :class="failedCount ? 'text-destructive' : 'text-success'"
+          >
+            <Icon :icon="failedCount ? 'mdi:alert-circle' : 'mdi:check-circle'" />
+            {{ failedCount ? $t('startupFailedCount', { n: failedCount }) : $t('startupAllOk') }}
+          </span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div
+            v-for="item in startupReport.items"
+            :key="item.kind + item.id"
+            class="border border-border rounded-md px-3 py-2 flex items-center justify-between text-sm"
+          >
+            <span class="flex items-center gap-2 min-w-0">
+              <Icon
+                :icon="kindIcon(item.kind)"
+                class="shrink-0"
+                :class="item.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'"
+              />
+              <span class="truncate">{{ item.name }}</span>
+            </span>
+            <span class="flex items-center gap-2 shrink-0">
+              <span
+                class="text-xs"
+                :class="item.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'"
+                :title="item.message"
+              >
+                {{ item.status === 'failed' ? item.message || $t('failed') : `${item.elapsed_ms}ms` }}
+              </span>
+              <Icon
+                :icon="item.status === 'failed' ? 'mdi:close-circle' : 'mdi:check-circle'"
+                :class="item.status === 'failed' ? 'text-destructive' : 'text-success'"
+              />
+            </span>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <!-- 进程资源监控 -->
     <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
       <CardHeader icon="mdi:chart-timeline-variant" :title="$t('processMonitor')" />
@@ -276,6 +328,7 @@ import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
 import type { ProcessSample } from '@/models/process'
 import type { HistoryPoint } from '@/models/system'
+import type { StartupReport, StartupItemReport } from '@/models/startup-report'
 import { toast } from '@/composables/useToast'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -302,6 +355,38 @@ const runningSoftware = computed(() =>
     return status === SoftwareStatus.Running
   })
 )
+
+// ===== 最近一次启动报告 =====
+const startupReport = ref<StartupReport | null>(null)
+const failedCount = computed(() => startupReport.value?.items.filter(i => i.status === 'failed').length ?? 0)
+
+const KIND_ICON: Record<string, string> = {
+  software: 'mdi:package-variant-closed',
+  node: 'mdi:nodejs',
+  stack: 'mdi:layers-outline',
+}
+function kindIcon(kind: string): string {
+  return KIND_ICON[kind] ?? 'mdi:cube-outline'
+}
+
+function formatStartTime(iso: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+}
+
+/** 启动进行中：按 kind+id 就地更新报告项（后端在编排结束时再推完整报告覆盖） */
+function upsertStartupItem(item: StartupItemReport) {
+  if (!startupReport.value) {
+    startupReport.value = { started_at: new Date().toISOString(), total_elapsed_ms: 0, items: [] }
+  }
+  const items = startupReport.value.items
+  const i = items.findIndex(x => x.kind === item.kind && x.id === item.id)
+  i >= 0 ? (items[i] = item) : items.push(item)
+}
+
+let unlistenStartupProgress: UnlistenFn | null = null
+let unlistenStartupDone: UnlistenFn | null = null
 
 // ===== 进程资源监控 =====
 const expandedPids = ref<Set<number>>(new Set())
@@ -421,6 +506,12 @@ onMounted(async () => {
     await sbStore.fetchApps()
     runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
   })
+  // 启动报告：先展示上次持久化结果，再接收本次编排的实时进度与完成事件
+  startupReport.value = await invoke<StartupReport | null>('get_last_startup_report')
+  unlistenStartupProgress = await listen<StartupItemReport>('startup-progress', (e) => upsertStartupItem(e.payload))
+  unlistenStartupDone = await listen<StartupReport>('startup-completed', (e) => {
+    startupReport.value = e.payload
+  })
 })
 
 onUnmounted(() => {
@@ -429,5 +520,7 @@ onUnmounted(() => {
   lifecycleStore.destroyListener()
   stackStore.unsubscribe()
   unlistenSb?.()
+  unlistenStartupProgress?.()
+  unlistenStartupDone?.()
 })
 </script>

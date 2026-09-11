@@ -74,14 +74,12 @@ pub fn run() {
                 crate::services::springboot_manager::SpringBootManager::new(),
             );
             app.manage(springboot_mgr.clone());
-            // Node 应用管理：注册 State，并在启动时拉起 auto_start 的 Node 应用（用已装 Node）
+            // Node 应用管理：注册 State（auto_start 应用由底部统一启动编排协调器拉起）
             let node_mgr = std::sync::Arc::new(
                 crate::services::node_app_manager::NodeAppManager::new(),
             );
-            if let Some(exe) = crate::commands::node_app::resolve_node_exe(&software_mgr, None) {
-                node_mgr.auto_start_all(&exe);
-            }
-            app.manage(node_mgr);
+            let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
+            app.manage(node_mgr.clone());
             // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
             app.manage(std::sync::Arc::new(
                 crate::services::stack_manager::StackManager::new(software_mgr, springboot_mgr),
@@ -105,32 +103,31 @@ pub fn run() {
                 app.manage(std::sync::Mutex::new(g));
             }
 
-            // auto_start 拉起：按 startup_order 升序拉起 auto_start=true 的实例
-            // 后台异步执行，不阻塞 setup；单个实例慢启动不阻塞后续
-            let app_handle_for_auto = app.handle().clone();
-            let manager_arc = app
+            // 统一启动编排：把软件/Node/Stack 的 auto_start 收敛为单一有序序列，
+            // 失败逆序回滚已拉起项，产出并持久化启动报告。后台异步执行。
+            let app_handle_for_boot = app.handle().clone();
+            let sw_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
                 .clone();
-            // 定时备份调度（在 manager_arc 被 auto_start spawn 捕获前克隆）
-            let bs_manager = manager_arc.clone();
+            // 定时备份调度（复用协调器拿到的 software Arc clone）
+            let bs_manager = sw_mgr_arc.clone();
             let bs_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::software_manager::lifecycle::auto_start_all(
-                    &manager_arc,
-                    &app_handle_for_auto,
-                )
-                .await;
-            });
-
-            // 服务组自启：启用 auto_start 的服务组在应用启动后按序拉起
-            let app_handle_for_stack_auto = app.handle().clone();
             let stack_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
                 .inner()
                 .clone();
+            let node_mgr_arc = node_mgr.clone();
+            let node_exe_for_boot = node_exe.clone();
             tauri::async_runtime::spawn(async move {
-                stack_mgr_arc.auto_start_all(&app_handle_for_stack_auto).await;
+                crate::services::startup_bootstrap::run_bootstrap(
+                    sw_mgr_arc,
+                    node_mgr_arc,
+                    stack_mgr_arc,
+                    app_handle_for_boot,
+                    node_exe_for_boot,
+                )
+                .await;
             });
 
             // 定时备份调度：后台循环按配置间隔自动对实例做 Hot 快照
@@ -233,6 +230,7 @@ pub fn run() {
             commands::software::restart_software,
             commands::software::update_software_deps,
             commands::software::resolve_software_deps,
+            commands::software::get_last_startup_report,
             commands::software::get_software_status,
             commands::software::get_config_schema,
             commands::software::read_config_form,

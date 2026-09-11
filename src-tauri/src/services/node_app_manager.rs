@@ -309,6 +309,14 @@ impl NodeAppManager {
         Ok(())
     }
 
+    /// 返回 auto_start 的应用（按 startup_order 升序），供启动编排协调器聚合
+    pub fn auto_start_list(&self) -> Vec<NodeApp> {
+        let apps = self.inner.lock().unwrap().apps.clone();
+        let mut pick: Vec<NodeApp> = apps.into_iter().filter(|a| a.auto_start).collect();
+        pick.sort_by_key(|a| a.startup_order);
+        pick
+    }
+
     /// 应用启动时按 order 拉起 auto_start 的应用（node_exe 由命令层解析已装 Node）
     pub fn auto_start_all(&self, node_exe: &Path) {
         let apps = self.inner.lock().unwrap().apps.clone();
