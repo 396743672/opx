@@ -2,6 +2,17 @@
 //! 对开启 auto_restart 的项按「延迟 + 上限」策略自动拉起；连续失败达上限则放弃。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tauri::Emitter;
+
+use crate::models::software::SoftwareStatus;
+use crate::models::springboot::AppStatus;
+use crate::services::node_app_manager::NodeAppManager;
+use crate::services::software_manager::{health_check, SoftwareManager};
+use crate::services::springboot_manager::SpringBootManager;
 
 pub const POLL_INTERVAL_SECS: u64 = 5;
 pub const RESTART_DELAY_SECS: u64 = 2;
@@ -55,12 +66,6 @@ impl WatchdogState {
         self.attempts.get(key).map(|a| a.given_up).unwrap_or(false)
     }
 
-    pub fn record_success(&mut self, key: &str) {
-        let a = self.attempts.entry(key.to_string()).or_default();
-        a.failures = 0;
-        a.given_up = false;
-    }
-
     pub fn record_failure(&mut self, key: &str) {
         self.attempts.entry(key.to_string()).or_default().failures += 1;
     }
@@ -76,6 +81,206 @@ impl WatchdogState {
     /// 达到上限时置「已放弃」。
     pub fn mark_given_up(&mut self, key: &str) {
         self.attempts.entry(key.to_string()).or_default().given_up = true;
+    }
+}
+
+/// 看门狗主循环：永不返回，随 OPX 进程结束而终止。
+pub async fn run_watchdog(
+    software: Arc<SoftwareManager>,
+    springboot: Arc<SpringBootManager>,
+    node: Arc<NodeAppManager>,
+    app: tauri::AppHandle,
+    node_exe: Option<PathBuf>,
+) {
+    let mut state = WatchdogState::new();
+    loop {
+        tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+        watch_software(&software, &app, &mut state).await;
+        watch_springboot(&software, &springboot, &app, &mut state).await;
+        watch_node(&node, &app, node_exe.as_deref(), &mut state).await;
+    }
+}
+
+async fn watch_software(
+    software: &Arc<SoftwareManager>,
+    app: &tauri::AppHandle,
+    state: &mut WatchdogState,
+) {
+    for sw in software.get_installed() {
+        let key = format!("software:{}", sw.id);
+        let running = sw.status == SoftwareStatus::Running;
+        let alive = running && sw.pid.map_or(false, health_check::is_process_alive);
+        if running && alive {
+            state.record_healthy(&key);
+            continue;
+        }
+        if !is_unexpected_exit(sw.auto_restart, running, sw.pid, alive) {
+            continue;
+        }
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
+        if next_action(failures, MAX_FAILURES) == Action::GiveUp {
+            state.mark_given_up(&key);
+            {
+                let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
+                let _ = software.update_runtime_fields(
+                    &sw.id,
+                    SoftwareStatus::Error,
+                    None,
+                    None,
+                    None,
+                    Some(msg.clone()),
+                );
+                crate::services::software_manager::lifecycle::emit_status_changed(
+                    app,
+                    &sw.id,
+                    SoftwareStatus::Error,
+                    None,
+                    Some(msg),
+                );
+                let _ = app.emit(
+                    "auto-restart-giveup",
+                    serde_json::json!({ "kind": "software", "id": sw.id, "name": sw.name }),
+                );
+                crate::oplog!("auto_restart_giveup", &sw.name, &format!("连续 {} 次失败", failures));
+            }
+            continue;
+        }
+        // 陈旧 Running 会被 validate_start_transition 拒绝，先复位为 Stopped
+        let _ = software.update_runtime_fields(
+            &sw.id,
+            SoftwareStatus::Stopped,
+            None,
+            None,
+            Some(chrono::Local::now().naive_local()),
+            None,
+        );
+        tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
+        match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
+            Ok(_) => {
+                crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures + 1));
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
+            }
+            Err(e) => {
+                tracing::warn!(id = %sw.id, error = %e, "看门狗重启软件失败");
+                state.record_failure(&key);
+            }
+        }
+    }
+}
+
+async fn watch_springboot(
+    software: &Arc<SoftwareManager>,
+    springboot: &Arc<SpringBootManager>,
+    app: &tauri::AppHandle,
+    state: &mut WatchdogState,
+) {
+    for sb in springboot.snapshot_apps() {
+        let key = format!("springboot:{}", sb.id);
+        let running = sb.status == AppStatus::Running;
+        let alive = running && sb.pid.map_or(false, health_check::is_process_alive);
+        if running && alive {
+            state.record_healthy(&key);
+            continue;
+        }
+        if !is_unexpected_exit(sb.auto_restart, running, sb.pid, alive) {
+            continue;
+        }
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
+        if next_action(failures, MAX_FAILURES) == Action::GiveUp {
+            state.mark_given_up(&key);
+            {
+                let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
+                let _ = springboot.update_status(&sb.id, AppStatus::Error, None, Some(msg.clone()));
+                let _ = app.emit(
+                    "springboot-status-changed",
+                    (sb.id.clone(), "Error", None::<u32>, Some(msg)),
+                );
+                let _ = app.emit(
+                    "auto-restart-giveup",
+                    serde_json::json!({ "kind": "springboot", "id": sb.id, "name": sb.name }),
+                );
+                crate::oplog!("auto_restart_giveup", &sb.name, &format!("连续 {} 次失败", failures));
+            }
+            continue;
+        }
+        // 陈旧 Running 会被 start_app 拒绝，先复位为 Stopped
+        let _ = springboot.update_status(&sb.id, AppStatus::Stopped, None, None);
+        tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
+        match crate::services::springboot_manager::lifecycle::start_app(
+            &sb.id, springboot, software, app,
+        )
+        .await
+        {
+            Ok(_) => {
+                crate::oplog!("auto_restart", &sb.name, &format!("第 {} 次", failures + 1));
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
+            }
+            Err(e) => {
+                tracing::warn!(id = %sb.id, error = %e, "看门狗重启 SpringBoot 失败");
+                state.record_failure(&key);
+            }
+        }
+    }
+}
+
+async fn watch_node(
+    node: &Arc<NodeAppManager>,
+    app: &tauri::AppHandle,
+    node_exe: Option<&std::path::Path>,
+    state: &mut WatchdogState,
+) {
+    for na in node.snapshot() {
+        let key = format!("node:{}", na.id);
+        let running = na.status == crate::models::node_app::NodeAppStatus::Running;
+        let alive = running && na.pid.map_or(false, health_check::is_process_alive);
+        if running && alive {
+            state.record_healthy(&key);
+            continue;
+        }
+        if !is_unexpected_exit(na.auto_restart, running, na.pid, alive) {
+            continue;
+        }
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
+        if next_action(failures, MAX_FAILURES) == Action::GiveUp {
+            state.mark_given_up(&key);
+            {
+                let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
+                let _ = node.set_status(&na.id, crate::models::node_app::NodeAppStatus::Error, None, Some(msg));
+                let _ = app.emit(
+                    "auto-restart-giveup",
+                    serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
+                );
+                crate::oplog!("auto_restart_giveup", &na.name, &format!("连续 {} 次失败", failures));
+            }
+            continue;
+        }
+        let Some(exe) = node_exe else {
+            state.record_failure(&key);
+            continue;
+        };
+        tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
+        match node.start(&na.id, exe) {
+            Ok(_) => {
+                crate::oplog!("auto_restart", &na.name, &format!("第 {} 次", failures + 1));
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
+            }
+            Err(e) => {
+                tracing::warn!(id = %na.id, error = %e, "看门狗重启 Node 应用失败");
+                state.record_failure(&key);
+            }
+        }
     }
 }
 
@@ -112,15 +317,6 @@ mod tests {
         s.record_failure("software:a");
         s.record_failure("software:a");
         assert_eq!(s.failures("software:a"), 2);
-    }
-
-    #[test]
-    fn successful_restart_clears_failures_and_given_up() {
-        let mut s = WatchdogState::new();
-        s.record_failure("node:x");
-        s.record_success("node:x");
-        assert_eq!(s.failures("node:x"), 0);
-        assert!(!s.is_given_up("node:x"));
     }
 
     #[test]

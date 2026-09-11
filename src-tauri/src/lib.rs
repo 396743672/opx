@@ -136,6 +136,29 @@ pub fn run() {
                     .await;
             });
 
+            // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
+            let wd_software = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let wd_springboot = app
+                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+                .inner()
+                .clone();
+            let wd_node = node_mgr.clone();
+            let wd_app = app.handle().clone();
+            let wd_node_exe = node_exe.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::watchdog::run_watchdog(
+                    wd_software,
+                    wd_springboot,
+                    wd_node,
+                    wd_app,
+                    wd_node_exe,
+                )
+                .await;
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）

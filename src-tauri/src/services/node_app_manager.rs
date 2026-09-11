@@ -310,6 +310,38 @@ impl NodeAppManager {
         Ok(())
     }
 
+    /// 只读快照：不改状态、不落盘（供看门狗判定意外退出）
+    pub fn snapshot(&self) -> Vec<NodeApp> {
+        self.inner.lock().unwrap().apps.clone()
+    }
+
+    /// 写回状态/pid/错误并落盘（看门狗复位或放弃时使用）
+    pub fn set_status(
+        &self,
+        app_id: &str,
+        status: NodeAppStatus,
+        pid: Option<u32>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        let a = inner
+            .apps
+            .iter_mut()
+            .find(|a| a.id == app_id)
+            .ok_or_else(|| format!("未找到 Node 应用: {}", app_id))?;
+        a.status = status;
+        a.pid = pid;
+        a.last_error = error;
+        let apps = inner.apps.clone();
+        if let Some(parent) = inner.data_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(content) = serde_json::to_string_pretty(&apps) {
+            let _ = fs::write(&inner.data_path, content);
+        }
+        Ok(())
+    }
+
     /// 返回 auto_start 的应用（按 startup_order 升序），供启动编排协调器聚合
     pub fn auto_start_list(&self) -> Vec<NodeApp> {
         let apps = self.inner.lock().unwrap().apps.clone();
