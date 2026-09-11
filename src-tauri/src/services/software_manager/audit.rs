@@ -236,6 +236,14 @@ mod tests {
         let u = uniq();
         record("__qa_stats", &u, "");
         record("__qa_stats", &u, "");
+
+        // 断言本次运行写入的两条可被统计到（用唯一 target 隔离历史行）
+        let mine = read_days(1)
+            .into_iter()
+            .filter(|e| e.action == "__qa_stats" && e.target == u)
+            .count();
+        assert_eq!(mine, 2, "本次写入的两条应可被 read_days 统计到");
+
         let s = stats(1);
         assert!(s.total >= 2);
         assert!(s.today >= 2);
