@@ -126,7 +126,8 @@ async fn watch_software(
         }
         // 进程被外部结束但未开启自动重启：仅把陈旧状态纠正为 Error，避免 UI 长期显示「运行中」
         if is_dead_without_autorestart(sw.auto_restart, running, sw.pid, alive) {
-            let msg = "进程已退出".to_string();
+            // 带上软件名，避免全局错误弹窗只显示「进程已退出」而不知是哪个软件
+            let msg = format!("{} 进程已退出", sw.name);
             let _ = software.update_runtime_fields(
                 &sw.id,
                 SoftwareStatus::Error,
