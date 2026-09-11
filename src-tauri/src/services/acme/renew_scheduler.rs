@@ -18,47 +18,65 @@ pub fn needs_renewal(expires: Option<&str>, now: chrono::DateTime<chrono::Local>
     exp.with_timezone(&chrono::Local) - now < chrono::Duration::days(days)
 }
 
-pub async fn run_scheduler(app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<SoftwareManager>) {
+pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<SoftwareManager>) {
     let mut tick = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     tick.tick().await; // 消耗初始化 tick
     loop {
         tick.tick().await;
         let settings = match crate::commands::config::read_settings() {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(error = %e, "读取设置失败，跳过本轮 ACME 续期");
+                continue;
+            }
         };
         let acme = crate::services::acme::AcmeSettings {
             dns_provider: settings.dns_provider.clone(),
             cloudflare_api_token: settings.cloudflare_api_token.clone(),
             use_staging: settings.acme_use_staging,
         };
+
+        // 每轮解析一次 nginx 与证书目录，避免逐站点重算
+        let Ok(nginx) = crate::commands::website::resolve_nginx(&sm) else {
+            tracing::warn!("未找到可用的 nginx 实例，跳过本轮 ACME 续期");
+            continue;
+        };
+        let cert_dir = std::path::PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
+
         for site in wm.list().into_iter().filter(|s| s.ssl.acme) {
             if !needs_renewal(site.ssl.cert_expires_at.as_deref(), chrono::Local::now(), RENEW_BEFORE_DAYS) {
                 continue;
             }
-            let Some(domain) = site.server_name.clone().filter(|d| !d.trim().is_empty()) else {
-                continue;
+            let Some(raw) = site.server_name.clone() else { continue };
+            let domain = match crate::commands::website::sanitize_domain(&raw) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(site = %site.id, error = %e, "域名不合法，跳过续期");
+                    continue;
+                }
             };
-            let Ok(nginx) = crate::commands::website::resolve_nginx(&sm) else { continue };
-            let cert_dir = std::path::PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
             match crate::services::acme::issue_certificate(&domain, &acme, &cert_dir, |_, _| {}).await {
                 Ok((cert, key)) => {
                     if let Some(mut s) = wm.get(&site.id) {
                         s.ssl.cert_path = Some(cert.to_string_lossy().to_string());
                         s.ssl.key_path = Some(key.to_string_lossy().to_string());
-                        s.ssl.cert_expires_at = Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
-                        let _ = wm.upsert_mem(s);
-                        let _ = wm.persist();
+                        s.ssl.cert_expires_at =
+                            Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
+                        if let Err(e) = wm.upsert_mem(s) {
+                            tracing::warn!(site = %site.id, error = %e, "更新站点 SSL 配置失败");
+                        }
                     }
-                    let _ = crate::commands::website::regenerate(&sm, &wm, true);
+                    if let Err(e) = crate::commands::website::regenerate(&sm, &wm, true) {
+                        tracing::warn!(site = %site.id, error = %e, "续期后 nginx 配置重建/reload 失败");
+                    }
+                    if let Err(e) = wm.persist() {
+                        tracing::warn!(site = %site.id, error = %e, "持久化站点配置失败");
+                    }
                     crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
                 }
-                Err(e) => {
-                    tracing::warn!(site = %site.id, error = %e, "ACME 自动续期失败");
-                }
+                Err(e) => tracing::warn!(site = %site.id, error = %e, "ACME 自动续期失败"),
             }
         }
-        let _ = &app;
     }
 }
 
