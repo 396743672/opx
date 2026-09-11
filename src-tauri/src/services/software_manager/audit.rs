@@ -215,7 +215,9 @@ mod tests {
         let u = uniq();
         record("__qa_q_case", &format!("{u}_MixedCase"), "");
         assert_eq!(query(1, Some("__qa_q_case"), Some(&u.to_lowercase()), 100).entries.len(), 1);
-        assert_eq!(query(1, Some("__qa_q_case"), Some("mixedcase"), 100).entries.len(), 1);
+        // 用带唯一标记的大写形式验证大小写不敏感，避免匹配历史遗留行
+        let upper = format!("{u}_MIXEDCASE");
+        assert_eq!(query(1, Some("__qa_q_case"), Some(&upper), 100).entries.len(), 1);
     }
 
     #[test]
