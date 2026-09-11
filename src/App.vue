@@ -40,11 +40,14 @@ import { useSystemStore } from '@/stores/system'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
+import { toast } from '@/composables/useToast'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
 const lifecycleStore = useLifecycleStore()
+const { t } = useI18n()
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)
@@ -60,6 +63,7 @@ const defaultChoice = computed<'tray' | 'exit'>(() =>
 let unlistenClose: UnlistenFn | null = null
 let unlistenStopComplete: UnlistenFn | null = null
 let unlistenTrayStop: UnlistenFn | null = null
+let unlistenAutoRestartGiveUp: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -158,6 +162,10 @@ onMounted(async () => {
     }
   })
 
+  unlistenAutoRestartGiveUp = await listen<{ name: string }>('auto-restart-giveup', (e) => {
+    toast(t('autoRestartGiveUp', { name: e.payload?.name ?? '' }), 'err')
+  })
+
   window.clearTimeout(bootTimeout)
 })
 
@@ -165,6 +173,7 @@ onUnmounted(() => {
   unlistenClose?.()
   unlistenStopComplete?.()
   unlistenTrayStop?.()
+  unlistenAutoRestartGiveUp?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

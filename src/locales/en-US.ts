@@ -293,6 +293,7 @@ export default {
   all: 'All',
   noGroup: 'No Group',
   autoRestart: 'Auto Restart',
+  autoRestartGiveUp: 'Auto-restart for "{name}" gave up after repeated failures (check logs)',
   replaceJar: 'Replace JAR',
   replaceAndRestart: 'Replace & Restart',
   replaceRestartSuccess: 'Replaced and restarted',

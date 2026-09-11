@@ -142,6 +142,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
@@ -180,6 +181,7 @@ function applyPreset(p: (typeof PRESETS)[number]) {
   form.value.argsText = (form.value.argsText ? form.value.argsText + '\n' : '') + p.args
 }
 let timer: ReturnType<typeof setInterval> | null = null
+let unlistenAutoRestartGiveUp: UnlistenFn | null = null
 
 async function load() {
   loading.value = true
@@ -333,12 +335,16 @@ function statusLabel(s: string): string {
   return map[s] ?? 'unknown'
 }
 
-onMounted(() => {
+onMounted(async () => {
   load()
   timer = setInterval(load, 3000)
+  unlistenAutoRestartGiveUp = await listen<{ kind: string }>('auto-restart-giveup', (e) => {
+    if (e.payload?.kind === 'node') load()
+  })
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  unlistenAutoRestartGiveUp?.()
 })
 </script>
 
