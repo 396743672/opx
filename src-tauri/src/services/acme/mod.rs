@@ -1,6 +1,7 @@
 //! ACME（Let's Encrypt）DNS-01 签发与续期。
 
 pub mod dns;
+pub mod renew_scheduler;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

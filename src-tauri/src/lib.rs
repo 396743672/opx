@@ -136,6 +136,21 @@ pub fn run() {
                     .await;
             });
 
+            // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
+            let renew_wm = app
+                .state::<std::sync::Arc<crate::services::website_manager::WebsiteManager>>()
+                .inner()
+                .clone();
+            let renew_sm = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let renew_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::acme::renew_scheduler::run_scheduler(renew_app, renew_wm, renew_sm)
+                    .await;
+            });
+
             // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
             let wd_software = app
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
