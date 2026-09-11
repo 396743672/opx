@@ -164,6 +164,12 @@ const categoryClass = computed(() => CATEGORY_CLASS[props.software.category ?? '
 // 图标：优先 catalog 软件专属图标（与软件仓库一致）；自定义软件回退为上传图标
 const categoryIcon = computed(() => props.software.icon || 'mdi:upload')
 
+// Nacos 主版本号：2.x 与 3.x 的控制台端口与 context path 规则不同；无法解析时按 3.x
+function nacosMajor(): number {
+  const m = /^(\d+)/.exec(String(props.software.version ?? ''))
+  return m ? Number(m[1]) : 3
+}
+
 // 运行端口：优先运行时字段，其次按软件从 config 取对应端口字段（默认值兜底）
 const runtimePort = computed(() => {
   const s = props.software
@@ -173,7 +179,8 @@ const runtimePort = computed(() => {
     case 'minio':
       return cfg.console_port || 9001
     case 'nacos':
-      return cfg.console_port || 8080
+      // 3.x 控制台独立端口；2.x 控制台与主端口共用
+      return nacosMajor() >= 3 ? cfg.console_port || 8080 : cfg.port || 8848
     case 'nginx':
       return cfg.listen || 80
     case 'elasticsearch':
@@ -200,7 +207,8 @@ const webUrl = computed(() => {
     case 'minio':
       return `http://${host}:${port}`
     case 'nacos': {
-      const path = s.config?.context_path || '/nacos'
+      // 3.x 控制台无需 context path；2.x 需带（默认 /nacos）
+      const path = nacosMajor() >= 3 ? '' : s.config?.context_path || '/nacos'
       return `http://${host}:${port}${path}`
     }
   }
