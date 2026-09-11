@@ -134,7 +134,6 @@ export default {
   // 对话框标题
   customStartCommand: '自定义启动命令',
   uninstallCheck: '卸载校验',
-  todoPlaceholder: '功能待实现',
 
   // ConfigEditDialog
   noConfigSchema: '该软件无配置表单',
@@ -446,9 +445,9 @@ export default {
   uptime: '运行时长',
   noData: '暂无数据',
 
-  // 占位
-  comingSoon: '即将实现',
-  comingSoonDesc: '该功能正在开发中，敬请期待。',
+  // SpringBoot 空状态
+  noApplications: '暂无应用',
+  noApplicationsDesc: '点击「添加应用」注册你的第一个 SpringBoot 应用',
 
   // 关闭与退出
   closeDialogTitle: '关闭窗口',

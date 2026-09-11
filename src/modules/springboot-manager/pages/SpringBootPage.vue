@@ -74,8 +74,8 @@
     <div v-else-if="filteredApps.length === 0">
       <EmptyState
         icon="mdi:leaf"
-        :title="$t('comingSoon')"
-        :description="$t('comingSoonDesc')"
+        :title="$t('noApplications')"
+        :description="$t('noApplicationsDesc')"
       >
         <template #action>
           <button class="btn primary" @click="openAddDialog">

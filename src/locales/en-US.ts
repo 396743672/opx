@@ -134,7 +134,6 @@ export default {
   // Dialog titles
   customStartCommand: 'Custom Start Command',
   uninstallCheck: 'Uninstall Check',
-  todoPlaceholder: 'Feature to be implemented',
 
   // ConfigEditDialog
   noConfigSchema: 'No config schema for this software',
@@ -446,9 +445,9 @@ export default {
   uptime: 'Uptime',
   noData: 'No data',
 
-  // placeholder
-  comingSoon: 'Coming Soon',
-  comingSoonDesc: 'This feature is under development. Stay tuned.',
+  // SpringBoot empty state
+  noApplications: 'No applications',
+  noApplicationsDesc: 'Click "Add Application" to register your first SpringBoot app',
 
   // close & exit
   closeDialogTitle: 'Close Window',

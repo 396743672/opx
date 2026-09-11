@@ -419,8 +419,7 @@ mod tests {
         assert_eq!(parse_major_version(""), None);
     }
 
-    /// 预期：每实例应保留最多 5 个快照（第 6 个生成后最旧被删）。
-    /// 当前 create_snapshot 未实现滚动删除，manifest 会无限增长 => 该断言在修复前会失败。
+    /// 预期：每实例最多保留 5 个快照（write_manifest 按 MAX_SNAPSHOTS_PER_INSTANCE 滚动保留末尾最近的）。
     #[test]
     fn test_snapshot_retention_keeps_five() {
         let id = format!("__qa_retention_{}", unique_suffix());
