@@ -57,6 +57,9 @@ pub async fn issue_certificate(
         .new_order(&NewOrder::new(&[Identifier::Dns(domain.to_string())]))
         .await?;
 
+    // 记录本次创建的所有挑战记录，验证结束后统一清理
+    let mut created: Vec<(String, String)> = Vec::new();
+
     let mut authorizations = order.authorizations();
     while let Some(result) = authorizations.next().await {
         let mut authz = result?;
@@ -66,19 +69,33 @@ pub async fn issue_certificate(
         let value = challenge.key_authorization().dns_value();
         let fqdn = dns::acme_challenge_fqdn(domain);
         on_progress("waiting-dns", &format!("写入 TXT 记录 {}", fqdn));
-        provider.create_txt(&fqdn, &value).await?;
+        if let Err(e) = provider.create_txt(&fqdn, &value).await {
+            for (f, v) in &created {
+                let _ = provider.delete_txt(f, v).await;
+            }
+            return Err(e).context("创建 DNS 挑战记录失败");
+        }
+        created.push((fqdn, value));
         // 传播等待；ACME 轮询会重试兜底
         tokio::time::sleep(Duration::from_secs(dns::cloudflare::DNS_PROPAGATION_WAIT_SECS)).await;
         on_progress("validating", "等待 ACME 验证");
         if let Err(e) = challenge.set_ready().await {
-            let _ = provider.delete_txt(&fqdn, &value).await;
+            for (f, v) in &created {
+                let _ = provider.delete_txt(f, v).await;
+            }
             return Err(e).context("提交 DNS-01 challenge 失败");
         }
-        // 验证完成后清理 TXT（尽力）
-        let _ = provider.delete_txt(&fqdn, &value).await;
     }
 
-    order.poll_ready(&RetryPolicy::default()).await?;
+    // 验证（此时 DNS 记录必须仍在）
+    let poll_result = order.poll_ready(&RetryPolicy::default()).await;
+
+    // 无论验证成败，验证结束后统一清理 TXT
+    for (f, v) in &created {
+        let _ = provider.delete_txt(f, v).await;
+    }
+    poll_result?;
+
     on_progress("downloading", "签发完成，下载证书");
     let key_pem = order.finalize().await?;
     let cert_pem = order.poll_certificate(&RetryPolicy::default()).await?;
