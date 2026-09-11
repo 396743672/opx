@@ -416,6 +416,7 @@ mod tests {
             icon: String::new(),
             category: None,
             depends_on: vec![],
+            auto_restart: false,
         }
     }
 

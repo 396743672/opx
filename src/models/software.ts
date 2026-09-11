@@ -97,6 +97,8 @@ export interface InstalledSoftware {
   // 来自 catalog 的软件分类；自定义软件为 null
   category: SoftwareCategory | null
   depends_on: string[]
+  /** 进程意外退出后自动重启 */
+  auto_restart: boolean
 }
 
 export interface InstalledSoftwareList {

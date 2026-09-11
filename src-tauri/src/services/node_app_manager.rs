@@ -137,6 +137,7 @@ impl NodeAppManager {
             env_vars: payload.env_vars,
             auto_start: payload.auto_start,
             startup_order: payload.startup_order,
+            auto_restart: payload.auto_restart,
             status: NodeAppStatus::Stopped,
             pid: None,
             last_error: None,

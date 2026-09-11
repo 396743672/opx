@@ -40,6 +40,10 @@ pub struct NodeApp {
     #[serde(default)]
     pub startup_order: u32,
 
+    /// 进程意外退出后自动重启
+    #[serde(default)]
+    pub auto_restart: bool,
+
     // ===== 运行时字段 =====
     #[serde(default)]
     pub status: NodeAppStatus,
@@ -67,6 +71,8 @@ pub struct CreateNodeAppParams {
     pub auto_start: bool,
     #[serde(default)]
     pub startup_order: u32,
+    #[serde(default)]
+    pub auto_restart: bool,
 }
 
 /// Node 应用更新载荷（全可选）
@@ -84,4 +90,20 @@ pub struct UpdateNodeAppParams {
     pub auto_start: Option<bool>,
     #[serde(default)]
     pub startup_order: Option<u32>,
+    #[serde(default)]
+    pub auto_restart: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_app_params_default_auto_restart_false() {
+        let p: CreateNodeAppParams =
+            serde_json::from_str(r#"{"name":"a","entry_path":"b"}"#).expect("params parse");
+        assert!(!p.auto_restart);
+        let u: UpdateNodeAppParams = serde_json::from_str(r#"{}"#).expect("update parse");
+        assert!(u.auto_restart.is_none());
+    }
 }

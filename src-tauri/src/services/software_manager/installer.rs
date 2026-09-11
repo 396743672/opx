@@ -224,6 +224,7 @@ pub async fn install_software(
             icon: String::new(),
             category: None,
             depends_on: vec![],
+            auto_restart: false,
         };
         manager.add_installed(installed)?;
 
@@ -426,6 +427,7 @@ pub async fn install_custom(
             icon: String::new(),
             category: None,
             depends_on: vec![],
+            auto_restart: false,
         };
         manager.add_installed(installed)?;
 
@@ -963,6 +965,7 @@ async fn install_from_builtin(
             icon: String::new(),
             category: None,
             depends_on: vec![],
+            auto_restart: false,
         };
         manager.add_installed(installed)?;
 

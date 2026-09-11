@@ -231,6 +231,7 @@ function openEdit(a?: NodeApp) {
     env_vars: [],
     auto_start: false,
     startup_order: 0,
+    auto_restart: false,
     status: 'stopped',
     pid: null,
     last_error: null,

@@ -342,6 +342,7 @@ async fn do_upgrade(
         icon: String::new(),
             category: software.category.clone(),
             depends_on: vec![],
+            auto_restart: software.auto_restart,
     };
 
     // remove_installed 会删除旧安装目录（旧目录已压缩删除，此时路径不存在，不误删 .bak.zip 备份）
@@ -2439,6 +2440,7 @@ mod tests {
         icon: String::new(),
             category: None,
             depends_on: vec![],
+            auto_restart: false,
         }
     }
 
