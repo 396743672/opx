@@ -111,9 +111,15 @@ async fn load_or_create_account(staging: bool) -> Result<Account> {
     let dir_url = directory_url(staging);
     let path = account_path();
     if let Ok(raw) = std::fs::read_to_string(&path) {
-        if let Ok(creds) = serde_json::from_str::<AccountCredentials>(&raw) {
+        // directory 字段为 pub(crate) 无法直接访问，序列化后的 JSON 中含明文 "directory"
+        let stored_dir = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|v| v.get("directory")?.as_str().map(str::to_owned));
+        if stored_dir.as_deref() == Some(dir_url.as_str()) {
+            let creds = serde_json::from_str::<AccountCredentials>(&raw)?;
             return Ok(Account::builder()?.from_credentials(creds).await?);
         }
+        tracing::warn!("ACME 账户凭据目录不匹配（staging 切换），将重新注册账户");
     }
     let (account, creds) = Account::builder()?
         .create(
@@ -126,8 +132,13 @@ async fn load_or_create_account(staging: bool) -> Result<Account> {
             None,
         )
         .await?;
-    if let Ok(json) = serde_json::to_string_pretty(&creds) {
-        let _ = std::fs::write(&path, json);
+    match serde_json::to_string_pretty(&creds) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!(error = %e, "写入 ACME 账户凭据失败");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "序列化 ACME 账户凭据失败"),
     }
     Ok(account)
 }
