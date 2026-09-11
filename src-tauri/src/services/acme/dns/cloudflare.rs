@@ -51,15 +51,26 @@ impl DnsProvider for Cloudflare {
 
     fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move {
-            let body = self.get(&format!("{}/zones?per_page=50", API)).await?;
-            let names: Vec<String> = body["result"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|z| z["name"].as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let mut names: Vec<String> = Vec::new();
+            let mut page = 1u32;
+            loop {
+                let body = self
+                    .get(&format!("{}/zones?per_page=50&page={}", API, page))
+                    .await?;
+                let arr = body["result"].as_array().cloned().unwrap_or_default();
+                if arr.is_empty() {
+                    break;
+                }
+                for z in &arr {
+                    if let Some(n) = z["name"].as_str() {
+                        names.push(n.to_string());
+                    }
+                }
+                if arr.len() < 50 {
+                    break;
+                }
+                page += 1;
+            }
             longest_zone_match(domain, &names)
                 .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", domain))
         })
