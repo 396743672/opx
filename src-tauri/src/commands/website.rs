@@ -12,7 +12,7 @@ use crate::oplog;
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
-fn resolve_nginx(sm: &SoftwareManager) -> Result<crate::models::software::InstalledSoftware, String> {
+pub fn resolve_nginx(sm: &SoftwareManager) -> Result<crate::models::software::InstalledSoftware, String> {
     let mut nginx = sm
         .get_installed()
         .into_iter()
@@ -44,7 +44,7 @@ fn run_nginx(install_path: &Path, args: &[&str]) -> std::io::Result<std::process
 
 /// 从当前站点列表重建 conf/sites/*.conf（幂等，天然处理删除/下线）。
 /// 文件处理规则见 [`sync_site_files`]。
-fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result<(), String> {
+pub fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result<(), String> {
     let nginx = resolve_nginx(sm)?;
     let base = PathBuf::from(&nginx.install_path);
     let conf_dir = base.join("conf");
@@ -453,6 +453,62 @@ pub fn generate_self_signed_cert(
         .map_err(|e| format!("私钥写入失败: {e}"))?;
 
     Ok((rel("crt"), rel("key")))
+}
+
+/// 为站点申请/重新申请 Let's Encrypt 证书（DNS-01）。
+#[tauri::command]
+pub async fn issue_site_certificate(
+    app: tauri::AppHandle,
+    wm: State<'_, Arc<WebsiteManager>>,
+    sm: State<'_, Arc<SoftwareManager>>,
+    site_id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let site = wm.get(&site_id).ok_or_else(|| format!("未找到站点: {}", site_id))?;
+    let domain = site
+        .server_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "请先填写 server_name（域名）".to_string())?;
+
+    let settings = crate::commands::config::read_settings()?;
+    let acme_settings = crate::services::acme::AcmeSettings {
+        dns_provider: settings.dns_provider.clone(),
+        cloudflare_api_token: settings.cloudflare_api_token.clone(),
+        use_staging: settings.acme_use_staging,
+    };
+
+    let nginx = resolve_nginx(&sm)?;
+    let cert_dir = PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
+
+    let app_for_progress = app.clone();
+    let domain_for_progress = domain.clone();
+    let on_progress = move |phase: &str, msg: &str| {
+        let _ = app_for_progress.emit(
+            "acme-progress",
+            serde_json::json!({ "domain": domain_for_progress, "phase": phase, "message": msg }),
+        );
+    };
+
+    let (cert_path, key_path) =
+        crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    // 更新站点 ssl 并落盘 + 重新生成 nginx 配置并 reload
+    let mut updated = site.clone();
+    updated.ssl.enabled = true;
+    updated.ssl.acme = true;
+    updated.ssl.cert_path = Some(cert_path.to_string_lossy().to_string());
+    updated.ssl.key_path = Some(key_path.to_string_lossy().to_string());
+    updated.ssl.cert_expires_at =
+        Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
+    wm.upsert_mem(updated).map_err(|e| e.to_string())?;
+    wm.persist().map_err(|e| e.to_string())?;
+    regenerate(&sm, &wm, true)?;
+
+    oplog!("acme_issue", &format!("{} ({})", site.name, domain));
+    Ok(())
 }
 
 fn sanitize_cert_name(s: &str) -> String {
