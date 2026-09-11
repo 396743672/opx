@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod audit_log;
 pub mod backup;
 pub mod backup_scheduler;
