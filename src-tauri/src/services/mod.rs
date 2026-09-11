@@ -1,3 +1,4 @@
+pub mod acme;
 pub mod node_app_manager;
 pub mod software_manager;
 pub mod stack_manager;
