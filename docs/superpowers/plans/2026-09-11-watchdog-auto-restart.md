@@ -12,7 +12,7 @@
 
 - 分支：`feat/watchdog-auto-restart`（已创建；spec 已提交 `8d2bb7f`）。
 - 不引入新依赖（tokio / serde / chrono / once_cell 已在用）。
-- 参数固定：轮询 `POLL_INTERVAL=5s`、重启延迟 `RESTART_DELAY=2s`、上限 `MAX_FAILURES=3`、稳定重置 `RESET_AFTER_SECS=60`。
+- 参数固定：轮询 `POLL_INTERVAL_SECS=5`、重启延迟 `RESTART_DELAY_SECS=2`、失败上限 `MAX_FAILURES=3`（失败计数**无时间窗口**：每轮观察到意外退出 +1，观察到健康清零）。
 - 「意外退出」仅指进程消失（`!is_process_alive(pid)`），不做健康检查级假活检测。
 - 后端验证：`cd src-tauri && cargo test --lib`；前端：`npx vue-tsc --noEmit`。
 - i18n 键必须同时加 `src/locales/zh-CN.ts` 与 `src/locales/en-US.ts`。
@@ -139,9 +139,8 @@ git commit -m "feat(watchdog): 软件/Node 模型增加 auto_restart 字段"
 - Produces:
   - `pub enum Action { Restart, GiveUp }`
   - `pub fn next_action(failures: u32, limit: u32) -> Action`
-  - `pub fn effective_failures(failures: u32, elapsed_secs: u64, reset_after_secs: u64) -> u32`
   - `pub fn is_unexpected_exit(auto_restart: bool, running: bool, pid: Option<u32>, alive: bool) -> bool`
-  - `struct WatchdogState { attempts: HashMap<String, Attempt> }` 及 `failures_now/record_success/record_failure/record_healthy`
+  - `struct WatchdogState { attempts: HashMap<String, Attempt> }`，`Attempt { failures: u32, given_up: bool }`，方法 `failures/is_given_up/record_failure/record_healthy/mark_given_up`
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -899,7 +898,7 @@ git commit -m "chore(watchdog): 实机走查微调"
 **Spec coverage：**
 - 覆盖软件/SpringBoot/Node → Task 3 三个 `watch_*`；模型字段 → Task 1（SpringBoot 复用既有）
 - 意外退出判定（仅进程消失、主动停止/退出不误判）→ Task 2 `is_unexpected_exit` + Task 3 状态前置条件
-- 轮询 5s / 延迟 2s / 上限 3 / 稳定 60s 重置 → Task 2 常量 + Task 3 循环
+- 轮询 5s / 延迟 2s / 上限 3（观察即计数、健康即清零）→ Task 2 常量与状态 + Task 3 循环
 - 配置入口（软件启动设置、Node 表单、SpringBoot 既有）→ Task 4 / Task 5
 - 可观测（`auto_restart` / `auto_restart_giveup` 审计 + `auto-restart-giveup` 事件 → toast）→ Task 3 / Task 6
 - 测试（纯函数单测 + 实机走查）→ Task 2 / Task 7

@@ -115,7 +115,7 @@
 - `watchdog.rs` 纯函数单测（`cargo test --lib`）：
   - `is_unexpected_exit`：pid 死→true；pid 活→false；无 pid→false；非 Running→false；`auto_restart=false`→false。
   - `next_action`：`failures < limit` → Restart；`failures >= limit` → GiveUp。
-  - `effective_failures`：未到稳定阈值→原值；达到→0。
+  - 观察到「运行中且存活」→ 计数清零并解除 `given_up`。
 - 真实重启行为靠实机走查（杀进程观察是否拉起、连续失败是否放弃）。
 - 前端 `npx vue-tsc --noEmit`。
 
