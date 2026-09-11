@@ -149,7 +149,6 @@ git commit -m "feat(watchdog): 软件/Node 模型增加 auto_restart 字段"
 
 ```rust
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 #[cfg(test)]
 mod tests {
@@ -161,14 +160,6 @@ mod tests {
         assert_eq!(next_action(2, 3), Action::Restart);
         assert_eq!(next_action(3, 3), Action::GiveUp);
         assert_eq!(next_action(4, 3), Action::GiveUp);
-    }
-
-    #[test]
-    fn effective_failures_resets_after_stable_window() {
-        assert_eq!(effective_failures(3, 59, 60), 3);
-        assert_eq!(effective_failures(3, 60, 60), 0);
-        assert_eq!(effective_failures(3, 120, 60), 0);
-        assert_eq!(effective_failures(0, 5, 60), 0);
     }
 
     #[test]
@@ -186,30 +177,41 @@ mod tests {
     }
 
     #[test]
-    fn state_counts_failures_and_resets_on_success_or_health() {
+    fn failures_accumulate_without_time_reset() {
         let mut s = WatchdogState::new();
-        let now = Instant::now();
-        assert_eq!(s.failures_now("software:a", now), 0);
+        assert_eq!(s.failures("software:a"), 0);
         s.record_failure("software:a");
         s.record_failure("software:a");
-        assert_eq!(s.failures_now("software:a", now), 2);
-        s.record_success("software:a", now);
-        assert_eq!(s.failures_now("software:a", now), 0);
-        s.record_failure("software:a");
-        s.record_healthy("software:a");
-        assert_eq!(s.failures_now("software:a", now), 0);
+        assert_eq!(s.failures("software:a"), 2);
     }
 
     #[test]
-    fn state_resets_failures_after_stable_window() {
+    fn successful_restart_clears_failures_and_given_up() {
         let mut s = WatchdogState::new();
-        let past = Instant::now() - Duration::from_secs(120);
         s.record_failure("node:x");
-        s.record_failure("node:x");
-        s.record_success("node:x", past);
-        s.record_failure("node:x"); // 成功后又失败 1 次
-        // 距上次成功已 120s ≥ 60s → 计数归零
-        assert_eq!(s.failures_now("node:x", Instant::now()), 0);
+        s.record_success("node:x");
+        assert_eq!(s.failures("node:x"), 0);
+        assert!(!s.is_given_up("node:x"));
+    }
+
+    #[test]
+    fn given_up_blocks_until_healthy_observed() {
+        let mut s = WatchdogState::new();
+        s.record_failure("springboot:y");
+        s.mark_given_up("springboot:y");
+        assert!(s.is_given_up("springboot:y"));
+        // 观察到健康（用户手动拉起成功）→ 解除并清零
+        s.record_healthy("springboot:y");
+        assert!(!s.is_given_up("springboot:y"));
+        assert_eq!(s.failures("springboot:y"), 0);
+    }
+
+    #[test]
+    fn record_healthy_does_not_create_missing_entry() {
+        let mut s = WatchdogState::new();
+        s.record_healthy("ghost");
+        assert_eq!(s.failures("ghost"), 0);
+        assert!(!s.is_given_up("ghost"));
     }
 }
 ```
@@ -228,12 +230,10 @@ Expected: 编译失败（类型/函数未定义）；同时在 `src-tauri/src/se
 //! 对开启 auto_restart 的项按「延迟 + 上限」策略自动拉起；连续失败达上限则放弃。
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 pub const POLL_INTERVAL_SECS: u64 = 5;
 pub const RESTART_DELAY_SECS: u64 = 2;
 pub const MAX_FAILURES: u32 = 3;
-pub const RESET_AFTER_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -250,15 +250,6 @@ pub fn next_action(failures: u32, limit: u32) -> Action {
     }
 }
 
-/// 距上次成功重启已稳定运行 reset_after_secs 秒，则失败计数归零；否则保持。
-pub fn effective_failures(failures: u32, elapsed_secs: u64, reset_after_secs: u64) -> u32 {
-    if elapsed_secs >= reset_after_secs {
-        0
-    } else {
-        failures
-    }
-}
-
 /// 是否应视为「意外退出」：开启自动重启 + 运行中 + 有 pid + 进程已不存在。
 pub fn is_unexpected_exit(auto_restart: bool, running: bool, pid: Option<u32>, alive: bool) -> bool {
     auto_restart && running && pid.is_some() && !alive
@@ -267,7 +258,8 @@ pub fn is_unexpected_exit(auto_restart: bool, running: bool, pid: Option<u32>, a
 #[derive(Debug, Clone, Copy, Default)]
 struct Attempt {
     failures: u32,
-    last_restart_at: Option<Instant>,
+    /// 已达上限并放弃自动重启；仅当再次观察到健康才解除。
+    given_up: bool,
 }
 
 /// 各实体重启尝试状态（内存态，不落盘）
@@ -282,32 +274,36 @@ impl WatchdogState {
         }
     }
 
-    /// 当前有效失败次数（稳定窗口外加权归零）。
-    pub fn failures_now(&mut self, key: &str, now: Instant) -> u32 {
-        let a = self.attempts.entry(key.to_string()).or_default();
-        let eff = match a.last_restart_at {
-            Some(t) => effective_failures(a.failures, now.duration_since(t).as_secs(), RESET_AFTER_SECS),
-            None => a.failures,
-        };
-        a.failures = eff;
-        eff
+    /// 当前失败次数（不随时间自动归零）。
+    pub fn failures(&self, key: &str) -> u32 {
+        self.attempts.get(key).map(|a| a.failures).unwrap_or(0)
     }
 
-    pub fn record_success(&mut self, key: &str, now: Instant) {
+    pub fn is_given_up(&self, key: &str) -> bool {
+        self.attempts.get(key).map(|a| a.given_up).unwrap_or(false)
+    }
+
+    pub fn record_success(&mut self, key: &str) {
         let a = self.attempts.entry(key.to_string()).or_default();
         a.failures = 0;
-        a.last_restart_at = Some(now);
+        a.given_up = false;
     }
 
     pub fn record_failure(&mut self, key: &str) {
         self.attempts.entry(key.to_string()).or_default().failures += 1;
     }
 
-    /// 观察到「运行中且存活」→ 视为健康，清零失败计数（用户手动恢复后不再立即放弃）。
+    /// 观察到「运行中且存活」→ 健康：清零失败计数并解除「已放弃」。
     pub fn record_healthy(&mut self, key: &str) {
         if let Some(a) = self.attempts.get_mut(key) {
             a.failures = 0;
+            a.given_up = false;
         }
+    }
+
+    /// 达到上限时置「已放弃」。
+    pub fn mark_given_up(&mut self, key: &str) {
+        self.attempts.entry(key.to_string()).or_default().given_up = true;
     }
 }
 ```
@@ -425,10 +421,9 @@ pub async fn run_watchdog(
     let mut state = WatchdogState::new();
     loop {
         tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
-        let now = Instant::now();
-        watch_software(&software, &app, &mut state, now).await;
-        watch_springboot(&software, &springboot, &app, &mut state, now).await;
-        watch_node(&node, &app, node_exe.as_deref(), &mut state, now).await;
+        watch_software(&software, &app, &mut state).await;
+        watch_springboot(&software, &springboot, &app, &mut state).await;
+        watch_node(&node, &app, node_exe.as_deref(), &mut state).await;
     }
 }
 
@@ -436,7 +431,6 @@ async fn watch_software(
     software: &Arc<SoftwareManager>,
     app: &tauri::AppHandle,
     state: &mut WatchdogState,
-    now: Instant,
 ) {
     for sw in software.get_installed() {
         let key = format!("software:{}", sw.id);
@@ -449,9 +443,13 @@ async fn watch_software(
         if !is_unexpected_exit(sw.auto_restart, running, sw.pid, alive) {
             continue;
         }
-        let failures = state.failures_now(&key, now);
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
-            if failures == MAX_FAILURES {
+            state.mark_given_up(&key);
+            {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
                 let _ = software.update_runtime_fields(
                     &sw.id,
@@ -489,7 +487,7 @@ async fn watch_software(
         match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
             Ok(_) => {
                 crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key, Instant::now());
+                state.record_success(&key);
             }
             Err(e) => {
                 tracing::warn!(id = %sw.id, error = %e, "看门狗重启软件失败");
@@ -504,7 +502,6 @@ async fn watch_springboot(
     springboot: &Arc<SpringBootManager>,
     app: &tauri::AppHandle,
     state: &mut WatchdogState,
-    now: Instant,
 ) {
     for sb in springboot.snapshot_apps() {
         let key = format!("springboot:{}", sb.id);
@@ -517,9 +514,13 @@ async fn watch_springboot(
         if !is_unexpected_exit(sb.auto_restart, running, sb.pid, alive) {
             continue;
         }
-        let failures = state.failures_now(&key, now);
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
-            if failures == MAX_FAILURES {
+            state.mark_given_up(&key);
+            {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
                 let _ = springboot.update_status(&sb.id, AppStatus::Error, None, Some(msg.clone()));
                 let _ = app.emit(
@@ -544,7 +545,7 @@ async fn watch_springboot(
         {
             Ok(_) => {
                 crate::oplog!("auto_restart", &sb.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key, Instant::now());
+                state.record_success(&key);
             }
             Err(e) => {
                 tracing::warn!(id = %sb.id, error = %e, "看门狗重启 SpringBoot 失败");
@@ -559,7 +560,6 @@ async fn watch_node(
     app: &tauri::AppHandle,
     node_exe: Option<&std::path::Path>,
     state: &mut WatchdogState,
-    now: Instant,
 ) {
     for na in node.snapshot() {
         let key = format!("node:{}", na.id);
@@ -572,9 +572,13 @@ async fn watch_node(
         if !is_unexpected_exit(na.auto_restart, running, na.pid, alive) {
             continue;
         }
-        let failures = state.failures_now(&key, now);
+        if state.is_given_up(&key) {
+            continue;
+        }
+        let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
-            if failures == MAX_FAILURES {
+            state.mark_given_up(&key);
+            {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
                 let _ = node.set_status(&na.id, crate::models::node_app::NodeAppStatus::Error, None, Some(msg));
                 let _ = app.emit(
@@ -593,7 +597,7 @@ async fn watch_node(
         match node.start(&na.id, exe) {
             Ok(_) => {
                 crate::oplog!("auto_restart", &na.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key, Instant::now());
+                state.record_success(&key);
             }
             Err(e) => {
                 tracing::warn!(id = %na.id, error = %e, "看门狗重启 Node 应用失败");
@@ -910,6 +914,6 @@ git commit -m "chore(watchdog): 实机走查微调"
 **Placeholder scan：** 无 TBD/TODO；代码步骤均含完整代码。Task 4/6 中对既有文件「按既有类名/加载函数」的说明属定位指引，非占位实现。
 
 **Type consistency：**
-- `Action`、`next_action`、`effective_failures`、`is_unexpected_exit`、`WatchdogState::{new,failures_now,record_success,record_failure,record_healthy}` 在 Task 2 定义、Task 3 使用，命名一致。
+- `Action`、`next_action`、`is_unexpected_exit`、`WatchdogState::{new,failures,is_given_up,record_success,record_failure,record_healthy,mark_given_up}` 在 Task 2 定义、Task 3 使用，命名一致。
 - `update_startup_settings` 四参版本在 Task 4 后端定义并在同任务前端调用一致；`save_startup_settings` 参数 `autoRestart`（JS camelCase）↔ `auto_restart`（Rust）符合 Tauri 约定。
 - 事件名 `auto-restart-giveup`、载荷 `{kind,id,name}` 在 Task 3 定义、Task 6 消费一致。

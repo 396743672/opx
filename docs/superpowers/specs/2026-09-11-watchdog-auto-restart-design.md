@@ -17,7 +17,7 @@
 
 1. **覆盖范围**：软件实例 + SpringBoot 应用 + Node 应用（三类进程型实体）。
 2. **重启策略**：意外退出后延迟 ~2s 重启；连续失败达上限（3 次）则放弃。
-3. **参数**：看门狗轮询间隔 5s；稳定运行 60s 后重置失败计数。
+3. **参数**：看门狗轮询间隔 5s；**失败计数不设时间窗口**——每轮观察到「运行中且存活」即清零；放弃后置 `given_up` 标记，仅当再次观察到健康（如用户手动拉起成功）才解除并清零。
 4. **「意外退出」仅指进程消失**，不做健康检查级「假活」检测。
 
 ## 设计
@@ -78,15 +78,25 @@
     - SpringBoot → 写回状态并 emit 既有 `springboot-status-changed`
     - Node → 写回状态（Node 无状态事件，前端靠 `auto-restart-giveup` 触发列表刷新）
   - 同时 emit `"auto-restart-giveup"`，载荷 `{ kind: "software"|"springboot"|"node", id, name }`；前端 `App.vue` 监听后调用 `toast(...)` 提示（与 `App.vue` 既有 `listen('close-requested')` / `listen('stop-complete')` 同法）。Node 页面另行监听该事件以刷新列表。
-  - 稳定 60s 后重置：下一轮扫描时若 `last_restart_at.elapsed() >= 60s` 则把 `failures` 归零。
+  - **重置**：每轮观察到「运行中且存活」→ `record_healthy`：`failures = 0` 且解除 `given_up`。**无时间窗口**。
 
-- 决策与重置抽为纯函数：
+- 决策与计数抽为纯函数/纯状态：
 
   ```rust
   pub enum Action { Restart, GiveUp }
   pub fn next_action(failures: u32, limit: u32) -> Action
-  /// 距上次重启已稳定运行 reset_after 则以「0 次失败」重新计数
-  pub fn effective_failures(failures: u32, elapsed_secs: u64, reset_after_secs: u64) -> u32
+
+  struct Attempt { failures: u32, given_up: bool }
+  pub struct WatchdogState { attempts: HashMap<String, Attempt> }
+  impl WatchdogState {
+      pub fn new() -> Self
+      pub fn failures(&self, key: &str) -> u32        // 当前失败次数
+      pub fn is_given_up(&self, key: &str) -> bool    // 已放弃且未恢复
+      pub fn record_success(&mut self, key: &str)     // failures=0, given_up=false
+      pub fn record_failure(&mut self, key: &str)     // failures += 1
+      pub fn record_healthy(&mut self, key: &str)     // failures=0, given_up=false
+      pub fn mark_given_up(&mut self, key: &str)      // 置 given_up
+  }
   ```
 
 ### 4. 配置入口
