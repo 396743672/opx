@@ -145,6 +145,36 @@ pub fn stats(days: u64) -> AuditStats {
     }
 }
 
+/// CSV 字段转义：含逗号/引号/换行时用双引号包裹，内部引号翻倍。
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// 按过滤条件导出 CSV（UTF-8 BOM，便于 Excel 正确识别中文）到 dest_path。
+pub fn export_csv(
+    days: u64,
+    action: Option<&str>,
+    keyword: Option<&str>,
+    dest_path: &str,
+) -> Result<(), String> {
+    let q = query(days, action, keyword, usize::MAX);
+    let mut out = String::from("\u{feff}时间,操作,目标,详情\n");
+    for e in q.entries {
+        out.push_str(&format!(
+            "{},{},{},{}\n",
+            csv_field(&e.ts),
+            csv_field(&e.action),
+            csv_field(&e.target),
+            csv_field(&e.detail)
+        ));
+    }
+    std::fs::write(dest_path, out).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +244,26 @@ mod tests {
             .expect("action counted");
         assert!(c.count >= 2);
         assert!(s.last_ts.is_some());
+    }
+
+    #[test]
+    fn csv_field_escapes_special_chars() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("he said \"hi\""), "\"he said \"\"hi\"\"\"");
+        assert_eq!(csv_field("l1\nl2"), "\"l1\nl2\"");
+    }
+
+    #[test]
+    fn export_csv_writes_header_and_rows() {
+        let u = uniq();
+        record("__qa_csv", &format!("{u},comma"), "");
+        let dest = paths::logs_dir().join(format!("{u}.csv"));
+        export_csv(1, Some("__qa_csv"), Some(&u), dest.to_str().unwrap()).unwrap();
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert!(content.starts_with('\u{feff}'), "BOM for Excel");
+        assert!(content.contains("时间,操作,目标,详情"));
+        assert!(content.contains("__qa_csv"));
+        let _ = std::fs::remove_file(&dest);
     }
 }
