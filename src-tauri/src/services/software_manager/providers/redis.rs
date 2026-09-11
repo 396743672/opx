@@ -254,8 +254,6 @@ impl SoftwareProvider for RedisProvider {
                             "noeviction".to_string(),
                         ],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("noeviction"),
                     section: None,

@@ -184,10 +184,11 @@ export interface ConfigField {
 /// serde tag="type"（无 content，因 unit variant 无负载）
 export type ConfigFieldType =
   | { type: 'Text' }
+  | { type: 'Textarea' }
   | { type: 'Number' }
   | { type: 'Port' }
   | { type: 'Password' }
-  | { type: 'Select'; options: string[]; labels?: string[]; disabled_options?: string[]; disabled_hint_i18n?: string }
+  | { type: 'Select'; options: string[]; labels?: string[] }
   | { type: 'Size'; units: string[] }
   | { type: 'Boolean' }
 
