@@ -124,7 +124,7 @@ const emit = defineEmits<{ close: []; saved: [] }>()
 
 const form = ref<Site>(props.site)
 if (!form.value.ssl) {
-  form.value.ssl = { enabled: false, cert_path: null, key_path: null }
+  form.value.ssl = { enabled: false, cert_path: null, key_path: null, acme: false, cert_expires_at: null }
 }
 const genDomain = ref(props.site.server_name || '')
 const genning = ref(false)

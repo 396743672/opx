@@ -57,6 +57,12 @@ pub struct SslConfig {
     pub cert_path: Option<String>,
     #[serde(default)]
     pub key_path: Option<String>,
+    /// 是否由 ACME（Let's Encrypt）签发
+    #[serde(default)]
+    pub acme: bool,
+    /// ACME 证书到期时间（RFC3339 本地时间）；自签为空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,4 +86,17 @@ pub struct Site {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WebsiteList {
     pub websites: Vec<Site>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssl_config_without_acme_fields_defaults() {
+        let c: SslConfig = serde_json::from_str(r#"{"enabled":true,"cert_path":"a.crt","key_path":"a.key"}"#).unwrap();
+        assert!(c.enabled);
+        assert!(!c.acme);
+        assert!(c.cert_expires_at.is_none());
+    }
 }
