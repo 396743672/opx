@@ -219,6 +219,20 @@ async fn watch_springboot(
             state.record_healthy(&key);
             continue;
         }
+        // 进程被外部结束但未开启自动重启：纠正状态为 Error 并提示（与软件实例一致）
+        if is_dead_without_autorestart(sb.auto_restart, running, sb.pid, alive) {
+            let msg = format!("{} 进程已退出", sb.name);
+            let _ = springboot.update_status(&sb.id, AppStatus::Error, None, Some(msg.clone()));
+            let _ = app.emit(
+                "springboot-status-changed",
+                (sb.id.clone(), "Error", None::<u32>, Some(msg)),
+            );
+            let _ = app.emit(
+                "process-exited",
+                serde_json::json!({ "kind": "springboot", "id": sb.id, "name": sb.name }),
+            );
+            continue;
+        }
         if !is_unexpected_exit(sb.auto_restart, running, sb.pid, alive) {
             continue;
         }
@@ -278,6 +292,21 @@ async fn watch_node(
         let alive = running && na.pid.map_or(false, health_check::is_process_alive);
         if running && alive {
             state.record_healthy(&key);
+            continue;
+        }
+        // 进程被外部结束但未开启自动重启：纠正状态为 Error 并提示（与软件实例一致）
+        if is_dead_without_autorestart(na.auto_restart, running, na.pid, alive) {
+            let msg = format!("{} 进程已退出", na.name);
+            let _ = node.set_status(
+                &na.id,
+                crate::models::node_app::NodeAppStatus::Error,
+                None,
+                Some(msg),
+            );
+            let _ = app.emit(
+                "process-exited",
+                serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
+            );
             continue;
         }
         if !is_unexpected_exit(na.auto_restart, running, na.pid, alive) {

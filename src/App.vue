@@ -64,6 +64,7 @@ let unlistenClose: UnlistenFn | null = null
 let unlistenStopComplete: UnlistenFn | null = null
 let unlistenTrayStop: UnlistenFn | null = null
 let unlistenAutoRestartGiveUp: UnlistenFn | null = null
+let unlistenProcessExited: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -168,6 +169,11 @@ onMounted(async () => {
     toast(t('autoRestartGiveUp', { name: e.payload?.name ?? '' }), 'err')
   })
 
+  // SpringBoot / Node 进程被外部结束（未开自动重启）：toast 提示（软件实例走全局错误弹窗）
+  unlistenProcessExited = await listen<{ name: string }>('process-exited', (e) => {
+    toast(t('processStopped', { name: e.payload?.name ?? '' }), 'err')
+  })
+
   window.clearTimeout(bootTimeout)
 })
 
@@ -176,6 +182,7 @@ onUnmounted(() => {
   unlistenStopComplete?.()
   unlistenTrayStop?.()
   unlistenAutoRestartGiveUp?.()
+  unlistenProcessExited?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

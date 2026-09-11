@@ -294,6 +294,7 @@ export default {
   noGroup: 'No Group',
   autoRestart: 'Auto Restart',
   autoRestartGiveUp: 'Auto-restart for "{name}" gave up after repeated failures (check logs)',
+  processStopped: '"{name}" process has stopped',
   replaceJar: 'Replace JAR',
   replaceAndRestart: 'Replace & Restart',
   replaceRestartSuccess: 'Replaced and restarted',

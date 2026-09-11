@@ -294,6 +294,7 @@ export default {
   noGroup: '无分组',
   autoRestart: '自动重启',
   autoRestartGiveUp: '「{name}」自动重启连续失败，已放弃（请检查日志）',
+  processStopped: '「{name}」进程已停止',
   replaceJar: '换包',
   replaceAndRestart: '替换并重启',
   replaceRestartSuccess: '替换并重启成功',
