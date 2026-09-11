@@ -67,12 +67,12 @@
 - 重启调用（复用既有路径，不新写启动逻辑）：
   - 软件 → `crate::commands::software::do_start_software(&software, &app, id, None).await`
   - SpringBoot → `crate::services::springboot_manager::lifecycle::start_app(id, &springboot, &software, &app).await`
-  - Node → `node.start(id, &exe)`（`node_exe` 为 None 则跳过并记一次失败）
+  - Node → `node.start(id, &exe)`（`node_exe` 为 None 则跳过；本轮失败已在上方计数）
   - 每次重启前 `sleep(2s)`。
 
-- 失败计数（内存态，不落盘）：`Mutex<HashMap<String, Attempt>>`，`Attempt { failures: u32, last_restart_at: Instant }`。
-  - 重启成功 → `failures = 0`，记 `last_restart_at`。
-  - 重启失败 → `failures += 1`。
+- 失败计数（内存态，不落盘）：`HashMap<String, Attempt>`，`Attempt { failures: u32, given_up: bool }`。
+  - **每轮「观察到意外退出」即 `failures += 1`**。这是关键：启动返回 `Ok` 只代表 spawn 成功、不代表存活，故不能在 `Ok` 清零，也不能只在同步 `Err` 计数——否则「启动即崩」的循环永远到不了上限。
+  - 观察到「运行中且存活」→ `failures = 0` 并解除 `given_up`。
   - `failures >= 3` → 放弃：不再尝试，状态置 Error：
     - 软件 → 写回状态并 emit 既有 `software-status-changed`
     - SpringBoot → 写回状态并 emit 既有 `springboot-status-changed`

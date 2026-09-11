@@ -431,6 +431,8 @@ async fn watch_software(
         if state.is_given_up(&key) {
             continue;
         }
+        // 观察到一次意外退出即计一次失败（覆盖「spawn 成功但随即崩溃」的循环）
+        state.record_failure(&key);
         let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
             state.mark_given_up(&key);
@@ -471,13 +473,13 @@ async fn watch_software(
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
             Ok(_) => {
-                crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures + 1));
+                crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
                 // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
             Err(e) => {
                 tracing::warn!(id = %sw.id, error = %e, "看门狗重启软件失败");
-                state.record_failure(&key);
+                // 不在此计数：失败已由下一轮「观察到意外退出」累加
             }
         }
     }
@@ -503,6 +505,8 @@ async fn watch_springboot(
         if state.is_given_up(&key) {
             continue;
         }
+        // 观察到一次意外退出即计一次失败（覆盖「spawn 成功但随即崩溃」的循环）
+        state.record_failure(&key);
         let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
             state.mark_given_up(&key);
@@ -536,7 +540,7 @@ async fn watch_springboot(
             }
             Err(e) => {
                 tracing::warn!(id = %sb.id, error = %e, "看门狗重启 SpringBoot 失败");
-                state.record_failure(&key);
+                // 不在此计数：失败已由下一轮「观察到意外退出」累加
             }
         }
     }
@@ -562,6 +566,8 @@ async fn watch_node(
         if state.is_given_up(&key) {
             continue;
         }
+        // 观察到一次意外退出即计一次失败（覆盖「spawn 成功但随即崩溃」的循环）
+        state.record_failure(&key);
         let failures = state.failures(&key);
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
             state.mark_given_up(&key);
@@ -577,7 +583,7 @@ async fn watch_node(
             continue;
         }
         let Some(exe) = node_exe else {
-            state.record_failure(&key);
+            // 无 Node 运行时：本轮失败已在上方计数，直接跳过
             continue;
         };
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
@@ -589,7 +595,7 @@ async fn watch_node(
             }
             Err(e) => {
                 tracing::warn!(id = %na.id, error = %e, "看门狗重启 Node 应用失败");
-                state.record_failure(&key);
+                // 不在此计数：失败已由下一轮「观察到意外退出」累加
             }
         }
     }
