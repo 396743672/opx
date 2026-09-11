@@ -330,7 +330,8 @@ git commit -m "feat(watchdog): 意外退出判定/上限/重置纯逻辑 + 单�
 
 **Files:**
 - Modify: `src-tauri/src/services/watchdog.rs`
-- Modify: `src-tauri/src/services/node_app_manager.rs`（新增 `set_error`）
+- Modify: `src-tauri/src/services/node_app_manager.rs`（新增 `snapshot` / `set_status`）
+- Modify: `src-tauri/src/services/springboot_manager/mod.rs`（新增 `snapshot_apps`）
 - Modify: `src-tauri/src/lib.rs`（spawn 看门狗）
 
 **Interfaces:**
@@ -343,24 +344,39 @@ git commit -m "feat(watchdog): 意外退出判定/上限/重置纯逻辑 + 单�
   - `SpringBootManager::list_apps() -> Vec<SpringBootApp>`、`update_status(&str, AppStatus, Option<u32>, Option<String>) -> Result<()>`
   - `springboot_manager::lifecycle::start_app(&str, &SpringBootManager, &SoftwareManager, &AppHandle) -> Result<(), String>`
   - `NodeAppManager::list() -> Vec<NodeApp>`、`start(&str, &Path) -> Result<(), String>`
-- Produces: `pub async fn run_watchdog(software: Arc<SoftwareManager>, springboot: Arc<SpringBootManager>, node: Arc<NodeAppManager>, app: tauri::AppHandle, node_exe: Option<PathBuf>)`；`NodeAppManager::set_error(&self, app_id: &str, message: &str) -> Result<(), String>`
+- Produces: `pub async fn run_watchdog(software: Arc<SoftwareManager>, springboot: Arc<SpringBootManager>, node: Arc<NodeAppManager>, app: tauri::AppHandle, node_exe: Option<PathBuf>)`；`NodeAppManager::snapshot(&self) -> Vec<NodeApp>`、`NodeAppManager::set_status(&self, app_id: &str, status: NodeAppStatus, pid: Option<u32>, error: Option<String>) -> Result<(), String>`；`SpringBootManager::snapshot_apps(&self) -> Vec<SpringBootApp>`
 
-- [ ] **Step 1: NodeAppManager 增加 set_error**
+> **为什么必须用快照**（预检发现的关键点）：`NodeAppManager::list()` 会把死进程的 Running 改判为 Error 并落盘；`SpringBootManager::list_apps()` 会改判为 Stopped **并清空 pid** 并落盘。若看门狗用它们，就读不到「Running + 有 pid」这一意外退出前提，永远不会触发重启。因此必须用**不产生副作用的快照**读取。
+>
+> 另外：重启前必须把陈旧的 `Running` 复位为 `Stopped`——`lifecycle::validate_start_transition` 与 `springboot start_app` 都会拒绝 `Running`。Node 的 `start` 只校验 pid 存活性，无需复位。
+
+- [ ] **Step 1: 管理器加无损快照与状态写回**
 
 在 `src-tauri/src/services/node_app_manager.rs` 的 `impl NodeAppManager` 内（`stop` 之后）加：
 
 ```rust
-    /// 写回 Error 状态（供看门狗放弃自动重启时标注）
-    pub fn set_error(&self, app_id: &str, message: &str) -> Result<(), String> {
+    /// 只读快照：不改状态、不落盘（供看门狗判定意外退出）
+    pub fn snapshot(&self) -> Vec<NodeApp> {
+        self.inner.lock().unwrap().apps.clone()
+    }
+
+    /// 写回状态/pid/错误并落盘（看门狗复位或放弃时使用）
+    pub fn set_status(
+        &self,
+        app_id: &str,
+        status: NodeAppStatus,
+        pid: Option<u32>,
+        error: Option<String>,
+    ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap();
         let a = inner
             .apps
             .iter_mut()
             .find(|a| a.id == app_id)
             .ok_or_else(|| format!("未找到 Node 应用: {}", app_id))?;
-        a.status = NodeAppStatus::Error;
-        a.pid = None;
-        a.last_error = Some(message.to_string());
+        a.status = status;
+        a.pid = pid;
+        a.last_error = error;
         let apps = inner.apps.clone();
         if let Some(parent) = inner.data_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -369,6 +385,15 @@ git commit -m "feat(watchdog): 意外退出判定/上限/重置纯逻辑 + 单�
             let _ = std::fs::write(&inner.data_path, content);
         }
         Ok(())
+    }
+```
+
+在 `src-tauri/src/services/springboot_manager/mod.rs` 的 `impl SpringBootManager` 内（`list_apps` 之后）加：
+
+```rust
+    /// 只读快照：不做死进程纠正、不落盘（供看门狗判定意外退出）
+    pub fn snapshot_apps(&self) -> Vec<SpringBootApp> {
+        self.store.read().unwrap().applications.clone()
     }
 ```
 
@@ -451,6 +476,15 @@ async fn watch_software(
             }
             continue;
         }
+        // 陈旧 Running 会被 validate_start_transition 拒绝，先复位为 Stopped
+        let _ = software.update_runtime_fields(
+            &sw.id,
+            SoftwareStatus::Stopped,
+            None,
+            None,
+            Some(chrono::Local::now().naive_local()),
+            None,
+        );
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
             Ok(_) => {
@@ -472,7 +506,7 @@ async fn watch_springboot(
     state: &mut WatchdogState,
     now: Instant,
 ) {
-    for sb in springboot.list_apps() {
+    for sb in springboot.snapshot_apps() {
         let key = format!("springboot:{}", sb.id);
         let running = sb.status == AppStatus::Running;
         let alive = running && sb.pid.map_or(false, health_check::is_process_alive);
@@ -500,6 +534,8 @@ async fn watch_springboot(
             }
             continue;
         }
+        // 陈旧 Running 会被 start_app 拒绝，先复位为 Stopped
+        let _ = springboot.update_status(&sb.id, AppStatus::Stopped, None, None);
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match crate::services::springboot_manager::lifecycle::start_app(
             &sb.id, springboot, software, app,
@@ -525,7 +561,7 @@ async fn watch_node(
     state: &mut WatchdogState,
     now: Instant,
 ) {
-    for na in node.list() {
+    for na in node.snapshot() {
         let key = format!("node:{}", na.id);
         let running = na.status == crate::models::node_app::NodeAppStatus::Running;
         let alive = running && na.pid.map_or(false, health_check::is_process_alive);
@@ -540,7 +576,7 @@ async fn watch_node(
         if next_action(failures, MAX_FAILURES) == Action::GiveUp {
             if failures == MAX_FAILURES {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
-                let _ = node.set_error(&na.id, &msg);
+                let _ = node.set_status(&na.id, crate::models::node_app::NodeAppStatus::Error, None, Some(msg));
                 let _ = app.emit(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
@@ -612,7 +648,7 @@ Expected: 全绿（含 Task 1/2 新测试）
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src-tauri/src/services/watchdog.rs src-tauri/src/services/node_app_manager.rs src-tauri/src/lib.rs
+git add src-tauri/src/services/watchdog.rs src-tauri/src/services/node_app_manager.rs src-tauri/src/services/springboot_manager/mod.rs src-tauri/src/lib.rs
 git commit -m "feat(watchdog): 三实体意外退出自动拉起 + lib.rs 接线"
 ```
 
