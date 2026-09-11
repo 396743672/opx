@@ -42,6 +42,12 @@ const routes = [
     meta: { title: 'nodeApps' },
   },
   {
+    path: '/audit',
+    name: 'audit',
+    component: () => import('@/modules/audit/pages/AuditLogPage.vue'),
+    meta: { title: 'auditLog' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/modules/settings/pages/SettingsPage.vue'),
