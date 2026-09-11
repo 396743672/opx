@@ -5,3 +5,4 @@ pub mod startup_bootstrap;
 pub mod website_manager;
 pub mod springboot_manager;
 pub mod system_monitor;
+pub mod watchdog;
