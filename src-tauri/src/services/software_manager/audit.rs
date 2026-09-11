@@ -25,6 +25,12 @@ fn file_for(date: chrono::NaiveDate) -> PathBuf {
 
 /// 追加一条操作记录（同步写盘：保证 quit/exit 等退出前调用不丢尾部）。
 pub fn record(action: &str, target: &str, detail: &str) {
+    // 串行化同进程内的追加：O_APPEND 不保证进程内多线程并发写的原子性，
+    // 不加锁时并发调用会交错截断 JSONL 行。
+    static WRITE_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let entry = AuditEntry {
         ts: chrono::Local::now().to_rfc3339(),
         action: action.to_string(),
@@ -40,6 +46,64 @@ pub fn record(action: &str, target: &str, detail: &str) {
             let _ = writeln!(f, "{}", line);
         }
     }
+}
+
+/// 查询结果（entries 按 ts 倒序）
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditQuery {
+    pub entries: Vec<AuditEntry>,
+    pub truncated: bool,
+}
+
+/// 读取最近 days 天的全部条目（未过滤、未排序）。无法解析的行跳过，不 panic。
+fn read_days(days: u64) -> Vec<AuditEntry> {
+    let today = chrono::Local::now().date_naive();
+    let mut out = Vec::new();
+    for i in 0..days.max(1) as i64 {
+        let path = file_for(today - chrono::Duration::days(i));
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(e) = serde_json::from_str::<AuditEntry>(line) {
+                out.push(e);
+            }
+        }
+    }
+    out
+}
+
+fn matches_filters(e: &AuditEntry, action: Option<&str>, keyword: Option<&str>) -> bool {
+    if let Some(a) = action {
+        if !a.is_empty() && e.action != a {
+            return false;
+        }
+    }
+    if let Some(k) = keyword {
+        let k = k.trim().to_lowercase();
+        if !k.is_empty() {
+            let haystack = format!("{} {} {}", e.action, e.target, e.detail).to_lowercase();
+            if !haystack.contains(&k) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// 查询：天范围 + action 精确 + keyword 子串（大小写不敏感），ts 倒序，最多 limit 条。
+pub fn query(days: u64, action: Option<&str>, keyword: Option<&str>, limit: usize) -> AuditQuery {
+    let mut entries: Vec<AuditEntry> = read_days(days)
+        .into_iter()
+        .filter(|e| matches_filters(e, action, keyword))
+        .collect();
+    // ts 为本地时区 RFC3339，同偏移下字符串序即时间序
+    entries.sort_by(|a, b| b.ts.cmp(&a.ts));
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
+    AuditQuery { entries, truncated }
 }
 
 #[cfg(test)]
@@ -64,5 +128,35 @@ mod tests {
         let hit = hit.expect("entry appended");
         assert_eq!(hit.detail, format!("{u}_detail"));
         assert!(!hit.ts.is_empty());
+    }
+
+    #[test]
+    fn query_filters_by_action_and_keyword() {
+        let u = uniq();
+        record("__qa_q_action", &format!("{u}_target"), "");
+        record("__qa_q_other", &format!("{u}_target"), "");
+        let q = query(1, Some("__qa_q_action"), Some(&u), 100);
+        assert_eq!(q.entries.len(), 1);
+        assert_eq!(q.entries[0].action, "__qa_q_action");
+        assert!(!q.truncated);
+    }
+
+    #[test]
+    fn query_is_case_insensitive_on_keyword() {
+        let u = uniq();
+        record("__qa_q_case", &format!("{u}_MixedCase"), "");
+        assert_eq!(query(1, Some("__qa_q_case"), Some(&u.to_lowercase()), 100).entries.len(), 1);
+        assert_eq!(query(1, Some("__qa_q_case"), Some("mixedcase"), 100).entries.len(), 1);
+    }
+
+    #[test]
+    fn query_marks_truncated_when_over_limit() {
+        let u = uniq();
+        for i in 0..3 {
+            record("__qa_q_trunc", &format!("{u}_{i}"), "");
+        }
+        let q = query(1, Some("__qa_q_trunc"), Some(&u), 2);
+        assert_eq!(q.entries.len(), 2);
+        assert!(q.truncated);
     }
 }
