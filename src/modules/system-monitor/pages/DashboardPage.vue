@@ -498,8 +498,7 @@ onMounted(async () => {
     }
     checkAlerts()
   }, 1000)
-  // ponytail: 监听启动/停止事件，运行列表实时刷新
-  await lifecycleStore.initListener()
+  // ponytail: 监听启动/停止事件，运行列表实时刷新（软件状态监听已提升到 App.vue 全局）
   await stackStore.loadStacks()
   await stackStore.subscribe()
   unlistenSb = await listen('springboot-status-changed', async () => {
@@ -517,7 +516,6 @@ onMounted(async () => {
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
   if (procTimer) clearInterval(procTimer)
-  lifecycleStore.destroyListener()
   stackStore.unsubscribe()
   unlistenSb?.()
   unlistenStartupProgress?.()

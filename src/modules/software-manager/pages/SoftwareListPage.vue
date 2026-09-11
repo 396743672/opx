@@ -470,7 +470,6 @@ function onUninstalled() {
 }
 
 onMounted(async () => {
-  await lifecycleStore.initListener()
   await installStore.initEvents()
   await loadInstalled()
   loadUpgrades()
@@ -509,7 +508,6 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  lifecycleStore.destroyListener()
   installStore.cleanup()
   if (pollTimer) {
     clearInterval(pollTimer)

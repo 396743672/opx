@@ -110,6 +110,8 @@ async function onChoose(choice: 'tray' | 'exit', remember: boolean) {
 }
 
 onMounted(async () => {
+  // 软件状态事件全局监听：不依赖具体页面挂载，避免切页期间事件丢失（状态刷新与错误弹窗）
+  await lifecycleStore.initListener()
   // 禁用右键菜单和 F12 等开发者工具快捷键
   document.addEventListener('contextmenu', (e) => e.preventDefault())
   document.addEventListener('keydown', (e) => {
