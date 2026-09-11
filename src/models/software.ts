@@ -226,6 +226,23 @@ export interface SoftwareStatusEvent {
   timestamp: string
 }
 
+/// 单个配置端口的诊断状态（对应后端 PortStatus）
+export type PortState = 'listening' | 'conflict' | 'not-listening' | 'unknown'
+
+export interface PortStatus {
+  port: number
+  state: PortState
+  owner_pid: number | null
+  owner_name: string | null
+}
+
+/// 端口图谱报告（对应后端 PortReport）
+export interface PortReport {
+  configured: PortStatus[]
+  /// 本软件进程实际监听的所有端口（含配置外的）
+  listening: number[]
+}
+
 /// 内置自定义模板
 export interface CustomTemplate {
   id: string

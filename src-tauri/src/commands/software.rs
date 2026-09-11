@@ -690,12 +690,84 @@ pub fn get_last_startup_report() -> Option<crate::services::startup_bootstrap::S
     crate::services::startup_bootstrap::read_startup_report()
 }
 
+/// 单个配置端口的诊断状态
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PortStatus {
+    pub port: u16,
+    /// listening=本软件正常监听 / conflict=被其他进程占用 / not-listening=未监听 / unknown=已监听但宿主未知
+    pub state: String,
+    pub owner_pid: Option<u32>,
+    pub owner_name: Option<String>,
+}
+
+/// 某软件的端口图谱报告
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PortReport {
+    /// 配置声明的端口及诊断
+    pub configured: Vec<PortStatus>,
+    /// 本软件进程实际监听的所有端口（含配置外的）
+    pub listening: Vec<u16>,
+}
+
+/// 采集某软件的端口监听与冲突诊断（仅运行中实例有意义）。
+#[tauri::command]
+pub async fn get_software_port_report(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<PortReport, String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+
+    // 1. 配置端口（自定义软件走 custom_start_command，无 provider）
+    let providers_list = providers::all_providers();
+    let provider = providers_list.iter().find(|p| p.key() == software.key);
+    let configured_ports = collect_configured_ports(&software, provider.map(|p| &**p));
+
+    // 2. 实际监听（命令失败降级为空集）
+    let entries = crate::services::software_manager::netutils::listen_entries();
+    let my_pid = software.pid;
+    let mut listening: Vec<u16> = entries
+        .iter()
+        .filter(|e| my_pid.map_or(false, |p| e.pid == Some(p)))
+        .map(|e| e.port)
+        .collect();
+    listening.sort_unstable();
+    listening.dedup();
+
+    // 3. 配置端口 × 监听集 → 诊断
+    let mut configured = Vec::new();
+    for port in configured_ports {
+        let owner = entries.iter().find(|e| e.port == port);
+        let (state, owner_pid, owner_name) = match owner {
+            None => ("not-listening", None, None),
+            Some(e) => match (my_pid, e.pid) {
+                (Some(mine), Some(op)) if mine == op => ("listening", Some(op), None),
+                (_, Some(op)) => (
+                    "conflict",
+                    Some(op),
+                    crate::services::software_manager::process_monitor::process_name(op),
+                ),
+                (_, None) => ("unknown", None, None),
+            },
+        };
+        configured.push(PortStatus {
+            port,
+            state: state.to_string(),
+            owner_pid,
+            owner_name,
+        });
+    }
+
+    Ok(PortReport { configured, listening })
+}
+
 /// 收集软件启动将监听的端口，用于启动前占用校验。
 /// 标准软件：取 config_schema 中 field_type=Port 的字段，从 config 读端口值（缺失回退字段默认值）。
 /// 自定义软件：从 custom_start_command 的健康检查规格推导（Tcp 端口 / Http url 端口）。
 fn collect_configured_ports(
     software: &InstalledSoftware,
-    provider: &dyn providers::SoftwareProvider,
+    provider: Option<&dyn providers::SoftwareProvider>,
 ) -> Vec<u16> {
     use crate::models::software::{ConfigFieldType, CustomHealthSpec};
     let mut ports = Vec::new();
@@ -714,7 +786,7 @@ fn collect_configured_ports(
                 CustomHealthSpec::None => {}
             }
         }
-    } else if let Some(schema) = provider.config_schema() {
+    } else if let Some(schema) = provider.and_then(|p| p.config_schema()) {
         for field in &schema.fields {
             if matches!(field.field_type, ConfigFieldType::Port) {
                 let v = software.config.get(&field.key).unwrap_or(&field.default_value);
@@ -912,7 +984,7 @@ pub async fn do_start_software(
 
     // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
     // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
-    for port in collect_configured_ports(&software, &**provider) {
+    for port in collect_configured_ports(&software, Some(&**provider)) {
         if !health_check::is_port_free(port) {
             return Err(anyhow::anyhow!(
                 "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",

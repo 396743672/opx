@@ -21,7 +21,7 @@
         <span v-if="software.pid" class="kv">
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
-        <span v-if="runtimePort" class="kv">
+        <span v-if="runtimePort && !portChips.length" class="kv">
           <Icon icon="mdi:lan" /> {{ $t('port') }}
           <a
             v-if="webUrl && canOpenWeb"
@@ -41,6 +41,20 @@
             </span>
           </span>
         </span>
+      </div>
+      <div v-if="portChips.length" class="port-map">
+        <span class="port-map-label"><Icon icon="mdi:lan-pending" /> {{ $t('listeningPorts') }}</span>
+        <template v-for="c in portChips" :key="c.port">
+          <a
+            v-if="c.open"
+            class="port-chip web-open"
+            :href="c.open"
+            target="_blank"
+            rel="noopener"
+            :title="$t('openInBrowser')"
+          >{{ c.port }} <Icon icon="mdi:open-in-new" /></a>
+          <span v-else class="port-chip" :class="c.state" :title="c.hint">{{ c.port }}</span>
+        </template>
       </div>
       <div v-if="software.last_error" class="error-text">
         <Icon icon="mdi:alert-circle" /> {{ translateError(software.last_error, t, te) }}
@@ -100,11 +114,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
-import { InstalledSoftware, SoftwareCategory, SoftwareStatus } from '@/models/software'
+import { InstalledSoftware, SoftwareCategory, SoftwareStatus, type PortReport } from '@/models/software'
 import { translateError } from '@/utils/i18nError'
 
 const { t, te } = useI18n()
@@ -200,6 +215,59 @@ const canOpenWeb = computed(
     props.software.status === SoftwareStatus.Running ||
     props.software.status === SoftwareStatus.Starting,
 )
+
+// ===== 端口图谱（扩展 3）：运行态展示进程实际监听端口 + 配置端口冲突诊断 =====
+interface PortChip { port: number; state: string; hint: string; open?: string }
+
+const portReport = ref<PortReport | null>(null)
+
+function portHint(state: string, pid: number | null, name: string | null): string {
+  if (state === 'conflict') {
+    return name
+      ? t('portConflictBy', { pid: pid ?? '?', name })
+      : t('portConflictByPid', { pid: pid ?? '?' })
+  }
+  if (state === 'not-listening') return t('portNotListening')
+  if (state === 'unknown') return t('portUnknownOwner')
+  return t('listeningPorts')
+}
+
+const portChips = computed<PortChip[]>(() => {
+  if (props.software.status !== SoftwareStatus.Running || !portReport.value) return []
+  const chips: PortChip[] = portReport.value.configured.map((c) => ({
+    port: c.port,
+    state: c.state,
+    hint: portHint(c.state, c.owner_pid, c.owner_name),
+  }))
+  const seen = new Set(chips.map((c) => c.port))
+  for (const p of portReport.value.listening) {
+    if (!seen.has(p)) chips.push({ port: p, state: 'listening', hint: t('listeningPorts') })
+  }
+  // 已知可网页访问的端口才可点击打开（复用现有 webUrl）
+  const web = webUrl.value
+  if (web && canOpenWeb.value) {
+    const target = chips.find((c) => c.port === Number(runtimePort.value))
+    if (target) target.open = web
+  }
+  return chips
+})
+
+async function loadPortReport() {
+  if (props.software.status !== SoftwareStatus.Running) {
+    portReport.value = null
+    return
+  }
+  try {
+    portReport.value = await invoke<PortReport>('get_software_port_report', {
+      installedId: props.software.id,
+    })
+  } catch {
+    portReport.value = null
+  }
+}
+
+// ponytail: 仅运行态/pid 变化时拉取，不轮询；需感知运行中端口变更再加定时刷新
+watch(() => [props.software.status, props.software.pid], loadPortReport, { immediate: true })
 
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
 const isRuntime = computed(() => props.software.category === SoftwareCategory.Runtime)
@@ -405,6 +473,53 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
 .dep-chip svg {
   width: 10px;
   height: 10px;
+}
+.port-map {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.port-map-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+.port-map-label svg {
+  width: 12px;
+  height: 12px;
+}
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  background: color-mix(in oklch, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+.port-chip svg {
+  width: 10px;
+  height: 10px;
+}
+.port-chip.web-open {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+.port-chip.conflict {
+  background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
+  color: var(--color-destructive);
+}
+.port-chip.not-listening,
+.port-chip.unknown {
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
 }
 .tag {
   font-size: 10px;

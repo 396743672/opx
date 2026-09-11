@@ -8,6 +8,7 @@ pub mod installer;
 pub mod lifecycle;
 pub mod log_viewer;
 pub mod log_watcher;
+pub mod netutils;
 pub mod process_monitor;
 pub mod providers;
 pub mod uninstall_guard;

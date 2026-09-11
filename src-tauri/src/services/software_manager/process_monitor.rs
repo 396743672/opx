@@ -34,6 +34,15 @@ pub fn sample_processes(pids: &[u32]) -> Vec<ProcessSample> {
         .collect()
 }
 
+/// 查询进程名（端口冲突占用者提示用）。进程不存在返回 None。
+pub fn process_name(pid: u32) -> Option<String> {
+    let mut system = PROCESS_SYS.lock().unwrap();
+    system.refresh_processes(ProcessesToUpdate::All);
+    system
+        .process(Pid::from_u32(pid))
+        .map(|p| p.name().to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
