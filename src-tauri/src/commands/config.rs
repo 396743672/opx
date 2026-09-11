@@ -15,6 +15,15 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
     }
 }
 
+/// 从 settings.json 读取设置（失败返回默认值）。
+pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
+    let path = crate::utils::paths::settings_path();
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).map_err(|e| e.to_string()),
+        Err(_) => Ok(Default::default()),
+    }
+}
+
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]
 pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), String> {

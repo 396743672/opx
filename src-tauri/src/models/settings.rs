@@ -32,6 +32,19 @@ pub struct AppSettings {
     pub github_proxy_url: String,
     /// 全局下载代理（如 http://127.0.0.1:7890），空=直连
     pub proxy_url: String,
+    /// DNS 服务商（DNS-01 用），v1 支持 "cloudflare"
+    #[serde(default = "default_dns_provider")]
+    pub dns_provider: String,
+    /// DNS 服务商 API Token（明文存储，UI 需提示风险）
+    #[serde(default)]
+    pub cloudflare_api_token: String,
+    /// 使用 Let's Encrypt 测试环境（staging）
+    #[serde(default)]
+    pub acme_use_staging: bool,
+}
+
+fn default_dns_provider() -> String {
+    "cloudflare".to_string()
 }
 
 impl Default for AppSettings {
@@ -49,6 +62,9 @@ impl Default for AppSettings {
             jre_default_id: None,
             github_proxy_url: "https://ghfast.top".to_string(),
             proxy_url: String::new(),
+            dns_provider: default_dns_provider(),
+            cloudflare_api_token: String::new(),
+            acme_use_staging: false,
         }
     }
 }

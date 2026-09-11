@@ -19,4 +19,7 @@ export interface AppSettings {
   jre_default_id: string | null
   github_proxy_url: string
   proxy_url: string
+  dns_provider: string
+  cloudflare_api_token: string
+  acme_use_staging: boolean
 }
