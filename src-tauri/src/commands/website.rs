@@ -465,11 +465,11 @@ pub async fn issue_site_certificate(
 ) -> Result<(), String> {
     use tauri::Emitter;
     let site = wm.get(&site_id).ok_or_else(|| format!("未找到站点: {}", site_id))?;
-    let domain = site
+    let raw = site
         .server_name
         .clone()
-        .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| "请先填写 server_name（域名）".to_string())?;
+    let domain = sanitize_domain(&raw)?;
 
     let settings = crate::commands::config::read_settings()?;
     let acme_settings = crate::services::acme::AcmeSettings {
@@ -504,8 +504,8 @@ pub async fn issue_site_certificate(
     updated.ssl.cert_expires_at =
         Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
     wm.upsert_mem(updated).map_err(|e| e.to_string())?;
-    wm.persist().map_err(|e| e.to_string())?;
     regenerate(&sm, &wm, true)?;
+    wm.persist().map_err(|e| e.to_string())?;
 
     oplog!("acme_issue", &format!("{} ({})", site.name, domain));
     Ok(())
@@ -517,4 +517,31 @@ fn sanitize_cert_name(s: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
         .collect();
     if c.is_empty() { "cert".to_string() } else { c }
+}
+
+/// 校验并规范化域名：去空白；空、含空白或路径分隔符则拒绝。
+pub(crate) fn sanitize_domain(domain: &str) -> Result<String, String> {
+    let d = domain.trim();
+    if d.is_empty() {
+        return Err("请先填写 server_name（域名）".to_string());
+    }
+    if d.chars().any(|c| c.is_whitespace() || c == '/' || c == '\\') {
+        return Err(format!("域名不合法: {}", d));
+    }
+    Ok(d.to_string())
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::sanitize_domain;
+
+    #[test]
+    fn sanitize_domain_trims_and_rejects_bad() {
+        assert_eq!(sanitize_domain("  example.com ").unwrap(), "example.com");
+        assert!(sanitize_domain("").is_err());
+        assert!(sanitize_domain("   ").is_err());
+        assert!(sanitize_domain("a b.com").is_err());
+        assert!(sanitize_domain("a/b.com").is_err());
+        assert!(sanitize_domain("a\\b.com").is_err());
+    }
 }
