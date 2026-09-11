@@ -210,6 +210,9 @@ impl NodeAppManager {
         if let Some(v) = params.startup_order {
             app.startup_order = v;
         }
+        if let Some(v) = params.auto_restart {
+            app.auto_restart = v;
+        }
         let out = app.clone();
         drop(inner);
         let _ = self.save();

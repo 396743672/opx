@@ -114,6 +114,7 @@
         </div>
         <div class="row-chk">
           <label class="chk"><input type="checkbox" v-model="form.auto_start" /> {{ $t('autoStartOnAppStart') }}</label>
+          <label class="chk"><input type="checkbox" v-model="form.auto_restart" /> {{ $t('autoRestart') }}</label>
           <label class="fld"><span>{{ $t('startupOrder') }}</span><input v-model.number="form.startup_order" class="input num" type="number" /></label>
         </div>
         <div class="foot">
@@ -163,6 +164,7 @@ const form = ref({
   envText: '',
   auto_start: false,
   startup_order: 0,
+  auto_restart: false,
 })
 const installedNodes = ref<InstalledSoftware[]>([])
 const entryChanged = ref(false)
@@ -246,8 +248,9 @@ function openEdit(a?: NodeApp) {
         envText: a.env_vars.map(([k, v]) => `${k}=${v}`).join('\n'),
         auto_start: a.auto_start,
         startup_order: a.startup_order,
+        auto_restart: a.auto_restart,
       }
-    : { name: '', entry_path: '', node_installed_id: '', argsText: '', envText: '', auto_start: false, startup_order: 0 }
+    : { name: '', entry_path: '', node_installed_id: '', argsText: '', envText: '', auto_start: false, startup_order: 0, auto_restart: false }
 }
 
 async function browse() {
@@ -285,6 +288,7 @@ async function save() {
       env_vars,
       auto_start: form.value.auto_start,
       startup_order: form.value.startup_order,
+      auto_restart: form.value.auto_restart,
     }
     if (editTarget.value?.id) {
       await invoke('update_node_app', {
