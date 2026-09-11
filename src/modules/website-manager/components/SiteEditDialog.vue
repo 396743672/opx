@@ -185,7 +185,6 @@ async function issueCert() {
     } catch {
       // 刷新失败不影响签发结果提示
     }
-    emit('saved')
   } catch (e) {
     acmeStatus.value = String(e)
   } finally {
