@@ -6,14 +6,14 @@ use crate::utils::paths;
 /// 默认保留天数（spec 第 1284 行明确 7 天）
 pub const DEFAULT_RETAIN_DAYS: u64 = 7;
 
-/// 操作日志宏 — 结构化 `action target [detail]` 格式
+/// 操作日志宏 — 写入独立审计 JSONL（供「操作记录」页查询）
 #[macro_export]
 macro_rules! oplog {
     ($action:expr, $target:expr) => {
-        tracing::info!(action = $action, target = $target, "");
+        $crate::services::software_manager::audit::record($action, $target, "");
     };
     ($action:expr, $target:expr, $detail:expr) => {
-        tracing::info!(action = $action, target = $target, detail = $detail, "");
+        $crate::services::software_manager::audit::record($action, $target, $detail);
     };
 }
 
@@ -71,7 +71,50 @@ pub fn cleanup_old_logs(log_dir: &Path, retain_days: u64) {
                         }
                     }
                 }
+                // 审计文件 audit-YYYY-MM-DD.jsonl：同规则清理
+                if let Some(date_str) = name
+                    .strip_prefix("audit-")
+                    .and_then(|s| s.strip_suffix(".jsonl"))
+                {
+                    if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                        if date < cutoff_date {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uniq_dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "__qa_auditlog_{}",
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn cleanup_removes_old_audit_files_keeps_recent() {
+        let dir = uniq_dir();
+        let old = dir.join("audit-2000-01-01.jsonl");
+        let recent = dir.join(format!(
+            "audit-{}.jsonl",
+            chrono::Local::now().date_naive().format("%Y-%m-%d")
+        ));
+        std::fs::write(&old, "{}").unwrap();
+        std::fs::write(&recent, "{}").unwrap();
+
+        cleanup_old_logs(&dir, DEFAULT_RETAIN_DAYS);
+
+        assert!(!old.exists(), "old audit file removed");
+        assert!(recent.exists(), "recent audit file kept");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
