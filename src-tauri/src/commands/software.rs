@@ -1642,19 +1642,8 @@ pub async fn get_config_schema(
     if has_jdk_field {
         fill_jdk_options(&mut schema, manager.inner(), provider.min_jdk_version());
     }
-    // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
-    if software.key == "nacos" {
-        let storage = software
-            .config
-            .get("storage")
-            .and_then(|v| v.as_str())
-            .unwrap_or("embedded");
-        if storage != "mysql" {
-            schema
-                .fields
-                .retain(|f| !f.key.starts_with("mysql_"));
-        }
-    }
+    // 注：nacos 的 mysql_* 连接字段是否显示，交由 schema.field_rules（visible_when storage=mysql）
+    // 在前端按表单实时值切换，避免此处按已保存 config 静态剥离导致改 storage 后字段不出现。
 
     Ok(Some(schema))
 }

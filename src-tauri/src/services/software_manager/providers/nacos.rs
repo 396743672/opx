@@ -358,6 +358,15 @@ impl SoftwareProvider for NacosProvider {
     }
 
     fn config_schema(&self) -> Option<ConfigSchema> {
+        // mysql_* 连接字段仅在 storage=mysql 时显示（前端按 formData.storage 实时切换）
+        let show_if_mysql = |key: &str| FieldRule {
+            field_key: key.to_string(),
+            visible_when: Some(FieldCondition {
+                key: "storage".to_string(),
+                equals: serde_json::json!("mysql"),
+            }),
+            required: false,
+        };
         Some(ConfigSchema {
             fields: vec![
                 ConfigField {
@@ -496,14 +505,21 @@ impl SoftwareProvider for NacosProvider {
                 },
             ],
             ephemeral_keys: vec![],
-            field_rules: vec![FieldRule {
-                field_key: "cluster_nodes".to_string(),
-                visible_when: Some(FieldCondition {
-                    key: "mode".to_string(),
-                    equals: serde_json::json!("cluster"),
-                }),
-                required: true,
-            }],
+            field_rules: vec![
+                FieldRule {
+                    field_key: "cluster_nodes".to_string(),
+                    visible_when: Some(FieldCondition {
+                        key: "mode".to_string(),
+                        equals: serde_json::json!("cluster"),
+                    }),
+                    required: true,
+                },
+                show_if_mysql("mysql_host"),
+                show_if_mysql("mysql_port"),
+                show_if_mysql("mysql_db"),
+                show_if_mysql("mysql_user"),
+                show_if_mysql("mysql_password"),
+            ],
         })
     }
 
@@ -580,6 +596,30 @@ mod tests {
     fn render_cluster_conf_one_per_line_with_trailing_newline() {
         let nodes = vec!["192.168.1.1:8848".to_string(), "10.0.0.2:8848".to_string()];
         assert_eq!(render_cluster_conf(&nodes), "192.168.1.1:8848\n10.0.0.2:8848\n");
+    }
+
+    #[test]
+    fn config_schema_gates_mysql_and_cluster_fields() {
+        let schema = NacosProvider.config_schema().expect("nacos has schema");
+        let rule = |key: &str| {
+            schema
+                .field_rules
+                .iter()
+                .find(|r| r.field_key == key)
+                .unwrap_or_else(|| panic!("missing rule for {key}"))
+        };
+        // mysql_* 连接字段：仅 storage=mysql 时可见
+        for k in ["mysql_host", "mysql_port", "mysql_db", "mysql_user", "mysql_password"] {
+            let cond = rule(k).visible_when.as_ref().expect("has condition");
+            assert_eq!(cond.key, "storage");
+            assert_eq!(cond.equals, serde_json::json!("mysql"));
+        }
+        // cluster_nodes：仅 mode=cluster 时可见且必填
+        let cluster = rule("cluster_nodes");
+        assert!(cluster.required);
+        let cond = cluster.visible_when.as_ref().expect("has condition");
+        assert_eq!(cond.key, "mode");
+        assert_eq!(cond.equals, serde_json::json!("cluster"));
     }
 }
 
