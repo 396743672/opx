@@ -92,7 +92,6 @@
       pub fn new() -> Self
       pub fn failures(&self, key: &str) -> u32        // 当前失败次数
       pub fn is_given_up(&self, key: &str) -> bool    // 已放弃且未恢复
-      pub fn record_success(&mut self, key: &str)     // failures=0, given_up=false
       pub fn record_failure(&mut self, key: &str)     // failures += 1
       pub fn record_healthy(&mut self, key: &str)     // failures=0, given_up=false
       pub fn mark_given_up(&mut self, key: &str)      // 置 given_up

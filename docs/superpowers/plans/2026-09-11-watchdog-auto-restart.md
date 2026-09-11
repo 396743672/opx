@@ -186,15 +186,6 @@ mod tests {
     }
 
     #[test]
-    fn successful_restart_clears_failures_and_given_up() {
-        let mut s = WatchdogState::new();
-        s.record_failure("node:x");
-        s.record_success("node:x");
-        assert_eq!(s.failures("node:x"), 0);
-        assert!(!s.is_given_up("node:x"));
-    }
-
-    #[test]
     fn given_up_blocks_until_healthy_observed() {
         let mut s = WatchdogState::new();
         s.record_failure("springboot:y");
@@ -281,12 +272,6 @@ impl WatchdogState {
 
     pub fn is_given_up(&self, key: &str) -> bool {
         self.attempts.get(key).map(|a| a.given_up).unwrap_or(false)
-    }
-
-    pub fn record_success(&mut self, key: &str) {
-        let a = self.attempts.entry(key.to_string()).or_default();
-        a.failures = 0;
-        a.given_up = false;
     }
 
     pub fn record_failure(&mut self, key: &str) {
@@ -487,7 +472,8 @@ async fn watch_software(
         match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
             Ok(_) => {
                 crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key);
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
             Err(e) => {
                 tracing::warn!(id = %sw.id, error = %e, "看门狗重启软件失败");
@@ -545,7 +531,8 @@ async fn watch_springboot(
         {
             Ok(_) => {
                 crate::oplog!("auto_restart", &sb.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key);
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
             Err(e) => {
                 tracing::warn!(id = %sb.id, error = %e, "看门狗重启 SpringBoot 失败");
@@ -597,7 +584,8 @@ async fn watch_node(
         match node.start(&na.id, exe) {
             Ok(_) => {
                 crate::oplog!("auto_restart", &na.name, &format!("第 {} 次", failures + 1));
-                state.record_success(&key);
+                // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
+                // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
             Err(e) => {
                 tracing::warn!(id = %na.id, error = %e, "看门狗重启 Node 应用失败");
@@ -914,6 +902,6 @@ git commit -m "chore(watchdog): 实机走查微调"
 **Placeholder scan：** 无 TBD/TODO；代码步骤均含完整代码。Task 4/6 中对既有文件「按既有类名/加载函数」的说明属定位指引，非占位实现。
 
 **Type consistency：**
-- `Action`、`next_action`、`is_unexpected_exit`、`WatchdogState::{new,failures,is_given_up,record_success,record_failure,record_healthy,mark_given_up}` 在 Task 2 定义、Task 3 使用，命名一致。
+- `Action`、`next_action`、`is_unexpected_exit`、`WatchdogState::{new,failures,is_given_up,record_failure,record_healthy,mark_given_up}` 在 Task 2 定义、Task 3 使用，命名一致。
 - `update_startup_settings` 四参版本在 Task 4 后端定义并在同任务前端调用一致；`save_startup_settings` 参数 `autoRestart`（JS camelCase）↔ `auto_restart`（Rust）符合 Tauri 约定。
 - 事件名 `auto-restart-giveup`、载荷 `{kind,id,name}` 在 Task 3 定义、Task 6 消费一致。
