@@ -359,7 +359,7 @@ export default {
   acmeDone: '证书已签发',
   certExpiresAt: '到期时间',
   acmeNeedToken: '请先在设置中配置 DNS 服务商 Token',
-  acmeNeedIssue: '未申请到证书前不会启用 HTTPS',
+  acmeNeedIssue: '保存时将自动申请证书',
   acmeNeedSave: '请先保存站点，再申请证书',
   routeRules: '路由规则',
   addRoute: '添加路由规则',

@@ -66,7 +66,7 @@
               </template>
               <template v-else>
                 <div class="flex items-center gap-2 flex-wrap">
-                  <button class="btn primary" :disabled="acmeBusy || isNew" @click="issueCert">
+                  <button v-if="!isNew" class="btn primary" :disabled="acmeBusy" @click="issueCert">
                     <Icon icon="mdi:certificate-outline" />
                     {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
                   </button>
@@ -75,7 +75,6 @@
                 <div v-if="form.ssl.cert_expires_at" class="hint">
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
                 </div>
-                <div v-if="isNew" class="hint">{{ $t('acmeNeedSave') }}</div>
                 <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
                 <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
               </template>
@@ -99,7 +98,7 @@
           <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
             class="btn primary"
-            :disabled="saving || (tab === 'form' && (!!site.custom_conf || sslNeedIssue))"
+            :disabled="saving || (tab === 'form' && !!site.custom_conf)"
             :title="tab === 'form' && site.custom_conf ? $t('customConfLocked') : ''"
             @click="save()"
           >
@@ -164,24 +163,16 @@ const hasDnsToken = computed(() => {
   return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
 })
 
-// ACME 未签发（无证书路径）时不允许保存：后端 regenerate 会写入脏内存态
+// 选了 ACME 但尚未签发（无证书路径）：保存时会自动申请证书
 const sslNeedIssue = computed(
   () => certSource.value === 'acme' && !form.value.ssl.cert_path
 )
 
-async function issueCert() {
-  if (props.isNew) {
-    acmeStatus.value = t('acmeNeedSave')
-    return
-  }
-  if (!hasDnsToken.value) {
-    acmeStatus.value = t('acmeNeedToken')
-    return
-  }
+/** 实际发起签发（不含前置校验），供「保存」与「申请证书」共用。返回是否成功。 */
+async function doIssue(): Promise<boolean> {
   acmeBusy.value = true
   acmeStatus.value = t('acmeIssuing')
   try {
-    // 后端按 id 读取已保存的站点及其 server_name，故不在此隐式保存（避免用户没点保存却写盘）
     await invoke('issue_site_certificate', { siteId: props.site.id })
     acmeStatus.value = t('acmeDone')
     // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
@@ -195,11 +186,27 @@ async function issueCert() {
     } catch {
       // 刷新失败不影响签发结果提示
     }
+    return true
   } catch (e) {
     acmeStatus.value = String(e)
+    saveError.value = String(e)
+    return false
   } finally {
     acmeBusy.value = false
   }
+}
+
+/** 独立的「申请证书/重新申请」按钮：需站点已保存（后端按 id 读取） */
+async function issueCert() {
+  if (props.isNew) {
+    acmeStatus.value = t('acmeNeedSave')
+    return
+  }
+  if (!hasDnsToken.value) {
+    acmeStatus.value = t('acmeNeedToken')
+    return
+  }
+  await doIssue()
 }
 
 onMounted(async () => {
@@ -276,6 +283,14 @@ async function save() {
     } else {
       // 保存即生效：nginx 运行中时后端自动校验并 reload
       await invoke('save_website', { site: form.value })
+      // 选了 ACME 但尚无证书：保存时一并申请，一次操作完成
+      if (sslNeedIssue.value) {
+        if (!hasDnsToken.value) {
+          saveError.value = t('acmeNeedToken') // 站点已保存，留在对话框提示去配置 Token
+          return
+        }
+        if (!(await doIssue())) return // 签发失败：留在对话框展示原因
+      }
     }
     emit('saved')
   } catch (e) {

@@ -359,7 +359,7 @@ export default {
   acmeDone: 'Certificate issued',
   certExpiresAt: 'Expires at',
   acmeNeedToken: 'Configure a DNS provider token in Settings first',
-  acmeNeedIssue: 'HTTPS stays off until a certificate is issued',
+  acmeNeedIssue: 'A certificate will be requested when you save',
   acmeNeedSave: 'Save the site first, then request a certificate',
   routeRules: 'Route Rules',
   addRoute: 'Add Route',
