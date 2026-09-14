@@ -1,7 +1,6 @@
 //! 指标采样器：每 30s 采样整机与运行中实例，落盘保留 7 天，并做阈值告警。
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,14 +10,9 @@ use crate::models::system::HistoryPoint;
 use crate::services::software_manager::{process_monitor, SoftwareManager};
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::system_monitor::{alerts, history, info};
-use crate::utils::paths;
 
 pub const SAMPLE_INTERVAL_SECS: u64 = 30;
 pub const RETAIN_DAYS: i64 = 7;
-
-fn metrics_path() -> PathBuf {
-    paths::data_dir().join("metrics_history.json")
-}
 
 pub async fn run_recorder(
     app: AppHandle,
@@ -83,7 +77,7 @@ async fn sample_once(
         .collect();
 
     // 读失败（如文件被短暂占用）就跳过本轮，避免用「只含当前点」的历史覆盖掉 7 天数据
-    let Ok(mut h) = history::load_metrics(&metrics_path()) else {
+    let Ok(mut h) = history::load_metrics(&history::metrics_path()) else {
         tracing::warn!("读取指标历史失败，跳过本轮采样落盘");
         return;
     };
@@ -104,7 +98,7 @@ async fn sample_once(
     }
     // 对全部键裁剪（含已退出进程的残留键），并丢弃空键
     history::prune_all(&mut h, now_ms, RETAIN_DAYS);
-    if let Err(e) = history::save_history(&metrics_path(), &h) {
+    if let Err(e) = history::save_history(&history::metrics_path(), &h) {
         tracing::warn!(error = %e, "写入指标历史失败");
     }
 

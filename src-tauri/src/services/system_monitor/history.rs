@@ -2,6 +2,11 @@ use crate::models::system::{HistoryPoint, MetricsHistory};
 use anyhow::Result;
 use std::path::Path;
 
+/// 指标历史文件路径（`data/metrics_history.json`）。读写方共用，避免路径字面量多处重复。
+pub fn metrics_path() -> std::path::PathBuf {
+    crate::utils::paths::data_dir().join("metrics_history.json")
+}
+
 pub fn load_metrics(path: &Path) -> Result<MetricsHistory> {
     if !path.exists() {
         return Ok(MetricsHistory::default());
@@ -71,6 +76,18 @@ mod tests {
         let mut empty: Vec<HistoryPoint> = Vec::new();
         prune_older_than(&mut empty, now, 7);
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn missing_file_yields_empty_not_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "__qa_metrics_miss_{}",
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let h = load_metrics(&dir.join("nope.json")).expect("文件缺失不应报错");
+        assert!(h.system.is_empty() && h.processes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
