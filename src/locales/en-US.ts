@@ -752,6 +752,7 @@ export default {
   auditExport: 'Export CSV',
   auditEmpty: 'No audit records',
   auditPageInfo: '{from}-{to} of {total}',
+  perPage: 'Per page',
   prevPage: 'Previous',
   nextPage: 'Next',
   auditExportDone: 'Exported',

@@ -67,6 +67,10 @@
 
     <!-- 分页 -->
     <div v-if="total > 0" class="flex items-center justify-end gap-2 mt-3">
+      <span class="text-xs text-muted-foreground">{{ $t('perPage') }}</span>
+      <select v-model.number="pageSize" class="input w-20" @change="onPageSizeChange">
+        <option v-for="n in PAGE_SIZE_OPTIONS" :key="n" :value="n">{{ n }}</option>
+      </select>
       <span class="text-xs text-muted-foreground tnum">
         {{ $t('auditPageInfo', { from: pageFrom, to: pageTo, total }) }}
       </span>
@@ -101,14 +105,15 @@ const stats = ref<AuditStats | null>(null)
 const truncated = ref(false)
 const page = ref(0)
 const total = ref(0)
-const PAGE_SIZE = 50
+const pageSize = ref(50)
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200]
 const loading = ref(false)
 const exporting = ref(false)
 
 const lastTs = computed(() => (stats.value?.last_ts ? formatTs(stats.value.last_ts) : t('auditNone')))
 // 分页展示区间（1 基）
-const pageFrom = computed(() => (total.value === 0 ? 0 : page.value * PAGE_SIZE + 1))
-const pageTo = computed(() => page.value * PAGE_SIZE + entries.value.length)
+const pageFrom = computed(() => (total.value === 0 ? 0 : page.value * pageSize.value + 1))
+const pageTo = computed(() => page.value * pageSize.value + entries.value.length)
 
 function formatTs(iso: string): string {
   const d = new Date(iso)
@@ -122,8 +127,8 @@ async function loadEntries() {
       days: days.value,
       action: action.value || null,
       keyword: keyword.value.trim() || null,
-      limit: PAGE_SIZE,
-      offset: page.value * PAGE_SIZE,
+      limit: pageSize.value,
+      offset: page.value * pageSize.value,
     })
     entries.value = q.entries
     total.value = q.total
@@ -150,8 +155,15 @@ function reload() {
 }
 
 function goPage(n: number) {
-  if (n < 0 || (n > 0 && !truncated.value)) return
+  if (n < 0 || n === page.value) return
+  // 只有「向后翻」才需要检查是否还有下一页（此前误拦了上一页）
+  if (n > page.value && !truncated.value) return
   page.value = n
+  loadEntries()
+}
+
+function onPageSizeChange() {
+  page.value = 0
   loadEntries()
 }
 

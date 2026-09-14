@@ -752,6 +752,7 @@ export default {
   auditExport: '导出 CSV',
   auditEmpty: '暂无操作记录',
   auditPageInfo: '第 {from}-{to} 条 / 共 {total} 条',
+  perPage: '每页',
   prevPage: '上一页',
   nextPage: '下一页',
   auditExportDone: '已导出',
