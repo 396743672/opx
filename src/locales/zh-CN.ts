@@ -424,6 +424,13 @@ export default {
   proxyDefaultHint: '默认: https://ghfast.top',
   proxyEmptyDirect: 'http://127.0.0.1:7890（空=直连）',
 
+  // DNS 服务商（证书自动化）
+  dnsProvider: 'DNS 服务商',
+  dnsProviderDesc: '用于自动申请与续期 HTTPS 证书（DNS-01）',
+  cloudflareToken: 'Cloudflare API Token',
+  dnsTokenPlaintextWarning: 'Token 以明文保存在配置文件中，请确保本机环境可信',
+  acmeStaging: '使用 Let\'s Encrypt 测试环境',
+
   // 配置备份
   configBackups: '配置备份',
   restoreBackup: '还原',

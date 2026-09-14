@@ -103,6 +103,40 @@
           />
         </div>
       </div>
+
+      <div class="border-t border-border" />
+
+      <!-- DNS 服务商（证书自动化） -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('dnsProvider') }}</h3>
+      </div>
+      <div class="px-5 pb-4 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('dnsProviderDesc') }}</span>
+          <select
+            v-model="dnsProviderValue"
+            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
+          >
+            <option value="cloudflare">Cloudflare</option>
+          </select>
+        </div>
+        <div class="flex items-start justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('cloudflareToken') }}</span>
+          <div class="flex flex-col gap-1">
+            <input
+              v-model="cloudflareApiTokenValue"
+              type="password"
+              autocomplete="off"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            />
+            <span class="text-xs text-warning">{{ $t('dnsTokenPlaintextWarning') }}</span>
+          </div>
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('acmeStaging') }}</span>
+          <SwitchBtn v-model="acmeStagingValue" />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -126,6 +160,9 @@ const askOnCloseValue = ref(true)
 const githubProxyValue = ref('')
 const proxyValue = ref('')
 const autostartValue = ref(false)
+const dnsProviderValue = ref('cloudflare')
+const cloudflareApiTokenValue = ref('')
+const acmeStagingValue = ref(false)
 
 onMounted(async () => {
   try {
@@ -154,6 +191,9 @@ watch(
       askOnCloseValue.value = s.ask_on_close
       githubProxyValue.value = s.github_proxy_url || ''
       proxyValue.value = s.proxy_url || ''
+      dnsProviderValue.value = s.dns_provider || 'cloudflare'
+      cloudflareApiTokenValue.value = s.cloudflare_api_token || ''
+      acmeStagingValue.value = s.acme_use_staging
     }
   },
   { immediate: true }
@@ -170,7 +210,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -183,6 +223,9 @@ async function save() {
   settingsStore.settings.ask_on_close = askOnCloseValue.value
   settingsStore.settings.github_proxy_url = githubProxyValue.value
   settingsStore.settings.proxy_url = proxyValue.value
+  settingsStore.settings.dns_provider = dnsProviderValue.value
+  settingsStore.settings.cloudflare_api_token = cloudflareApiTokenValue.value
+  settingsStore.settings.acme_use_staging = acmeStagingValue.value
   await settingsStore.saveSettings()
 }
 </script>

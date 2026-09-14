@@ -424,6 +424,13 @@ export default {
   proxyDefaultHint: 'Default: https://ghfast.top',
   proxyEmptyDirect: 'http://127.0.0.1:7890 (empty = direct)',
 
+  // DNS provider (certificate automation)
+  dnsProvider: 'DNS Provider',
+  dnsProviderDesc: 'Used to issue and renew HTTPS certificates automatically (DNS-01)',
+  cloudflareToken: 'Cloudflare API Token',
+  dnsTokenPlaintextWarning: 'The token is stored in plain text in the config file; make sure this machine is trusted',
+  acmeStaging: 'Use Let\'s Encrypt staging environment',
+
   // config backups
   configBackups: 'Config Backups',
   restoreBackup: 'Restore',
