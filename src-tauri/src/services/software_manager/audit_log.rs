@@ -46,6 +46,7 @@ macro_rules! oplog_result {
 }
 
 /// 已知失败原因时直接记 fail（如命令前的同步校验被拒）。
+/// `$err` 按 `Display` 取文本：`&str` / `String` / `&anyhow::Error` 均可传。
 #[macro_export]
 macro_rules! oplog_fail {
     ($action:expr, $target:expr, $detail:expr, $err:expr) => {
@@ -54,7 +55,7 @@ macro_rules! oplog_fail {
             $target,
             $detail,
             $crate::services::software_manager::audit::RESULT_FAIL,
-            $err,
+            $err.to_string(),
         );
     };
 }
@@ -209,6 +210,15 @@ mod tests {
         let bad: Result<(), String> = Err(format!("{u}_bad"));
         oplog_result!("__qa_macro", format!("{u}_bad"), "d", bad);
 
+        // anyhow 错误体：oplog_fail! 按 Display 取文本（非 AsRef<str>），anyhow::Error 适用
+        let ae = anyhow::anyhow!("{u}_anyhow");
+        oplog_fail!("__qa_macro", format!("{u}_anyhow_fail"), "d", &ae);
+        // anyhow::Result 亦可直接交给 oplog_result!
+        let aok: anyhow::Result<()> = Ok(());
+        oplog_result!("__qa_macro", format!("{u}_anyhow_ok"), "d", aok);
+        let abad: anyhow::Result<()> = Err(anyhow::anyhow!("{u}_anyhow_bad"));
+        oplog_result!("__qa_macro", format!("{u}_anyhow_bad"), "d", abad);
+
         let q = query(1, Some("__qa_macro"), Some(&u), None, 100, 0);
         let find = |suffix: &str| {
             q.entries
@@ -225,6 +235,12 @@ mod tests {
         assert_eq!(find("ok").error, "");
         assert_eq!(find("bad").result, RESULT_FAIL);
         assert_eq!(find("bad").error, format!("{u}_bad"));
+        assert_eq!(find("anyhow_fail").result, RESULT_FAIL);
+        assert_eq!(find("anyhow_fail").error, format!("{u}_anyhow"));
+        assert_eq!(find("anyhow_ok").result, RESULT_OK);
+        assert_eq!(find("anyhow_ok").error, "");
+        assert_eq!(find("anyhow_bad").result, RESULT_FAIL);
+        assert_eq!(find("anyhow_bad").error, format!("{u}_anyhow_bad"));
     }
 
     /// audited! 包装体：`?` 与早 `return` 归属闭包，返回值原样透出并记录结果。
