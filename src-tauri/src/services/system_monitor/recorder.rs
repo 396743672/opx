@@ -82,7 +82,11 @@ async fn sample_once(
         })
         .collect();
 
-    let mut h = history::load_metrics(&metrics_path()).unwrap_or_default();
+    // 读失败（如文件被短暂占用）就跳过本轮，避免用「只含当前点」的历史覆盖掉 7 天数据
+    let Ok(mut h) = history::load_metrics(&metrics_path()) else {
+        tracing::warn!("读取指标历史失败，跳过本轮采样落盘");
+        return;
+    };
     h.system.push(HistoryPoint {
         timestamp: now_ms as u64,
         cpu_usage: sys.cpu_usage,
