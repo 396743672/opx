@@ -8,11 +8,13 @@ use crate::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::website_manager::{nginx_conf, WebsiteManager};
 use crate::utils::archive;
-use crate::oplog;
+use crate::{audited, audited_async};
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
-pub fn resolve_nginx(sm: &SoftwareManager) -> Result<crate::models::software::InstalledSoftware, String> {
+pub fn resolve_nginx(
+    sm: &SoftwareManager,
+) -> Result<crate::models::software::InstalledSoftware, String> {
     let mut nginx = sm
         .get_installed()
         .into_iter()
@@ -172,7 +174,10 @@ fn resolve_pending_zips(site: &mut Site, install_path: &Path) -> anyhow::Result<
             name_seg
         };
         let path_seg = sanitize_seg(&loc.path);
-        let dest = install_path.join("sites-data").join(&name_seg).join(&path_seg);
+        let dest = install_path
+            .join("sites-data")
+            .join(&name_seg)
+            .join(&path_seg);
         let _ = std::fs::remove_dir_all(&dest);
         std::fs::create_dir_all(&dest)?;
         archive::extract_zip_flatten(&staged, &dest, |_, _| {})?;
@@ -189,14 +194,17 @@ pub fn save_website(
     wm: State<'_, Arc<WebsiteManager>>,
     mut site: Site,
 ) -> Result<(), String> {
-    oplog!("website_save", &format!("{} ({})", site.name, site.id));
-    // 先验证 nginx 可用（失败则立即返回，不碰内存和磁盘）
-    let nginx = resolve_nginx(&sm)?;
-    resolve_pending_zips(&mut site, &Path::new(&nginx.install_path)).map_err(|e| e.to_string())?;
-    // 写入内存（不持久化），regenerate 验证后再持久化
-    wm.upsert_mem(site).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)?;
-    wm.persist().map_err(|e| e.to_string())
+    let target = format!("{} ({})", site.name, site.id);
+    audited!("website_save", target, "", {
+        // 先验证 nginx 可用（失败则立即返回，不碰内存和磁盘）
+        let nginx = resolve_nginx(&sm)?;
+        resolve_pending_zips(&mut site, &Path::new(&nginx.install_path))
+            .map_err(|e| e.to_string())?;
+        // 写入内存（不持久化），regenerate 验证后再持久化
+        wm.upsert_mem(site).map_err(|e| e.to_string())?;
+        regenerate(&sm, &wm, true)?;
+        wm.persist().map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]
@@ -206,28 +214,39 @@ pub fn delete_website(
     id: String,
 ) -> Result<(), String> {
     let site = wm.get(&id);
-    oplog!("website_delete", &site.as_ref().map(|s| &*s.name).unwrap_or(&id));
-    if let Some(ref s) = site {
-        if s.enabled {
-            return Err("ERR_SITE_RUNNING_DELETE:请先停用站点后再删除".to_string());
+    let target = site
+        .as_ref()
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| id.clone());
+    audited!("website_delete", target, "", {
+        if let Some(ref s) = site {
+            if s.enabled {
+                return Err("ERR_SITE_RUNNING_DELETE:请先停用站点后再删除".to_string());
+            }
         }
-    }
-    // 记录名称用于清理上传文件（必须在 wm.remove 之前获取）
-    let name_seg = site.as_ref().and_then(|s| {
-        let n = sanitize_seg(&s.name);
-        if n.is_empty() || n == "root" { None } else { Some(n) }
-    });
-    wm.remove_mem(&id).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)?;
-    wm.persist().map_err(|e| e.to_string())?;
-    // 删除站点对应的上传文件（sites-data/<name>/），避免下次同名站点文件残留
-    if let Some(seg) = name_seg {
-        if let Ok(nginx) = resolve_nginx(&sm) {
-            let data_dir = PathBuf::from(&nginx.install_path).join("sites-data").join(&seg);
-            let _ = std::fs::remove_dir_all(&data_dir);
+        // 记录名称用于清理上传文件（必须在 wm.remove 之前获取）
+        let name_seg = site.as_ref().and_then(|s| {
+            let n = sanitize_seg(&s.name);
+            if n.is_empty() || n == "root" {
+                None
+            } else {
+                Some(n)
+            }
+        });
+        wm.remove_mem(&id).map_err(|e| e.to_string())?;
+        regenerate(&sm, &wm, true)?;
+        wm.persist().map_err(|e| e.to_string())?;
+        // 删除站点对应的上传文件（sites-data/<name>/），避免下次同名站点文件残留
+        if let Some(seg) = name_seg {
+            if let Ok(nginx) = resolve_nginx(&sm) {
+                let data_dir = PathBuf::from(&nginx.install_path)
+                    .join("sites-data")
+                    .join(&seg);
+                let _ = std::fs::remove_dir_all(&data_dir);
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -239,10 +258,13 @@ pub fn set_website_enabled(
 ) -> Result<(), String> {
     let name = wm.get(&id).map(|s| s.name).unwrap_or_default();
     let action = if enabled { "enable" } else { "disable" };
-    oplog!("website_toggle", &format!("{} ({})", name, action));
-    wm.set_enabled_mem(&id, enabled).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)?;
-    wm.persist().map_err(|e| e.to_string())
+    let target = format!("{} ({})", name, action);
+    audited!("website_toggle", target, "", {
+        wm.set_enabled_mem(&id, enabled)
+            .map_err(|e| e.to_string())?;
+        regenerate(&sm, &wm, true)?;
+        wm.persist().map_err(|e| e.to_string())
+    })
 }
 
 /// 上传静态包：将 zip 暂存到 <nginx>/sites-data/.pending/，返回标记路径供保存时解压
@@ -254,7 +276,9 @@ pub fn upload_site_bundle(
     zip_path: String,
 ) -> Result<String, String> {
     let nginx = resolve_nginx(&sm)?;
-    let pending_dir = PathBuf::from(&nginx.install_path).join("sites-data").join(".pending");
+    let pending_dir = PathBuf::from(&nginx.install_path)
+        .join("sites-data")
+        .join(".pending");
     std::fs::create_dir_all(&pending_dir).map_err(|e| e.to_string())?;
     let sub = sanitize_seg(&loc_path);
     let staged = pending_dir.join(format!("{}_{}.zip", id, sub));
@@ -291,9 +315,14 @@ pub fn get_site_conf(
 
     // 站点已落库且配置文件已存在 → 读取实际内容（含停用态 .conf.disabled）
     if let Some(s) = &site {
-        let sites_dir = PathBuf::from(&nginx.install_path).join("conf").join("sites");
+        let sites_dir = PathBuf::from(&nginx.install_path)
+            .join("conf")
+            .join("sites");
         let fname = nginx_conf::site_conf_filename(s);
-        for candidate in [sites_dir.join(&fname), sites_dir.join(format!("{}.disabled", fname))] {
+        for candidate in [
+            sites_dir.join(&fname),
+            sites_dir.join(format!("{}.disabled", fname)),
+        ] {
             if candidate.exists() {
                 return std::fs::read_to_string(&candidate).map_err(|e| e.to_string());
             }
@@ -357,15 +386,23 @@ pub fn set_site_conf(
         .get(&id)
         .ok_or_else(|| "站点不存在，请先保存站点".to_string())?;
 
-    let sites_dir = PathBuf::from(&nginx.install_path).join("conf").join("sites");
+    let sites_dir = PathBuf::from(&nginx.install_path)
+        .join("conf")
+        .join("sites");
     std::fs::create_dir_all(&sites_dir).map_err(|e| e.to_string())?;
     let fname = nginx_conf::site_conf_filename(&site);
     // 停用站点写入 .conf.disabled（不被 include 加载），启用站点写 .conf；
     // 并清除另一态的残留文件，避免同一站点同时存在两份。
     let (write_path, stale_path) = if site.enabled {
-        (sites_dir.join(&fname), sites_dir.join(format!("{}.disabled", fname)))
+        (
+            sites_dir.join(&fname),
+            sites_dir.join(format!("{}.disabled", fname)),
+        )
     } else {
-        (sites_dir.join(format!("{}.disabled", fname)), sites_dir.join(&fname))
+        (
+            sites_dir.join(format!("{}.disabled", fname)),
+            sites_dir.join(&fname),
+        )
     };
     std::fs::write(&write_path, content).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&stale_path);
@@ -379,7 +416,8 @@ pub fn set_site_conf(
                 String::from_utf8_lossy(&test.stderr)
             ));
         }
-        let rl = run_nginx(Path::new(&nginx.install_path), &["-s", "reload"]).map_err(|e| e.to_string())?;
+        let rl = run_nginx(Path::new(&nginx.install_path), &["-s", "reload"])
+            .map_err(|e| e.to_string())?;
         if !rl.status.success() {
             return Err(format!(
                 "nginx reload 失败: {}",
@@ -409,7 +447,9 @@ pub fn unlock_site_conf(
     // 交给 regenerate 按表单重建（若站点已下线则重建时自然不生成）
     if let Some(site) = wm.get(&id) {
         let nginx = resolve_nginx(&sm)?;
-        let sites_dir = PathBuf::from(&nginx.install_path).join("conf").join("sites");
+        let sites_dir = PathBuf::from(&nginx.install_path)
+            .join("conf")
+            .join("sites");
         let fname = nginx_conf::site_conf_filename(&site);
         let _ = std::fs::remove_file(sites_dir.join(&fname));
         let _ = std::fs::remove_file(sites_dir.join(format!("{}.disabled", fname)));
@@ -431,12 +471,14 @@ pub fn generate_self_signed_cert(
     }
 
     let nginx = resolve_nginx(&sm)?;
-    let certs_dir = PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
+    let certs_dir = PathBuf::from(&nginx.install_path)
+        .join("sites-data")
+        .join("certs");
     std::fs::create_dir_all(&certs_dir).map_err(|e| format!("创建证书目录失败: {e}"))?;
 
     // rcgen 生成自签 X.509：SAN=domain，CN=domain
-    let mut params = rcgen::CertificateParams::new(vec![d.clone()])
-        .map_err(|e| format!("证书参数错误: {e}"))?;
+    let mut params =
+        rcgen::CertificateParams::new(vec![d.clone()]).map_err(|e| format!("证书参数错误: {e}"))?;
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, &d);
@@ -449,8 +491,11 @@ pub fn generate_self_signed_cert(
     let rel = |ext: &str| format!("sites-data/certs/{file_base}.{ext}");
     std::fs::write(certs_dir.join(format!("{file_base}.crt")), cert.pem())
         .map_err(|e| format!("证书写入失败: {e}"))?;
-    std::fs::write(certs_dir.join(format!("{file_base}.key")), key_pair.serialize_pem())
-        .map_err(|e| format!("私钥写入失败: {e}"))?;
+    std::fs::write(
+        certs_dir.join(format!("{file_base}.key")),
+        key_pair.serialize_pem(),
+    )
+    .map_err(|e| format!("私钥写入失败: {e}"))?;
 
     Ok((rel("crt"), rel("key")))
 }
@@ -463,69 +508,83 @@ pub async fn issue_site_certificate(
     sm: State<'_, Arc<SoftwareManager>>,
     site_id: String,
 ) -> Result<(), String> {
-    use tauri::Emitter;
-    let site = wm.get(&site_id).ok_or_else(|| format!("未找到站点: {}", site_id))?;
+    let site = wm
+        .get(&site_id)
+        .ok_or_else(|| format!("未找到站点: {}", site_id))?;
     let raw = site
         .server_name
         .clone()
         .ok_or_else(|| "请先填写 server_name（域名）".to_string())?;
     let domain = sanitize_domain(&raw)?;
+    let target = format!("{} ({})", site.name, domain);
 
-    let settings = crate::commands::config::read_settings()?;
-    let acme_settings = crate::services::acme::AcmeSettings {
-        dns_provider: settings.dns_provider.clone(),
-        cloudflare_api_token: settings.cloudflare_api_token.clone(),
-        use_staging: settings.acme_use_staging,
-    };
+    audited_async!("acme_issue", target, "", {
+        use tauri::Emitter;
+        let settings = crate::commands::config::read_settings()?;
+        let acme_settings = crate::services::acme::AcmeSettings {
+            dns_provider: settings.dns_provider.clone(),
+            cloudflare_api_token: settings.cloudflare_api_token.clone(),
+            use_staging: settings.acme_use_staging,
+        };
 
-    let nginx = resolve_nginx(&sm)?;
-    let cert_dir = PathBuf::from(&nginx.install_path).join("sites-data").join("certs");
+        let nginx = resolve_nginx(&sm)?;
+        let cert_dir = PathBuf::from(&nginx.install_path)
+            .join("sites-data")
+            .join("certs");
 
-    let app_for_progress = app.clone();
-    let domain_for_progress = domain.clone();
-    let on_progress = move |phase: &str, msg: &str| {
-        let _ = app_for_progress.emit(
-            "acme-progress",
-            serde_json::json!({ "domain": domain_for_progress, "phase": phase, "message": msg }),
-        );
-    };
+        let app_for_progress = app.clone();
+        let domain_for_progress = domain.clone();
+        let on_progress = move |phase: &str, msg: &str| {
+            let _ = app_for_progress.emit(
+                "acme-progress",
+                serde_json::json!({ "domain": domain_for_progress, "phase": phase, "message": msg }),
+            );
+        };
 
-    crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
-        .await
-        // {:#} 展开 anyhow 的 error chain，否则前端只看到最外层 context
-        // （如「创建 DNS 挑战记录失败」）而看不到真实原因（如 Cloudflare 权限不足）
-        .map_err(|e| format!("{:#}", e))?;
+        crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
+            .await
+            // {:#} 展开 anyhow 的 error chain，否则前端只看到最外层 context
+            // （如「创建 DNS 挑战记录失败」）而看不到真实原因（如 Cloudflare 权限不足）
+            .map_err(|e| format!("{:#}", e))?;
 
-    // 更新站点 ssl 并落盘 + 重新生成 nginx 配置并 reload
-    let mut updated = site.clone();
-    updated.ssl.enabled = true;
-    updated.ssl.acme = true;
-    // 与自签一致存**相对**路径（生成 conf 时会按 conf/ 基准补 ../）；
-    // 存绝对路径会在 nginx 卸载/重装到别的目录后失效
-    let base = format!("sites-data/certs/{}", domain);
-    updated.ssl.cert_path = Some(format!("{base}.crt"));
-    updated.ssl.key_path = Some(format!("{base}.key"));
-    updated.ssl.cert_expires_at =
-        Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
-    wm.upsert_mem(updated).map_err(|e| e.to_string())?;
-    if let Err(e) = regenerate(&sm, &wm, true) {
-        // 回滚内存中的 ssl，避免内存/磁盘/nginx 三者不一致
-        let _ = wm.upsert_mem(site.clone());
-        crate::oplog!("acme_issue_failed", &format!("{} ({})", site.name, domain));
-        return Err(e);
-    }
-    wm.persist().map_err(|e| e.to_string())?;
-
-    oplog!("acme_issue", &format!("{} ({})", site.name, domain));
-    Ok(())
+        // 更新站点 ssl 并落盘 + 重新生成 nginx 配置并 reload
+        let mut updated = site.clone();
+        updated.ssl.enabled = true;
+        updated.ssl.acme = true;
+        // 与自签一致存**相对**路径（生成 conf 时会按 conf/ 基准补 ../）；
+        // 存绝对路径会在 nginx 卸载/重装到别的目录后失效
+        let base = format!("sites-data/certs/{}", domain);
+        updated.ssl.cert_path = Some(format!("{base}.crt"));
+        updated.ssl.key_path = Some(format!("{base}.key"));
+        updated.ssl.cert_expires_at =
+            Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
+        wm.upsert_mem(updated).map_err(|e| e.to_string())?;
+        if let Err(e) = regenerate(&sm, &wm, true) {
+            // 回滚内存中的 ssl，避免内存/磁盘/nginx 三者不一致
+            let _ = wm.upsert_mem(site.clone());
+            return Err(e);
+        }
+        wm.persist().map_err(|e| e.to_string())?;
+        Ok(())
+    })
 }
 
 fn sanitize_cert_name(s: &str) -> String {
     let c: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    if c.is_empty() { "cert".to_string() } else { c }
+    if c.is_empty() {
+        "cert".to_string()
+    } else {
+        c
+    }
 }
 
 /// 校验并规范化域名：去空白；空、含空白或路径分隔符则拒绝。
@@ -534,7 +593,9 @@ pub(crate) fn sanitize_domain(domain: &str) -> Result<String, String> {
     if d.is_empty() {
         return Err("请先填写 server_name（域名）".to_string());
     }
-    if d.chars().any(|c| c.is_whitespace() || c == '/' || c == '\\') {
+    if d.chars()
+        .any(|c| c.is_whitespace() || c == '/' || c == '\\')
+    {
         return Err(format!("域名不合法: {}", d));
     }
     Ok(d.to_string())
