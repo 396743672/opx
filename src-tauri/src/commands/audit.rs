@@ -14,6 +14,7 @@ pub fn list_audit_entries(
         days,
         action.as_deref(),
         keyword.as_deref(),
+        None,
         limit.unwrap_or(50),
         offset.unwrap_or(0),
     )
@@ -34,5 +35,5 @@ pub fn export_audit_entries(
     dest_path: String,
 ) -> Result<(), String> {
     let days = days.clamp(1, 31);
-    audit::export_csv(days, action.as_deref(), keyword.as_deref(), &dest_path)
+    audit::export_csv(days, action.as_deref(), keyword.as_deref(), None, &dest_path)
 }
