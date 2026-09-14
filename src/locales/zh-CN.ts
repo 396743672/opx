@@ -751,7 +751,9 @@ export default {
   auditRange7d: '近 7 天',
   auditExport: '导出 CSV',
   auditEmpty: '暂无操作记录',
-  auditTruncated: '仅显示最近 {n} 条，可用关键字缩小范围',
+  auditPageInfo: '第 {from}-{to} 条 / 共 {total} 条',
+  prevPage: '上一页',
+  nextPage: '下一页',
   auditExportDone: '已导出',
   auditNone: '无',
 }

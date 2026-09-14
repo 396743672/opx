@@ -1,15 +1,22 @@
 use crate::services::software_manager::audit;
 
-/// 查询操作记录（默认上限 2000 条，超出以 truncated 标记）
+/// 查询操作记录（分页：默认每页 50 条；total 为过滤后总数，truncated 表示还有下一页）
 #[tauri::command]
 pub fn list_audit_entries(
     days: u64,
     action: Option<String>,
     keyword: Option<String>,
     limit: Option<usize>,
+    offset: Option<usize>,
 ) -> audit::AuditQuery {
     let days = days.clamp(1, 31);
-    audit::query(days, action.as_deref(), keyword.as_deref(), limit.unwrap_or(2000))
+    audit::query(
+        days,
+        action.as_deref(),
+        keyword.as_deref(),
+        limit.unwrap_or(50),
+        offset.unwrap_or(0),
+    )
 }
 
 /// 操作记录概览统计

@@ -43,10 +43,6 @@
       <button class="btn" @click="reload"><Icon icon="mdi:magnify" /> {{ $t('auditKeyword') }}</button>
     </div>
 
-    <div v-if="truncated" class="text-xs text-warning mb-2">
-      <Icon icon="mdi:alert-outline" /> {{ $t('auditTruncated', { n: entries.length }) }}
-    </div>
-
     <!-- 表格 -->
     <div v-if="loading" class="py-8 text-center text-sm text-muted-foreground">{{ $t('loading') }}</div>
     <div v-else-if="entries.length === 0" class="py-8 text-center text-sm text-muted-foreground">{{ $t('auditEmpty') }}</div>
@@ -68,6 +64,19 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- 分页 -->
+    <div v-if="total > 0" class="flex items-center justify-end gap-2 mt-3">
+      <span class="text-xs text-muted-foreground tnum">
+        {{ $t('auditPageInfo', { from: pageFrom, to: pageTo, total }) }}
+      </span>
+      <button class="btn" :disabled="page === 0 || loading" @click="goPage(page - 1)">
+        {{ $t('prevPage') }}
+      </button>
+      <button class="btn" :disabled="!truncated || loading" @click="goPage(page + 1)">
+        {{ $t('nextPage') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -90,10 +99,16 @@ const keyword = ref('')
 const entries = ref<AuditEntry[]>([])
 const stats = ref<AuditStats | null>(null)
 const truncated = ref(false)
+const page = ref(0)
+const total = ref(0)
+const PAGE_SIZE = 50
 const loading = ref(false)
 const exporting = ref(false)
 
 const lastTs = computed(() => (stats.value?.last_ts ? formatTs(stats.value.last_ts) : t('auditNone')))
+// 分页展示区间（1 基）
+const pageFrom = computed(() => (total.value === 0 ? 0 : page.value * PAGE_SIZE + 1))
+const pageTo = computed(() => page.value * PAGE_SIZE + entries.value.length)
 
 function formatTs(iso: string): string {
   const d = new Date(iso)
@@ -103,12 +118,15 @@ function formatTs(iso: string): string {
 async function loadEntries() {
   loading.value = true
   try {
-    const q = await invoke<{ entries: AuditEntry[]; truncated: boolean }>('list_audit_entries', {
+    const q = await invoke<{ entries: AuditEntry[]; total: number; truncated: boolean }>('list_audit_entries', {
       days: days.value,
       action: action.value || null,
       keyword: keyword.value.trim() || null,
+      limit: PAGE_SIZE,
+      offset: page.value * PAGE_SIZE,
     })
     entries.value = q.entries
+    total.value = q.total
     truncated.value = q.truncated
   } catch (e) {
     toast(String(e), 'err')
@@ -125,7 +143,15 @@ async function loadStats() {
   }
 }
 
+// 过滤条件变化 → 回到第一页
 function reload() {
+  page.value = 0
+  loadEntries()
+}
+
+function goPage(n: number) {
+  if (n < 0 || (n > 0 && !truncated.value)) return
+  page.value = n
   loadEntries()
 }
 

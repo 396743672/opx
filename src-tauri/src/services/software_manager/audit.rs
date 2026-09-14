@@ -52,6 +52,9 @@ pub fn record(action: &str, target: &str, detail: &str) {
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditQuery {
     pub entries: Vec<AuditEntry>,
+    /// 过滤后的总条数（不受 limit/offset 影响），供分页展示
+    pub total: u64,
+    /// 是否还有下一页（offset + limit < total）
     pub truncated: bool,
 }
 
@@ -94,16 +97,27 @@ fn matches_filters(e: &AuditEntry, action: Option<&str>, keyword: Option<&str>) 
 }
 
 /// 查询：天范围 + action 精确 + keyword 子串（大小写不敏感），ts 倒序，最多 limit 条。
-pub fn query(days: u64, action: Option<&str>, keyword: Option<&str>, limit: usize) -> AuditQuery {
+pub fn query(
+    days: u64,
+    action: Option<&str>,
+    keyword: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> AuditQuery {
     let mut entries: Vec<AuditEntry> = read_days(days)
         .into_iter()
         .filter(|e| matches_filters(e, action, keyword))
         .collect();
     // ts 为本地时区 RFC3339，同偏移下字符串序即时间序
     entries.sort_by(|a, b| b.ts.cmp(&a.ts));
-    let truncated = entries.len() > limit;
-    entries.truncate(limit);
-    AuditQuery { entries, truncated }
+    let total = entries.len();
+    let truncated = offset.saturating_add(limit) < total;
+    let entries = entries.into_iter().skip(offset).take(limit).collect();
+    AuditQuery {
+        entries,
+        total: total as u64,
+        truncated,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -169,7 +183,7 @@ pub fn export_csv(
     keyword: Option<&str>,
     dest_path: &str,
 ) -> Result<(), String> {
-    let q = query(days, action, keyword, usize::MAX);
+    let q = query(days, action, keyword, usize::MAX, 0);
     let mut out = String::from("\u{feff}时间,操作,目标,详情\n");
     for e in q.entries {
         out.push_str(&format!(
@@ -212,7 +226,7 @@ mod tests {
         let u = uniq();
         record("__qa_q_action", &format!("{u}_target"), "");
         record("__qa_q_other", &format!("{u}_target"), "");
-        let q = query(1, Some("__qa_q_action"), Some(&u), 100);
+        let q = query(1, Some("__qa_q_action"), Some(&u), 100, 0);
         assert_eq!(q.entries.len(), 1);
         assert_eq!(q.entries[0].action, "__qa_q_action");
         assert!(!q.truncated);
@@ -222,10 +236,10 @@ mod tests {
     fn query_is_case_insensitive_on_keyword() {
         let u = uniq();
         record("__qa_q_case", &format!("{u}_MixedCase"), "");
-        assert_eq!(query(1, Some("__qa_q_case"), Some(&u.to_lowercase()), 100).entries.len(), 1);
+        assert_eq!(query(1, Some("__qa_q_case"), Some(&u.to_lowercase()), 100, 0).entries.len(), 1);
         // 用带唯一标记的大写形式验证大小写不敏感，避免匹配历史遗留行
         let upper = format!("{u}_MIXEDCASE");
-        assert_eq!(query(1, Some("__qa_q_case"), Some(&upper), 100).entries.len(), 1);
+        assert_eq!(query(1, Some("__qa_q_case"), Some(&upper), 100, 0).entries.len(), 1);
     }
 
     #[test]
@@ -234,9 +248,30 @@ mod tests {
         for i in 0..3 {
             record("__qa_q_trunc", &format!("{u}_{i}"), "");
         }
-        let q = query(1, Some("__qa_q_trunc"), Some(&u), 2);
+        let q = query(1, Some("__qa_q_trunc"), Some(&u), 2, 0);
         assert_eq!(q.entries.len(), 2);
         assert!(q.truncated);
+    }
+
+    #[test]
+    fn query_pages_with_total_and_next_flag() {
+        let u = uniq();
+        for i in 0..5 {
+            record("__qa_page", &format!("{u}_{i}"), "");
+        }
+        let p1 = query(1, Some("__qa_page"), Some(&u), 2, 0);
+        assert_eq!(p1.entries.len(), 2, "首页取 2 条");
+        assert_eq!(p1.total, 5, "total 为过滤后总数，与分页无关");
+        assert!(p1.truncated, "还有下一页");
+
+        let p3 = query(1, Some("__qa_page"), Some(&u), 2, 4);
+        assert_eq!(p3.entries.len(), 1, "末页只剩 1 条");
+        assert!(!p3.truncated, "末页不应标记还有下一页");
+
+        // 越界 offset 返回空且无下一页
+        let p4 = query(1, Some("__qa_page"), Some(&u), 2, 99);
+        assert!(p4.entries.is_empty());
+        assert!(!p4.truncated);
     }
 
     #[test]

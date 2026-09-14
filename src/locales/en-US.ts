@@ -751,7 +751,9 @@ export default {
   auditRange7d: 'Last 7 days',
   auditExport: 'Export CSV',
   auditEmpty: 'No audit records',
-  auditTruncated: 'Showing latest {n} records; narrow with a keyword',
+  auditPageInfo: '{from}-{to} of {total}',
+  prevPage: 'Previous',
+  nextPage: 'Next',
   auditExportDone: 'Exported',
   auditNone: 'N/A',
 }

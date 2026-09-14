@@ -9,6 +9,9 @@ export interface AuditEntry {
 
 export interface AuditQuery {
   entries: AuditEntry[]
+  /** 过滤后的总条数（不受分页影响） */
+  total: number
+  /** 是否还有下一页 */
   truncated: boolean
 }
 
