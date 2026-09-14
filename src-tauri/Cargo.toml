@@ -45,5 +45,4 @@ encoding_rs = "0.8"
 rcgen = { version = "0.13", features = ["pem"] }
 notify = "6"
 instant-acme = "0.8"
-base64 = "0.22"
 

@@ -504,7 +504,12 @@ pub async fn issue_site_certificate(
     updated.ssl.cert_expires_at =
         Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
     wm.upsert_mem(updated).map_err(|e| e.to_string())?;
-    regenerate(&sm, &wm, true)?;
+    if let Err(e) = regenerate(&sm, &wm, true) {
+        // 回滚内存中的 ssl，避免内存/磁盘/nginx 三者不一致
+        let _ = wm.upsert_mem(site.clone());
+        crate::oplog!("acme_issue_failed", &format!("{} ({})", site.name, domain));
+        return Err(e);
+    }
     wm.persist().map_err(|e| e.to_string())?;
 
     oplog!("acme_issue", &format!("{} ({})", site.name, domain));

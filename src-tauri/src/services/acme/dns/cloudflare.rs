@@ -51,6 +51,9 @@ impl DnsProvider for Cloudflare {
 
     fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move {
+            // ponytail: 分页上限，防账户 zone 过多时反复全量列举；20 * 50 = 1000 个 zone，
+            // 超出请改用按 name 过滤查询
+            const MAX_PAGES: u32 = 20;
             let mut names: Vec<String> = Vec::new();
             let mut page = 1u32;
             loop {
@@ -66,7 +69,7 @@ impl DnsProvider for Cloudflare {
                         names.push(n.to_string());
                     }
                 }
-                if arr.len() < 50 {
+                if arr.len() < 50 || page >= MAX_PAGES {
                     break;
                 }
                 page += 1;

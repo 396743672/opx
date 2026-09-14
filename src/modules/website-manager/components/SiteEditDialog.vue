@@ -194,7 +194,8 @@ async function issueCert() {
 
 onMounted(async () => {
   unlistenAcme = await listen<{ domain: string; phase: string; message: string }>('acme-progress', (e) => {
-    if (e.payload.domain !== props.site.server_name) return
+    const cur = (props.site.server_name ?? '').trim().toLowerCase()
+    if (e.payload.domain.trim().toLowerCase() !== cur) return
     acmeStatus.value = e.payload.message || e.payload.phase
   })
 })
