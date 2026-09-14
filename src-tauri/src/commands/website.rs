@@ -490,19 +490,21 @@ pub async fn issue_site_certificate(
         );
     };
 
-    let (cert_path, key_path) =
-        crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
-            .await
-            // {:#} 展开 anyhow 的 error chain，否则前端只看到最外层 context
-            // （如「创建 DNS 挑战记录失败」）而看不到真实原因（如 Cloudflare 权限不足）
-            .map_err(|e| format!("{:#}", e))?;
+    crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
+        .await
+        // {:#} 展开 anyhow 的 error chain，否则前端只看到最外层 context
+        // （如「创建 DNS 挑战记录失败」）而看不到真实原因（如 Cloudflare 权限不足）
+        .map_err(|e| format!("{:#}", e))?;
 
     // 更新站点 ssl 并落盘 + 重新生成 nginx 配置并 reload
     let mut updated = site.clone();
     updated.ssl.enabled = true;
     updated.ssl.acme = true;
-    updated.ssl.cert_path = Some(cert_path.to_string_lossy().to_string());
-    updated.ssl.key_path = Some(key_path.to_string_lossy().to_string());
+    // 与自签一致存**相对**路径（生成 conf 时会按 conf/ 基准补 ../）；
+    // 存绝对路径会在 nginx 卸载/重装到别的目录后失效
+    let base = format!("sites-data/certs/{}", domain);
+    updated.ssl.cert_path = Some(format!("{base}.crt"));
+    updated.ssl.key_path = Some(format!("{base}.key"));
     updated.ssl.cert_expires_at =
         Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
     wm.upsert_mem(updated).map_err(|e| e.to_string())?;

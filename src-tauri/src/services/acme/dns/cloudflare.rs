@@ -123,12 +123,24 @@ impl DnsProvider for Cloudflare {
                 for r in records {
                     if r["content"].as_str() == Some(value) {
                         if let Some(id) = r["id"].as_str() {
-                            let _ = self
+                            // 清理失败不阻断签发，但要留痕（否则 DNS 里会静默残留 TXT）
+                            match self
                                 .client
                                 .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
                                 .bearer_auth(&self.token)
                                 .send()
-                                .await;
+                                .await
+                            {
+                                Ok(resp) if resp.status().is_success() => {}
+                                Ok(resp) => tracing::warn!(
+                                    status = %resp.status(), name = %fqdn,
+                                    "删除 ACME 挑战 TXT 记录失败（响应非成功）"
+                                ),
+                                Err(e) => tracing::warn!(
+                                    error = %e, name = %fqdn,
+                                    "删除 ACME 挑战 TXT 记录请求失败"
+                                ),
+                            }
                         }
                     }
                 }

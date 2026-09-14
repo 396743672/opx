@@ -56,23 +56,31 @@ pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<Sof
                 }
             };
             match crate::services::acme::issue_certificate(&domain, &acme, &cert_dir, |_, _| {}).await {
-                Ok((cert, key)) => {
+                Ok(_) => {
                     if let Some(mut s) = wm.get(&site.id) {
-                        s.ssl.cert_path = Some(cert.to_string_lossy().to_string());
-                        s.ssl.key_path = Some(key.to_string_lossy().to_string());
+                        // 与自签/手动签发一致存相对路径（绝对路径在 nginx 重装后会失效）
+                        let base = format!("sites-data/certs/{}", domain);
+                        s.ssl.cert_path = Some(format!("{base}.crt"));
+                        s.ssl.key_path = Some(format!("{base}.key"));
                         s.ssl.cert_expires_at =
                             Some((chrono::Local::now() + chrono::Duration::days(90)).to_rfc3339());
                         if let Err(e) = wm.upsert_mem(s) {
                             tracing::warn!(site = %site.id, error = %e, "更新站点 SSL 配置失败");
                         }
                     }
-                    if let Err(e) = crate::commands::website::regenerate(&sm, &wm, true) {
-                        tracing::warn!(site = %site.id, error = %e, "续期后 nginx 配置重建/reload 失败");
-                    }
                     if let Err(e) = wm.persist() {
                         tracing::warn!(site = %site.id, error = %e, "持久化站点配置失败");
                     }
-                    crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
+                    // 审计要与实际一致：配置重载失败就不记为续期成功
+                    match crate::commands::website::regenerate(&sm, &wm, true) {
+                        Ok(_) => {
+                            crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
+                        }
+                        Err(e) => {
+                            tracing::warn!(site = %site.id, error = %e, "续期后 nginx 配置重建/reload 失败");
+                            crate::oplog!("acme_renew_failed", &format!("{} ({})", site.name, domain));
+                        }
+                    }
                 }
                 // {:#} 展开 error chain，便于定位真实原因（如 Cloudflare 权限/API 报错）
                 Err(e) => tracing::warn!(site = %site.id, error = %format!("{:#}", e), "ACME 自动续期失败"),
