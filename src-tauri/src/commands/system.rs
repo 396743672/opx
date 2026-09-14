@@ -9,8 +9,9 @@ pub fn system_info() -> SystemInfo {
 
 #[tauri::command]
 pub fn system_history() -> Result<Vec<HistoryPoint>, String> {
+    // 文件缺失/损坏都降级为空曲线，不把错误抛给前端（采样器侧会对损坏文件留 warn 并跳过落盘）
     let h = system_monitor::history::load_metrics(&system_monitor::history::metrics_path())
-        .map_err(|e| e.to_string())?;
+        .unwrap_or_default();
     Ok(h.system)
 }
 
@@ -18,6 +19,6 @@ pub fn system_history() -> Result<Vec<HistoryPoint>, String> {
 #[tauri::command]
 pub fn process_metrics_history() -> Result<std::collections::HashMap<String, Vec<HistoryPoint>>, String> {
     let h = system_monitor::history::load_metrics(&system_monitor::history::metrics_path())
-        .map_err(|e| e.to_string())?;
+        .unwrap_or_default();
     Ok(h.processes)
 }

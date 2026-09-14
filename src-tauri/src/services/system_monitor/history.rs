@@ -12,11 +12,10 @@ pub fn load_metrics(path: &Path) -> Result<MetricsHistory> {
         return Ok(MetricsHistory::default());
     }
     let content = std::fs::read_to_string(path)?;
-    // 解析失败（截断/旧格式）回退空历史，但要留痕，便于排查「曲线莫名清空」
-    Ok(serde_json::from_str(&content).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, path = %path.display(), "解析指标历史失败，已回退为空");
-        MetricsHistory::default()
-    }))
+    // 解析失败按错误返回（而非回退空历史）：调用方据此跳过落盘，避免用「只含当前点」的历史
+    // 覆盖掉 7 天数据；读取命令侧自行降级为空。
+    serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("解析指标历史失败（{}）: {}", path.display(), e))
 }
 
 /// 写临时文件后 rename 原子替换，避免中途崩溃留下截断文件导致历史归零。
@@ -87,6 +86,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let h = load_metrics(&dir.join("nope.json")).expect("文件缺失不应报错");
         assert!(h.system.is_empty() && h.processes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_file_is_error_so_callers_can_skip_writing() {
+        let dir = std::env::temp_dir().join(format!(
+            "__qa_metrics_corrupt_{}",
+            chrono::Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("metrics_history.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(load_metrics(&path).is_err(), "损坏文件应报错，由调用方决定降级方式");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

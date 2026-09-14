@@ -106,15 +106,15 @@ async fn sample_once(
     // 先释放已退出进程的告警态，否则 PID 复用时新进程永久失警
     let live: HashSet<String> = rows
         .iter()
-        .flat_map(|(pid, ..)| [format!("proc:{pid}:cpu"), format!("proc:{pid}:mem")])
+        .flat_map(|(pid, ..)| alerts::proc_keys(*pid))
         .collect();
     alerts::release_stale(alerting, &live);
 
     eval(app, alerting, "system:cpu", "整机", "cpu", sys.cpu_usage, thresholds.alert_system_cpu);
     eval(app, alerting, "system:mem", "整机", "mem", sys.memory_usage, thresholds.alert_system_mem);
     for (pid, name, cpu, mem_pct) in &rows {
-        eval(app, alerting, &format!("proc:{pid}:cpu"), name, "cpu", *cpu, thresholds.alert_process_cpu);
-        eval(app, alerting, &format!("proc:{pid}:mem"), name, "mem", *mem_pct, thresholds.alert_process_mem);
+        eval(app, alerting, &alerts::proc_key(*pid, "cpu"), name, "cpu", *cpu, thresholds.alert_process_cpu);
+        eval(app, alerting, &alerts::proc_key(*pid, "mem"), name, "mem", *mem_pct, thresholds.alert_process_mem);
     }
 }
 
