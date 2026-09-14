@@ -766,4 +766,12 @@ export default {
   nextPage: '下一页',
   auditExportDone: '已导出',
   auditNone: '无',
+  auditResultCol: '结果',
+  auditResultOk: '成功',
+  auditResultFail: '失败',
+  auditResultRunning: '进行中',
+  auditResultNone: '—',
+  auditAllResults: '全部结果',
+  auditResultUnset: '未采集',
+  auditFailed: '失败 {n}',
 }

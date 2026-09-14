@@ -766,4 +766,12 @@ export default {
   nextPage: 'Next',
   auditExportDone: 'Exported',
   auditNone: 'N/A',
+  auditResultCol: 'Result',
+  auditResultOk: 'Success',
+  auditResultFail: 'Failed',
+  auditResultRunning: 'Running',
+  auditResultNone: '—',
+  auditAllResults: 'All results',
+  auditResultUnset: 'Not recorded',
+  auditFailed: '{n} failed',
 }

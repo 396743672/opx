@@ -14,7 +14,13 @@
     <!-- 概览 -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
       <StatCard :label="$t('auditToday')" :value="String(stats?.today ?? 0)" icon="mdi:calendar-today" accent="primary" />
-      <StatCard :label="$t('auditTotal')" :value="String(stats?.total ?? 0)" icon="mdi:counter" accent="chart-2" />
+      <StatCard
+        :label="$t('auditTotal')"
+        :value="String(stats?.total ?? 0)"
+        :sub="stats ? $t('auditFailed', { n: stats.failed }) : undefined"
+        icon="mdi:counter"
+        accent="chart-2"
+      />
       <StatCard :label="$t('auditLast')" :value="lastTs" icon="mdi:clock-outline" accent="chart-3" />
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
         <div class="text-xs text-muted-foreground mb-2">{{ $t('auditTopActions') }}</div>
@@ -39,6 +45,13 @@
         <option value="">{{ $t('auditAllActions') }}</option>
         <option v-for="a in stats?.by_action ?? []" :key="a.action" :value="a.action">{{ a.action }}</option>
       </select>
+      <select v-model="resultFilter" class="input" @change="reload">
+        <option value="">{{ $t('auditAllResults') }}</option>
+        <option value="ok">{{ $t('auditResultOk') }}</option>
+        <option value="fail">{{ $t('auditResultFail') }}</option>
+        <option value="running">{{ $t('auditResultRunning') }}</option>
+        <option value="__none">{{ $t('auditResultUnset') }}</option>
+      </select>
       <input v-model="keyword" class="input grow" :placeholder="$t('auditKeywordPlaceholder')" @keyup.enter="reload" />
       <button class="btn" @click="reload"><Icon icon="mdi:magnify" /> {{ $t('auditKeyword') }}</button>
     </div>
@@ -53,14 +66,19 @@
           <th>{{ $t('auditActionCol') }}</th>
           <th>{{ $t('auditTargetCol') }}</th>
           <th>{{ $t('auditDetailCol') }}</th>
+          <th>{{ $t('auditResultCol') }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(e, i) in entries" :key="e.ts + i">
+        <tr v-for="(e, i) in entries" :key="e.ts + i" :class="{ 'row-fail': resultKind(e) === 'fail' }">
           <td class="tnum">{{ formatTs(e.ts) }}</td>
           <td><span class="action-chip">{{ e.action }}</span></td>
           <td class="truncate-cell">{{ e.target }}</td>
           <td class="truncate-cell">{{ e.detail || '—' }}</td>
+          <td>
+            <span class="result-chip" :class="`result-${resultKind(e)}`">{{ resultLabel(e) }}</span>
+            <span v-if="e.error" class="result-error" :title="e.error">{{ e.error }}</span>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -100,6 +118,7 @@ const { t } = useI18n()
 const days = ref(7)
 const action = ref('')
 const keyword = ref('')
+const resultFilter = ref('')
 const entries = ref<AuditEntry[]>([])
 const stats = ref<AuditStats | null>(null)
 const truncated = ref(false)
@@ -120,6 +139,26 @@ function formatTs(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
+type ResultKind = 'ok' | 'fail' | 'running' | 'none'
+
+function resultKind(e: AuditEntry): ResultKind {
+  if (e.result === 'ok' || e.result === 'fail' || e.result === 'running') return e.result
+  return 'none'
+}
+
+function resultLabel(e: AuditEntry): string {
+  switch (resultKind(e)) {
+    case 'ok':
+      return t('auditResultOk')
+    case 'fail':
+      return t('auditResultFail')
+    case 'running':
+      return t('auditResultRunning')
+    default:
+      return t('auditResultNone')
+  }
+}
+
 async function loadEntries() {
   loading.value = true
   try {
@@ -127,6 +166,8 @@ async function loadEntries() {
       days: days.value,
       action: action.value || null,
       keyword: keyword.value.trim() || null,
+      // '' = 全部（传 null）；'__none' = 未采集（传空串）
+      result: resultFilter.value === '' ? null : resultFilter.value === '__none' ? '' : resultFilter.value,
       limit: pageSize.value,
       offset: page.value * pageSize.value,
     })
@@ -180,6 +221,8 @@ async function onExport() {
       days: days.value,
       action: action.value || null,
       keyword: keyword.value.trim() || null,
+      // '' = 全部（传 null）；'__none' = 未采集（传空串）
+      result: resultFilter.value === '' ? null : resultFilter.value === '__none' ? '' : resultFilter.value,
       destPath: dest,
     })
     toast(t('auditExportDone'), 'ok')
@@ -243,6 +286,42 @@ onMounted(loadAll)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.row-fail {
+  background: color-mix(in oklch, var(--color-destructive, #ef4444) 6%, transparent);
+}
+.result-chip {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.result-ok {
+  background: color-mix(in oklch, var(--color-chart-2, #22c55e) 16%, transparent);
+  color: var(--color-chart-2, #22c55e);
+}
+.result-fail {
+  background: color-mix(in oklch, var(--color-destructive, #ef4444) 16%, transparent);
+  color: var(--color-destructive, #ef4444);
+}
+.result-running {
+  background: color-mix(in oklch, var(--color-chart-3, #f59e0b) 16%, transparent);
+  color: var(--color-chart-3, #f59e0b);
+}
+.result-none {
+  color: var(--color-muted-foreground);
+}
+.result-error {
+  display: inline-block;
+  max-width: 260px;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-size: 11px;
+  color: var(--color-destructive, #ef4444);
 }
 .tnum {
   font-variant-numeric: tabular-nums;
