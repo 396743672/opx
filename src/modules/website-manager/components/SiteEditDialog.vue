@@ -65,7 +65,7 @@
                 </div>
               </template>
               <template v-else>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <button class="btn primary" :disabled="acmeBusy" @click="issueCert">
                     <Icon icon="mdi:certificate-outline" />
                     {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
@@ -410,7 +410,7 @@ watch(tab, async (t) => {
 }
 .confirm-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .confirm-title svg { color: var(--color-destructive); }
-.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; overflow-wrap: anywhere; word-break: break-word; max-height: 40vh; overflow-y: auto; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
 .head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
@@ -420,7 +420,7 @@ watch(tab, async (t) => {
 .body { padding: 16px 18px; }
 .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
-.hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; }
+.hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; overflow-wrap: anywhere; word-break: break-word; }
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; box-sizing: border-box; }
 .input:focus { border-color: var(--color-primary); background: var(--color-card); }
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }
