@@ -52,7 +52,7 @@
                 <div class="flex gap-2">
                   <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
                   <button class="btn" :disabled="genning" @click="genCert">
-                    <Icon icon="mdi:shield-check-outline" /> {{ $t('genCert') }}
+                    <Icon icon="mdi:shield-check-outline" /> {{ genning ? $t('genCerting') : $t('genCert') }}
                   </button>
                 </div>
                 <div>
@@ -95,14 +95,15 @@
         </div>
 
         <div class="foot">
-          <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
+          <span v-if="busyText" class="hint" style="margin: 0 auto 0 0">{{ busyText }}</span>
+          <button class="btn" :disabled="saving" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
             class="btn primary"
             :disabled="saving || (tab === 'form' && !!site.custom_conf)"
             :title="tab === 'form' && site.custom_conf ? $t('customConfLocked') : ''"
             @click="save()"
           >
-            {{ $t('save') }}
+            {{ saving ? $t('saving') : $t('save') }}
           </button>
         </div>
       </div>
@@ -161,6 +162,14 @@ const hasDnsToken = computed(() => {
   const s = settingsStore.settings
   if (!s) return true // 设置未加载完成时不误报
   return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
+})
+
+/** 底部统一忙碌提示：签发进度 > 自签生成 > 保存中（这三个互斥或嵌套，取最具体的一个） */
+const busyText = computed(() => {
+  if (acmeBusy.value) return acmeStatus.value || t('acmeIssuing')
+  if (genning.value) return t('genCerting')
+  if (saving.value) return t('saving')
+  return ''
 })
 
 // 选了 ACME 但尚未签发（无证书路径）：保存时会自动申请证书

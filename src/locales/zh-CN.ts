@@ -346,6 +346,7 @@ export default {
   sslEnable: '启用 HTTPS',
   sslDomain: '域名（可留空，默认用站点域名）',
   genCert: '生成自签证书',
+  genCerting: '正在生成自签证书…',
   sslDomainRequired: '请先填写域名',
   sslCertPath: '证书路径 (.crt)',
   sslKeyPath: '私钥路径 (.key)',

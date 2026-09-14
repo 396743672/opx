@@ -346,6 +346,7 @@ export default {
   sslEnable: 'Enable HTTPS',
   sslDomain: 'Domain (optional, defaults to site domain)',
   genCert: 'Generate self-signed cert',
+  genCerting: 'Generating self-signed certificate…',
   sslDomainRequired: 'Please enter a domain first',
   sslCertPath: 'Certificate (.crt)',
   sslKeyPath: 'Private key (.key)',
