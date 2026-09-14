@@ -1,8 +1,8 @@
-use std::fs;
-use tauri::AppHandle;
 use crate::models::settings::AppSettings;
 use crate::utils::paths;
-use crate::oplog;
+use crate::{audited, audited_async};
+use std::fs;
+use tauri::AppHandle;
 
 /// 读取设置；文件缺失或解析失败返回默认值。
 /// 路径相对 exe 所在目录（便携布局），不再使用外部 APPDATA。
@@ -35,35 +35,35 @@ pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
 /// 「可写 Token」的最小验证（`/user/tokens/verify` 只验有效性、不验权限）。
 #[tauri::command]
 pub async fn test_dns_token(provider: String, token: String, zone: String) -> Result<(), String> {
-    let zone = crate::commands::website::sanitize_domain(&zone)?;
-    let p = crate::services::acme::dns::provider_for(&provider, &token)
-        .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
-    let fqdn = format!("_opx-token-test.{}", zone);
-    let value = format!("opx-{}", chrono::Local::now().timestamp_millis());
-    p.create_txt(&fqdn, &value)
-        .await
-        .map_err(|e| format!("{:#}", e))?;
-    let _ = p.delete_txt(&fqdn, &value).await; // 清理探针记录（尽力而为）
-    oplog!("test_dns_token", &format!("{} ({})", provider, zone));
-    Ok(())
+    let target = format!("{} ({})", provider, zone);
+    audited_async!("test_dns_token", target, "", {
+        let zone = crate::commands::website::sanitize_domain(&zone)?;
+        let p = crate::services::acme::dns::provider_for(&provider, &token)
+            .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
+        let fqdn = format!("_opx-token-test.{}", zone);
+        let value = format!("opx-{}", chrono::Local::now().timestamp_millis());
+        p.create_txt(&fqdn, &value)
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+        let _ = p.delete_txt(&fqdn, &value).await; // 清理探针记录（尽力而为）
+        Ok(())
+    })
 }
 
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]
 pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), String> {
-    oplog!("save_settings", "all");
-    let path = paths::settings_path();
-    let tmp = path.with_extension("json.tmp");
-    let content =
-        serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化失败: {}", e))?;
-    fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("重命名失败: {}", e))?;
-    // 立即刷新下载代理配置
-    crate::utils::download::init_download_config(
-        settings.github_proxy_url,
-        settings.proxy_url,
-    );
-    Ok(())
+    audited!("save_settings", "all", "", {
+        let path = paths::settings_path();
+        let tmp = path.with_extension("json.tmp");
+        let content =
+            serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化失败: {}", e))?;
+        fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
+        fs::rename(&tmp, &path).map_err(|e| format!("重命名失败: {}", e))?;
+        // 立即刷新下载代理配置
+        crate::utils::download::init_download_config(settings.github_proxy_url, settings.proxy_url);
+        Ok(())
+    })
 }
 
 const RUN_VALUE: &str = "OPX";
