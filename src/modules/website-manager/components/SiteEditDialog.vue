@@ -169,10 +169,22 @@ const sslNeedIssue = computed(
 )
 
 async function issueCert() {
+  if (!hasDnsToken.value) {
+    acmeStatus.value = t('acmeNeedToken')
+    return
+  }
   acmeBusy.value = true
   acmeStatus.value = t('acmeIssuing')
   try {
-    await invoke('issue_site_certificate', { siteId: props.site.id })
+    // 站点必须先落库：后端按 id 读取站点；新建站点未保存时 id 不存在（会报「未找到站点」）。
+    // 预保存时关闭 SSL：此时尚无证书，开启会让生成配置缺 ssl_certificate 而 nginx -t 失败。
+    // 签发成功后由后端写回 enabled/acme/证书路径并 reload。
+    const pre: Site = {
+      ...form.value,
+      ssl: { ...form.value.ssl, enabled: false, acme: false, cert_path: null, key_path: null },
+    }
+    await invoke('save_website', { site: pre })
+    await invoke('issue_site_certificate', { siteId: form.value.id })
     acmeStatus.value = t('acmeDone')
     // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
     try {
