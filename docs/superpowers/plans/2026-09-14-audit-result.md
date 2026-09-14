@@ -943,13 +943,13 @@ git commit -m "feat(audit): 设置命令补采操作结果"
 
 - [ ] **Step 1: 改 import**
 
-文件头的 `use crate::oplog;` 改为：
+文件头第 13 行的 `use crate::oplog;` 改为：
 
 ```rust
-use crate::audited_async;
+use crate::{audited_async, oplog};
 ```
 
-（`software.rs` 中 Task 8 会再用到 `oplog_begin!` / `oplog_result!` / `oplog_fail!`，届时一并加入这一行。）
+（`oplog` 此时**必须保留**：`install` / `install_custom` / `start` / `do_upgrade` 四处要到 Task 8 才改造。Task 8 完成后这一行会被再次替换。）
 
 - [ ] **Step 2: `stop_software` 示例（含早 `return Ok(true)` 的形态）**
 
@@ -1138,7 +1138,7 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
 
 - [ ] **Step 4: `start_software` 改为「进行中 + 完成」**
 
-先把 Task 7 留下的 import 行扩成：
+先把 Task 7 留下的第 13 行 import 换成（此时 `oplog` 已无调用点，删掉）：
 
 ```rust
 use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
