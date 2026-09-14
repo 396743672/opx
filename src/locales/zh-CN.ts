@@ -430,6 +430,11 @@ export default {
   cloudflareToken: 'Cloudflare API Token',
   dnsTokenPlaintextWarning: 'Token 以明文保存在配置文件中，请确保本机环境可信',
   acmeStaging: '使用 Let\'s Encrypt 测试环境',
+  testToken: '测试 Token',
+  testTokenZonePlaceholder: '该账户下的域名，如 example.com',
+  testTokenTesting: '测试中…',
+  testTokenOk: 'Token 具备 DNS 写权限，校验通过',
+  testTokenNeedZone: '请先填写用于测试的域名',
 
   // 配置备份
   configBackups: '配置备份',

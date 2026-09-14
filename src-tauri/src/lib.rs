@@ -250,6 +250,7 @@ pub fn run() {
             commands::config::save_settings,
             commands::config::get_autostart,
             commands::config::set_autostart,
+            commands::config::test_dns_token,
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,

@@ -136,6 +136,27 @@
           <span class="text-sm">{{ $t('acmeStaging') }}</span>
           <SwitchBtn v-model="acmeStagingValue" />
         </div>
+        <div class="flex items-start justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('testToken') }}</span>
+          <div class="flex flex-col gap-1 items-end min-w-0">
+            <div class="flex items-center gap-2">
+              <input
+                v-model="dnsTestZone"
+                class="h-8 px-2 w-56 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+                :placeholder="$t('testTokenZonePlaceholder')"
+              />
+              <button class="btn text-xs h-7 px-2" :disabled="dnsTesting" @click="testToken">
+                {{ dnsTesting ? $t('testTokenTesting') : $t('testToken') }}
+              </button>
+            </div>
+            <span
+              v-if="dnsTestResult"
+              class="text-xs max-w-72 text-right"
+              :class="dnsTestOk ? 'text-success' : 'text-destructive'"
+              style="overflow-wrap: anywhere; word-break: break-word"
+            >{{ dnsTestResult }}</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -150,7 +171,7 @@ import { CloseWindowAction, type ThemeMode, type Language } from '@/models/setti
 import PageHeader from '@/components/PageHeader.vue'
 import SwitchBtn from '@/components/SwitchBtn.vue'
 
-useI18n()
+const { t } = useI18n()
 const settingsStore = useSettingsStore()
 
 const themeValue = ref<ThemeMode>('auto')
@@ -163,6 +184,36 @@ const autostartValue = ref(false)
 const dnsProviderValue = ref('cloudflare')
 const cloudflareApiTokenValue = ref('')
 const acmeStagingValue = ref(false)
+// DNS Token 测试（不持久化）：填入该服务商账户下的域名，实际建/删一条临时 TXT 验证写权限
+const dnsTestZone = ref('')
+const dnsTesting = ref(false)
+const dnsTestResult = ref('')
+const dnsTestOk = ref(false)
+
+async function testToken() {
+  const zone = dnsTestZone.value.trim()
+  if (!zone) {
+    dnsTestOk.value = false
+    dnsTestResult.value = t('testTokenNeedZone')
+    return
+  }
+  dnsTesting.value = true
+  dnsTestResult.value = t('testTokenTesting')
+  try {
+    await invoke('test_dns_token', {
+      provider: dnsProviderValue.value,
+      token: cloudflareApiTokenValue.value,
+      zone,
+    })
+    dnsTestOk.value = true
+    dnsTestResult.value = t('testTokenOk')
+  } catch (e) {
+    dnsTestOk.value = false
+    dnsTestResult.value = String(e)
+  } finally {
+    dnsTesting.value = false
+  }
+}
 
 onMounted(async () => {
   try {

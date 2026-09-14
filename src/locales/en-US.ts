@@ -430,6 +430,11 @@ export default {
   cloudflareToken: 'Cloudflare API Token',
   dnsTokenPlaintextWarning: 'The token is stored in plain text in the config file; make sure this machine is trusted',
   acmeStaging: 'Use Let\'s Encrypt staging environment',
+  testToken: 'Test token',
+  testTokenZonePlaceholder: 'A domain in this account, e.g. example.com',
+  testTokenTesting: 'Testing…',
+  testTokenOk: 'Token has DNS write access — check passed',
+  testTokenNeedZone: 'Enter a domain to test against first',
 
   // config backups
   configBackups: 'Config Backups',
