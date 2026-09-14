@@ -34,3 +34,13 @@ pub struct HistoryPoint {
     pub cpu_usage: f64,
     pub memory_usage: f64,
 }
+
+/// 持久化指标历史（30s 粒度，保留 7 天）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MetricsHistory {
+    #[serde(default)]
+    pub system: Vec<HistoryPoint>,
+    /// pid（字符串）-> 该进程的样本
+    #[serde(default)]
+    pub processes: std::collections::HashMap<String, Vec<HistoryPoint>>,
+}

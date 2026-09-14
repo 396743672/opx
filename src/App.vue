@@ -65,6 +65,7 @@ let unlistenStopComplete: UnlistenFn | null = null
 let unlistenTrayStop: UnlistenFn | null = null
 let unlistenAutoRestartGiveUp: UnlistenFn | null = null
 let unlistenProcessExited: UnlistenFn | null = null
+let unlistenResourceAlert: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -174,6 +175,25 @@ onMounted(async () => {
     toast(t('processStopped', { name: e.payload?.name ?? '' }), 'err')
   })
 
+  // 资源采样超阈值：toast 提示
+  unlistenResourceAlert = await listen<{ kind: string; name: string; metric: string; value: number; threshold: number }>(
+    'resource-alert',
+    (e) => {
+      const p = e.payload
+      if (!p) return
+      toast(
+        t('resourceAlert', {
+          // 系统级告警后端不带名称（审计文案另算），按 kind 本地化
+          name: p.kind === 'system' ? t('systemOverall') : p.name,
+          metric: p.metric === 'cpu' ? 'CPU' : t('memory'),
+          value: p.value,
+          threshold: p.threshold,
+        }),
+        'err',
+      )
+    },
+  )
+
   window.clearTimeout(bootTimeout)
 })
 
@@ -183,6 +203,7 @@ onUnmounted(() => {
   unlistenTrayStop?.()
   unlistenAutoRestartGiveUp?.()
   unlistenProcessExited?.()
+  unlistenResourceAlert?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

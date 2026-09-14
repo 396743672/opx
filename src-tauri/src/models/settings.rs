@@ -41,10 +41,23 @@ pub struct AppSettings {
     /// 使用 Let's Encrypt 测试环境（staging）
     #[serde(default)]
     pub acme_use_staging: bool,
+    /// 告警阈值（百分比）。默认 90。
+    #[serde(default = "default_ninety")]
+    pub alert_system_cpu: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_system_mem: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_process_cpu: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_process_mem: u32,
 }
 
 fn default_dns_provider() -> String {
     "cloudflare".to_string()
+}
+
+fn default_ninety() -> u32 {
+    90
 }
 
 impl Default for AppSettings {
@@ -65,6 +78,10 @@ impl Default for AppSettings {
             dns_provider: default_dns_provider(),
             cloudflare_api_token: String::new(),
             acme_use_staging: false,
+            alert_system_cpu: default_ninety(),
+            alert_system_mem: default_ninety(),
+            alert_process_cpu: default_ninety(),
+            alert_process_mem: default_ninety(),
         }
     }
 }
@@ -86,5 +103,20 @@ mod tests {
         assert_eq!(s.dns_provider, "cloudflare");
         assert!(s.cloudflare_api_token.is_empty());
         assert!(!s.acme_use_staging);
+    }
+
+    #[test]
+    fn alert_thresholds_default_to_90_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"https://mirrors.aliyun.com",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.alert_system_cpu, 90);
+        assert_eq!(s.alert_system_mem, 90);
+        assert_eq!(s.alert_process_cpu, 90);
+        assert_eq!(s.alert_process_mem, 90);
     }
 }

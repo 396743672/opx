@@ -1,42 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { SystemInfo, HistoryPoint } from '@/models/system'
+import type { SystemInfo } from '@/models/system'
 import type { ProcessSample } from '@/models/process'
 
 const POLL_INTERVAL = 1000
-/** 趋势图最多保留的点数，超出后丢弃最旧的 */
-const MAX_HISTORY = 120
 
 export const useSystemStore = defineStore('system', () => {
   const systemInfo = ref<SystemInfo | null>(null)
-  const history = ref<HistoryPoint[]>([])
 
   const loading = ref(false)
   const lastUpdated = ref<number>(0)
 
-  /** pid -> 该进程的历史采样点（环形 MAX_HISTORY） */
-  const processSamples = ref<Record<number, HistoryPoint[]>>({})
-  /** 最近一次整机内存总量，用于内存趋势归一化 */
+  /** 最近一次整机内存总量，用于内存占比归一化 */
   const memTotal = ref(0)
 
-  // 进程采样：一次 invoke 批量采样所有 pid，写入各 pid 历史
+  // 进程采样：一次 invoke 批量采样所有 pid，只返回实时样本（趋势历史由后端持久化）
   async function sampleProcesses(pids: number[]) {
     if (pids.length === 0) return []
     try {
-      const samples = await invoke<ProcessSample[]>('sample_process_resources', { pids })
-      for (const s of samples) {
-        const point: HistoryPoint = {
-          timestamp: Date.now(),
-          cpu_usage: s.cpu_usage,
-          memory_usage: memTotal.value > 0 ? (s.mem_bytes / memTotal.value) * 100 : 0,
-        }
-        const list = processSamples.value[s.pid] ?? []
-        list.push(point)
-        if (list.length > MAX_HISTORY) list.splice(0, list.length - MAX_HISTORY)
-        processSamples.value[s.pid] = list
-      }
-      return samples
+      return await invoke<ProcessSample[]>('sample_process_resources', { pids })
     } catch (e) {
       console.error('process sample failed:', e)
       return []
@@ -90,36 +73,14 @@ export const useSystemStore = defineStore('system', () => {
         }
       }
 
-      // 追加历史趋势点
-      history.value.push({
-        timestamp: now,
-        cpu_usage: info.cpu_usage,
-        memory_usage: info.memory_usage,
-      })
-      if (history.value.length > MAX_HISTORY) {
-        history.value = history.value.slice(-MAX_HISTORY)
-      }
-
       lastUpdated.value = now
     } finally {
       loading.value = false
     }
   }
 
-  async function loadHistory() {
-    try {
-      const pts = await invoke<HistoryPoint[]>('system_history')
-      if (pts && pts.length) {
-        history.value = pts.slice(-MAX_HISTORY)
-      }
-    } catch {
-      // 历史文件可能尚不存在，忽略
-    }
-  }
-
   function startPolling() {
     if (timer !== null) return
-    loadHistory()
     fetchAll()
     timer = window.setInterval(fetchAll, POLL_INTERVAL)
   }
@@ -133,7 +94,6 @@ export const useSystemStore = defineStore('system', () => {
 
   return {
     systemInfo,
-    history,
     loading,
     lastUpdated,
     netSentRate,
@@ -141,10 +101,8 @@ export const useSystemStore = defineStore('system', () => {
     cpuUsage,
     memoryUsage,
     diskUsage,
-    processSamples,
     memTotal,
     fetchAll,
-    loadHistory,
     startPolling,
     stopPolling,
     sampleProcesses,
