@@ -261,6 +261,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::system::system_info,
             commands::system::system_history,
+            commands::system::process_metrics_history,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::get_autostart,
