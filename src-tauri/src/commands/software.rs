@@ -20,7 +20,7 @@ use crate::services::software_manager::{
     log_viewer, providers, uninstall_guard, SoftwareManager,
 };
 use crate::utils::topo::topo_layers;
-use crate::{audited_async, oplog};
+use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -143,8 +143,9 @@ pub async fn install_software(
     app: AppHandle,
     params: InstallParams,
 ) -> Result<String, String> {
-    oplog!("install", &params.key, &params.version);
     let install_id = uuid::Uuid::new_v4().to_string();
+    oplog_begin!("install", &params.key, &params.version);
+    installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -162,18 +163,25 @@ pub async fn upgrade_software(
     installed_id: String,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
+    let audit_target = manager
+        .find_installed(&installed_id)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    oplog_begin!("upgrade", &audit_target);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = do_upgrade(
+        let audit_target_for_task = audit_target.clone();
+        let r = do_upgrade(
             &manager_arc,
             &app,
             &installed_id_for_task,
             &install_id_for_task,
         )
-        .await
-        {
+        .await;
+        oplog_result!("upgrade", &audit_target_for_task, "", r);
+        if let Err(ref e) = r {
             let _ = app.emit(
                 "install-progress",
                 serde_json::json!({
@@ -198,7 +206,6 @@ async fn do_upgrade(
     let software = manager
         .find_installed(installed_id)
         .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
-    oplog!("upgrade", &software.name);
 
     // 目标版本：compute_upgrades 中该软件的 target_version（无可升级则报错）
     let catalog = manager.get_catalog();
@@ -511,8 +518,9 @@ pub async fn install_custom(
     app: AppHandle,
     params: CustomInstallParams,
 ) -> Result<String, String> {
-    oplog!("install_custom", &params.name);
     let install_id = uuid::Uuid::new_v4().to_string();
+    oplog_begin!("install_custom", &params.name);
+    installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -593,30 +601,37 @@ pub async fn start_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!(
-        "start",
-        &software.name,
-        &format!("{} ({})", software.version, software.id)
-    );
+    let audit_target = software.name.clone();
+    let audit_detail = format!("{} ({})", software.version, software.id);
+    oplog_begin!("start", &audit_target, &audit_detail);
 
-    lifecycle::validate_start_transition(software.status).map_err(|e| e.to_string())?;
+    if let Err(e) = lifecycle::validate_start_transition(software.status) {
+        oplog_fail!("start", &audit_target, &audit_detail, &e);
+        return Err(e.to_string());
+    }
 
     // PID 残留校验：旧 PID 仍存活则拒绝启动
     if let Some(pid) = software.pid {
         if health_check::is_process_alive(pid) {
-            return Err(format!("进程 {} 仍在运行，请先停止", pid));
+            let msg = format!("进程 {} 仍在运行，请先停止", pid);
+            oplog_fail!("start", &audit_target, &audit_detail, &msg);
+            return Err(msg);
         }
     }
 
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let app_handle = app.clone();
+    let audit_target_task = audit_target.clone();
+    let audit_detail_task = audit_detail.clone();
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
         // 依赖编排：先按拓扑序拉起未运行的依赖，再启动自身
         if let Err(e) = ensure_dependencies(&manager_arc, &app_handle, &installed_id_for_task).await
         {
+            let msg = format!("依赖编排失败：{}", e);
+            oplog_fail!("start", &audit_target_task, &audit_detail_task, &msg);
             tracing::warn!(error = %e, installed_id = %installed_id_for_task, "依赖编排失败");
             let _ = manager_arc.update_runtime_fields(
                 &installed_id_for_task,
@@ -624,14 +639,14 @@ pub async fn start_software(
                 None,
                 None,
                 None,
-                Some(format!("依赖编排失败：{}", e)),
+                Some(msg.clone()),
             );
             lifecycle::emit_status_changed(
                 &app_handle,
                 &installed_id_for_task,
                 SoftwareStatus::Error,
                 None,
-                Some(format!("依赖编排失败：{}", e)),
+                Some(msg.clone()),
             );
             return;
         }
@@ -642,6 +657,7 @@ pub async fn start_software(
             init_password,
         )
         .await;
+        oplog_result!("start", &audit_target_task, &audit_detail_task, result);
         if let Err(e) = result {
             let _ = manager_arc.update_runtime_fields(
                 &installed_id_for_task,

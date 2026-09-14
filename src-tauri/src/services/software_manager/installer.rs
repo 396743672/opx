@@ -1,16 +1,19 @@
 use anyhow::Result;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::models::software::ArchiveFormat;
 use crate::models::software::{
     CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
-use crate::models::software::ArchiveFormat;
 use crate::services::software_manager::providers::{all_providers, InstallContext};
 use crate::services::software_manager::SoftwareManager;
 use crate::utils::{archive, download, paths};
@@ -38,7 +41,55 @@ fn cleanup_path(path: &Path) {
     }
 }
 
+/// install_id → (action, target, detail)：供 emit_event 在终态补写审计完成记录。
+/// ponytail: 命令侧与 emit_event 之间隔着 50 余处调用点，逐点透传审计上下文改动过大；
+/// 用一张按 install_id 索引的小表收口，终态事件一次性 take 后即释放。
+static INSTALL_AUDIT_CTX: LazyLock<Mutex<HashMap<String, (String, String, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 命令发起安装任务时登记审计上下文（与 oplog_begin! 同处调用）。
+pub fn register_install_audit(install_id: &str, action: &str, target: &str, detail: &str) {
+    INSTALL_AUDIT_CTX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            install_id.to_string(),
+            (action.to_string(), target.to_string(), detail.to_string()),
+        );
+}
+
 fn emit_event(app: &AppHandle, payload: serde_json::Value) {
+    // 终态（failed / completed）顺带补写审计完成记录：这是安装任务唯一的完成出口，
+    // 覆盖 install_software / install_custom / install_from_builtin 的全部失败分支。
+    let phase = payload.get("phase").and_then(|v| v.as_str()).unwrap_or("");
+    if phase == "failed" || phase == "completed" {
+        if let Some(id) = payload.get("install_id").and_then(|v| v.as_str()) {
+            let ctx = INSTALL_AUDIT_CTX
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id); // take：同一 install_id 只落一条完成记录
+            if let Some((action, target, detail)) = ctx {
+                let (result, error) = if phase == "completed" {
+                    (
+                        crate::services::software_manager::audit::RESULT_OK,
+                        String::new(),
+                    )
+                } else {
+                    (
+                        crate::services::software_manager::audit::RESULT_FAIL,
+                        payload
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                };
+                crate::services::software_manager::audit::record_full(
+                    action, target, detail, result, error,
+                );
+            }
+        }
+    }
     let _ = app.emit("install-progress", payload);
 }
 
@@ -49,7 +100,9 @@ struct ThrottledEmitter {
 
 impl ThrottledEmitter {
     fn new() -> Self {
-        Self { last_emit: std::time::Instant::now() }
+        Self {
+            last_emit: std::time::Instant::now(),
+        }
     }
 
     fn should_emit(&mut self, _percent: i64) -> bool {
@@ -81,9 +134,7 @@ pub async fn install_software(
     params: InstallParams,
     install_id: String,
 ) {
-    let install_path = paths::apps_dir()
-        .join(&params.key)
-        .join(&params.version);
+    let install_path = paths::apps_dir().join(&params.key).join(&params.version);
 
     let catalog = manager.get_catalog();
     let entry = match catalog.entries.iter().find(|e| e.key == params.key) {
@@ -192,7 +243,15 @@ pub async fn install_software(
 
     let result: Result<()> = async {
         // 下载到缓存→SHA 校验→解压到 install_path→provider.post_install（含进度事件）
-        download_and_extract(&params, &install_path, &app, &install_id, version_info, mirror).await?;
+        download_and_extract(
+            &params,
+            &install_path,
+            &app,
+            &install_id,
+            version_info,
+            mirror,
+        )
+        .await?;
 
         // 关键：在 move 进 InstalledSoftware 之前克隆 installed_id，
         // 后续的 jre_default 更新和 completed 事件需要使用这个 id。
@@ -293,8 +352,8 @@ pub async fn install_custom(
     // 校验扩展名
     let path_str = &params.archive_path;
     let is_zip = path_str.to_lowercase().ends_with(".zip");
-    let is_tar_gz = path_str.to_lowercase().ends_with(".tar.gz")
-        || path_str.to_lowercase().ends_with(".tgz");
+    let is_tar_gz =
+        path_str.to_lowercase().ends_with(".tar.gz") || path_str.to_lowercase().ends_with(".tgz");
     if !is_zip && !is_tar_gz {
         emit_event(
             &app,
@@ -369,7 +428,11 @@ pub async fn install_custom(
         let id_ep = install_id.clone();
         let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
             if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
@@ -525,27 +588,28 @@ pub async fn download_and_extract(
         // 节流：大文件按每 chunk 回调会刷屏 IPC，限制为最多每 200ms 或百分比变化时 emit 一次
         let mut last_emit = std::time::Instant::now();
         let mut last_percent: i64 = -1;
-        if let Err(e) = download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
-            let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
-            let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
-            if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                last_emit = std::time::Instant::now();
-                if let Some(p) = percent {
-                    last_percent = p;
+        if let Err(e) =
+            download::download_with_progress(&mirror.url, &cache_path, move |downloaded, total| {
+                let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+                let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
+                if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                    last_emit = std::time::Instant::now();
+                    if let Some(p) = percent {
+                        last_percent = p;
+                    }
+                    emit_event(
+                        &app_for_progress,
+                        serde_json::json!({
+                            "install_id": install_id_for_progress.clone(),
+                            "phase": "downloading",
+                            "downloaded": downloaded,
+                            "total": total,
+                            "percent": percent
+                        }),
+                    );
                 }
-                emit_event(
-                    &app_for_progress,
-                    serde_json::json!({
-                        "install_id": install_id_for_progress.clone(),
-                        "phase": "downloading",
-                        "downloaded": downloaded,
-                        "total": total,
-                        "percent": percent
-                    }),
-                );
-            }
-        })
-        .await
+            })
+            .await
         {
             // 下载失败：删除不完整的缓存文件，避免下次误当命中复用
             let _ = fs::remove_file(&cache_path);
@@ -579,7 +643,11 @@ pub async fn download_and_extract(
     let blocking_result = tokio::task::spawn_blocking(move || {
         let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
             if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
@@ -601,9 +669,13 @@ pub async fn download_and_extract(
             }
             ArchiveFormat::Executable => {
                 let dest_file = install_path2.join(
-                    cache_path2.file_name().unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
+                    cache_path2
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
                 );
-                fs::copy(&cache_path2, &dest_file).map(|_| ()).map_err(Into::into)
+                fs::copy(&cache_path2, &dest_file)
+                    .map(|_| ())
+                    .map_err(Into::into)
             }
         }
     })
@@ -722,27 +794,28 @@ async fn install_from_builtin(
                 let id_ep = install_id.clone();
                 let mut last_emit = std::time::Instant::now();
                 let mut last_percent: i64 = -1;
-                if let Err(e) = download::download_with_progress(url, &temp_zip, move |downloaded, total| {
-                    let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
-                    let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
-                    if last_emit.elapsed().as_millis() >= 200 || percent_changed {
-                        last_emit = std::time::Instant::now();
-                        if let Some(p) = percent {
-                            last_percent = p;
+                if let Err(e) =
+                    download::download_with_progress(url, &temp_zip, move |downloaded, total| {
+                        let percent = total.map(|t| (downloaded as f64 / t as f64 * 100.0) as i64);
+                        let percent_changed = percent.map(|p| p != last_percent).unwrap_or(false);
+                        if last_emit.elapsed().as_millis() >= 200 || percent_changed {
+                            last_emit = std::time::Instant::now();
+                            if let Some(p) = percent {
+                                last_percent = p;
+                            }
+                            emit_event(
+                                &app_ep,
+                                serde_json::json!({
+                                    "install_id": id_ep.clone(),
+                                    "phase": "downloading",
+                                    "downloaded": downloaded,
+                                    "total": total,
+                                    "percent": percent
+                                }),
+                            );
                         }
-                        emit_event(
-                            &app_ep,
-                            serde_json::json!({
-                                "install_id": id_ep.clone(),
-                                "phase": "downloading",
-                                "downloaded": downloaded,
-                                "total": total,
-                                "percent": percent
-                            }),
-                        );
-                    }
-                })
-                .await
+                    })
+                    .await
                 {
                     cleanup_temp(&temp_zip);
                     emit_event(
@@ -869,7 +942,11 @@ async fn install_from_builtin(
         let id_ep = install_id.clone();
         let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
-            let percent = if total > 0 { (extracted as f64 / total as f64 * 100.0) as i64 } else { 0 };
+            let percent = if total > 0 {
+                (extracted as f64 / total as f64 * 100.0) as i64
+            } else {
+                0
+            };
             if throttle.should_emit(percent) {
                 emit_event(
                     &app_ep,
@@ -887,9 +964,7 @@ async fn install_from_builtin(
             ArchiveFormat::Zip => {
                 archive::extract_zip_flatten(&temp_zip, &install_path, on_progress)
             }
-            ArchiveFormat::TarGz => {
-                archive::extract_tar_gz(&temp_zip, &install_path, on_progress)
-            }
+            ArchiveFormat::TarGz => archive::extract_tar_gz(&temp_zip, &install_path, on_progress),
             ArchiveFormat::Executable => {
                 // 单个可执行文件：从临时副本复制到 install_path 下
                 // （文件名仍用原始 resource_zip 的文件名，保持语义一致）
@@ -899,7 +974,9 @@ async fn install_from_builtin(
                         .and_then(|p| p.file_name())
                         .unwrap_or_else(|| std::ffi::OsStr::new("app.exe")),
                 );
-                fs::copy(&temp_zip, &dest_file).map(|_| ()).map_err(Into::into)
+                fs::copy(&temp_zip, &dest_file)
+                    .map(|_| ())
+                    .map_err(Into::into)
             }
         };
 
