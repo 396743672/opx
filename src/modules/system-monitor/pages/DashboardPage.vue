@@ -155,6 +155,11 @@
     <!-- 进程资源监控 -->
     <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
       <CardHeader icon="mdi:chart-timeline-variant" :title="$t('processMonitor')" />
+      <!-- 告警机制提示：说明采样/阈值/触发条件，避免「改了阈值却没记录」的困惑 -->
+      <div class="text-xs text-muted-foreground mb-2" style="overflow-wrap: anywhere">
+        {{ $t('alertHintLine', alertHintParams) }}
+        <span v-if="runningTotal === 0"> · {{ $t('alertNoRunning') }}</span>
+      </div>
       <div v-if="processRows.length === 0" class="py-3 text-sm text-muted-foreground">
         {{ $t('noRunningProcess') }}
       </div>
@@ -320,6 +325,7 @@ import { useSystemStore } from '@/stores/system'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { useStackStore } from '@/stores/stack'
+import { useSettingsStore } from '@/stores/settings'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { InstalledSoftware } from '@/models/software'
 import { SoftwareStatus } from '@/models/software'
@@ -340,6 +346,7 @@ const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
 const lifecycleStore = useLifecycleStore()
 const stackStore = useStackStore()
+const settingsStore = useSettingsStore()
 
 const installedSoftware = ref<InstalledSoftware[]>([])
 const runningApps = ref<SpringBootApp[]>([])
@@ -414,6 +421,18 @@ function toggleProcess(pid: number) {
   next.has(pid) ? next.delete(pid) : next.add(pid)
   expandedPids.value = next
 }
+
+// 告警机制提示：阈值取自设置（后端每 30s 采样时读取），并提示无实例时进程告警不会触发
+const alertHintParams = computed(() => {
+  const s = settingsStore.settings
+  return {
+    sc: s?.alert_system_cpu ?? 90,
+    sm: s?.alert_system_mem ?? 90,
+    pc: s?.alert_process_cpu ?? 90,
+    pm: s?.alert_process_mem ?? 90,
+  }
+})
+const runningTotal = computed(() => runningSoftware.value.length + runningApps.value.length)
 
 // 趋势曲线读后端持久化序列（30s 粒度），前端不再累积历史、不做告警判定
 const sysHistory = ref<HistoryPoint[]>([])
