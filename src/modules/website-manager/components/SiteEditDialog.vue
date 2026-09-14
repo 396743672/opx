@@ -95,7 +95,6 @@
         </div>
 
         <div class="foot">
-          <span v-if="busyText" class="hint" style="margin: 0 auto 0 0">{{ busyText }}</span>
           <button class="btn" :disabled="saving" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
             class="btn primary"
@@ -109,6 +108,20 @@
       </div>
     </div>
   </Teleport>
+  <Teleport to="body">
+    <div v-if="busyKind" class="overlay" style="z-index:65">
+      <div class="confirm-box">
+        <div class="confirm-title" style="color: var(--color-primary)">
+          <Icon icon="mdi:progress-clock" /> {{ busyTitle }}
+        </div>
+        <p class="confirm-msg" style="margin-bottom: 12px">{{ busyText }}</p>
+        <div v-if="busyPct != null" class="busy-bar">
+          <i :style="{ width: busyPct + '%' }"></i>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <Teleport to="body">
     <div v-if="confirmUnlock" class="overlay" style="z-index:60">
       <div class="confirm-box">
@@ -164,13 +177,26 @@ const hasDnsToken = computed(() => {
   return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
 })
 
-/** 底部统一忙碌提示：签发进度 > 自签生成 > 保存中（这三个互斥或嵌套，取最具体的一个） */
+// ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
+const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')
+const acmePct = ref(0)
+/** 后端 acme-progress 的阶段 → 进度百分比（仅用于展示） */
+const PHASE_PCT: Record<string, number> = {
+  'creating-order': 10,
+  'waiting-dns': 35,
+  validating: 65,
+  downloading: 90,
+  done: 100,
+}
+const busyTitle = computed(() =>
+  busyKind.value === 'issue' ? t('issueCert') : busyKind.value === 'gen' ? t('genCert') : t('save'),
+)
 const busyText = computed(() => {
-  if (acmeBusy.value) return acmeStatus.value || t('acmeIssuing')
-  if (genning.value) return t('genCerting')
-  if (saving.value) return t('saving')
-  return ''
+  if (busyKind.value === 'issue') return acmeStatus.value || t('acmeIssuing')
+  if (busyKind.value === 'gen') return t('genCerting')
+  return t('saving')
 })
+const busyPct = computed(() => (busyKind.value === 'issue' ? acmePct.value : null))
 
 // 选了 ACME 但尚未签发（无证书路径）：保存时会自动申请证书
 const sslNeedIssue = computed(
@@ -180,6 +206,8 @@ const sslNeedIssue = computed(
 /** 实际发起签发（不含前置校验），供「保存」与「申请证书」共用。返回是否成功。 */
 async function doIssue(): Promise<boolean> {
   acmeBusy.value = true
+  busyKind.value = 'issue'
+  acmePct.value = 0
   acmeStatus.value = t('acmeIssuing')
   try {
     await invoke('issue_site_certificate', { siteId: props.site.id })
@@ -202,6 +230,7 @@ async function doIssue(): Promise<boolean> {
     return false
   } finally {
     acmeBusy.value = false
+    busyKind.value = ''
   }
 }
 
@@ -223,6 +252,7 @@ onMounted(async () => {
     const cur = (props.site.server_name ?? '').trim().toLowerCase()
     if (e.payload.domain.trim().toLowerCase() !== cur) return
     acmeStatus.value = e.payload.message || e.payload.phase
+    acmePct.value = PHASE_PCT[e.payload.phase] ?? acmePct.value
   })
 })
 onUnmounted(() => {
@@ -239,6 +269,7 @@ async function genCert() {
     return
   }
   genning.value = true
+  busyKind.value = 'gen'
   saveError.value = ''
   try {
     const [cert, key] = await invoke<string[]>('generate_self_signed_cert', { domain: d })
@@ -248,6 +279,7 @@ async function genCert() {
     saveError.value = String(e)
   } finally {
     genning.value = false
+    busyKind.value = ''
   }
 }
 const saving = ref(false)
@@ -283,6 +315,7 @@ async function save() {
     }
   }
   saving.value = true
+  busyKind.value = 'save'
   try {
     if (tab.value === 'source') {
       await invoke('set_site_conf', {
@@ -306,6 +339,7 @@ async function save() {
     saveError.value = String(e)
   } finally {
     saving.value = false
+    busyKind.value = ''
   }
 }
 
@@ -324,6 +358,7 @@ async function doUnlock() {
     saveError.value = String(e)
   } finally {
     saving.value = false
+    busyKind.value = ''
   }
 }
 
@@ -437,6 +472,8 @@ watch(tab, async (t) => {
 .confirm-title svg { color: var(--color-destructive); }
 .confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; overflow-wrap: anywhere; word-break: break-word; max-height: 40vh; overflow-y: auto; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.busy-bar { height: 6px; border-radius: 999px; background: var(--color-muted); overflow: hidden; }
+.busy-bar i { display: block; height: 100%; background: var(--color-primary); transition: width 0.3s ease-out; }
 .dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
 .head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
