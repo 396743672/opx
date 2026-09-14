@@ -36,7 +36,10 @@ impl Cloudflare {
                 .and_then(|a| a.first())
                 .and_then(|e| e["code"].as_i64())
                 .filter(|c| *c == 10000)
-                .map(|_| "（Token 可能缺少 Zone → DNS → Edit 权限，请在 Cloudflare 编辑该 Token 时补上）")
+                .map(|_| {
+                    "（需要【区域(Zone)作用域】的 DNS → Edit 权限；账户作用域的 DNS View/Settings 不能替代。\
+最简单做法：Cloudflare → API Tokens → Create Token → 选「Edit zone DNS」模板 → Zone Resources 选目标域名）"
+                })
                 .unwrap_or("");
             let detail = if body.is_null() { text } else { body.to_string() };
             return Err(anyhow!("Cloudflare API 失败（{}）：{}{}", status, detail, hint));
