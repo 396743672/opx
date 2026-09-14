@@ -10,6 +10,15 @@ pub fn is_recovered(value: f64, threshold: u32) -> bool {
     value < threshold as f64 - 2.0
 }
 
+/// 释放已消失进程的告警态：保留非 `proc:` 键与存活键。
+/// 进程退出后其键若不清理，PID 被复用（Windows 常见）时新进程会永久失警。
+pub fn release_stale(
+    alerting: &mut std::collections::HashSet<String>,
+    live_keys: &std::collections::HashSet<String>,
+) {
+    alerting.retain(|k| !k.starts_with("proc:") || live_keys.contains(k));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,5 +37,19 @@ mod tests {
         assert!(!is_recovered(88.5, 90), "阈值下 1.5 个百分点仍在迟滞区，未恢复");
         assert!(is_recovered(87.9, 90), "低于 阈值的 2 个百分点才判恢复");
         assert!(is_recovered(10.0, 90));
+    }
+
+    #[test]
+    fn stale_pid_key_does_not_suppress_new_alert() {
+        let mut alerting: std::collections::HashSet<String> =
+            ["proc:123:cpu".to_string(), "system:cpu".to_string()].into_iter().collect();
+        // 本轮存活进程里没有 123（已退出）
+        let live: std::collections::HashSet<String> =
+            ["proc:456:cpu".to_string()].into_iter().collect();
+        release_stale(&mut alerting, &live);
+        assert!(!alerting.contains("proc:123:cpu"), "退出进程的告警键应被释放");
+        assert!(alerting.contains("system:cpu"), "非 proc 键不受影响");
+        // 释放后同 PID 的新进程可重新告警
+        assert!(should_alert(95.0, 90, alerting.contains("proc:123:cpu")));
     }
 }

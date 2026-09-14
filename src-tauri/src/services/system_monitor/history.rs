@@ -14,11 +14,14 @@ pub fn load_metrics(path: &Path) -> Result<MetricsHistory> {
     }))
 }
 
+/// 写临时文件后 rename 原子替换，避免中途崩溃留下截断文件导致历史归零。
 pub fn save_history(path: &Path, h: &MetricsHistory) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, serde_json::to_string(h)?)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(h)?)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -26,6 +29,16 @@ pub fn save_history(path: &Path, h: &MetricsHistory) -> Result<()> {
 pub fn prune_older_than(points: &mut Vec<HistoryPoint>, now_ms: i64, retain_days: i64) {
     let cutoff = now_ms - retain_days * 86_400_000;
     points.retain(|p| (p.timestamp as i64) >= cutoff);
+}
+
+/// 对整机与**所有**进程序列裁剪，并丢弃裁剪后为空的键。
+/// 必须遍历全部键（而非本轮采到的 pid），否则已退出进程的序列永不淘汰。
+pub fn prune_all(h: &mut MetricsHistory, now_ms: i64, retain_days: i64) {
+    prune_older_than(&mut h.system, now_ms, retain_days);
+    for pts in h.processes.values_mut() {
+        prune_older_than(pts, now_ms, retain_days);
+    }
+    h.processes.retain(|_, pts| !pts.is_empty());
 }
 
 #[cfg(test)]
@@ -73,6 +86,19 @@ mod tests {
         assert_eq!(back.system.len(), 1);
         assert_eq!(back.processes.get("42").unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dead_process_series_dropped() {
+        let now = 10_000_000_000i64;
+        let day = 86_400_000i64;
+        let mut h = MetricsHistory::default();
+        h.system.push(pt(now as u64));
+        // 已退出进程：键仍在，但样本全部超期
+        h.processes.insert("123".to_string(), vec![pt((now - 8 * day) as u64)]);
+        prune_all(&mut h, now, 7);
+        assert!(!h.processes.contains_key("123"), "全部超期的进程键应被丢弃");
+        assert_eq!(h.system.len(), 1, "system 未超期点应保留");
     }
 }
 

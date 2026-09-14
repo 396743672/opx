@@ -27,6 +27,8 @@ pub async fn run_recorder(
 ) {
     let mut alerting: HashSet<String> = HashSet::new();
     let mut tick = tokio::time::interval(Duration::from_secs(SAMPLE_INTERVAL_SECS));
+    // 休眠/挂起恢复后不补打遗漏的 tick，避免突发一串采样
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tick.tick().await; // 消耗初始化 tick
     loop {
         tick.tick().await;
@@ -62,7 +64,23 @@ async fn sample_once(
     }
 
     let pids: Vec<u32> = targets.iter().map(|(_, p)| *p).collect();
-    let samples = process_monitor::sample_processes(&pids);
+    // 每进程只算一次：显示名、CPU%、内存占整机百分比（落盘与告警共用）
+    let rows: Vec<(u32, String, f64, f64)> = process_monitor::sample_processes(&pids)
+        .into_iter()
+        .map(|s| {
+            let mem_pct = if sys.memory_total > 0 {
+                s.mem_bytes as f64 / sys.memory_total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let name = targets
+                .iter()
+                .find(|(_, p)| *p == s.pid)
+                .map(|(n, _)| n.clone())
+                .unwrap_or_else(|| format!("PID {}", s.pid));
+            (s.pid, name, s.cpu_usage, mem_pct)
+        })
+        .collect();
 
     let mut h = history::load_metrics(&metrics_path()).unwrap_or_default();
     h.system.push(HistoryPoint {
@@ -70,50 +88,35 @@ async fn sample_once(
         cpu_usage: sys.cpu_usage,
         memory_usage: sys.memory_usage,
     });
-    for s in &samples {
-        let mem_pct = if sys.memory_total > 0 {
-            s.mem_bytes as f64 / sys.memory_total as f64 * 100.0
-        } else {
-            0.0
-        };
+    for (pid, _, cpu, mem_pct) in &rows {
         h.processes
-            .entry(s.pid.to_string())
+            .entry(pid.to_string())
             .or_default()
             .push(HistoryPoint {
                 timestamp: now_ms as u64,
-                cpu_usage: s.cpu_usage,
-                memory_usage: mem_pct,
+                cpu_usage: *cpu,
+                memory_usage: *mem_pct,
             });
-        if let Some(pts) = h.processes.get_mut(&s.pid.to_string()) {
-            history::prune_older_than(pts, now_ms, RETAIN_DAYS);
-        }
     }
-    history::prune_older_than(&mut h.system, now_ms, RETAIN_DAYS);
-    // 丢弃已无样本的进程键，避免文件无限膨胀
-    h.processes.retain(|_, pts| !pts.is_empty());
+    // 对全部键裁剪（含已退出进程的残留键），并丢弃空键
+    history::prune_all(&mut h, now_ms, RETAIN_DAYS);
     if let Err(e) = history::save_history(&metrics_path(), &h) {
         tracing::warn!(error = %e, "写入指标历史失败");
     }
 
     // ---- 告警判定 ----
-    let name_of = |pid: u32| {
-        targets
-            .iter()
-            .find(|(_, p)| *p == pid)
-            .map(|(n, _)| n.clone())
-            .unwrap_or_else(|| format!("PID {pid}"))
-    };
+    // 先释放已退出进程的告警态，否则 PID 复用时新进程永久失警
+    let live: HashSet<String> = rows
+        .iter()
+        .flat_map(|(pid, ..)| [format!("proc:{pid}:cpu"), format!("proc:{pid}:mem")])
+        .collect();
+    alerts::release_stale(alerting, &live);
+
     eval(app, alerting, "system:cpu", "整机", "cpu", sys.cpu_usage, thresholds.alert_system_cpu);
     eval(app, alerting, "system:mem", "整机", "mem", sys.memory_usage, thresholds.alert_system_mem);
-    for s in &samples {
-        let mem_pct = if sys.memory_total > 0 {
-            s.mem_bytes as f64 / sys.memory_total as f64 * 100.0
-        } else {
-            0.0
-        };
-        let name = name_of(s.pid);
-        eval(app, alerting, &format!("proc:{}:cpu", s.pid), &name, "cpu", s.cpu_usage, thresholds.alert_process_cpu);
-        eval(app, alerting, &format!("proc:{}:mem", s.pid), &name, "mem", mem_pct, thresholds.alert_process_mem);
+    for (pid, name, cpu, mem_pct) in &rows {
+        eval(app, alerting, &format!("proc:{pid}:cpu"), name, "cpu", *cpu, thresholds.alert_process_cpu);
+        eval(app, alerting, &format!("proc:{pid}:mem"), name, "mem", *mem_pct, thresholds.alert_process_mem);
     }
 }
 
