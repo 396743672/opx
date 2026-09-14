@@ -74,7 +74,8 @@ pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<Sof
                     }
                     crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
                 }
-                Err(e) => tracing::warn!(site = %site.id, error = %e, "ACME 自动续期失败"),
+                // {:#} 展开 error chain，便于定位真实原因（如 Cloudflare 权限/API 报错）
+                Err(e) => tracing::warn!(site = %site.id, error = %format!("{:#}", e), "ACME 自动续期失败"),
             }
         }
     }

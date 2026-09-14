@@ -493,7 +493,9 @@ pub async fn issue_site_certificate(
     let (cert_path, key_path) =
         crate::services::acme::issue_certificate(&domain, &acme_settings, &cert_dir, on_progress)
             .await
-            .map_err(|e| e.to_string())?;
+            // {:#} 展开 anyhow 的 error chain，否则前端只看到最外层 context
+            // （如「创建 DNS 挑战记录失败」）而看不到真实原因（如 Cloudflare 权限不足）
+            .map_err(|e| format!("{:#}", e))?;
 
     // 更新站点 ssl 并落盘 + 重新生成 nginx 配置并 reload
     let mut updated = site.clone();

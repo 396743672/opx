@@ -26,9 +26,20 @@ impl Cloudflare {
 
     async fn json(resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
-        let body: Value = resp.json().await.unwrap_or(Value::Null);
+        // 先取文本再尽力解析：非 JSON 错误体（如网关 HTML）也能把原文带出来
+        let text = resp.text().await.unwrap_or_default();
+        let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if !status.is_success() || body.get("success").and_then(|v| v.as_bool()) != Some(true) {
-            return Err(anyhow!("Cloudflare API 失败（{}）：{}", status, body));
+            // Cloudflare 10000 = Authentication error：绝大多数是 Token 缺少 Zone→DNS→Edit 权限
+            let hint = body["errors"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|e| e["code"].as_i64())
+                .filter(|c| *c == 10000)
+                .map(|_| "（Token 可能缺少 Zone → DNS → Edit 权限，请在 Cloudflare 编辑该 Token 时补上）")
+                .unwrap_or("");
+            let detail = if body.is_null() { text } else { body.to_string() };
+            return Err(anyhow!("Cloudflare API 失败（{}）：{}{}", status, detail, hint));
         }
         Ok(body)
     }
