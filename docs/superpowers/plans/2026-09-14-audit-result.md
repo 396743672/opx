@@ -13,6 +13,7 @@
 - 所有改动在从 `dev` 新建的分支 `feat/audit-result` 上完成；禁止直接在 `master` / `dev` 上改。
 - 结果取值固定为四种：`""`（未采集）、`"running"`（进行中）、`"ok"`、`"fail"`。后端常量：`RESULT_OK` / `RESULT_FAIL` / `RESULT_RUNNING`。
 - 后端测试：`cd src-tauri && cargo test --lib`（当前基线 151 passed，改动后只增不减）。
+- **格式化只作用于本任务改动的文件**：在 `src-tauri/` 下运行 `rustfmt --edition 2021 <相对路径文件>`。**不要运行 `cargo fmt`** —— 该仓库并非 rustfmt-clean，`cargo fmt` 会重排 67 个无关文件、污染 diff。
 - 前端类型检查：仓库根目录 `npx vue-tsc --noEmit`。
 - i18n 键必须同时加进 `src/locales/zh-CN.ts` 与 `src/locales/en-US.ts`。
 - 提交信息用中文 conventional commits，不加 `Co-Authored-By`。
@@ -654,7 +655,7 @@ use crate::{audited_async, oplog_result};
 
 - [ ] **Step 5: 格式化 + 编译**
 
-Run: `cd src-tauri && cargo fmt && cargo build 2>&1 | tail -20`
+Run: `cd src-tauri && rustfmt --edition 2021 src/commands/springboot.rs && cargo build 2>&1 | tail -20`
 Expected: 编译通过，无 `unused import` 警告。
 
 - [ ] **Step 6: 提交**
@@ -832,7 +833,7 @@ pub fn delete_website(
 
 - [ ] **Step 6: 格式化 + 编译**
 
-Run: `cd src-tauri && cargo fmt && cargo build 2>&1 | tail -20`
+Run: `cd src-tauri && rustfmt --edition 2021 src/commands/website.rs && cargo build 2>&1 | tail -20`
 Expected: 通过，无 `unused import`。
 
 - [ ] **Step 7: 提交**
@@ -906,7 +907,7 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
 
 - [ ] **Step 4: 格式化 + 编译 + 提交**
 
-Run: `cd src-tauri && cargo fmt && cargo build 2>&1 | tail -20`
+Run: `cd src-tauri && rustfmt --edition 2021 src/commands/config.rs && cargo build 2>&1 | tail -20`
 Expected: 编译通过。
 
 ```bash
@@ -1026,7 +1027,7 @@ let detail = String::new();
 
 - [ ] **Step 4: 格式化 + 编译**
 
-Run: `cd src-tauri && cargo fmt && cargo build 2>&1 | tail -30`
+Run: `cd src-tauri && rustfmt --edition 2021 src/commands/software.rs && cargo build 2>&1 | tail -30`
 Expected: 编译通过。若某处出现借用冲突（多为「target 借用局部变量后又 move 该变量」），把该变量先 `.clone()` 进 `target` 再入块，不要改块内逻辑。
 
 - [ ] **Step 5: 提交**
@@ -1231,7 +1232,7 @@ spawn 闭包改为（`oplog_result!` 同样传 `r`，不加 `&`；记录放在 e
 
 - [ ] **Step 6: 格式化 + 编译 + 测试**
 
-Run: `cd src-tauri && cargo fmt && cargo test --lib 2>&1 | tail -20`
+Run: `cd src-tauri && rustfmt --edition 2021 src/services/software_manager/installer.rs src/commands/software.rs && cargo test --lib 2>&1 | tail -20`
 Expected: 全部 PASS（≥157 passed）。
 
 - [ ] **Step 7: 提交**
