@@ -438,6 +438,7 @@ export default {
 
   // 告警阈值（资源采样超限提示）
   alertThresholds: '告警阈值',
+  systemOverall: '整机',
   alertSystemCpu: '整机 CPU 超过',
   alertSystemMem: '整机内存超过',
   alertProcessCpu: '单实例 CPU 超过',

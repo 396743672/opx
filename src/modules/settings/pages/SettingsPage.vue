@@ -334,6 +334,13 @@ async function save() {
   settingsStore.settings.dns_provider = dnsProviderValue.value
   settingsStore.settings.cloudflare_api_token = cloudflareApiTokenValue.value
   settingsStore.settings.acme_use_staging = acmeStagingValue.value
+  // 数值输入被清空时 v-model.number 会给出 ''，直接写进 store 会让 save_settings 反序列化失败
+  // 并污染后续所有保存 —— 这里归一到 [1,100]，非法值回落默认 90
+  const pct = (v: number) => (Number(v) >= 1 && Number(v) <= 100 ? Number(v) : 90)
+  alertSystemCpuValue.value = pct(alertSystemCpuValue.value)
+  alertSystemMemValue.value = pct(alertSystemMemValue.value)
+  alertProcessCpuValue.value = pct(alertProcessCpuValue.value)
+  alertProcessMemValue.value = pct(alertProcessMemValue.value)
   settingsStore.settings.alert_system_cpu = alertSystemCpuValue.value
   settingsStore.settings.alert_system_mem = alertSystemMemValue.value
   settingsStore.settings.alert_process_cpu = alertProcessCpuValue.value

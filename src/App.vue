@@ -176,14 +176,15 @@ onMounted(async () => {
   })
 
   // 资源采样超阈值：toast 提示
-  unlistenResourceAlert = await listen<{ name: string; metric: string; value: number; threshold: number }>(
+  unlistenResourceAlert = await listen<{ kind: string; name: string; metric: string; value: number; threshold: number }>(
     'resource-alert',
     (e) => {
       const p = e.payload
       if (!p) return
       toast(
         t('resourceAlert', {
-          name: p.name,
+          // 系统级告警后端不带名称（审计文案另算），按 kind 本地化
+          name: p.kind === 'system' ? t('systemOverall') : p.name,
           metric: p.metric === 'cpu' ? 'CPU' : t('memory'),
           value: p.value,
           threshold: p.threshold,

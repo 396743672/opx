@@ -438,6 +438,7 @@ export default {
 
   // Alert thresholds (resource sampling)
   alertThresholds: 'Alert thresholds',
+  systemOverall: 'System',
   alertSystemCpu: 'System CPU above',
   alertSystemMem: 'System memory above',
   alertProcessCpu: 'Instance CPU above',
