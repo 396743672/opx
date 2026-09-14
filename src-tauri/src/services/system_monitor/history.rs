@@ -7,7 +7,11 @@ pub fn load_metrics(path: &Path) -> Result<MetricsHistory> {
         return Ok(MetricsHistory::default());
     }
     let content = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content).unwrap_or_default())
+    // 解析失败（截断/旧格式）回退空历史，但要留痕，便于排查「曲线莫名清空」
+    Ok(serde_json::from_str(&content).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, path = %path.display(), "解析指标历史失败，已回退为空");
+        MetricsHistory::default()
+    }))
 }
 
 pub fn save_history(path: &Path, h: &MetricsHistory) -> Result<()> {
