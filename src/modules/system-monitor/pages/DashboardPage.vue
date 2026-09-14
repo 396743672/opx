@@ -65,11 +65,11 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
         <CardHeader :title="$t('cpuUsage')" :subtitle="$t('trendHint')" hide-refresh />
-        <TrendChart metric="cpu" :points="systemStore.history" color-var="--color-chart-1" />
+        <TrendChart metric="cpu" :points="sysHistory" color-var="--color-chart-1" />
       </div>
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
         <CardHeader :title="$t('memoryUsage')" :subtitle="$t('trendHint')" hide-refresh />
-        <TrendChart metric="memory" :points="systemStore.history" color-var="--color-chart-2" />
+        <TrendChart metric="memory" :points="sysHistory" color-var="--color-chart-2" />
       </div>
     </div>
 
@@ -183,11 +183,11 @@
           <div v-if="expandedPids.has(row.pid)" class="border-t border-border p-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <div class="text-xs text-muted-foreground mb-1">{{ $t('cpuUsage') }}</div>
-              <TrendChart metric="cpu" :points="processPoints(row.pid)" color-var="--color-chart-1" :height="120" />
+              <TrendChart metric="cpu" :points="procHistory[String(row.pid)] ?? []" color-var="--color-chart-1" :height="120" />
             </div>
             <div>
               <div class="text-xs text-muted-foreground mb-1">{{ $t('memoryUsage') }}（占整机 %）</div>
-              <TrendChart metric="memory" :points="processPoints(row.pid)" color-var="--color-chart-2" :height="120" :max="100" />
+              <TrendChart metric="memory" :points="procHistory[String(row.pid)] ?? []" color-var="--color-chart-2" :height="120" :max="100" />
             </div>
           </div>
         </div>
@@ -315,7 +315,6 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useSystemStore } from '@/stores/system'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
@@ -329,7 +328,6 @@ import { AppStatus } from '@/models/springboot'
 import type { ProcessSample } from '@/models/process'
 import type { HistoryPoint } from '@/models/system'
 import type { StartupReport, StartupItemReport } from '@/models/startup-report'
-import { toast } from '@/composables/useToast'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
@@ -338,7 +336,6 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
-const { t } = useI18n()
 const systemStore = useSystemStore()
 const sbStore = useSpringBootStore()
 const lifecycleStore = useLifecycleStore()
@@ -390,8 +387,6 @@ let unlistenStartupDone: UnlistenFn | null = null
 
 // ===== 进程资源监控 =====
 const expandedPids = ref<Set<number>>(new Set())
-/** 告警去重：pid:metric 已告警标记 */
-const alerted = ref<Set<string>>(new Set())
 /** 最近一次采样结果（pid -> sample），用于表格实时值回填 */
 const latestSamples = ref<Map<number, ProcessSample>>(new Map())
 
@@ -414,44 +409,22 @@ const processRows = computed<ProcRow[]>(() => {
   return rows
 })
 
-function processPoints(pid: number): HistoryPoint[] {
-  return systemStore.processSamples[pid] ?? []
-}
-
 function toggleProcess(pid: number) {
   const next = new Set(expandedPids.value)
   next.has(pid) ? next.delete(pid) : next.add(pid)
   expandedPids.value = next
 }
 
-const THRESHOLD_CPU = 90
-const THRESHOLD_MEM = 90
-// 冷启动首个采样 CPU% 因 sysinfo 增量算法可能虚高，故跳过首个 tick 的告警判定
-const firstTick = ref(true)
-function checkAlerts() {
-  if (firstTick.value) {
-    firstTick.value = false
-    return
-  }
-  for (const row of processRows.value) {
-    if (row.cpu >= THRESHOLD_CPU) {
-      const key = `${row.pid}:cpu`
-      if (!alerted.value.has(key)) {
-        alerted.value.add(key)
-        toast(t('processAlertCpu', { name: row.name, value: row.cpu.toFixed(0) }), 'err')
-      }
-    } else {
-      alerted.value.delete(`${row.pid}:cpu`)
-    }
-    if (row.memPct >= THRESHOLD_MEM) {
-      const key = `${row.pid}:mem`
-      if (!alerted.value.has(key)) {
-        alerted.value.add(key)
-        toast(t('processAlertMem', { name: row.name, value: row.memPct.toFixed(0) }), 'err')
-      }
-    } else {
-      alerted.value.delete(`${row.pid}:mem`)
-    }
+// 趋势曲线读后端持久化序列（30s 粒度），前端不再累积历史、不做告警判定
+const sysHistory = ref<HistoryPoint[]>([])
+const procHistory = ref<Record<string, HistoryPoint[]>>({})
+
+async function loadMetricsHistory() {
+  try {
+    sysHistory.value = await invoke<HistoryPoint[]>('system_history')
+    procHistory.value = await invoke<Record<string, HistoryPoint[]>>('process_metrics_history')
+  } catch {
+    // 首次尚无历史文件：保持空数组即可
   }
 }
 
@@ -475,6 +448,7 @@ const bootTimeStr = computed(() =>
 const nowTick = ref(Date.now())
 let tickTimer: number | null = null
 let procTimer: number | null = null
+let metricsTimer: number | null = null
 const uptime = computed(() => {
   const boot = systemInfo.value?.boot_time
   if (!boot) return '-'
@@ -488,7 +462,7 @@ onMounted(async () => {
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
   }, 1000)
-  // 进程采样 + 告警：与整机轮询同频（1s）
+  // 进程采样：与整机轮询同频（1s），只刷新实时数值（告警由后端常驻循环负责）
   procTimer = window.setInterval(async () => {
     const pids = processRows.value.map((r) => r.pid).filter((p) => p != null)
     if (pids.length === 0) return
@@ -496,8 +470,10 @@ onMounted(async () => {
     for (const s of samples) {
       latestSamples.value.set(s.pid, s)
     }
-    checkAlerts()
   }, 1000)
+  // 趋势曲线：读后端持久化序列，与后端采样间隔一致（30s）
+  loadMetricsHistory()
+  metricsTimer = window.setInterval(loadMetricsHistory, 30_000)
   // ponytail: 监听启动/停止事件，运行列表实时刷新（软件状态监听已提升到 App.vue 全局）
   await stackStore.loadStacks()
   await stackStore.subscribe()
@@ -516,6 +492,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
   if (procTimer) clearInterval(procTimer)
+  if (metricsTimer) clearInterval(metricsTimer)
   stackStore.unsubscribe()
   unlistenSb?.()
   unlistenStartupProgress?.()
