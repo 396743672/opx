@@ -174,6 +174,21 @@ pub fn run() {
                 .await;
             });
 
+            // 指标采样器：30s 采样整机与运行中实例，落盘 7 天，并做阈值告警
+            let rec_app = app.handle().clone();
+            let rec_sw = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let rec_sb = app
+                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::system_monitor::recorder::run_recorder(rec_app, rec_sw, rec_sb)
+                    .await;
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
