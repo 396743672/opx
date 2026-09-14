@@ -66,7 +66,7 @@
               </template>
               <template v-else>
                 <div class="flex items-center gap-2 flex-wrap">
-                  <button class="btn primary" :disabled="acmeBusy" @click="issueCert">
+                  <button class="btn primary" :disabled="acmeBusy || isNew" @click="issueCert">
                     <Icon icon="mdi:certificate-outline" />
                     {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
                   </button>
@@ -75,6 +75,7 @@
                 <div v-if="form.ssl.cert_expires_at" class="hint">
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
                 </div>
+                <div v-if="isNew" class="hint">{{ $t('acmeNeedSave') }}</div>
                 <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
                 <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
               </template>
@@ -169,6 +170,10 @@ const sslNeedIssue = computed(
 )
 
 async function issueCert() {
+  if (props.isNew) {
+    acmeStatus.value = t('acmeNeedSave')
+    return
+  }
   if (!hasDnsToken.value) {
     acmeStatus.value = t('acmeNeedToken')
     return
@@ -176,15 +181,8 @@ async function issueCert() {
   acmeBusy.value = true
   acmeStatus.value = t('acmeIssuing')
   try {
-    // 站点必须先落库：后端按 id 读取站点；新建站点未保存时 id 不存在（会报「未找到站点」）。
-    // 预保存时关闭 SSL：此时尚无证书，开启会让生成配置缺 ssl_certificate 而 nginx -t 失败。
-    // 签发成功后由后端写回 enabled/acme/证书路径并 reload。
-    const pre: Site = {
-      ...form.value,
-      ssl: { ...form.value.ssl, enabled: false, acme: false, cert_path: null, key_path: null },
-    }
-    await invoke('save_website', { site: pre })
-    await invoke('issue_site_certificate', { siteId: form.value.id })
+    // 后端按 id 读取已保存的站点及其 server_name，故不在此隐式保存（避免用户没点保存却写盘）
+    await invoke('issue_site_certificate', { siteId: props.site.id })
     acmeStatus.value = t('acmeDone')
     // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
     try {
@@ -260,9 +258,13 @@ function validateName(): boolean {
 
 async function save() {
   if (tab.value === 'form' && !validateName()) return
-  if (tab.value === 'form' && sslNeedIssue.value) {
-    saveError.value = t('acmeNeedIssue')
-    return
+  if (tab.value === 'form') {
+    form.value.ssl.acme = certSource.value === 'acme'
+    // 选了 ACME 但尚未签发：本次保存不启用 HTTPS（否则生成的配置缺 ssl_certificate，
+    // nginx -t 会失败）；签发成功后由后端写回 enabled=true + 证书路径。
+    if (form.value.ssl.acme && !form.value.ssl.cert_path) {
+      form.value.ssl.enabled = false
+    }
   }
   saving.value = true
   try {
@@ -273,7 +275,6 @@ async function save() {
       })
     } else {
       // 保存即生效：nginx 运行中时后端自动校验并 reload
-      form.value.ssl.acme = certSource.value === 'acme'
       await invoke('save_website', { site: form.value })
     }
     emit('saved')
