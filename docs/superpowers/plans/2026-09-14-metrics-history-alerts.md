@@ -335,7 +335,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
-use crate::models::system::{HistoryPoint, MetricsHistory};
+use crate::models::system::HistoryPoint;
 use crate::services::software_manager::{process_monitor, SoftwareManager};
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::system_monitor::{alerts, history, info};
