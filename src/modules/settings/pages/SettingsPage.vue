@@ -158,6 +158,55 @@
           </div>
         </div>
       </div>
+
+      <div class="border-t border-border" />
+
+      <!-- 告警阈值 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('alertThresholds') }}</h3>
+      </div>
+      <div class="px-5 pb-4 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('alertSystemCpu') }}</span>
+          <input
+            v-model.number="alertSystemCpuValue"
+            type="number"
+            min="1"
+            max="100"
+            class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('alertSystemMem') }}</span>
+          <input
+            v-model.number="alertSystemMemValue"
+            type="number"
+            min="1"
+            max="100"
+            class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('alertProcessCpu') }}</span>
+          <input
+            v-model.number="alertProcessCpuValue"
+            type="number"
+            min="1"
+            max="100"
+            class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('alertProcessMem') }}</span>
+          <input
+            v-model.number="alertProcessMemValue"
+            type="number"
+            min="1"
+            max="100"
+            class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -184,6 +233,10 @@ const autostartValue = ref(false)
 const dnsProviderValue = ref('cloudflare')
 const cloudflareApiTokenValue = ref('')
 const acmeStagingValue = ref(false)
+const alertSystemCpuValue = ref(90)
+const alertSystemMemValue = ref(90)
+const alertProcessCpuValue = ref(90)
+const alertProcessMemValue = ref(90)
 // DNS Token 测试（不持久化）：填入该服务商账户下的域名，实际建/删一条临时 TXT 验证写权限
 const dnsTestZone = ref('')
 const dnsTesting = ref(false)
@@ -245,6 +298,10 @@ watch(
       dnsProviderValue.value = s.dns_provider || 'cloudflare'
       cloudflareApiTokenValue.value = s.cloudflare_api_token || ''
       acmeStagingValue.value = s.acme_use_staging
+      alertSystemCpuValue.value = s.alert_system_cpu ?? 90
+      alertSystemMemValue.value = s.alert_system_mem ?? 90
+      alertProcessCpuValue.value = s.alert_process_cpu ?? 90
+      alertProcessMemValue.value = s.alert_process_mem ?? 90
     }
   },
   { immediate: true }
@@ -261,7 +318,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -277,6 +334,10 @@ async function save() {
   settingsStore.settings.dns_provider = dnsProviderValue.value
   settingsStore.settings.cloudflare_api_token = cloudflareApiTokenValue.value
   settingsStore.settings.acme_use_staging = acmeStagingValue.value
+  settingsStore.settings.alert_system_cpu = alertSystemCpuValue.value
+  settingsStore.settings.alert_system_mem = alertSystemMemValue.value
+  settingsStore.settings.alert_process_cpu = alertProcessCpuValue.value
+  settingsStore.settings.alert_process_mem = alertProcessMemValue.value
   await settingsStore.saveSettings()
 }
 </script>

@@ -22,4 +22,8 @@ export interface AppSettings {
   dns_provider: string
   cloudflare_api_token: string
   acme_use_staging: boolean
+  alert_system_cpu: number
+  alert_system_mem: number
+  alert_process_cpu: number
+  alert_process_mem: number
 }

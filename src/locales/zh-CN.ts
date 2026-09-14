@@ -77,8 +77,6 @@ export default {
   noRunningProcess: '暂无运行中的进程',
   view: '查看',
   collapse: '收起',
-  processAlertCpu: '进程「{name}」CPU {value}% 已超过阈值 90%',
-  processAlertMem: '进程「{name}」内存占用 {value}% 已超过阈值 90%',
 
   // 软件管理
   installedSoftware: '已安装软件',
@@ -437,6 +435,14 @@ export default {
   testTokenTesting: '测试中…',
   testTokenOk: 'Token 具备 DNS 写权限，校验通过',
   testTokenNeedZone: '请先填写用于测试的域名',
+
+  // 告警阈值（资源采样超限提示）
+  alertThresholds: '告警阈值',
+  alertSystemCpu: '整机 CPU 超过',
+  alertSystemMem: '整机内存超过',
+  alertProcessCpu: '单实例 CPU 超过',
+  alertProcessMem: '单实例内存超过',
+  resourceAlert: '「{name}」{metric} {value}%（阈值 {threshold}%）',
 
   // 配置备份
   configBackups: '配置备份',

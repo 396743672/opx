@@ -77,8 +77,6 @@ export default {
   noRunningProcess: 'No running processes',
   view: 'View',
   collapse: 'Collapse',
-  processAlertCpu: 'Process "{name}" CPU {value}% exceeded 90% threshold',
-  processAlertMem: 'Process "{name}" memory usage {value}% exceeded 90% threshold',
 
   // software management
   installedSoftware: 'Installed Software',
@@ -437,6 +435,14 @@ export default {
   testTokenTesting: 'Testing…',
   testTokenOk: 'Token has DNS write access — check passed',
   testTokenNeedZone: 'Enter a domain to test against first',
+
+  // Alert thresholds (resource sampling)
+  alertThresholds: 'Alert thresholds',
+  alertSystemCpu: 'System CPU above',
+  alertSystemMem: 'System memory above',
+  alertProcessCpu: 'Instance CPU above',
+  alertProcessMem: 'Instance memory above',
+  resourceAlert: '"{name}" {metric} {value}% (threshold {threshold}%)',
 
   // config backups
   configBackups: 'Config Backups',
