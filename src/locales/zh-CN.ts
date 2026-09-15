@@ -466,6 +466,7 @@ export default {
   smtpPassWarning: '授权码明文存储于本机 settings.json',
   sendTestNotify: '发送测试通知',
   testNotifySending: '发送中…',
+  testNotifyOk: '已发送，请查收',
   testNotifyNoChannel: '请先配置 webhook 或启用 SMTP',
 
   // 配置备份

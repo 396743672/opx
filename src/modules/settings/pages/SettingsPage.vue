@@ -491,7 +491,7 @@ async function testNotify() {
     await save() // 先持久化当前输入，后端读的是 settings.json
     await invoke('test_alert_webhook')
     notifyTestOk.value = true
-    notifyTestResult.value = t('testTokenOk')
+    notifyTestResult.value = t('testNotifyOk')
   } catch (e) {
     notifyTestOk.value = false
     notifyTestResult.value = String(e)

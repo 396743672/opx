@@ -466,6 +466,7 @@ export default {
   smtpPassWarning: 'Auth code is stored in plaintext in local settings.json',
   sendTestNotify: 'Send test notification',
   testNotifySending: 'Sending…',
+  testNotifyOk: 'Sent, please check',
   testNotifyNoChannel: 'Configure webhook or enable SMTP first',
 
   // config backups
