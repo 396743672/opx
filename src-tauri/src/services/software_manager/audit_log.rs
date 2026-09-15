@@ -61,7 +61,7 @@ macro_rules! oplog_fail {
 }
 
 /// 用闭包包住同步命令体：`?` 与早 `return` 都归属闭包，退出时统一记结果。
-/// 用法：`audited!("action", target, "", { ...body... })`（须作为函数尾表达式）。
+/// 用法：`audited!("action", target, "", { ...body... })`。
 #[macro_export]
 macro_rules! audited {
     ($action:expr, $target:expr, $detail:expr, $body:block) => {{

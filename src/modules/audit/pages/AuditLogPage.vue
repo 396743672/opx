@@ -288,7 +288,7 @@ onMounted(loadAll)
   white-space: nowrap;
 }
 .row-fail {
-  background: color-mix(in oklch, var(--color-destructive, #ef4444) 6%, transparent);
+  background: color-mix(in oklch, var(--color-destructive) 6%, transparent);
 }
 .result-chip {
   display: inline-block;
@@ -298,16 +298,16 @@ onMounted(loadAll)
   font-weight: 600;
 }
 .result-ok {
-  background: color-mix(in oklch, var(--color-chart-2, #22c55e) 16%, transparent);
-  color: var(--color-chart-2, #22c55e);
+  background: color-mix(in oklch, var(--color-success) 16%, transparent);
+  color: var(--color-success);
 }
 .result-fail {
-  background: color-mix(in oklch, var(--color-destructive, #ef4444) 16%, transparent);
-  color: var(--color-destructive, #ef4444);
+  background: color-mix(in oklch, var(--color-destructive) 16%, transparent);
+  color: var(--color-destructive);
 }
 .result-running {
-  background: color-mix(in oklch, var(--color-chart-3, #f59e0b) 16%, transparent);
-  color: var(--color-chart-3, #f59e0b);
+  background: color-mix(in oklch, var(--color-chart-3) 16%, transparent);
+  color: var(--color-chart-3);
 }
 .result-none {
   color: var(--color-muted-foreground);
@@ -321,7 +321,7 @@ onMounted(loadAll)
   white-space: nowrap;
   vertical-align: bottom;
   font-size: 11px;
-  color: var(--color-destructive, #ef4444);
+  color: var(--color-destructive);
 }
 .tnum {
   font-variant-numeric: tabular-nums;
