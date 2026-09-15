@@ -27,8 +27,9 @@ static PROCESS_SYS_SLOW: Lazy<Mutex<System>> = Lazy::new(|| {
     Mutex::new(s)
 });
 
-/// 从当前 System 快照出 (pid, parent) 列表，供纯函数做进程树判断。
-fn snapshot_tree(system: &System) -> Vec<(u32, Option<u32>)> {
+/// 从当前 System 快照出 pid → parent 索引，供纯函数做进程树判断。
+/// HashMap：is_descendant 每跳查一次父进程，1Hz 采样下避免线性扫全表。
+fn snapshot_tree(system: &System) -> std::collections::HashMap<u32, Option<u32>> {
     system
         .processes()
         .iter()
@@ -37,13 +38,12 @@ fn snapshot_tree(system: &System) -> Vec<(u32, Option<u32>)> {
 }
 
 /// pid 是否为 root 的后代（**不含自身**）。沿 parent 链上溯，深度上限防异常环。
-fn is_descendant(tree: &[(u32, Option<u32>)], pid: u32, root: u32) -> bool {
-    let parent_of = |p: u32| tree.iter().find(|(q, _)| *q == p).and_then(|(_, par)| *par);
-    let mut cur = parent_of(pid);
+fn is_descendant(tree: &std::collections::HashMap<u32, Option<u32>>, pid: u32, root: u32) -> bool {
+    let mut cur = tree.get(&pid).copied().flatten();
     for _ in 0..32 {
         match cur {
             Some(p) if p == root => return true,
-            Some(p) => cur = parent_of(p),
+            Some(p) => cur = tree.get(&p).copied().flatten(),
             None => return false,
         }
     }
@@ -122,10 +122,14 @@ mod tests {
         assert!(me.mem_bytes > 0);
     }
 
+    fn tree(pairs: &[(u32, Option<u32>)]) -> std::collections::HashMap<u32, Option<u32>> {
+        pairs.iter().copied().collect()
+    }
+
     #[test]
     fn descendant_detection_follows_parent_chain() {
         // 1 -> 2 -> 3；4 独立
-        let tree = [(1u32, None), (2, Some(1)), (3, Some(2)), (4, None)];
+        let tree = tree(&[(1u32, None), (2, Some(1)), (3, Some(2)), (4, None)]);
         assert!(is_descendant(&tree, 2, 1), "直接子进程是后代");
         assert!(is_descendant(&tree, 3, 1), "孙进程也是后代");
         assert!(!is_descendant(&tree, 1, 1), "自身不算后代");
@@ -136,13 +140,13 @@ mod tests {
     #[test]
     fn descendant_detection_survives_parent_cycle() {
         // 异常环 5 <-> 6：深度上限兜底，不死循环
-        let tree = [(5u32, Some(6)), (6, Some(5))];
+        let tree = tree(&[(5u32, Some(6)), (6, Some(5))]);
         assert!(!is_descendant(&tree, 5, 99));
     }
 
     #[test]
     fn descendant_detection_handles_missing_pid() {
-        let tree = [(1u32, None)];
+        let tree = tree(&[(1u32, None)]);
         assert!(!is_descendant(&tree, 777, 1), "树里没有的 pid 不算后代");
     }
 
