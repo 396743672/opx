@@ -120,7 +120,10 @@ interface NavGroup {
 const groups: NavGroup[] = [
   {
     label: 'monitor',
-    items: [{ path: '/dashboard', titleKey: 'systemMonitor', icon: 'mdi:gauge' }],
+    items: [
+      { path: '/dashboard', titleKey: 'systemMonitor', icon: 'mdi:gauge' },
+      { path: '/monitor', titleKey: 'monitorCenter', icon: 'mdi:chart-timeline-variant' },
+    ],
   },
   {
     label: 'management',

@@ -12,6 +12,12 @@ const routes = [
     meta: { title: 'systemMonitor' },
   },
   {
+    path: '/monitor',
+    name: 'monitor',
+    component: () => import('@/modules/monitor/pages/MonitorCenterPage.vue'),
+    meta: { title: 'monitorCenter' },
+  },
+  {
     path: '/repository',
     name: 'repository',
     component: () => import('@/modules/software-manager/pages/RepositoryPage.vue'),
