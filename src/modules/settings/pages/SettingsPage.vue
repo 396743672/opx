@@ -207,6 +207,105 @@
           />
         </div>
       </div>
+
+      <div class="border-t border-border" />
+
+      <!-- 告警通知 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('alertNotify') }}</h3>
+      </div>
+      <div class="px-5 pb-4 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('webhookUrl') }}</span>
+          <input
+            v-model="webhookUrlValue"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            :placeholder="$t('webhookUrlPlaceholder')"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('webhookFormat') }}</span>
+          <select
+            v-model="webhookFormatValue"
+            class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
+          >
+            <option value="json">{{ $t('webhookFormatJson') }}</option>
+            <option value="dingtalk">{{ $t('webhookFormatDingtalk') }}</option>
+            <option value="wecom">{{ $t('webhookFormatWecom') }}</option>
+            <option value="feishu">{{ $t('webhookFormatFeishu') }}</option>
+          </select>
+        </div>
+        <div v-if="webhookFormatValue === 'dingtalk'" class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('dingtalkSecret') }}</span>
+          <input
+            v-model="webhookSecretValue"
+            type="password"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpEnabled') }}</span>
+          <SwitchBtn v-model="smtpEnabledValue" />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpHost') }}</span>
+          <input
+            v-model="smtpHostValue"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            placeholder="smtp.qq.com"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpPort') }}</span>
+          <input
+            v-model.number="smtpPortValue"
+            type="number"
+            min="1"
+            max="65535"
+            class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpUser') }}</span>
+          <input
+            v-model="smtpUserValue"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpPass') }}</span>
+          <input
+            v-model="smtpPassValue"
+            type="password"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+          />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('smtpTo') }}</span>
+          <input
+            v-model="smtpToValue"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            placeholder="a@x.com, b@y.com"
+          />
+        </div>
+        <div v-if="smtpEnabledValue" class="flex items-start justify-between gap-4 py-3">
+          <span class="text-xs text-warning max-w-72">{{ $t('smtpPassWarning') }}</span>
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('sendTestNotify') }}</span>
+          <div class="flex flex-col gap-1 items-end min-w-0">
+            <button class="btn text-xs h-7 px-2" :disabled="notifyTesting" @click="testNotify">
+              {{ notifyTesting ? $t('testNotifySending') : $t('sendTestNotify') }}
+            </button>
+            <span
+              v-if="notifyTestResult"
+              class="text-xs max-w-72 text-right"
+              :class="notifyTestOk ? 'text-success' : 'text-destructive'"
+              style="overflow-wrap: anywhere; word-break: break-word"
+            >{{ notifyTestResult }}</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -237,6 +336,18 @@ const alertSystemCpuValue = ref(90)
 const alertSystemMemValue = ref(90)
 const alertProcessCpuValue = ref(90)
 const alertProcessMemValue = ref(90)
+const webhookUrlValue = ref('')
+const webhookFormatValue = ref('json')
+const webhookSecretValue = ref('')
+const smtpEnabledValue = ref(false)
+const smtpHostValue = ref('')
+const smtpPortValue = ref(465)
+const smtpUserValue = ref('')
+const smtpPassValue = ref('')
+const smtpToValue = ref('')
+const notifyTesting = ref(false)
+const notifyTestResult = ref('')
+const notifyTestOk = ref(false)
 // DNS Token 测试（不持久化）：填入该服务商账户下的域名，实际建/删一条临时 TXT 验证写权限
 const dnsTestZone = ref('')
 const dnsTesting = ref(false)
@@ -302,6 +413,15 @@ watch(
       alertSystemMemValue.value = s.alert_system_mem ?? 90
       alertProcessCpuValue.value = s.alert_process_cpu ?? 90
       alertProcessMemValue.value = s.alert_process_mem ?? 90
+      webhookUrlValue.value = s.alert_webhook_url || ''
+      webhookFormatValue.value = s.alert_webhook_format || 'json'
+      webhookSecretValue.value = s.alert_webhook_secret || ''
+      smtpEnabledValue.value = s.smtp_enabled
+      smtpHostValue.value = s.smtp_host || ''
+      smtpPortValue.value = s.smtp_port ?? 465
+      smtpUserValue.value = s.smtp_user || ''
+      smtpPassValue.value = s.smtp_pass || ''
+      smtpToValue.value = s.smtp_to || ''
     }
   },
   { immediate: true }
@@ -318,7 +438,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -345,6 +465,38 @@ async function save() {
   settingsStore.settings.alert_system_mem = alertSystemMemValue.value
   settingsStore.settings.alert_process_cpu = alertProcessCpuValue.value
   settingsStore.settings.alert_process_mem = alertProcessMemValue.value
+  // 端口输入清空时 v-model.number 给 ''，归一回落 465（同告警阈值的 pct 兜底逻辑）
+  smtpPortValue.value = Number(smtpPortValue.value) >= 1 && Number(smtpPortValue.value) <= 65535 ? Number(smtpPortValue.value) : 465
+  settingsStore.settings.alert_webhook_url = webhookUrlValue.value
+  settingsStore.settings.alert_webhook_format = webhookFormatValue.value
+  settingsStore.settings.alert_webhook_secret = webhookSecretValue.value
+  settingsStore.settings.smtp_enabled = smtpEnabledValue.value
+  settingsStore.settings.smtp_host = smtpHostValue.value
+  settingsStore.settings.smtp_port = smtpPortValue.value
+  settingsStore.settings.smtp_user = smtpUserValue.value
+  settingsStore.settings.smtp_pass = smtpPassValue.value
+  settingsStore.settings.smtp_to = smtpToValue.value
   await settingsStore.saveSettings()
+}
+
+async function testNotify() {
+  if (!webhookUrlValue.value.trim() && !smtpEnabledValue.value) {
+    notifyTestOk.value = false
+    notifyTestResult.value = t('testNotifyNoChannel')
+    return
+  }
+  notifyTesting.value = true
+  notifyTestResult.value = t('testNotifySending')
+  try {
+    await save() // 先持久化当前输入，后端读的是 settings.json
+    await invoke('test_alert_webhook')
+    notifyTestOk.value = true
+    notifyTestResult.value = t('testTokenOk')
+  } catch (e) {
+    notifyTestOk.value = false
+    notifyTestResult.value = String(e)
+  } finally {
+    notifyTesting.value = false
+  }
 }
 </script>

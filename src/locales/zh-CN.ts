@@ -447,6 +447,27 @@ export default {
   alertProcessMem: '单实例内存超过',
   resourceAlert: '「{name}」{metric} {value}%（阈值 {threshold}%）',
 
+  // 告警通知（webhook + SMTP）
+  alertNotify: '告警通知',
+  webhookUrl: 'Webhook 地址',
+  webhookUrlPlaceholder: 'https://oapi.dingtalk.com/robot/send?access_token=…',
+  webhookFormat: 'Webhook 格式',
+  webhookFormatJson: '通用 JSON',
+  webhookFormatDingtalk: '钉钉机器人',
+  webhookFormatWecom: '企业微信机器人',
+  webhookFormatFeishu: '飞书机器人',
+  dingtalkSecret: '钉钉加签 Secret（可选）',
+  smtpEnabled: '启用邮件通知',
+  smtpHost: 'SMTP 服务器',
+  smtpPort: '端口',
+  smtpUser: '发件账号',
+  smtpPass: '授权码',
+  smtpTo: '收件人（逗号分隔）',
+  smtpPassWarning: '授权码明文存储于本机 settings.json',
+  sendTestNotify: '发送测试通知',
+  testNotifySending: '发送中…',
+  testNotifyNoChannel: '请先配置 webhook 或启用 SMTP',
+
   // 配置备份
   configBackups: '配置备份',
   restoreBackup: '还原',

@@ -447,6 +447,27 @@ export default {
   alertProcessMem: 'Instance memory above',
   resourceAlert: '"{name}" {metric} {value}% (threshold {threshold}%)',
 
+  // Alert notifications (webhook + SMTP)
+  alertNotify: 'Alert Notifications',
+  webhookUrl: 'Webhook URL',
+  webhookUrlPlaceholder: 'https://oapi.dingtalk.com/robot/send?access_token=…',
+  webhookFormat: 'Webhook format',
+  webhookFormatJson: 'Generic JSON',
+  webhookFormatDingtalk: 'DingTalk bot',
+  webhookFormatWecom: 'WeCom bot',
+  webhookFormatFeishu: 'Feishu bot',
+  dingtalkSecret: 'DingTalk sign secret (optional)',
+  smtpEnabled: 'Enable email',
+  smtpHost: 'SMTP server',
+  smtpPort: 'Port',
+  smtpUser: 'From account',
+  smtpPass: 'Password / auth code',
+  smtpTo: 'Recipients (comma separated)',
+  smtpPassWarning: 'Auth code is stored in plaintext in local settings.json',
+  sendTestNotify: 'Send test notification',
+  testNotifySending: 'Sending…',
+  testNotifyNoChannel: 'Configure webhook or enable SMTP first',
+
   // config backups
   configBackups: 'Config Backups',
   restoreBackup: 'Restore',
