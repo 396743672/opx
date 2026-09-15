@@ -19,6 +19,7 @@ export function useRunningSoftware() {
   const installedSoftware = ref<InstalledSoftware[]>([])
   const runningApps = ref<SpringBootApp[]>([])
   let unlistenSb: UnlistenFn | null = null
+  let unmounted = false
 
   const runningSoftware = computed(() =>
     installedSoftware.value.filter((s) => {
@@ -36,10 +37,14 @@ export function useRunningSoftware() {
   onMounted(async () => {
     installedSoftware.value = await invoke<InstalledSoftware[]>('list_installed_software')
     await refreshApps()
-    unlistenSb = await listen('springboot-status-changed', refreshApps)
+    const unlisten = await listen('springboot-status-changed', refreshApps)
+    // 卸载发生在 await 期间时立即注销，否则监听器泄漏（两页共用后暴露面翻倍）
+    if (unmounted) unlisten()
+    else unlistenSb = unlisten
   })
 
   onUnmounted(() => {
+    unmounted = true
     unlistenSb?.()
   })
 
