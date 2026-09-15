@@ -94,7 +94,7 @@
               />
             </div>
             <div>
-              <div class="text-xs text-muted-foreground mb-1">{{ $t('memoryUsage') }}（占整机 %）</div>
+              <div class="text-xs text-muted-foreground mb-1">{{ $t('memoryUsageOfTotal') }}</div>
               <TrendChart
                 metric="memory"
                 :points="procHistory[String(row.pid)] ?? []"

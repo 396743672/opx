@@ -66,6 +66,7 @@ export default {
   // system monitor
   cpuUsage: 'CPU Usage',
   memoryUsage: 'Memory Usage',
+  memoryUsageOfTotal: 'Memory Usage (% of total)',
   diskUsage: 'Disk Usage',
   networkTraffic: 'Network Traffic',
   systemInfo: 'System Info',

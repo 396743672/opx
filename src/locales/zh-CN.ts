@@ -66,6 +66,7 @@ export default {
   // 系统监控
   cpuUsage: 'CPU 使用率',
   memoryUsage: '内存使用率',
+  memoryUsageOfTotal: '内存使用率（占整机 %）',
   diskUsage: '磁盘使用率',
   networkTraffic: '网络流量',
   systemInfo: '系统信息',
