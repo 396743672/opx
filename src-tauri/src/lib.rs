@@ -53,7 +53,9 @@ pub fn run() {
                 }
                 // 初始化下载代理配置
                 if let Ok(content) = std::fs::read_to_string(&sp) {
-                    if let Ok(settings) = serde_json::from_str::<crate::models::settings::AppSettings>(&content) {
+                    if let Ok(settings) =
+                        serde_json::from_str::<crate::models::settings::AppSettings>(&content)
+                    {
                         crate::utils::download::init_download_config(
                             settings.github_proxy_url,
                             settings.proxy_url,
@@ -63,21 +65,18 @@ pub fn run() {
             }
 
             // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
-            let software_mgr = std::sync::Arc::new(
-                crate::services::software_manager::SoftwareManager::new(),
-            );
+            let software_mgr =
+                std::sync::Arc::new(crate::services::software_manager::SoftwareManager::new());
             app.manage(software_mgr.clone());
             app.manage(std::sync::Arc::new(
                 crate::services::website_manager::WebsiteManager::new(),
             ));
-            let springboot_mgr = std::sync::Arc::new(
-                crate::services::springboot_manager::SpringBootManager::new(),
-            );
+            let springboot_mgr =
+                std::sync::Arc::new(crate::services::springboot_manager::SpringBootManager::new());
             app.manage(springboot_mgr.clone());
             // Node 应用管理：注册 State（auto_start 应用由底部统一启动编排协调器拉起）
-            let node_mgr = std::sync::Arc::new(
-                crate::services::node_app_manager::NodeAppManager::new(),
-            );
+            let node_mgr =
+                std::sync::Arc::new(crate::services::node_app_manager::NodeAppManager::new());
             let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
             app.manage(node_mgr.clone());
             // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
@@ -132,8 +131,10 @@ pub fn run() {
 
             // 定时备份调度：后台循环按配置间隔自动对实例做 Hot 快照
             tauri::async_runtime::spawn(async move {
-                crate::services::software_manager::backup_scheduler::run_scheduler(bs_manager, bs_app)
-                    .await;
+                crate::services::software_manager::backup_scheduler::run_scheduler(
+                    bs_manager, bs_app,
+                )
+                .await;
             });
 
             // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
@@ -147,8 +148,10 @@ pub fn run() {
                 .clone();
             let renew_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                crate::services::acme::renew_scheduler::run_scheduler(renew_app, renew_wm, renew_sm)
-                    .await;
+                crate::services::acme::renew_scheduler::run_scheduler(
+                    renew_app, renew_wm, renew_sm,
+                )
+                .await;
             });
 
             // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
@@ -243,7 +246,11 @@ pub fn run() {
                     let handle = tray_for_listen.app_handle().clone();
                     if let Ok((menu, tooltip)) = build_tray_menu(&handle, &manager_for_listen) {
                         let _ = tray_for_listen.set_menu(Some(menu));
-                        let tooltip = if tooltip.is_empty() { None } else { Some(tooltip) };
+                        let tooltip = if tooltip.is_empty() {
+                            None
+                        } else {
+                            Some(tooltip)
+                        };
                         let _ = tray_for_listen.set_tooltip(tooltip);
                     }
                 });
@@ -267,6 +274,7 @@ pub fn run() {
             commands::config::get_autostart,
             commands::config::set_autostart,
             commands::config::test_dns_token,
+            commands::config::test_alert_webhook,
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,
@@ -420,8 +428,10 @@ fn build_tray_menu(
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
     owned.push(Box::new(quit_item));
 
-    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> =
-        owned.iter().map(|b| b.as_ref() as &dyn IsMenuItem<tauri::Wry>).collect();
+    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = owned
+        .iter()
+        .map(|b| b.as_ref() as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
     let menu = Menu::with_items(app, &refs)?;
     Ok((menu, tooltip))
 }
@@ -463,7 +473,9 @@ mod tests {
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
-            source: crate::models::software::InstallSource::Builtin { version: "1.0".into() },
+            source: crate::models::software::InstallSource::Builtin {
+                version: "1.0".into(),
+            },
             pid: None,
             last_started_at: None,
             last_stopped_at: None,

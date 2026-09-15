@@ -1,9 +1,11 @@
 //! 告警通知：资源告警触发时外送 webhook / SMTP。
 //! 纯函数层（payload/签名/文案）+ 发送层（Task 3 接线）。
 
+use crate::models::settings::AppSettings;
 use serde_json::json;
 
 /// 一条告警事件（recorder 触发时传入；测试命令构造假值）
+#[derive(Clone)]
 pub struct AlertEvent {
     pub name: String,
     pub metric: String,
@@ -89,6 +91,105 @@ pub fn parse_recipients(to: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// 发送入口（recorder 触发分支调用）：读最新设置，两个渠道各自游离 spawn，
+/// 不阻塞采样轮询。失败 warn + 审计，不重试。
+pub fn dispatch(e: AlertEvent) {
+    let s = crate::commands::config::read_settings().unwrap_or_default();
+    if !s.alert_webhook_url.trim().is_empty() {
+        let url = s.alert_webhook_url.clone();
+        let fmt = s.alert_webhook_format.clone();
+        let sec = s.alert_webhook_secret.clone();
+        let ev = e.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = send_webhook(&url, &fmt, &sec, &ev).await {
+                tracing::warn!(error = %err, "告警 webhook 发送失败");
+                crate::oplog!("webhook_failed", "webhook", &format!("{}", err));
+            }
+        });
+    }
+    if s.smtp_enabled && !s.smtp_host.trim().is_empty() && !s.smtp_to.trim().is_empty() {
+        let smtp = s;
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = send_mail(&smtp, &e).await {
+                tracing::warn!(error = %err, "告警邮件发送失败");
+                crate::oplog!("webhook_failed", "smtp", &format!("{}", err));
+            }
+        });
+    }
+}
+
+/// 实际发送 webhook（测试命令也直接调它做真实验证）。10s 超时，非 2xx 或
+/// 机器人 errcode/code 非 0 视为失败。
+pub async fn send_webhook(
+    url: &str,
+    format: &str,
+    secret: &str,
+    e: &AlertEvent,
+) -> anyhow::Result<()> {
+    let ts = chrono::Local::now().timestamp_millis();
+    let (full_url, body) = build_webhook(format, url, secret, ts, e);
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?
+        .post(&full_url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!(
+            "HTTP {}: {}",
+            status.as_u16(),
+            &text.chars().take(200).collect::<String>()
+        );
+    }
+    // 钉钉/企微（errcode）、飞书（code）业务错误也返回 200，需查 body
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        let code = v
+            .get("errcode")
+            .or_else(|| v.get("code"))
+            .and_then(|c| c.as_i64())
+            .unwrap_or(0);
+        if code != 0 {
+            let msg = v
+                .get("errmsg")
+                .or_else(|| v.get("msg"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("未知错误");
+            anyhow::bail!("机器人返回错误 {}: {}", code, msg);
+        }
+    }
+    Ok(())
+}
+
+/// 实际发送邮件（lettre async SMTP + rustls TLS）。
+pub async fn send_mail(s: &AppSettings, e: &AlertEvent) -> anyhow::Result<()> {
+    use lettre::{
+        transport::smtp::authentication::Credentials, AsyncSmtpTransport, AsyncTransport, Message,
+        Tokio1Executor,
+    };
+    let subject = format!("[OPX 告警] {} {} 超阈值", e.name, e.metric);
+    let mut builder = Message::builder()
+        .from(format!("OPX <{}>", s.smtp_user).parse()?)
+        .subject(subject);
+    for r in parse_recipients(&s.smtp_to) {
+        builder = builder.to(r.parse()?);
+    }
+    let email = builder.body(format!(
+        "{}\n时间: {}",
+        alert_text(e),
+        chrono::Local::now().to_rfc3339()
+    ))?;
+    let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(&s.smtp_host)?
+        .port(s.smtp_port)
+        .credentials(Credentials::new(s.smtp_user.clone(), s.smtp_pass.clone()))
+        .build();
+    mailer.send(email).await?;
+    Ok(())
 }
 
 #[cfg(test)]

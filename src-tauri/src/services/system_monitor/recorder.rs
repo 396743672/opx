@@ -110,11 +110,43 @@ async fn sample_once(
         .collect();
     alerts::release_stale(alerting, &live);
 
-    eval(app, alerting, "system:cpu", "整机", "cpu", sys.cpu_usage, thresholds.alert_system_cpu);
-    eval(app, alerting, "system:mem", "整机", "mem", sys.memory_usage, thresholds.alert_system_mem);
+    eval(
+        app,
+        alerting,
+        "system:cpu",
+        "整机",
+        "cpu",
+        sys.cpu_usage,
+        thresholds.alert_system_cpu,
+    );
+    eval(
+        app,
+        alerting,
+        "system:mem",
+        "整机",
+        "mem",
+        sys.memory_usage,
+        thresholds.alert_system_mem,
+    );
     for (pid, name, cpu, mem_pct) in &rows {
-        eval(app, alerting, &alerts::proc_key(*pid, "cpu"), name, "cpu", *cpu, thresholds.alert_process_cpu);
-        eval(app, alerting, &alerts::proc_key(*pid, "mem"), name, "mem", *mem_pct, thresholds.alert_process_mem);
+        eval(
+            app,
+            alerting,
+            &alerts::proc_key(*pid, "cpu"),
+            name,
+            "cpu",
+            *cpu,
+            thresholds.alert_process_cpu,
+        );
+        eval(
+            app,
+            alerting,
+            &alerts::proc_key(*pid, "mem"),
+            name,
+            "mem",
+            *mem_pct,
+            thresholds.alert_process_mem,
+        );
     }
 }
 
@@ -130,13 +162,31 @@ fn eval(
 ) {
     if alerts::should_alert(value, threshold, alerting.contains(key)) {
         alerting.insert(key.to_string());
-        crate::oplog!("alert_high", &format!("{} {} {}%（阈值 {}%）", name, metric, value.round(), threshold));
+        crate::oplog!(
+            "alert_high",
+            &format!(
+                "{} {} {}%（阈值 {}%）",
+                name,
+                metric,
+                value.round(),
+                threshold
+            )
+        );
         let _ = app.emit(
             "resource-alert",
             serde_json::json!({ "kind": if key.starts_with("proc:") { "process" } else { "system" }, "name": name, "metric": metric, "value": value.round(), "threshold": threshold }),
         );
+        super::notify::dispatch(super::notify::AlertEvent {
+            name: name.to_string(),
+            metric: metric.to_string(),
+            value,
+            threshold,
+        });
     } else if alerting.contains(key) && alerts::is_recovered(value, threshold) {
         alerting.remove(key);
-        crate::oplog!("alert_recovered", &format!("{} {} {}%", name, metric, value.round()));
+        crate::oplog!(
+            "alert_recovered",
+            &format!("{} {} {}%", name, metric, value.round())
+        );
     }
 }

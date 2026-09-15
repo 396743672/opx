@@ -105,3 +105,38 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 发送测试通知：构造固定告警事件，按当前设置对启用的渠道真实发送一遍。
+/// 未配置任何渠道时报错提示。
+#[tauri::command]
+pub async fn test_alert_webhook() -> Result<(), String> {
+    let e = crate::services::system_monitor::notify::AlertEvent {
+        name: "测试".to_string(),
+        metric: "cpu".to_string(),
+        value: 95.0,
+        threshold: 90,
+    };
+    let s = read_settings()?;
+    let mut sent = false;
+    if !s.alert_webhook_url.trim().is_empty() {
+        crate::services::system_monitor::notify::send_webhook(
+            &s.alert_webhook_url,
+            &s.alert_webhook_format,
+            &s.alert_webhook_secret,
+            &e,
+        )
+        .await
+        .map_err(|err| format!("webhook 发送失败: {:#}", err))?;
+        sent = true;
+    }
+    if s.smtp_enabled && !s.smtp_host.trim().is_empty() && !s.smtp_to.trim().is_empty() {
+        crate::services::system_monitor::notify::send_mail(&s, &e)
+            .await
+            .map_err(|err| format!("邮件发送失败: {:#}", err))?;
+        sent = true;
+    }
+    if !sent {
+        return Err("未配置任何通知渠道（webhook URL 为空且 SMTP 未启用）".to_string());
+    }
+    Ok(())
+}
