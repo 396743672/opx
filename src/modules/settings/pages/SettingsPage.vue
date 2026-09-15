@@ -206,6 +206,19 @@
             class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
           />
         </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('metricsRetainDays') }}</span>
+          <div class="flex items-center gap-2">
+            <input
+              v-model.number="metricsRetainDaysValue"
+              type="number"
+              min="1"
+              max="90"
+              class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+            />
+            <span class="text-xs text-muted-foreground">{{ $t('daysUnit') }}</span>
+          </div>
+        </div>
       </div>
 
       <div class="border-t border-border" />
@@ -336,6 +349,7 @@ const alertSystemCpuValue = ref(90)
 const alertSystemMemValue = ref(90)
 const alertProcessCpuValue = ref(90)
 const alertProcessMemValue = ref(90)
+const metricsRetainDaysValue = ref(7)
 const webhookUrlValue = ref('')
 const webhookFormatValue = ref('json')
 const webhookSecretValue = ref('')
@@ -413,6 +427,7 @@ watch(
       alertSystemMemValue.value = s.alert_system_mem ?? 90
       alertProcessCpuValue.value = s.alert_process_cpu ?? 90
       alertProcessMemValue.value = s.alert_process_mem ?? 90
+      metricsRetainDaysValue.value = s.metrics_retain_days ?? 7
       webhookUrlValue.value = s.alert_webhook_url || ''
       webhookFormatValue.value = s.alert_webhook_format || 'json'
       webhookSecretValue.value = s.alert_webhook_secret || ''
@@ -438,7 +453,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -465,6 +480,12 @@ async function save() {
   settingsStore.settings.alert_system_mem = alertSystemMemValue.value
   settingsStore.settings.alert_process_cpu = alertProcessCpuValue.value
   settingsStore.settings.alert_process_mem = alertProcessMemValue.value
+  // 指标保留天数归一 [1,90]，非法值回落 7（清空输入同理，防止 '' 写坏 settings.json）
+  metricsRetainDaysValue.value =
+    Number(metricsRetainDaysValue.value) >= 1 && Number(metricsRetainDaysValue.value) <= 90
+      ? Number(metricsRetainDaysValue.value)
+      : 7
+  settingsStore.settings.metrics_retain_days = metricsRetainDaysValue.value
   // 端口输入清空时 v-model.number 给 ''，归一回落 465（同告警阈值的 pct 兜底逻辑）
   smtpPortValue.value = Number(smtpPortValue.value) >= 1 && Number(smtpPortValue.value) <= 65535 ? Number(smtpPortValue.value) : 465
   settingsStore.settings.alert_webhook_url = webhookUrlValue.value

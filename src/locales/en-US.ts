@@ -446,6 +446,8 @@ export default {
   alertSystemMem: 'System memory above',
   alertProcessCpu: 'Instance CPU above',
   alertProcessMem: 'Instance memory above',
+  metricsRetainDays: 'Metrics retention',
+  daysUnit: 'days',
   resourceAlert: '"{name}" {metric} {value}% (threshold {threshold}%)',
 
   // Monitor center

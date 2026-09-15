@@ -12,7 +12,6 @@ use crate::services::springboot_manager::SpringBootManager;
 use crate::services::system_monitor::{alerts, history, info};
 
 pub const SAMPLE_INTERVAL_SECS: u64 = 30;
-pub const RETAIN_DAYS: i64 = 7;
 
 pub async fn run_recorder(
     app: AppHandle,
@@ -96,8 +95,9 @@ async fn sample_once(
                 memory_usage: *mem_pct,
             });
     }
-    // 对全部键裁剪（含已退出进程的残留键），并丢弃空键
-    history::prune_all(&mut h, now_ms, RETAIN_DAYS);
+    // 对全部键裁剪（含已退出进程的残留键），并丢弃空键。
+    // 保留天数可配置（settings.metrics_retain_days），下限 1 防止 0 把历史清空
+    history::prune_all(&mut h, now_ms, thresholds.metrics_retain_days.max(1) as i64);
     if let Err(e) = history::save_history(&history::metrics_path(), &h) {
         tracing::warn!(error = %e, "写入指标历史失败");
     }

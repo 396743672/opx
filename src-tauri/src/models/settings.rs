@@ -50,6 +50,9 @@ pub struct AppSettings {
     pub alert_process_cpu: u32,
     #[serde(default = "default_ninety")]
     pub alert_process_mem: u32,
+    /// 指标历史保留天数（监控趋势曲线）。默认 7。
+    #[serde(default = "default_metrics_retain_days")]
+    pub metrics_retain_days: u32,
     // --- 告警通知（webhook + SMTP）---
     /// 告警 webhook URL，空 = 不发送
     #[serde(default)]
@@ -85,6 +88,10 @@ fn default_ninety() -> u32 {
     90
 }
 
+fn default_metrics_retain_days() -> u32 {
+    7
+}
+
 fn default_webhook_format() -> String {
     "json".to_string()
 }
@@ -115,6 +122,7 @@ impl Default for AppSettings {
             alert_system_mem: default_ninety(),
             alert_process_cpu: default_ninety(),
             alert_process_mem: default_ninety(),
+            metrics_retain_days: default_metrics_retain_days(),
             alert_webhook_url: String::new(),
             alert_webhook_format: default_webhook_format(),
             alert_webhook_secret: String::new(),
@@ -160,6 +168,7 @@ mod tests {
         assert_eq!(s.alert_system_mem, 90);
         assert_eq!(s.alert_process_cpu, 90);
         assert_eq!(s.alert_process_mem, 90);
+        assert_eq!(s.metrics_retain_days, 7, "旧 settings.json 缺字段时回落默认 7 天");
     }
 
     #[test]

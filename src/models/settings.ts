@@ -26,6 +26,8 @@ export interface AppSettings {
   alert_system_mem: number
   alert_process_cpu: number
   alert_process_mem: number
+  /** 指标历史保留天数（监控趋势曲线），默认 7 */
+  metrics_retain_days: number
   alert_webhook_url: string
   alert_webhook_format: string
   alert_webhook_secret: string
