@@ -361,6 +361,9 @@ async function handleAction(action: 'start' | 'stop' | 'restart', id: string) {
     if (action === 'start') await store.startApp(id)
     else if (action === 'stop') await store.stopApp(id)
     else await store.restartApp(id)
+  } catch (e) {
+    // 启动/停止失败（如前置依赖未运行）必须提示，否则用户以为点了没反应
+    toast(String(e), 'err')
   } finally {
     store.fetchApps()
   }
