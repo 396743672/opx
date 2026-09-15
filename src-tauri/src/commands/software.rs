@@ -1029,13 +1029,52 @@ async fn ensure_dependencies(
             if sw.status == SoftwareStatus::Running {
                 continue; // 已在运行，跳过
             }
-            // 拉起依赖（递归，依赖的依赖也按自身 depends_on 编排）
-            do_start_software(manager, app, dep_id, None).await?;
+            // 拉起依赖（递归，依赖的依赖也按自身 depends_on 编排）。
+            // 必须等到健康检查把状态翻成 Running 才能放行：
+            // do_start_software 在 spawn 后即返回，不等的话依赖端口尚未监听，
+            // 依赖方（如 Nacos 连 MySQL）会在依赖就绪前启动而报错。
+            let dep_name = sw.name.clone();
+            let dep_detail = format!("{} ({}, 依赖编排)", sw.version, sw.id);
+            let outcome = match do_start_software(manager, app, dep_id, None).await {
+                Ok(()) => wait_dependency_ready(manager, dep_id).await,
+                Err(e) => Err(e),
+            };
+            // 被拉起的依赖也是用户可见的启动动作，补记操作结果（否则操作记录缺失）
+            oplog_result!("start", dep_name, dep_detail, outcome);
+            outcome?;
             started.push(dep_id.clone());
         }
     }
 
     Ok(started)
+}
+
+/// 等待依赖编排拉起的软件就绪（健康检查把状态翻成 Running）。
+/// do_start_software 返回时状态为 Starting，健康检查在游离任务中异步完成；
+/// 轮询状态直到 Running / Error / 超时。健康检查本身最多 60s，这里给 90s 余量。
+async fn wait_dependency_ready(manager: &Arc<SoftwareManager>, dep_id: &str) -> anyhow::Result<()> {
+    for _ in 0..90 {
+        let sw = manager
+            .find_installed(dep_id)
+            .ok_or_else(|| anyhow::anyhow!("依赖记录消失：{}", dep_id))?;
+        match sw.status {
+            SoftwareStatus::Running => return Ok(()),
+            SoftwareStatus::Error => {
+                let msg = sw.last_error.unwrap_or_else(|| "未知原因".to_string());
+                return Err(anyhow::anyhow!("依赖 [{}] 启动失败：{}", sw.name, msg));
+            }
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let name = manager
+        .find_installed(dep_id)
+        .map(|s| s.name)
+        .unwrap_or_else(|| dep_id.to_string());
+    Err(anyhow::anyhow!(
+        "依赖 [{}] 未在 90s 内就绪，请检查其日志",
+        name
+    ))
 }
 
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
