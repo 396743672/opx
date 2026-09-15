@@ -120,6 +120,7 @@ PageHeader  监控中心                        [搜索框] [刷新]
 | `kpiRunningProcesses` | 运行中进程 | Running processes |
 | `kpiCpuAlerting` | CPU 告警中 | CPU alerting |
 | `kpiMemAlerting` | 内存告警中 | Memory alerting |
+| `noRunningServicesOrApps` | 暂无运行中的服务或应用 | No running services or apps |
 
 复用现有键：`runningServices`、`runningApps`、`processMonitor`、`alertHintLine`、`noRunningProcess`、`view`、`collapse`、`cpuUsage`、`memoryUsage`。
 
