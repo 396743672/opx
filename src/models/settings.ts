@@ -26,4 +26,13 @@ export interface AppSettings {
   alert_system_mem: number
   alert_process_cpu: number
   alert_process_mem: number
+  alert_webhook_url: string
+  alert_webhook_format: string
+  alert_webhook_secret: string
+  smtp_host: string
+  smtp_port: number
+  smtp_user: string
+  smtp_pass: string
+  smtp_to: string
+  smtp_enabled: boolean
 }

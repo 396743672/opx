@@ -50,6 +50,31 @@ pub struct AppSettings {
     pub alert_process_cpu: u32,
     #[serde(default = "default_ninety")]
     pub alert_process_mem: u32,
+    // --- 告警通知（webhook + SMTP）---
+    /// 告警 webhook URL，空 = 不发送
+    #[serde(default)]
+    pub alert_webhook_url: String,
+    /// "json" | "dingtalk" | "wecom" | "feishu"
+    #[serde(default = "default_webhook_format")]
+    pub alert_webhook_format: String,
+    /// 钉钉加签 secret（仅 dingtalk 生效，空 = 不加签）
+    #[serde(default)]
+    pub alert_webhook_secret: String,
+    #[serde(default)]
+    pub smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    #[serde(default)]
+    pub smtp_user: String,
+    /// SMTP 授权码（明文存储，UI 提示风险）
+    #[serde(default)]
+    pub smtp_pass: String,
+    /// 收件人，逗号分隔多个
+    #[serde(default)]
+    pub smtp_to: String,
+    /// SMTP 总开关：false 时即使填了配置也不发
+    #[serde(default)]
+    pub smtp_enabled: bool,
 }
 
 fn default_dns_provider() -> String {
@@ -58,6 +83,14 @@ fn default_dns_provider() -> String {
 
 fn default_ninety() -> u32 {
     90
+}
+
+fn default_webhook_format() -> String {
+    "json".to_string()
+}
+
+fn default_smtp_port() -> u16 {
+    465
 }
 
 impl Default for AppSettings {
@@ -82,6 +115,15 @@ impl Default for AppSettings {
             alert_system_mem: default_ninety(),
             alert_process_cpu: default_ninety(),
             alert_process_mem: default_ninety(),
+            alert_webhook_url: String::new(),
+            alert_webhook_format: default_webhook_format(),
+            alert_webhook_secret: String::new(),
+            smtp_host: String::new(),
+            smtp_port: default_smtp_port(),
+            smtp_user: String::new(),
+            smtp_pass: String::new(),
+            smtp_to: String::new(),
+            smtp_enabled: false,
         }
     }
 }
@@ -118,5 +160,25 @@ mod tests {
         assert_eq!(s.alert_system_mem, 90);
         assert_eq!(s.alert_process_cpu, 90);
         assert_eq!(s.alert_process_mem, 90);
+    }
+
+    #[test]
+    fn notify_fields_default_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.alert_webhook_url, "");
+        assert_eq!(s.alert_webhook_format, "json");
+        assert_eq!(s.alert_webhook_secret, "");
+        assert_eq!(s.smtp_host, "");
+        assert_eq!(s.smtp_port, 465);
+        assert_eq!(s.smtp_user, "");
+        assert_eq!(s.smtp_pass, "");
+        assert_eq!(s.smtp_to, "");
+        assert!(!s.smtp_enabled);
     }
 }
