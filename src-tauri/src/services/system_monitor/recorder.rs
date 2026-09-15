@@ -59,7 +59,7 @@ async fn sample_once(
 
     let pids: Vec<u32> = targets.iter().map(|(_, p)| *p).collect();
     // 每进程只算一次：显示名、CPU%、内存占整机百分比（落盘与告警共用）
-    let rows: Vec<(u32, String, f64, f64)> = process_monitor::sample_processes(&pids)
+    let rows: Vec<(u32, String, f64, f64)> = process_monitor::sample_processes_slow(&pids)
         .into_iter()
         .map(|s| {
             let mem_pct = if sys.memory_total > 0 {

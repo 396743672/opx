@@ -18,6 +18,15 @@ static PROCESS_SYS: Lazy<Mutex<System>> = Lazy::new(|| {
     Mutex::new(s)
 });
 
+/// 30s 落盘采样专用实例。CPU% 是「距上次 refresh 的增量 / 时间差」——
+/// 与 1s 实时采样共享同一实例时，落盘拿到的是那一瞬的瞬时值（多数时刻恰好空闲 → 全 0），
+/// 独立实例才能得到真正的 30s 平均。
+static PROCESS_SYS_SLOW: Lazy<Mutex<System>> = Lazy::new(|| {
+    let mut s = System::new();
+    s.refresh_processes(ProcessesToUpdate::All);
+    Mutex::new(s)
+});
+
 /// 从当前 System 快照出 (pid, parent) 列表，供纯函数做进程树判断。
 fn snapshot_tree(system: &System) -> Vec<(u32, Option<u32>)> {
     system
@@ -47,9 +56,17 @@ fn is_descendant(tree: &[(u32, Option<u32>)], pid: u32, root: u32) -> bool {
 /// CPU 恒 0、内存恒定），只看自身会得到一条死直线；Nginx 主+worker 同理。
 /// 返回的 `pid` 仍是传入值，调用方按原 pid 索引即可。
 pub fn sample_processes(pids: &[u32]) -> Vec<ProcessSample> {
-    let mut system = PROCESS_SYS.lock().unwrap();
+    sample_with(&mut PROCESS_SYS.lock().unwrap(), pids)
+}
+
+/// 低频（30s 落盘）专用入口：走独立的 System 实例，得到窗口期平均 CPU。
+pub fn sample_processes_slow(pids: &[u32]) -> Vec<ProcessSample> {
+    sample_with(&mut PROCESS_SYS_SLOW.lock().unwrap(), pids)
+}
+
+fn sample_with(system: &mut System, pids: &[u32]) -> Vec<ProcessSample> {
     system.refresh_processes(ProcessesToUpdate::All);
-    let tree = snapshot_tree(&system);
+    let tree = snapshot_tree(system);
     pids.iter()
         .filter_map(|&pid| {
             let root = system.process(Pid::from_u32(pid))?;

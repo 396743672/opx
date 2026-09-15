@@ -439,7 +439,7 @@ export default {
 
   // 告警阈值（资源采样超限提示）
   alertThresholds: '告警阈值',
-  alertHintLine: '每 30 秒采样一次；整机 CPU ≥ {sc}% / 内存 ≥ {sm}%，单实例 CPU ≥ {pc}% / 内存 ≥ {pm}%。仅当越过阈值时记一条「超限」，回落到阈值−2% 后记「已恢复」（持续超限不重复记录）。',
+  alertHintLine: '每 30 秒采样一次；整机 CPU ≥ {sc}% / 内存 ≥ {sm}%，单实例 CPU ≥ {pc}% / 内存 ≥ {pm}%。仅当越过阈值时记一条「超限」，回落到阈值−2% 后记「已恢复」（持续超限不重复记录）。单实例 CPU 为多核累计，可超过 100%。',
   alertNoRunning: '当前没有运行中的软件/应用，单实例告警不会触发',
   systemOverall: '整机',
   alertSystemCpu: '整机 CPU 超过',

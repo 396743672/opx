@@ -439,7 +439,7 @@ export default {
 
   // Alert thresholds (resource sampling)
   alertThresholds: 'Alert thresholds',
-  alertHintLine: 'Sampled every 30s; system CPU ≥ {sc}% / memory ≥ {sm}%, instance CPU ≥ {pc}% / memory ≥ {pm}%. One "high" entry per crossing, and "recovered" once it falls 2% below the threshold (sustained breaches are not re-logged).',
+  alertHintLine: 'Sampled every 30s; system CPU ≥ {sc}% / memory ≥ {sm}%, instance CPU ≥ {pc}% / memory ≥ {pm}%. One "high" entry per crossing, and "recovered" once it falls 2% below the threshold (sustained breaches are not re-logged). Instance CPU is summed across cores and can exceed 100%.',
   alertNoRunning: 'No software/app is running, so instance alerts will not fire',
   systemOverall: 'System',
   alertSystemCpu: 'System CPU above',
