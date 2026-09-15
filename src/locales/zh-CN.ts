@@ -447,6 +447,16 @@ export default {
   alertProcessMem: '单实例内存超过',
   resourceAlert: '「{name}」{metric} {value}%（阈值 {threshold}%）',
 
+  // 监控中心
+  monitorCenter: '监控中心',
+  runningServicesAndApps: '运行中服务与应用',
+  noRunningServicesOrApps: '暂无运行中的服务或应用',
+  searchProcessPlaceholder: '搜索名称或 PID',
+  noMatchingProcess: '无匹配进程',
+  kpiRunningProcesses: '运行中进程',
+  kpiCpuAlerting: 'CPU 告警中',
+  kpiMemAlerting: '内存告警中',
+
   // 告警通知（webhook + SMTP）
   alertNotify: '告警通知',
   webhookUrl: 'Webhook 地址',

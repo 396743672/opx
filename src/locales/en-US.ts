@@ -447,6 +447,16 @@ export default {
   alertProcessMem: 'Instance memory above',
   resourceAlert: '"{name}" {metric} {value}% (threshold {threshold}%)',
 
+  // Monitor center
+  monitorCenter: 'Monitor Center',
+  runningServicesAndApps: 'Running services & apps',
+  noRunningServicesOrApps: 'No running services or apps',
+  searchProcessPlaceholder: 'Search name or PID',
+  noMatchingProcess: 'No matching process',
+  kpiRunningProcesses: 'Running processes',
+  kpiCpuAlerting: 'CPU alerting',
+  kpiMemAlerting: 'Memory alerting',
+
   // Alert notifications (webhook + SMTP)
   alertNotify: 'Alert Notifications',
   webhookUrl: 'Webhook URL',
