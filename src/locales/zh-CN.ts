@@ -482,6 +482,24 @@ export default {
   testNotifyOk: '已发送，请查收',
   testNotifyNoChannel: '请先配置 webhook 或启用 SMTP',
 
+  // DDNS 动态域名
+  ddnsSection: 'DDNS 动态域名',
+  ddnsEnabled: '启用 DDNS',
+  ddnsProvider: 'DNS 服务商',
+  ddnsCloudflareToken: 'Cloudflare API Token',
+  ddnsAliyunKey: '阿里云 AccessKey ID',
+  ddnsAliyunSecret: '阿里云 AccessKey Secret',
+  ddnsDnspodId: 'DNSPod SecretId',
+  ddnsDnspodKey: 'DNSPod SecretKey',
+  ddnsHuaweiKey: '华为云 Access Key',
+  ddnsHuaweiSecret: '华为云 Secret Key',
+  ddnsDomains: '域名列表',
+  ddnsDomainsPlaceholder: '每行一个完整子域名，如\nhome.example.com\nnas.example.com',
+  ddnsIpv6: '同步 IPv6（AAAA）',
+  ddnsIpv6Hint: '开启后额外检测并同步 IPv6 地址',
+  syncDdnsNow: '立即同步',
+  ddnsSyncing: '同步中…',
+
   // 配置备份
   configBackups: '配置备份',
   restoreBackup: '还原',

@@ -319,6 +319,90 @@
           </div>
         </div>
       </div>
+
+      <div class="border-t border-border" />
+
+      <!-- DDNS 动态域名 -->
+      <div class="px-5 pt-4 pb-1">
+        <h3 class="text-sm font-semibold tracking-tight">{{ $t('ddnsSection') }}</h3>
+      </div>
+      <div class="px-5 pb-4 divide-y divide-border">
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('ddnsEnabled') }}</span>
+          <SwitchBtn v-model="ddnsEnabledValue" />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('ddnsProvider') }}</span>
+          <select v-model="ddnsProviderValue" class="h-8 px-2 w-56 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer">
+            <option value="cloudflare">Cloudflare</option>
+            <option value="aliyun">阿里云</option>
+            <option value="dnspod">DNSPod</option>
+            <option value="huawei">华为云</option>
+          </select>
+        </div>
+        <div v-if="ddnsProviderValue === 'cloudflare'" class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('ddnsCloudflareToken') }}</span>
+          <input v-model="ddnsCloudflareTokenValue" type="password"
+            class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+        </div>
+        <template v-else-if="ddnsProviderValue === 'aliyun'">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsAliyunKey') }}</span>
+            <input v-model="ddnsAliyunKeyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsAliyunSecret') }}</span>
+            <input v-model="ddnsAliyunSecretValue" type="password"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+        </template>
+        <template v-else-if="ddnsProviderValue === 'dnspod'">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsDnspodId') }}</span>
+            <input v-model="ddnsDnspodIdValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsDnspodKey') }}</span>
+            <input v-model="ddnsDnspodKeyValue" type="password"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+        </template>
+        <template v-else>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsHuaweiKey') }}</span>
+            <input v-model="ddnsHuaweiKeyValue" class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('ddnsHuaweiSecret') }}</span>
+            <input v-model="ddnsHuaweiSecretValue" type="password"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+          </div>
+        </template>
+        <div class="flex items-start justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('ddnsDomains') }}</span>
+          <textarea v-model="ddnsDomainsText" rows="4"
+            :placeholder="$t('ddnsDomainsPlaceholder')"
+            class="px-2 py-1.5 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono" />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">
+            {{ $t('ddnsIpv6') }}
+            <span class="block text-xs text-muted-foreground">{{ $t('ddnsIpv6Hint') }}</span>
+          </span>
+          <SwitchBtn v-model="ddnsIpv6Value" />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm">{{ $t('syncDdnsNow') }}</span>
+          <div class="flex flex-col gap-1 items-end min-w-0">
+            <button class="btn text-xs h-7 px-2" :disabled="ddnsSyncing" @click="syncDdns">
+              {{ ddnsSyncing ? $t('ddnsSyncing') : $t('syncDdnsNow') }}
+            </button>
+            <span v-if="ddnsSyncResult" class="text-xs max-w-72 text-right"
+              :class="ddnsSyncOk ? 'text-success' : 'text-destructive'"
+              style="overflow-wrap: anywhere; word-break: break-word">{{ ddnsSyncResult }}</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -367,6 +451,20 @@ const dnsTestZone = ref('')
 const dnsTesting = ref(false)
 const dnsTestResult = ref('')
 const dnsTestOk = ref(false)
+const ddnsEnabledValue = ref(false)
+const ddnsProviderValue = ref('cloudflare')
+const ddnsCloudflareTokenValue = ref('')
+const ddnsAliyunKeyValue = ref('')
+const ddnsAliyunSecretValue = ref('')
+const ddnsDnspodIdValue = ref('')
+const ddnsDnspodKeyValue = ref('')
+const ddnsHuaweiKeyValue = ref('')
+const ddnsHuaweiSecretValue = ref('')
+const ddnsDomainsText = ref('')
+const ddnsIpv6Value = ref(false)
+const ddnsSyncing = ref(false)
+const ddnsSyncResult = ref('')
+const ddnsSyncOk = ref(false)
 
 async function testToken() {
   const zone = dnsTestZone.value.trim()
@@ -437,6 +535,17 @@ watch(
       smtpUserValue.value = s.smtp_user || ''
       smtpPassValue.value = s.smtp_pass || ''
       smtpToValue.value = s.smtp_to || ''
+      ddnsEnabledValue.value = s.ddns_enabled
+      ddnsProviderValue.value = s.ddns_provider || 'cloudflare'
+      ddnsCloudflareTokenValue.value = s.ddns_cloudflare_token || ''
+      ddnsAliyunKeyValue.value = s.ddns_aliyun_access_key_id || ''
+      ddnsAliyunSecretValue.value = s.ddns_aliyun_access_key_secret || ''
+      ddnsDnspodIdValue.value = s.ddns_dnspod_secret_id || ''
+      ddnsDnspodKeyValue.value = s.ddns_dnspod_secret_key || ''
+      ddnsHuaweiKeyValue.value = s.ddns_huawei_access_key || ''
+      ddnsHuaweiSecretValue.value = s.ddns_huawei_secret_key || ''
+      ddnsDomainsText.value = (s.ddns_domains || []).join('\n')
+      ddnsIpv6Value.value = s.ddns_enable_ipv6
     }
   },
   { immediate: true }
@@ -453,7 +562,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -497,6 +606,18 @@ async function save() {
   settingsStore.settings.smtp_user = smtpUserValue.value
   settingsStore.settings.smtp_pass = smtpPassValue.value
   settingsStore.settings.smtp_to = smtpToValue.value
+  settingsStore.settings.ddns_enabled = ddnsEnabledValue.value
+  settingsStore.settings.ddns_provider = ddnsProviderValue.value
+  settingsStore.settings.ddns_cloudflare_token = ddnsCloudflareTokenValue.value
+  settingsStore.settings.ddns_aliyun_access_key_id = ddnsAliyunKeyValue.value
+  settingsStore.settings.ddns_aliyun_access_key_secret = ddnsAliyunSecretValue.value
+  settingsStore.settings.ddns_dnspod_secret_id = ddnsDnspodIdValue.value
+  settingsStore.settings.ddns_dnspod_secret_key = ddnsDnspodKeyValue.value
+  settingsStore.settings.ddns_huawei_access_key = ddnsHuaweiKeyValue.value
+  settingsStore.settings.ddns_huawei_secret_key = ddnsHuaweiSecretValue.value
+  settingsStore.settings.ddns_domains = ddnsDomainsText.value.split('\n')
+    .map((x) => x.trim()).filter(Boolean)
+  settingsStore.settings.ddns_enable_ipv6 = ddnsIpv6Value.value
   await settingsStore.saveSettings()
 }
 
@@ -518,6 +639,21 @@ async function testNotify() {
     notifyTestResult.value = String(e)
   } finally {
     notifyTesting.value = false
+  }
+}
+
+async function syncDdns() {
+  ddnsSyncing.value = true
+  ddnsSyncResult.value = t('ddnsSyncing')
+  try {
+    await save() // 先持久化当前输入，后端读的是 settings.json
+    ddnsSyncResult.value = await invoke<string>('sync_ddns_now')
+    ddnsSyncOk.value = true
+  } catch (e) {
+    ddnsSyncOk.value = false
+    ddnsSyncResult.value = String(e)
+  } finally {
+    ddnsSyncing.value = false
   }
 }
 </script>

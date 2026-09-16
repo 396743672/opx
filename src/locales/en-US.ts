@@ -482,6 +482,24 @@ export default {
   testNotifyOk: 'Sent, please check',
   testNotifyNoChannel: 'Configure webhook or enable SMTP first',
 
+  // DDNS dynamic DNS
+  ddnsSection: 'DDNS Dynamic DNS',
+  ddnsEnabled: 'Enable DDNS',
+  ddnsProvider: 'DNS Provider',
+  ddnsCloudflareToken: 'Cloudflare API Token',
+  ddnsAliyunKey: 'Aliyun AccessKey ID',
+  ddnsAliyunSecret: 'Aliyun AccessKey Secret',
+  ddnsDnspodId: 'DNSPod SecretId',
+  ddnsDnspodKey: 'DNSPod SecretKey',
+  ddnsHuaweiKey: 'Huawei Access Key',
+  ddnsHuaweiSecret: 'Huawei Secret Key',
+  ddnsDomains: 'Domains',
+  ddnsDomainsPlaceholder: 'One full subdomain per line, e.g.\nhome.example.com\nnas.example.com',
+  ddnsIpv6: 'Sync IPv6 (AAAA)',
+  ddnsIpv6Hint: 'Also detect and sync IPv6 address',
+  syncDdnsNow: 'Sync now',
+  ddnsSyncing: 'Syncing…',
+
   // config backups
   configBackups: 'Config Backups',
   restoreBackup: 'Restore',
