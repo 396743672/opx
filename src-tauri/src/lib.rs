@@ -296,7 +296,6 @@ pub fn run() {
             commands::software::restart_software,
             commands::software::update_software_deps,
             commands::software::resolve_software_deps,
-            commands::software::get_last_startup_report,
             commands::software::get_software_port_report,
             commands::software::get_software_status,
             commands::software::get_config_schema,

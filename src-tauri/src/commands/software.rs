@@ -744,12 +744,6 @@ pub async fn resolve_software_deps(
     }))
 }
 
-/// 读取最近一次启动编排报告（软件/Node/Stack 统一启动序列的结果）。
-#[tauri::command]
-pub fn get_last_startup_report() -> Option<crate::services::startup_bootstrap::StartupReport> {
-    crate::services::startup_bootstrap::read_startup_report()
-}
-
 /// 单个配置端口的诊断状态
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PortStatus {

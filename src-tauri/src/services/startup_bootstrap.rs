@@ -1,7 +1,7 @@
 //! 统一启动编排协调器（扩展 4）
 //!
 //! OPX 启动时，把原本分散的三路 auto_start（软件 / Node 应用 / 服务组 Stack）
-//! 收敛为单一有序启动序列：按顺序拉起，每项实时推送进度，产出持久化启动报告；
+//! 收敛为单一有序启动序列：按顺序拉起；
 //! 任一项失败时对本次已成功拉起的项按逆序停止（回滚）。
 //!
 //! 回滚边界（与扩展 1 软件级依赖区分）：
@@ -11,60 +11,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use tauri::Emitter;
-
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::stack_manager::StackManager;
-use crate::utils::paths;
 
-/// 启动报告文件
-const REPORT_FILE: &str = "startup_report.json";
-
-/// 单个被启动目标的结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartupItemReport {
-    pub kind: String,    // software / node / stack
-    pub id: String,
-    pub name: String,
-    pub status: String,  // running / failed / skipped
-    pub elapsed_ms: u64,
-    #[serde(default)]
-    pub message: String,
-}
-
-/// 最近一次启动编排的整体报告
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StartupReport {
-    pub started_at: String,
-    pub total_elapsed_ms: u64,
-    #[serde(default)]
-    pub items: Vec<StartupItemReport>,
-}
-
-fn report_path() -> PathBuf {
-    paths::data_dir().join(REPORT_FILE)
-}
-
-/// 读取最近一次启动报告
-pub fn read_startup_report() -> Option<StartupReport> {
-    let path = report_path();
-    if !path.exists() {
-        return None;
-    }
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-}
-
-fn write_startup_report(report: &StartupReport) {
-    if let Some(parent) = report_path().parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(s) = serde_json::to_string_pretty(report) {
-        let _ = std::fs::write(report_path(), s);
-    }
+/// 单个被启动目标的结果（编排内部簿记，回滚用）
+struct LaunchedItem {
+    kind: String, // software / node / stack
+    id: String,
 }
 
 /// 统一启动编排：软件 → Node → Stack（各自按内部排序字段升序）。
@@ -76,9 +30,6 @@ pub async fn run_bootstrap(
     app: tauri::AppHandle,
     node_exe: Option<PathBuf>,
 ) {
-    let started_at = chrono::Utc::now().to_rfc3339();
-    let t0 = std::time::Instant::now();
-
     // 1. 收集三类目标并合并排序（软件/Node 按 startup_order，Stack 按创建时间靠后）
     // 用 (order, seq) 稳定排序：Stack 排在软件/Node 之后。
     let mut targets: Vec<(u64, usize, String, String, String, u32)> = Vec::new();
@@ -103,16 +54,11 @@ pub async fn run_bootstrap(
     }
     targets.sort_by_key(|(o, s, _, _, _, _)| (*o, *s));
 
-    let mut report = StartupReport {
-        started_at,
-        total_elapsed_ms: 0,
-        items: Vec::new(),
-    };
-    let mut launched: Vec<StartupItemReport> = Vec::new(); // 本次已成功拉起的项（回滚用逆序）
+    let mut launched: Vec<LaunchedItem> = Vec::new(); // 本次已成功拉起的项（回滚用逆序）
+    let mut ok_count = 0usize;
 
-    // 2. 逐项启动并记录
+    // 2. 逐项启动
     for (_order, _seq, kind, id, name, _) in &targets {
-        let item_t0 = std::time::Instant::now();
         let result: Result<(), String> = match kind.as_str() {
             "software" => crate::commands::software::do_start_software(&software, &app, id, None)
                 .await
@@ -130,54 +76,20 @@ pub async fn run_bootstrap(
                 .map_err(|e| e.to_string()),
             _ => unreachable!(),
         };
-        let elapsed = item_t0.elapsed().as_millis() as u64;
-
-        let item = match result {
+        match result {
             Ok(_) => {
-                launched.push(StartupItemReport {
-                    kind: kind.clone(),
-                    id: id.clone(),
-                    name: name.clone(),
-                    status: "running".into(),
-                    elapsed_ms: elapsed,
-                    message: String::new(),
-                });
-                StartupItemReport {
-                    kind: kind.clone(),
-                    id: id.clone(),
-                    name: name.clone(),
-                    status: "running".into(),
-                    elapsed_ms: elapsed,
-                    message: String::new(),
-                }
+                launched.push(LaunchedItem { kind: kind.clone(), id: id.clone() });
+                ok_count += 1;
             }
             Err(e) => {
-                tracing::warn!(kind, id, error = %e, "启动编排项失败");
-                StartupItemReport {
-                    kind: kind.clone(),
-                    id: id.clone(),
-                    name: name.clone(),
-                    status: "failed".into(),
-                    elapsed_ms: elapsed,
-                    message: e,
-                }
+                tracing::warn!(kind, id, name, error = %e, "启动编排项失败");
+                // 失败：逆序停止本次已成功拉起的项（回滚）
+                rollback(&software, &node, &stack, &app, &launched).await;
+                break;
             }
-        };
-        // 实时推送进度
-        let _ = app.emit("startup-progress", &item);
-        // 失败：逆序停止本次已成功拉起的项（回滚）
-        if item.status == "failed" {
-            rollback(&software, &node, &stack, &app, &launched).await;
-            report.items.push(item);
-            break;
         }
-        report.items.push(item);
     }
-
-    report.total_elapsed_ms = t0.elapsed().as_millis() as u64;
-    write_startup_report(&report);
-    let _ = app.emit("startup-completed", &report);
-    tracing::info!(items = report.items.len(), "启动编排完成");
+    tracing::info!(items = ok_count, "启动编排完成");
 }
 
 /// 对已拉起项按逆序停止（回滚）。
@@ -186,7 +98,7 @@ async fn rollback(
     node: &NodeAppManager,
     stack: &StackManager,
     app: &tauri::AppHandle,
-    launched: &[StartupItemReport],
+    launched: &[LaunchedItem],
 ) {
     for item in launched.iter().rev() {
         match item.kind.as_str() {
@@ -223,12 +135,6 @@ fn stop_software(manager: &SoftwareManager, id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn report_roundtrip_default_empty() {
-        let r = StartupReport::default();
-        assert!(r.items.is_empty());
-        assert_eq!(r.total_elapsed_ms, 0);
-    }
+    // ponytail: 编排主体需要完整 manager 栈，不再有无报告可测的纯逻辑；
+    // 行为由实机验证覆盖（启动失败回滚在 watchdog/stack 测试间接受覆盖）
 }
