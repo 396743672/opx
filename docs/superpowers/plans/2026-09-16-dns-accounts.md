@@ -249,21 +249,24 @@ git commit -m "feat(dns): DnsAccount 模型（含零字段容错与 tested_at �
         unknown.provider = "nope".into();
         assert!(provider_for_account(&unknown).is_none());
 
-        // aliyun / dnspod / huawei 需要双凭证：只给一半必须 None
+        // aliyun / dnspod / huawei 的双凭证校验由 ddns::provider_for_account 负责
+        // （见 T3）；此处只断「acme 侧不认识这三家时不得误放行」。
+        // 正例断言（双凭证齐全 → Some）留到 T4 把三家改成 impl DnsProvider 后补，
+        // 那时它们才结构上可能产出 Box<dyn DnsProvider>。
         for p in ["aliyun", "dnspod", "huawei"] {
             let mut half = base.clone();
             half.provider = p.into();
             half.access_key_id = "k".into(); // 只有 id，没有 secret
             assert!(
                 provider_for_account(&half).is_none(),
-                "{} 只给一半凭证不应通过",
+                "{} 在 acme 侧未注册，不应放行",
                 p
             );
             let mut full = half.clone();
             full.access_key_secret = "s".into();
             assert!(
-                provider_for_account(&full).is_some(),
-                "{} 双凭证齐全应通过",
+                provider_for_account(&full).is_none(),
+                "{} 在 acme 侧未注册，凭证齐全也不应放行",
                 p
             );
         }
