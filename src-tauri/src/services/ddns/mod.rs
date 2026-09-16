@@ -6,8 +6,9 @@
 pub mod aliyun;
 pub mod cloudflare;
 pub mod dnspod;
+pub mod huawei;
 pub mod ip;
-// Task 6 逐个解开：huawei;  Task 7: pub mod scheduler;
+// Task 7: pub mod scheduler;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -51,6 +52,15 @@ pub fn provider_for(s: &crate::models::settings::AppSettings) -> Option<Box<dyn 
                 s.ddns_dnspod_secret_key.clone(),
             )))
         }
-        _ => None, // Task 6 逐家接入
+        "huawei"
+            if !s.ddns_huawei_access_key.trim().is_empty()
+                && !s.ddns_huawei_secret_key.trim().is_empty() =>
+        {
+            Some(Box::new(huawei::Huawei::new(
+                s.ddns_huawei_access_key.clone(),
+                s.ddns_huawei_secret_key.clone(),
+            )))
+        }
+        _ => None,
     }
 }
