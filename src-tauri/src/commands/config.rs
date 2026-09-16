@@ -159,5 +159,8 @@ pub async fn sync_ddns_now() -> Result<String, String> {
         report.push('；');
         report.push_str(&r.changes.join("；"));
     }
+    if r.failures > 0 {
+        report.push_str(&format!("（{} 条失败）", r.failures));
+    }
     Ok(report)
 }

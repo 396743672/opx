@@ -20,6 +20,15 @@ pub async fn run_ddns_scheduler() {
             continue;
         }
         match sync_once(&s).await {
+            // 部分域名失败时本轮仍算完成：用 warn 让日志能直接筛出「有失败的一轮」，
+            // 不必从 changes 文案里数失败条数
+            Ok(r) if r.failures > 0 => {
+                tracing::warn!(
+                    failures = r.failures,
+                    changes = ?r.changes,
+                    "DDNS 同步完成，但有记录失败"
+                )
+            }
             Ok(r) if !r.changes.is_empty() => {
                 tracing::info!(changes = ?r.changes, "DDNS 同步完成")
             }
