@@ -135,11 +135,13 @@ impl Huawei {
             return Err(anyhow!("华为云 API 失败（{}）：{}", status, text));
         }
         let text = resp.text().await.unwrap_or_default();
-        Ok(if text.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_str(&text).unwrap_or(Value::Null)
-        })
+        // 空体合法（写操作 2xx 常见）；非空但解析不了说明是网关/HTML 错误页，
+        // 必须显式报错——否则会退化成 Null，让调用方误报成「域名不在账户中」
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text)
+            .map_err(|e| anyhow!("华为云 API 返回了非 JSON 响应（{}）：{}", e, text))
     }
 
     /// 返回 (zone 名去尾点, zone id)。华为 zone 名带尾点（"example.com."）。
