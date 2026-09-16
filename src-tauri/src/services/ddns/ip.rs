@@ -51,10 +51,11 @@ pub fn extract_ip(body: &str) -> Option<String> {
                 if frag.parse::<std::net::Ipv4Addr>().is_ok() {
                     return Some(frag.to_string());
                 }
-            } else if (7..=45).contains(&len) && frag.contains(':') {
-                if frag.parse::<std::net::Ipv6Addr>().is_ok() {
-                    candidates_v6.push(frag.to_string());
-                }
+            } else if (7..=45).contains(&len)
+                && frag.contains(':')
+                && frag.parse::<std::net::Ipv6Addr>().is_ok()
+            {
+                candidates_v6.push(frag.to_string());
             }
         } else {
             i += 1;
