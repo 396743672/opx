@@ -37,4 +37,19 @@ export interface AppSettings {
   smtp_pass: string
   smtp_to: string
   smtp_enabled: boolean
+  // --- DDNS 动态域名（与证书的 DNS 配置零耦合）---
+  ddns_enabled: boolean
+  /** 'cloudflare' | 'aliyun' | 'dnspod' | 'huawei' */
+  ddns_provider: string
+  ddns_cloudflare_token: string
+  ddns_aliyun_access_key_id: string
+  ddns_aliyun_access_key_secret: string
+  ddns_dnspod_secret_id: string
+  ddns_dnspod_secret_key: string
+  ddns_huawei_access_key: string
+  ddns_huawei_secret_key: string
+  /** 每行一个完整子域名（如 home.example.com） */
+  ddns_domains: string[]
+  /** 开启后额外同步 AAAA 记录 */
+  ddns_enable_ipv6: boolean
 }

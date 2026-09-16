@@ -78,6 +78,32 @@ pub struct AppSettings {
     /// SMTP 总开关：false 时即使填了配置也不发
     #[serde(default)]
     pub smtp_enabled: bool,
+    // --- DDNS 动态域名（与证书的 DNS 配置零耦合）---
+    #[serde(default)]
+    pub ddns_enabled: bool,
+    /// "cloudflare" | "aliyun" | "dnspod" | "huawei"
+    #[serde(default = "default_ddns_provider")]
+    pub ddns_provider: String,
+    #[serde(default)]
+    pub ddns_cloudflare_token: String,
+    #[serde(default)]
+    pub ddns_aliyun_access_key_id: String,
+    #[serde(default)]
+    pub ddns_aliyun_access_key_secret: String,
+    #[serde(default)]
+    pub ddns_dnspod_secret_id: String,
+    #[serde(default)]
+    pub ddns_dnspod_secret_key: String,
+    #[serde(default)]
+    pub ddns_huawei_access_key: String,
+    #[serde(default)]
+    pub ddns_huawei_secret_key: String,
+    /// 每行一个完整子域名（如 home.example.com）
+    #[serde(default)]
+    pub ddns_domains: Vec<String>,
+    /// 开启后额外同步 AAAA 记录
+    #[serde(default)]
+    pub ddns_enable_ipv6: bool,
 }
 
 fn default_dns_provider() -> String {
@@ -90,6 +116,10 @@ fn default_ninety() -> u32 {
 
 fn default_metrics_retain_days() -> u32 {
     7
+}
+
+fn default_ddns_provider() -> String {
+    "cloudflare".to_string()
 }
 
 fn default_webhook_format() -> String {
@@ -132,6 +162,17 @@ impl Default for AppSettings {
             smtp_pass: String::new(),
             smtp_to: String::new(),
             smtp_enabled: false,
+            ddns_enabled: false,
+            ddns_provider: default_ddns_provider(),
+            ddns_cloudflare_token: String::new(),
+            ddns_aliyun_access_key_id: String::new(),
+            ddns_aliyun_access_key_secret: String::new(),
+            ddns_dnspod_secret_id: String::new(),
+            ddns_dnspod_secret_key: String::new(),
+            ddns_huawei_access_key: String::new(),
+            ddns_huawei_secret_key: String::new(),
+            ddns_domains: Vec::new(),
+            ddns_enable_ipv6: false,
         }
     }
 }
@@ -168,7 +209,10 @@ mod tests {
         assert_eq!(s.alert_system_mem, 90);
         assert_eq!(s.alert_process_cpu, 90);
         assert_eq!(s.alert_process_mem, 90);
-        assert_eq!(s.metrics_retain_days, 7, "旧 settings.json 缺字段时回落默认 7 天");
+        assert_eq!(
+            s.metrics_retain_days, 7,
+            "旧 settings.json 缺字段时回落默认 7 天"
+        );
     }
 
     #[test]
@@ -189,5 +233,27 @@ mod tests {
         assert_eq!(s.smtp_pass, "");
         assert_eq!(s.smtp_to, "");
         assert!(!s.smtp_enabled);
+    }
+
+    #[test]
+    fn ddns_fields_default_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert!(!s.ddns_enabled);
+        assert_eq!(s.ddns_provider, "cloudflare");
+        assert!(s.ddns_cloudflare_token.is_empty());
+        assert!(s.ddns_aliyun_access_key_id.is_empty());
+        assert!(s.ddns_aliyun_access_key_secret.is_empty());
+        assert!(s.ddns_dnspod_secret_id.is_empty());
+        assert!(s.ddns_dnspod_secret_key.is_empty());
+        assert!(s.ddns_huawei_access_key.is_empty());
+        assert!(s.ddns_huawei_secret_key.is_empty());
+        assert!(s.ddns_domains.is_empty());
+        assert!(!s.ddns_enable_ipv6);
     }
 }
