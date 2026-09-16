@@ -510,15 +510,74 @@ mod tests {
 }
 ```
 
+- [ ] **步骤 5.5：修掉这两处旧调用点（否则后续任务都在红 build 上开工）**
+
+`provider_for` 被重命名为 `provider_for_account` 后，有两处调用点会报 `cannot find function provider_for`——**这不是「预期红」**，而是本步骤要修干净的东西。改完它们，`cargo test --lib` 只剩真正属于 T3/T4 的错误。
+
+改 `src-tauri/src/services/acme/mod.rs`：
+
+```rust
+// 旧（第 15 行）
+use dns::provider_for;
+// 新
+use dns::provider_for_account;
+```
+
+```rust
+// 旧（第 50 行）
+    let provider = provider_for(&settings.dns_provider, &settings.cloudflare_api_token)
+        .ok_or_else(|| anyhow!("未配置 DNS 服务商或服务商不支持：{}", settings.dns_provider))?;
+// 新（AcmeSettings 的字段改造是 T5 的事，这里用 account 字段的最小形态）
+    let provider = provider_for_account(&settings.account)
+        .ok_or_else(|| anyhow!("未配置 DNS 服务商或服务商不支持：{}", settings.account.provider))?;
+```
+
+改 `src-tauri/src/commands/config.rs`（`test_dns_token` 探针）：
+
+```rust
+// 旧（第 41 行）
+        let p = crate::services::acme::dns::provider_for(&provider, &token)
+            .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
+// 新
+        let p = crate::services::acme::dns::provider_for_account(
+            &crate::models::dns_account::DnsAccount {
+                id: String::new(),
+                name: String::new(),
+                provider: provider.clone(),
+                token: token.clone(),
+                access_key_id: token.clone(),
+                access_key_secret: token.clone(),
+                zones: vec![],
+                tested_at: None,
+            },
+        )
+        .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
+```
+
+**注意**：`acme/mod.rs` 里 `AcmeSettings` 的字段改造（`dns_provider`/`cloudflare_api_token` → `account`）**不在本步骤**——那是 T5。所以本步骤改完后 `acme/mod.rs` 仍会报「no field `account`」，这是**真正的**预期红，由 T5 修。本步骤只消灭「函数名找不到」这一类错误。
+
+同时把 `create_txt` / `delete_txt` 的调用点改成新方法名（这两处也在 `acme/mod.rs` 与 `commands/config.rs`）：
+
+```rust
+// acme/mod.rs
+provider.set_value(&fqdn, "TXT", &value)      // 原 provider.create_txt(&fqdn, &value)
+provider.delete_value(f, "TXT")               // 原 provider.delete_txt(f, v)
+// commands/config.rs
+p.set_value(&fqdn, "TXT", &value)             // 原 p.create_txt(&fqdn, &value)
+p.delete_value(&fqdn, "TXT")                  // 原 p.delete_txt(&fqdn, &value)
+```
+
+> 这几处是为了让 build 从「名字找不到」推进到「字段还没改」——后者才是 T5 的活。**不要**顺手把 `AcmeSettings` 也改了，那会让 T5 无从下手。
+
 - [ ] **步骤 6：运行测试**
 
 运行：`cd src-tauri && cargo test --lib services::acme::dns`
-预期：`models::dns_account` 与 `acme::dns` 的测试 PASS。此时 `services::acme::mod` 与 `services::ddns` 仍编译失败（T3/T7 修）——**不要**为此改动它们。
+预期：`models::dns_account` 与 `acme::dns` 的测试 PASS。残留错误应**只有** `no field 'account' on type '&AcmeSettings'`（T5 修）与 `services::ddns` 的 trait 不匹配（T3 修）——**不要再有 `cannot find function provider_for`**。
 
 - [ ] **步骤 7：Commit**
 
 ```bash
-git add src-tauri/src/services/acme/dns/mod.rs src-tauri/src/services/acme/dns/cloudflare.rs
+git add src-tauri/src/services/acme/dns/mod.rs src-tauri/src/services/acme/dns/cloudflare.rs src-tauri/src/services/acme/mod.rs src-tauri/src/commands/config.rs
 git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_value/set_value/delete_value）"
 ```
 
