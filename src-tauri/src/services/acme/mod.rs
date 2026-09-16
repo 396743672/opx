@@ -12,7 +12,7 @@ use instant_acme::{
     RetryPolicy,
 };
 
-use dns::provider_for;
+use dns::provider_for_account;
 
 pub struct AcmeSettings {
     pub dns_provider: String,
@@ -47,8 +47,8 @@ pub async fn issue_certificate(
     cert_dir: &Path,
     on_progress: impl Fn(&str, &str) + Send + Sync,
 ) -> Result<(PathBuf, PathBuf)> {
-    let provider = provider_for(&settings.dns_provider, &settings.cloudflare_api_token)
-        .ok_or_else(|| anyhow!("未配置 DNS 服务商或服务商不支持：{}", settings.dns_provider))?;
+    let provider = provider_for_account(&settings.account)
+        .ok_or_else(|| anyhow!("未配置 DNS 服务商或服务商不支持：{}", settings.account.provider))?;
 
     std::fs::create_dir_all(cert_dir).context("创建证书目录失败")?;
 
@@ -70,9 +70,9 @@ pub async fn issue_certificate(
         let value = challenge.key_authorization().dns_value();
         let fqdn = dns::acme_challenge_fqdn(domain);
         on_progress("waiting-dns", &format!("写入 TXT 记录 {}", fqdn));
-        if let Err(e) = provider.create_txt(&fqdn, &value).await {
-            for (f, v) in &created {
-                let _ = provider.delete_txt(f, v).await;
+        if let Err(e) = provider.set_value(&fqdn, "TXT", &value).await {
+            for (f, _) in &created {
+                let _ = provider.delete_value(f, "TXT").await;
             }
             return Err(e).context("创建 DNS 挑战记录失败");
         }
@@ -81,8 +81,8 @@ pub async fn issue_certificate(
         tokio::time::sleep(Duration::from_secs(dns::cloudflare::DNS_PROPAGATION_WAIT_SECS)).await;
         on_progress("validating", "等待 ACME 验证");
         if let Err(e) = challenge.set_ready().await {
-            for (f, v) in &created {
-                let _ = provider.delete_txt(f, v).await;
+            for (f, _) in &created {
+                let _ = provider.delete_value(f, "TXT").await;
             }
             return Err(e).context("提交 DNS-01 challenge 失败");
         }
@@ -92,8 +92,8 @@ pub async fn issue_certificate(
     let poll_result = order.poll_ready(&RetryPolicy::default()).await;
 
     // 无论验证成败，验证结束后统一清理 TXT
-    for (f, v) in &created {
-        let _ = provider.delete_txt(f, v).await;
+    for (f, _) in &created {
+        let _ = provider.delete_value(f, "TXT").await;
     }
     poll_result?;
 

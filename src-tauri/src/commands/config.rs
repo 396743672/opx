@@ -38,14 +38,25 @@ pub async fn test_dns_token(provider: String, token: String, zone: String) -> Re
     let target = format!("{} ({})", provider, zone);
     audited_async!("test_dns_token", target, "", {
         let zone = crate::commands::website::sanitize_domain(&zone)?;
-        let p = crate::services::acme::dns::provider_for(&provider, &token)
-            .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
+        let p = crate::services::acme::dns::provider_for_account(
+            &crate::models::dns_account::DnsAccount {
+                id: String::new(),
+                name: String::new(),
+                provider: provider.clone(),
+                token: token.clone(),
+                access_key_id: token.clone(),
+                access_key_secret: token.clone(),
+                zones: vec![],
+                tested_at: None,
+            },
+        )
+        .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
         let fqdn = format!("_opx-token-test.{}", zone);
         let value = format!("opx-{}", chrono::Local::now().timestamp_millis());
-        p.create_txt(&fqdn, &value)
+        p.set_value(&fqdn, "TXT", &value)
             .await
             .map_err(|e| format!("{:#}", e))?;
-        let _ = p.delete_txt(&fqdn, &value).await; // 清理探针记录（尽力而为）
+        let _ = p.delete_value(&fqdn, "TXT").await; // 清理探针记录（尽力而为）
         Ok(())
     })
 }
