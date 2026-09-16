@@ -209,8 +209,13 @@ impl DdnsProvider for Dnspod {
                             r["Value"].as_str().unwrap_or("").to_string(),
                         )
                     }),
-                // DNSPod：无记录时 DescribeRecordList 报 ResourceNotFound.NoFoundData
-                Err(e) if e.to_string().contains("NoFoundData") => None,
+                // DNSPod：该 name+type 无记录时报 ResourceNotFound.NoDataOfRecord（实测值）
+                Err(e)
+                    if e.to_string().contains("NoDataOfRecord")
+                        || e.to_string().contains("NoFoundData") =>
+                {
+                    None
+                }
                 Err(e) => return Err(e),
             };
             match cur {
@@ -245,6 +250,22 @@ impl DdnsProvider for Dnspod {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「无记录」判定必须认得线上实际错误码：计划里写的是 NoFoundData，
+    /// 实测 2021-03-23 的 dnspod 端点返回 NoDataOfRecord —— 认不出就会把
+    /// 「该建记录」误报成致命错误。两个码都保留，兼容版本差异。
+    #[test]
+    fn no_record_error_codes_are_recognized() {
+        let is_no_record =
+            |msg: &str| msg.contains("NoDataOfRecord") || msg.contains("NoFoundData");
+        assert!(is_no_record(
+            "DNSPod API 错误：ResourceNotFound.NoDataOfRecord 记录列表为空"
+        ));
+        assert!(is_no_record("ResourceNotFound.NoFoundData"));
+        // 真正的错误不能被误当成「无记录」，否则会把凭证/权限问题变成静默建记录
+        assert!(!is_no_record("AuthFailure.SignatureFailure"));
+        assert!(!is_no_record("InvalidParameter.DomainInvalid"));
+    }
 
     /// 规范化请求的六行构成，用固定输入断言精确字符串（HMAC 链本身由 hmac/sha2 保证）。
     #[test]
