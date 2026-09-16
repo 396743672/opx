@@ -192,6 +192,12 @@ pub fn run() {
                     .await;
             });
 
+            // DDNS 动态域名：5 分钟一轮公网 IP 检测与记录同步
+            // （常驻循环，停用只跳过本轮，改设置即时生效）
+            tauri::async_runtime::spawn(async move {
+                crate::services::ddns::scheduler::run_ddns_scheduler().await;
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
@@ -275,6 +281,7 @@ pub fn run() {
             commands::config::set_autostart,
             commands::config::test_dns_token,
             commands::config::test_alert_webhook,
+            commands::config::sync_ddns_now,
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,

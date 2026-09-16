@@ -140,3 +140,24 @@ pub async fn test_alert_webhook() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 立即执行一轮 DDNS 同步（设置页「立即同步」按钮）：走与调度器同一条 `sync_once`，
+/// 返回人读报告。未启用 / 未配置域名 / 无凭证时同步报错。
+#[tauri::command]
+pub async fn sync_ddns_now() -> Result<String, String> {
+    let s = read_settings()?;
+    let r = crate::services::ddns::sync_once(&s)
+        .await
+        .map_err(|e| format!("{:#}", e))?;
+    let mut report = format!("公网 IP: {}", r.v4);
+    if let Some(v6) = r.v6 {
+        report.push_str(&format!(" / IPv6: {}", v6));
+    }
+    if r.changes.is_empty() {
+        report.push_str("；所有记录未变");
+    } else {
+        report.push('；');
+        report.push_str(&r.changes.join("；"));
+    }
+    Ok(report)
+}
