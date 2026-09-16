@@ -300,4 +300,76 @@ mod tests {
         assert!(auth.contains("tc3_request, SignedHeaders="));
         assert!(auth.contains(", Signature="));
     }
+
+    /// 自洽性：独立重算整条派生链与规范化串，与 `tc3_authorization` 产出的签名逐字节比对。
+    /// 形状断言（starts_with / contains / assert_ne）无法发现链算错——例如 k_date 少 "TC3"
+    /// 前缀、或 date 与 service 位置对调，格式和「三段互不相等」都仍成立。这条能发现。
+    #[test]
+    fn authorization_signature_matches_independent_chain_recompute() {
+        let secret_id = "AKIDtest";
+        let secret_key = "testsecret";
+        let ts: i64 = TS_2019;
+        let body = r#"{"Domain":"example.com"}"#;
+        let headers = [
+            ("content-type", "application/json"),
+            ("host", "dnsapi.tencentcloudapi.com"),
+            ("x-tc-action", "describerecordlist"),
+            ("x-tc-timestamp", "1551113065"),
+        ];
+
+        // 被测：按实现自身的方式拼 canonical request
+        let cr = tc3_canonical_request(
+            "POST",
+            "/",
+            "",
+            &headers,
+            "content-type;host;x-tc-action;x-tc-timestamp",
+            &hex(&Sha256::digest(body.as_bytes())),
+        );
+        let auth = tc3_authorization(secret_id, secret_key, ts, "dnspod", &cr);
+
+        // ---- 独立重算（不复用实现里的任何函数）----
+        let hmac = |key: &[u8], data: &[u8]| -> Vec<u8> {
+            let mut m = <Hmac<Sha256>>::new_from_slice(key).expect("任意长度密钥均可");
+            m.update(data);
+            m.finalize().into_bytes().to_vec()
+        };
+        let hex_of = |b: &[u8]| -> String { b.iter().map(|x| format!("{:02x}", x)).collect() };
+
+        // 手写六行构成，不经 tc3_canonical_request
+        let canonical = format!(
+            "POST\n/\n\n{}\n\n{}\n{}",
+            headers
+                .iter()
+                .map(|(k, v)| format!("{}:{}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            headers
+                .iter()
+                .map(|(k, _)| *k)
+                .collect::<Vec<_>>()
+                .join(";"),
+            hex_of(&Sha256::digest(body.as_bytes())),
+        );
+        let date = "2019-02-25";
+        let string_to_sign = format!(
+            "TC3-HMAC-SHA256\n{}\n{}/{}/tc3_request\n{}",
+            ts,
+            date,
+            "dnspod",
+            hex_of(&Sha256::digest(canonical.as_bytes())),
+        );
+        // 手写派生链：少 "TC3" 前缀、或 date/service 对调，这里会算出不同结果
+        let k_date = hmac(format!("TC3{}", secret_key).as_bytes(), date.as_bytes());
+        let k_service = hmac(&k_date, b"dnspod");
+        let k_signing = hmac(&k_service, b"tc3_request");
+        let expected = hex_of(&hmac(&k_signing, string_to_sign.as_bytes()));
+
+        assert!(
+            auth.ends_with(&format!("Signature={}", expected)),
+            "授权头中的签名必须等于独立重算结果\n实际: {}\n期望签名: {}",
+            auth,
+            expected
+        );
+    }
 }
