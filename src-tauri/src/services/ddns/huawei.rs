@@ -1,4 +1,4 @@
-//! 华为云 DNS DDNS：SDK-HMAC-SHA256 签名，/v2/zones + recordsets。
+//! 华为云 DNS DDNS：SDK-HMAC-SHA256 签名，zone 列表用 v2、记录集用 v2.1。
 //! 注意：华为的记录名是带尾点的 FQDN（"home.example.com."）。
 
 use anyhow::{anyhow, Result};
@@ -144,6 +144,9 @@ impl Huawei {
 
     /// 返回 (zone 名去尾点, zone id)。华为 zone 名带尾点（"example.com."）。
     async fn find_zone(&self, fqdn: &str) -> Result<(String, String)> {
+        // ponytail: zone 列表留 v2 —— 仅能确认同组 zone 接口（POST /v2/zones、
+        // GET /v2/zones/{zone_id}）为 v2，ListPublicZones 文档页取不到。
+        // 若首次查找即 404，就是这里：改 /v2.1/zones（同记录集一处前缀）。
         let body = self
             .call("GET", "/v2/zones", &[("limit", "100".into())], None)
             .await?;
@@ -180,11 +183,12 @@ impl DdnsProvider for Huawei {
             let list = self
                 .call(
                     "GET",
-                    &format!("/v2/zones/{}/recordsets", zid),
+                    &format!("/v2.1/zones/{}/recordsets", zid),
                     &[("type", rtype.to_string()), ("name", name.clone())],
                     None,
                 )
                 .await?;
+            // 列表接口返回体字段名为 "recordsets"（ShowRecordSetByZone 响应）。
             let cur = list["recordsets"]
                 .as_array()
                 .cloned()
@@ -209,7 +213,7 @@ impl DdnsProvider for Huawei {
                 None => {
                     self.call(
                         "POST",
-                        &format!("/v2/zones/{}/recordsets", zid),
+                        &format!("/v2.1/zones/{}/recordsets", zid),
                         &[],
                         Some(&body),
                     )
@@ -219,7 +223,7 @@ impl DdnsProvider for Huawei {
                 Some((rid, old)) if old != ip => {
                     self.call(
                         "PUT",
-                        &format!("/v2/zones/{}/recordsets/{}", zid, rid),
+                        &format!("/v2.1/zones/{}/recordsets/{}", zid, rid),
                         &[],
                         Some(&body),
                     )
