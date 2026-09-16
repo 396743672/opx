@@ -3,9 +3,10 @@
 //! 注意：需以 `Box<dyn DdnsProvider>` 使用，而 trait 对象不支持 `async fn`（RPITIT 非
 //! dyn 兼容），故统一返回 boxed future（同 `acme::dns`）。
 
+pub mod aliyun;
 pub mod cloudflare;
 pub mod ip;
-// Task 4-6 逐个解开：pub mod aliyun; dnspod; huawei;  Task 7: pub mod scheduler;
+// Task 5-6 逐个解开：dnspod; huawei;  Task 7: pub mod scheduler;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -31,6 +32,15 @@ pub fn provider_for(s: &crate::models::settings::AppSettings) -> Option<Box<dyn 
         "cloudflare" if !s.ddns_cloudflare_token.trim().is_empty() => Some(Box::new(
             cloudflare::Cloudflare::new(s.ddns_cloudflare_token.clone()),
         )),
-        _ => None, // Task 4-6 逐家接入
+        "aliyun"
+            if !s.ddns_aliyun_access_key_id.trim().is_empty()
+                && !s.ddns_aliyun_access_key_secret.trim().is_empty() =>
+        {
+            Some(Box::new(aliyun::Aliyun::new(
+                s.ddns_aliyun_access_key_id.clone(),
+                s.ddns_aliyun_access_key_secret.clone(),
+            )))
+        }
+        _ => None, // Task 5-6 逐家接入
     }
 }
