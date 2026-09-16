@@ -405,6 +405,9 @@ export default {
 
   // settings
   appearance: 'Appearance',
+  settingsTabGeneral: 'General',
+  settingsTabMonitor: 'Monitoring',
+  settingsTabDns: 'Domains & DNS',
   theme: 'Theme',
   language: 'Language',
   light: 'Light',

@@ -405,6 +405,9 @@ export default {
 
   // 设置
   appearance: '外观',
+  settingsTabGeneral: '通用',
+  settingsTabMonitor: '监控与告警',
+  settingsTabDns: '域名与 DNS',
   theme: '主题',
   language: '语言',
   light: '浅色',
