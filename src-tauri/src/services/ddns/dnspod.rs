@@ -10,7 +10,12 @@ use sha2::{Digest, Sha256};
 
 use super::{BoxFuture, DdnsProvider};
 
-const HOST: &str = "dnsapi.tencentcloudapi.com";
+/// TC3 服务名：与 HOST 首段相同，且必须同时出现在 CredentialScope 与派生密钥的
+/// service 段。腾讯云有 `dnspod`（DescribeXxx）与 `dnsapi`（Xxx 老式命名）两套：
+/// 本文件用的是 DescribeXxx，故只能走 `dnspod`——曾误配 `dnsapi` 端点导致
+/// InvalidAction（service=`dnsapi` 无 DescribeDomainList）。
+const SERVICE: &str = "dnspod";
+const HOST: &str = "dnspod.tencentcloudapi.com";
 const VERSION: &str = "2021-03-23";
 /// 签名与实发必须同一字面量：TC3 要求 signed content-type 与线上头逐字节一致。
 const CONTENT_TYPE: &str = "application/json";
@@ -117,7 +122,7 @@ impl Dnspod {
             "content-type;host;x-tc-action;x-tc-timestamp",
             &payload_hash,
         );
-        let auth = tc3_authorization(&self.secret_id, &self.secret_key, ts, "dnspod", &cr);
+        let auth = tc3_authorization(&self.secret_id, &self.secret_key, ts, SERVICE, &cr);
         let resp = self
             .client
             .post(format!("https://{}/", HOST))
@@ -250,13 +255,13 @@ mod tests {
             "",
             &[
                 ("content-type", "application/json; charset=utf-8"),
-                ("host", "dnsapi.tencentcloudapi.com"),
+                ("host", HOST),
                 ("x-tc-action", "describerecordlist"),
             ],
             "content-type;host;x-tc-action",
             "0000000000000000000000000000000000000000000000000000000000000000",
         );
-        assert_eq!(cr, "POST\n/\n\ncontent-type:application/json; charset=utf-8\nhost:dnsapi.tencentcloudapi.com\nx-tc-action:describerecordlist\n\ncontent-type;host;x-tc-action\n0000000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(cr, format!("POST\n/\n\ncontent-type:application/json; charset=utf-8\nhost:{}\nx-tc-action:describerecordlist\n\ncontent-type;host;x-tc-action\n0000000000000000000000000000000000000000000000000000000000000000", HOST));
     }
 
     #[test]
@@ -265,17 +270,17 @@ mod tests {
             "AKIDtest",
             "testkey",
             TS_2019,
-            "dnspod",
+            SERVICE,
             "POST\n/\n\n\n\n", // canonical request（占位，仅测头格式）
         );
         // 结构断言：前缀、scope、签名段齐全；签名值是 64 位 hex
-        assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=AKIDtest/2019-02-25/dnspod/tc3_request, SignedHeaders=content-type;host;x-tc-action;x-tc-timestamp, Signature="));
+        assert!(auth.starts_with(&format!("TC3-HMAC-SHA256 Credential=AKIDtest/2019-02-25/{}/tc3_request, SignedHeaders=content-type;host;x-tc-action;x-tc-timestamp, Signature=", SERVICE)));
         let sig = auth.rsplit('=').next().unwrap();
         assert_eq!(sig.len(), 64);
         assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
         // ts 以 UTC 计算 date：同一时刻的 UTC 与该时刻的本地日期不同时，必须以 UTC 为准
-        let auth_next = tc3_authorization("AKIDtest", "testkey", TS_2019 + 86_400, "dnspod", "");
-        assert!(auth_next.contains("/2019-02-26/dnspod/tc3_request"));
+        let auth_next = tc3_authorization("AKIDtest", "testkey", TS_2019 + 86_400, SERVICE, "");
+        assert!(auth_next.contains(&format!("/2019-02-26/{}/tc3_request", SERVICE)));
     }
 
     /// 派生链的连续性：date → service → signing 三段每段都改变密钥，
@@ -295,12 +300,25 @@ mod tests {
     /// 此处用官方示例的字符串拼接规则校验 scope 顺序与固定 SignedHeaders。
     #[test]
     fn authorization_uses_dnspod_service_scope() {
-        let auth = tc3_authorization("AKIDEXAMPLE", "sk", TS_2019, "dnspod", "cr");
-        assert!(auth.contains("Credential=AKIDEXAMPLE/2019-02-25/dnspod/tc3_request"));
+        let auth = tc3_authorization("AKIDEXAMPLE", "sk", TS_2019, SERVICE, "cr");
+        assert!(auth.contains(&format!(
+            "Credential=AKIDEXAMPLE/2019-02-25/{}/tc3_request",
+            SERVICE
+        )));
         assert!(auth.contains("SignedHeaders=content-type;host;x-tc-action;x-tc-timestamp"));
         // 头部与签名之间必须是 ", " 分隔（官方格式，缺空格会 SignatureFailure）
         assert!(auth.contains("tc3_request, SignedHeaders="));
         assert!(auth.contains(", Signature="));
+    }
+
+    /// 端点与签名 scope 必须同源：HOST 首段即 TC3 service 名。
+    /// 这条锁死本次线上事故的根因——两处曾各写各的（HOST=dnsapi / service=dnspod），
+    /// 而形状断言只验格式、不验二者一致，故全线绿灯却线上 InvalidAction。
+    #[test]
+    fn host_and_service_scope_agree() {
+        assert_eq!(HOST.split('.').next().unwrap(), SERVICE);
+        assert_eq!(HOST, "dnspod.tencentcloudapi.com");
+        assert_eq!(SERVICE, "dnspod");
     }
 
     /// 自洽性：独立重算整条派生链与规范化串，与 `tc3_authorization` 产出的签名逐字节比对。
@@ -314,7 +332,7 @@ mod tests {
         let body = r#"{"Domain":"example.com"}"#;
         let headers = [
             ("content-type", "application/json"),
-            ("host", "dnsapi.tencentcloudapi.com"),
+            ("host", HOST),
             ("x-tc-action", "describerecordlist"),
             ("x-tc-timestamp", "1551113065"),
         ];
@@ -328,7 +346,7 @@ mod tests {
             "content-type;host;x-tc-action;x-tc-timestamp",
             &hex(&Sha256::digest(body.as_bytes())),
         );
-        let auth = tc3_authorization(secret_id, secret_key, ts, "dnspod", &cr);
+        let auth = tc3_authorization(secret_id, secret_key, ts, SERVICE, &cr);
 
         // ---- 独立重算（不复用实现里的任何函数）----
         let hmac = |key: &[u8], data: &[u8]| -> Vec<u8> {
@@ -358,12 +376,12 @@ mod tests {
             "TC3-HMAC-SHA256\n{}\n{}/{}/tc3_request\n{}",
             ts,
             date,
-            "dnspod",
+            SERVICE,
             hex_of(&Sha256::digest(canonical.as_bytes())),
         );
         // 手写派生链：少 "TC3" 前缀、或 date/service 对调，这里会算出不同结果
         let k_date = hmac(format!("TC3{}", secret_key).as_bytes(), date.as_bytes());
-        let k_service = hmac(&k_date, b"dnspod");
+        let k_service = hmac(&k_date, SERVICE.as_bytes());
         let k_signing = hmac(&k_service, b"tc3_request");
         let expected = hex_of(&hmac(&k_signing, string_to_sign.as_bytes()));
 
