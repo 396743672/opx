@@ -63,6 +63,11 @@ fn pe(s: &str) -> String {
     out
 }
 
+/// 华为记录名：FQDN，且必须以点结尾（官方要求「以"."结束的完整主机名」）。
+fn record_name(fqdn: &str) -> String {
+    format!("{}.", fqdn.trim_end_matches('.'))
+}
+
 pub struct Huawei {
     ak: String,
     sk: String,
@@ -181,7 +186,7 @@ impl DdnsProvider for Huawei {
     ) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move {
             let (_zone, zid) = self.find_zone(fqdn).await?;
-            let name = format!("{}.", fqdn.trim_end_matches('.')); // 华为记录名带尾点
+            let name = record_name(fqdn); // 华为记录名带尾点
             let list = self
                 .call(
                     "GET",
@@ -275,14 +280,11 @@ mod tests {
         assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    /// 记录名与 zone 查询都要带尾点，且 fqdn 已带点时不能出现两个尾点。
     #[test]
-    fn record_name_is_trailing_dot_fqdn() {
-        assert_eq!(format!("{}.", "home.example.com"), "home.example.com.");
-        assert_eq!(format!("{}.", "home.example.com."), "home.example.com..");
-        assert_eq!(
-            format!("{}.", "home.example.com.".trim_end_matches('.')),
-            "home.example.com."
-        );
+    fn record_name_is_fqdn_with_single_trailing_dot() {
+        assert_eq!(record_name("home.example.com"), "home.example.com.");
+        // 已带尾点的输入不得变成双点
+        assert_eq!(record_name("home.example.com."), "home.example.com.");
+        assert!(!record_name("home.example.com.").contains(".."));
     }
 }

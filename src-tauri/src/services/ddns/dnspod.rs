@@ -12,6 +12,8 @@ use super::{BoxFuture, DdnsProvider};
 
 const HOST: &str = "dnsapi.tencentcloudapi.com";
 const VERSION: &str = "2021-03-23";
+/// 签名与实发必须同一字面量：TC3 要求 signed content-type 与线上头逐字节一致。
+const CONTENT_TYPE: &str = "application/json";
 /// 固定引用时间戳（官方示例用值），仅测试使用
 #[cfg(test)]
 const TS_2019: i64 = 1_551_113_065;
@@ -107,7 +109,7 @@ impl Dnspod {
             "/",
             "",
             &[
-                ("content-type", "application/json"),
+                ("content-type", CONTENT_TYPE),
                 ("host", HOST),
                 ("x-tc-action", &action.to_lowercase()),
                 ("x-tc-timestamp", &ts_str),
@@ -120,7 +122,7 @@ impl Dnspod {
             .client
             .post(format!("https://{}/", HOST))
             // 与签名值逐字节一致：不加 charset
-            .header("Content-Type", "application/json")
+            .header("Content-Type", CONTENT_TYPE)
             .header("X-TC-Action", action)
             .header("X-TC-Version", VERSION)
             .header("X-TC-Timestamp", &ts_str)
