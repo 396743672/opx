@@ -10,7 +10,7 @@
 
 ## 已确认决策
 
-1. **4 个 Tab 按功能域分组**（见下表）。
+1. **3 个 Tab 按功能域分组**（见下表）。原设计为 4 个，实施时发现设置页**没有**「配置备份」区块（`configBackups` / `noBackups` / `backupHint` 等 i18n 键存在但页面从未引用），故取消 `data` Tab。
 2. **选中状态记入 URL query**（`?tab=...`）——刷新保持、可从别处直达、非法值回落首 Tab。
 3. **保存行为不变**：仍为「任何字段改动 400ms 后自动保存」，切 Tab 不影响。
 4. 复用现有 `CategoryTabs` 组件（`src/modules/software-manager/components/CategoryTabs.vue`），**不新建组件**。
@@ -25,9 +25,10 @@
 | `general` | 通用 / General | `mdi:tune` | 外观、关闭行为、开机自启、下载代理 |
 | `monitor` | 监控与告警 / Monitoring | `mdi:bell-outline` | 告警阈值、告警通知（webhook + SMTP） |
 | `dns` | 域名与 DNS / Domains & DNS | `mdi:dns-outline` | DNS 服务商（证书自动化）、DDNS 动态域名 |
-| `data` | 数据与维护 / Data | `mdi:database-cog-outline` | 配置备份（及其后所有尾部区块） |
 
-分组依据：外部依赖（证书/DDNS 都要 DNS 凭证）放同一 Tab；监控类同域；其余按「与本机行为」vs「数据维护」划分。
+分组依据：外部依赖（证书/DDNS 都要 DNS 凭证）放同一 Tab；监控类同域；其余归「与本机行为」。原计划的 `data` Tab（配置备份及尾部区块）因页面无对应区块而取消。
+
+当前 `dns` Tab 是最后一个，后续若新增尾部区块，按同样方式追加新 Tab 或并入 `dns`。
 
 ### 2. 结构
 
@@ -37,7 +38,6 @@ CategoryTabs（复用组件，v-model="activeTab"）
 <div v-show="activeTab === 'general'">  原先的四个区块（保持各自 border-t 分隔）
 <div v-show="activeTab === 'monitor'">  告警阈值 + 告警通知
 <div v-show="activeTab === 'dns'">      DNS 服务商 + DDNS
-<div v-show="activeTab === 'data'">     配置备份 + 尾部区块
 ```
 
 每个 Tab 内沿用现有的 `px-5 pt-4 pb-1` 标题 + `divide-y divide-border` 区块写法，**外观样式零改动**——只是把现有 DOM 分到四个容器里。
@@ -49,7 +49,7 @@ CategoryTabs（复用组件，v-model="activeTab"）
 ```ts
 const route = useRoute()
 const router = useRouter()
-const TAB_KEYS = ['general', 'monitor', 'dns', 'data'] as const
+const TAB_KEYS = ['general', 'monitor', 'dns'] as const
 
 // 非法/缺失值回落首 Tab
 const activeTab = ref<string>(
@@ -68,26 +68,25 @@ watch(activeTab, (t) => {
 
 ### 4. i18n
 
-`zh-CN.ts` / `en-US.ts` 同位置新增 4 键：
+`zh-CN.ts` / `en-US.ts` 同位置新增 3 键：
 
 | key | zh-CN | en-US |
 |---|---|---|
 | `settingsTabGeneral` | 通用 | General |
 | `settingsTabMonitor` | 监控与告警 | Monitoring |
 | `settingsTabDns` | 域名与 DNS | Domains & DNS |
-| `settingsTabData` | 数据与维护 | Data |
 
 ### 5. 验证
 
 - `npx vue-tsc --noEmit` 零错误；`npm run build` 成功。
 - 实机清单：
-  1. 四个 Tab 显示正常，点击切换内容对应
+  1. 三个 Tab 显示正常，点击切换内容对应
   2. 刷新页面停在原 Tab（看 URL 有 `?tab=...`）
   3. 手改 URL 为 `?tab=dns` 回车 → 直接进入该 Tab
   4. 手改 URL 为 `?tab=nonsense` → 回到「通用」（不报错、不空白）
   5. 切 Tab 后返回上一页再前进：浏览器历史里没有一堆 Tab 记录（`replace` 生效）
   6. 各 Tab 内的设置项功能不变：改值 → 400ms 后自动保存 → 重启后仍在
-  7. 中英切换：4 个 Tab 标签都有文案
+  7. 中英切换：3 个 Tab 标签都有文案
 
 ## 边界（不做）
 
@@ -99,4 +98,4 @@ watch(activeTab, (t) => {
 ## 改动文件
 
 - `src/modules/settings/pages/SettingsPage.vue`（模板分区 + `activeTab` 状态）
-- `src/locales/zh-CN.ts`、`src/locales/en-US.ts`（4 键）
+- `src/locales/zh-CN.ts`、`src/locales/en-US.ts`（3 键）
