@@ -776,6 +776,23 @@ git commit -m "refactor(ddns): DdnsProvider 收窄 + blanket impl，sync_record 
 - 修改：`src-tauri/src/services/ddns/dnspod.rs`
 - 修改：`src-tauri/src/services/ddns/huawei.rs`
 
+- [ ] **步骤 0：补 T2 留下的正例断言**
+
+T2 的 `provider_for_account_rejects_missing_credentials`（`acme/dns/mod.rs`）只断负例——因为那一步三家还没 `impl DnsProvider`。本任务把三家改挂完之后，回到该测试，把「凭证齐全」的正例补上：
+
+```rust
+        // T4 起三家已 impl DnsProvider，正例可以断了
+        assert!(
+            crate::services::acme::dns::provider_for_account(&full).is_some(),
+            "{} 双凭证齐全应通过",
+            p
+        );
+```
+
+（`acme::dns::provider_for_account` 目前仍只 match `"cloudflare"`，所以这条正例会**失败**——**不要**去改工厂。工厂收四家是 T7 的事（那时 `acme` 侧才有必要认识四家）。如果 T7 的实现在你这次执行时已经存在，则本条适用；否则**跳过步骤 0，只保留注释**，把「补正例」记进 T7 备注。）
+
+> **给 T7 的备注**：T7 把 `acme::dns::provider_for_account` 扩成分派四家时，记得回来把 T2 那条测试的正例断言补上。
+
 - [ ] **步骤 1：Cloudflare**
 
 `ddns/cloudflare.rs`：把 `use super::{BoxFuture, DdnsProvider};` 改成

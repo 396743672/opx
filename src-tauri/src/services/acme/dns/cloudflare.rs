@@ -63,7 +63,7 @@ impl DnsProvider for Cloudflare {
         "cloudflare"
     }
 
-    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async move {
             // ponytail: 分页上限，防账户 zone 过多时反复全量列举；20 * 50 = 1000 个 zone，
             // 超出请改用按 name 过滤查询
@@ -88,64 +88,140 @@ impl DnsProvider for Cloudflare {
                 }
                 page += 1;
             }
+            Ok(names)
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            let names = self.list_zones().await?;
             longest_zone_match(domain, &names)
                 .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", domain))
         })
     }
 
-    fn create_txt<'a>(&'a self, fqdn: &'a str, value: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
-            let zone_id = self.zone_id(&zone).await?;
-            let body = serde_json::json!({ "type": "TXT", "name": fqdn, "content": value, "ttl": 120 });
-            let resp = self
-                .client
-                .post(format!("{}/zones/{}/dns_records", API, zone_id))
-                .bearer_auth(&self.token)
-                .json(&body)
-                .send()
-                .await?;
-            Self::json(resp).await.map(|_| ())
-        })
-    }
-
-    fn delete_txt<'a>(&'a self, fqdn: &'a str, value: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
         Box::pin(async move {
             let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
             let zone_id = self.zone_id(&zone).await?;
             let body = self
                 .get(&format!(
-                    "{}/zones/{}/dns_records?type=TXT&name={}",
-                    API, zone_id, fqdn
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            Ok(body["result"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["content"].as_str())
+                .map(|s| s.to_string()))
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            // 读现有记录 id：有则 PUT，无则 POST（Cloudflare 无 UPSERT，需分两步）
+            let list = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            let existing = list["result"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["id"].as_str())
+                .map(|s| s.to_string());
+            let body = serde_json::json!({
+                "type": rtype, "name": fqdn, "content": value, "ttl": 120
+            });
+            let resp = match existing {
+                Some(rid) => {
+                    self.client
+                        .put(format!("{}/zones/{}/dns_records/{}", API, zone_id, rid))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
+                }
+                None => {
+                    self.client
+                        .post(format!("{}/zones/{}/dns_records", API, zone_id))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
+                }
+            };
+            Self::json(resp).await.map(|_| ())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            let body = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
                 ))
                 .await?;
             if let Some(records) = body["result"].as_array() {
                 for r in records {
-                    if r["content"].as_str() == Some(value) {
-                        if let Some(id) = r["id"].as_str() {
-                            // 清理失败不阻断签发，但要留痕（否则 DNS 里会静默残留 TXT）
-                            match self
-                                .client
-                                .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
-                                .bearer_auth(&self.token)
-                                .send()
-                                .await
-                            {
-                                Ok(resp) if resp.status().is_success() => {}
-                                Ok(resp) => tracing::warn!(
-                                    status = %resp.status(), name = %fqdn,
-                                    "删除 ACME 挑战 TXT 记录失败（响应非成功）"
-                                ),
-                                Err(e) => tracing::warn!(
-                                    error = %e, name = %fqdn,
-                                    "删除 ACME 挑战 TXT 记录请求失败"
-                                ),
-                            }
-                        }
+                    let Some(id) = r["id"].as_str() else { continue };
+                    // 清理失败不阻断签发，但要留痕（否则 DNS 里会静默残留记录）
+                    match self
+                        .client
+                        .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
+                        .bearer_auth(&self.token)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) if resp.status().is_success() => {}
+                        Ok(resp) => tracing::warn!(
+                            status = %resp.status(), name = %fqdn,
+                            "删除 DNS 记录失败（响应非成功）"
+                        ),
+                        Err(e) => tracing::warn!(
+                            error = %e, name = %fqdn,
+                            "删除 DNS 记录请求失败"
+                        ),
                     }
                 }
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// const 断言：API 基址必须是 v4（改错版本整条路径失效）
+    #[test]
+    fn api_base_is_v4() {
+        assert_eq!(API, "https://api.cloudflare.com/client/v4");
+        assert!(API.ends_with("/v4"));
+    }
+
+    /// DNS-01 的 TXT 名前缀必须是 `_acme-challenge.`：
+    /// get/set/delete 三处都靠 trim_start_matches 反推 zone，
+    /// 前缀写错会让 find_zone 拿整个 challenge 名去匹配 zone 而失败。
+    #[test]
+    fn challenge_prefix_is_stripped_for_zone_lookup() {
+        let fqdn = crate::services::acme::dns::acme_challenge_fqdn("example.com");
+        assert_eq!(fqdn, "_acme-challenge.example.com");
+        let for_zone = fqdn.trim_start_matches("_acme-challenge.");
+        assert_eq!(for_zone, "example.com");
     }
 }
