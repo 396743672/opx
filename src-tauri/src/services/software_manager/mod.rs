@@ -37,22 +37,35 @@ pub struct SoftwareManager {
     install_tasks: Mutex<HashMap<String, InstallTaskState>>,
 }
 
-/// 启动对账：应用刚启动时子进程都不在，把上次退出残留的"运行中/启动中/停止中/初始化中"
-/// 重置为 Stopped 并清 PID，避免按钮卡在"启动中"（如退出 stop_all_on_exit 杀了进程但未落盘状态，
-/// 或应用崩溃/被强杀）。Stopped/Error/Unknown 保持不变。
-fn reconcile_stale_statuses(list: &mut InstalledSoftwareList) {
+/// 启动对账：纠正跨启动残留的状态。
+///
+/// - `Running` + pid 存活 → **保留**（强杀场景子进程仍在跑，收养：监控/停止照常可用）。
+///   ponytail: 只查 pid 存在，不校验进程名——pid 被复用且恰好存活时误收养，概率极低，
+///   表现为停止失败，重试即可。
+/// - `Running` + pid 已死 / `Starting/Stopping/Initializing`（瞬态不该跨启动存活）→
+///   重置 Stopped 并清 pid。
+/// - Stopped/Error/Unknown 不动。
+///
+/// 返回是否有修改（调用方据此落盘，保持内存与 installed.json 一致）。
+fn reconcile_stale_statuses(list: &mut InstalledSoftwareList) -> bool {
+    let mut changed = false;
     for s in &mut list.software {
-        if matches!(
-            s.status,
-            SoftwareStatus::Running
-                | SoftwareStatus::Starting
-                | SoftwareStatus::Stopping
-                | SoftwareStatus::Initializing
-        ) {
+        let reset = match s.status {
+            SoftwareStatus::Running => {
+                s.pid.map(|p| health_check::is_process_alive(p)) != Some(true)
+            }
+            SoftwareStatus::Starting | SoftwareStatus::Stopping | SoftwareStatus::Initializing => {
+                true
+            }
+            _ => false,
+        };
+        if reset {
             s.status = SoftwareStatus::Stopped;
             s.pid = None;
+            changed = true;
         }
     }
+    changed
 }
 
 impl SoftwareManager {
@@ -104,9 +117,7 @@ impl SoftwareManager {
 
     pub fn is_installing(&self, key: &str, version: &str) -> bool {
         let tasks = self.install_tasks.lock().unwrap();
-        tasks
-            .values()
-            .any(|t| t.key == key && t.version == version)
+        tasks.values().any(|t| t.key == key && t.version == version)
     }
 
     pub fn add_install_task(&self, install_id: String, key: String, version: String) {
@@ -152,7 +163,11 @@ impl SoftwareManager {
         let install_path = paths::resolve_install_path(&removed.install_path);
         if install_path.exists() {
             if let Err(e) = std::fs::remove_dir_all(&install_path) {
-                eprintln!("[software] 清理安装目录失败 {}: {}", install_path.display(), e);
+                eprintln!(
+                    "[software] 清理安装目录失败 {}: {}",
+                    install_path.display(),
+                    e
+                );
                 // 不阻断卸载流程——记录已从 installed.json 移除，目录残留可手动清理
             }
         }
@@ -178,7 +193,9 @@ impl SoftwareManager {
         }
         let content = std::fs::read_to_string(&path)?;
         let mut list: InstalledSoftwareList = serde_json::from_str(&content)?;
-        reconcile_stale_statuses(&mut list);
+        if reconcile_stale_statuses(&mut list) {
+            let _ = Self::save_installed_list(&list);
+        }
         Ok(list)
     }
 
@@ -339,7 +356,6 @@ impl SoftwareManager {
         Ok(())
     }
 
-
     /// 获取所有 auto_start=true 的实例（按 startup_order 升序排序，返回时解析路径）
     pub fn list_auto_start(&self) -> Vec<InstalledSoftware> {
         let installed = self.installed.read().unwrap();
@@ -379,5 +395,69 @@ impl SoftwareManager {
 impl Default for SoftwareManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::software::{InstalledSoftware, SoftwareStatus};
+
+    /// 测试条目：走 JSON 构造避免逐字段填 20+ 个字段。
+    /// 伪 pid 用不可能存活的极大值（走「死 pid → 重置」路径）。
+    fn entry(status: &str, pid: Option<u32>) -> InstalledSoftware {
+        let json = serde_json::json!({
+            "id": "t1", "key": "mysql", "version": "1.0", "name": "T",
+            "install_path": "apps/mysql/1.0",
+            "install_time": "2026-01-01T00:00:00",
+            "status": status, "port": 3306, "config": {},
+            "is_custom": false, "auto_start_on_app_start": false,
+            "startup_order": 0,
+            "source": {"Mirror": {"mirror_name": "m", "url": "https://x"}},
+            "pid": pid,
+        });
+        serde_json::from_value(json).expect("test entry parses")
+    }
+
+    fn list(items: Vec<InstalledSoftware>) -> InstalledSoftwareList {
+        InstalledSoftwareList { software: items }
+    }
+
+    #[test]
+    fn running_with_dead_pid_resets_to_stopped() {
+        let mut l = list(vec![entry("Running", Some(9_999_999))]);
+        assert!(reconcile_stale_statuses(&mut l), "死 pid 应触发修改");
+        assert_eq!(l.software[0].status, SoftwareStatus::Stopped);
+        assert_eq!(l.software[0].pid, None);
+    }
+
+    #[test]
+    fn transient_states_reset_regardless_of_pid() {
+        for st in ["Starting", "Stopping", "Initializing"] {
+            let mut l = list(vec![entry(st, Some(std::process::id()))]);
+            assert!(reconcile_stale_statuses(&mut l), "{st} 应无条件重置");
+            assert_eq!(l.software[0].status, SoftwareStatus::Stopped);
+        }
+    }
+
+    #[test]
+    fn settled_states_untouched() {
+        let mut l = list(vec![
+            entry("Stopped", None),
+            entry("Error", None),
+            entry("Unknown", None),
+        ]);
+        assert!(!reconcile_stale_statuses(&mut l), "稳定态不应触发修改/落盘");
+        assert_eq!(l.software[0].status, SoftwareStatus::Stopped);
+        assert_eq!(l.software[1].status, SoftwareStatus::Error);
+        assert_eq!(l.software[2].status, SoftwareStatus::Unknown);
+    }
+
+    #[test]
+    fn running_without_pid_resets() {
+        // Running 但 pid 缺失（数据异常）：无法探活，按死处理
+        let mut l = list(vec![entry("Running", None)]);
+        assert!(reconcile_stale_statuses(&mut l));
+        assert_eq!(l.software[0].status, SoftwareStatus::Stopped);
     }
 }
