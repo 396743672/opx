@@ -598,7 +598,9 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
     /// 用一个只记账的假 provider 验证，不碰网络。
     struct Fake {
         cur: Option<String>,
-        writes: std::cell::RefCell<Vec<String>>,
+        /// `Mutex` 而非 `RefCell`：`DnsProvider: Send + Sync`，`RefCell` 过不了 Send/Sync 约束。
+        /// （原计划写的是 `RefCell`，导致 5 处 E0277，已修正。）
+        writes: std::sync::Mutex<Vec<String>>,
     }
 
     impl crate::services::acme::dns::DnsProvider for Fake {
@@ -630,7 +632,7 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
             value: &'a str,
         ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<()>> {
             Box::pin(async move {
-                self.writes.borrow_mut().push(value.to_string());
+                self.writes.lock().unwrap().push(value.to_string());
                 Ok(())
             })
         }
@@ -651,7 +653,7 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
             .await
             .unwrap();
         assert_eq!(action, "A 记录新建 1.2.3.4");
-        assert_eq!(p.writes.borrow().as_slice(), ["1.2.3.4"]);
+        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
 
         // 值不同 → 更新
         let p = Fake { cur: Some("9.9.9.9".into()), writes: Default::default() };
@@ -659,7 +661,7 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
             .await
             .unwrap();
         assert_eq!(action, "A 记录更新 9.9.9.9 → 1.2.3.4");
-        assert_eq!(p.writes.borrow().as_slice(), ["1.2.3.4"]);
+        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
 
         // 值相同 → 未变，且绝不写
         let p = Fake { cur: Some("1.2.3.4".into()), writes: Default::default() };
@@ -667,7 +669,7 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
             .await
             .unwrap();
         assert_eq!(action, "未变");
-        assert!(p.writes.borrow().is_empty(), "值未变时不应发起写入");
+        assert!(p.writes.lock().unwrap().is_empty(), "值未变时不应发起写入");
     }
 ```
 
@@ -675,6 +677,7 @@ git commit -m "feat(dns): DnsProvider trait 下沉为五方法（list_zones/get_
 
 运行：`cd src-tauri && cargo test --lib services::ddns`
 预期：FAIL —— `Fake` 无法实现 `DnsProvider`（旧 trait 的 `create_txt`/`delete_txt` 与之不匹配），或 `sync_record` 尚不是默认方法无法用 `DdnsProvider::sync_record(&p, ...)` 调用。
+（注：此时也会同时看到 4 处 `E0046`（四家 ddns 实现）与 2 处 `E0609`，那是 T4/T5 的入口，见步骤 5。）
 
 - [ ] **步骤 3：收窄 trait 并加 blanket impl**
 
@@ -769,23 +772,32 @@ pub fn provider_for_account(a: &crate::models::dns_account::DnsAccount) -> Optio
 
 > 注意：`DnsAccount` 只有一对 `access_key_id`/`access_key_secret`。DNSPod 的 `SecretId`/`SecretKey` 与华为的 `AccessKey`/`SecretKey`、阿里云的 `AccessKeyId`/`AccessKeySecret` 都映射到这一对——UI 按 provider 显示对应标签即可。
 
-`sync_once` 里那一行改为：
+`sync_once` 的凭证来源改为**调用方传入**（原计划让它内联构造 `DnsAccount`，那等于让 DDNS 间接依赖 `AppSettings` 的全部字段，且折叠逻辑无法单测）：
 
 ```rust
-    let provider = provider_for_account(&s.dns_account)
-        .ok_or_else(|| anyhow::anyhow!("DDNS 服务商凭证未配置（{}）", s.dns_account.provider))?;
+pub async fn sync_once(
+    s: &crate::models::settings::AppSettings,
+    account: &crate::models::dns_account::DnsAccount,
+) -> anyhow::Result<SyncResult> {
+    ...
+    let provider = provider_for_account(account)
+        .ok_or_else(|| anyhow::anyhow!("DDNS 服务商凭证未配置（{}）", account.provider))?;
 ```
 
-（`sync_once` 的入参 `&AppSettings` 本次**不改**为 `&DnsAccount`——那是另一个话题。见任务 3 步骤 4 的注记。）
+两个调用点同步改：`services/ddns/scheduler.rs` 与 `commands/config.rs` 的 `sync_ddns_now`，
+都改为 `sync_once(&s, &ddns_account_of(&s))`。
 
-- [ ] **步骤 4：同步 AppSettings 的临时适配**
+- [ ] **步骤 4：加 `ddns_account_of` 适配函数**
 
-`sync_once` 当前从 `s.ddns_*` 拼 provider。为让本任务可编译，在 `sync_once` 开头从 settings 构造一个 `DnsAccount`：
+把上面那段折叠逻辑抽成 `services/ddns/mod.rs` 的**独立公开函数**（不要再内联进 `sync_once`）：
 
 ```rust
-    // DDNS 仍用自己的 ddns_* 字段（与证书账号解耦，见记忆 ddns-progress）。
-    // 这里临时把选中的服务商与凭证折成一个 DnsAccount，好复用同一个 provider_for_account。
-    let ddns_account = crate::models::dns_account::DnsAccount {
+/// 把设置页的 `ddns_*` 字段折成 `DnsAccount`，供 `sync_once` 用。
+///
+/// **这是刻意的适配层**：DDNS 的凭证字段与证书账号解耦（用户明确要求「证书可以
+/// 是其他家的」），DDNS 不引入账号概念，只是复用同一个 provider 工厂。
+pub fn ddns_account_of(s: &crate::models::settings::AppSettings) -> crate::models::dns_account::DnsAccount {
+    crate::models::dns_account::DnsAccount {
         id: String::new(),
         name: "ddns".into(),
         provider: s.ddns_provider.clone(),
@@ -804,30 +816,39 @@ pub fn provider_for_account(a: &crate::models::dns_account::DnsAccount) -> Optio
         },
         zones: Vec::new(),
         tested_at: None,
-    };
+    }
+}
 ```
 
-**这一步是刻意的适配层**：DDNS 的凭证字段保持独立（用户明确要求过「证书可以是其他家的」，DDNS 与证书零耦合），只是复用同一个 provider 工厂。**不要**把它改成共同账号——那会破坏既有的解耦决策。
+**不要**把 DDNS 改成共用站点账号——那会破坏既有的解耦决策。
 
-- [ ] **步骤 5：运行测试验证通过**
+- [ ] **步骤 5：运行测试验证失败（T3 的出口是预期红，不是全绿）**
 
 运行：`cd src-tauri && cargo test --lib services::ddns`
-预期：PASS（含原有 `normalize_domains_*`、`is_change_*`、`sync_once_rejects_second_concurrent_entry` 与新增的 `sync_record_default_impl_three_branches`）。
+预期：`E0046` × 5（四家 `ddns/*.rs` 各一处，加 `ddns/mod.rs:59` blanket impl 一处）+ `E0609` × 2（`acme/mod.rs` 的 `AcmeSettings.account`，T5 的活）。**这 7 处正是后续 T4/T5 的入口**，不要在本步处理。详见下方实施记录。
 
 若报 `Fake` 的 `list_zones` 未被使用警告，忽略（trait 要求实现）。
 
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add src-tauri/src/services/ddns/mod.rs
+git add src-tauri/src/services/ddns/mod.rs src-tauri/src/services/ddns/scheduler.rs src-tauri/src/commands/config.rs
 git commit -m "refactor(ddns): DdnsProvider 收窄 + blanket impl，sync_record 改默认实现"
 ```
+
+> **实施记录（2026-09-17 修正）**：T3 的实际出口是「7 处预期红」，不是「全绿」。步骤 5 的原预期「PASS」是错的——收窄 `DdnsProvider` 会让四家的旧 `impl DdnsProvider for X` 报 4 处 `E0046`（缺 `find_zone`/`get_value`/`set_value`），`ddns/mod.rs:59` 的 blanket impl 报 1 处 `E0046`，加上 T5 的 2 处 `E0609`。**这正是 T4 存在的理由**：T4 把四家改挂 `DnsProvider` 后前 5 处一起消失，故 T4 不能合并进 T3（合并会让 T4 失去可验证的出口）。
+>
+> 另两处计划缺陷已随实施修正：
+> 1. `Fake.writes` 原写 `RefCell<Vec<String>>`，但 `DnsProvider: Send + Sync` → 必须用 `Mutex`。
+> 2. `sync_once` 的凭证折叠原写成函数体内联的 `let ddns_account = ...`，使 DDNS 间接依赖 `AppSettings` 全部字段。改为 `pub fn ddns_account_of(&AppSettings) -> DnsAccount`，`sync_once` 收 `(&AppSettings, &DnsAccount)`；两个调用点（`scheduler.rs`、`config.rs`）同步改。
 
 ---
 
 ## 任务 4：四家 DDNS 实现改挂 DnsProvider
 
 **这一步只搬 `impl`，不碰签名。四个文件的签名函数与常量一行不动。**
+
+**本任务的出口（可验证）**：T3 留下的 4 处 `E0046` 从 `aliyun.rs` / `cloudflare.rs` / `dnspod.rs` / `huawei.rs` 消失，且 `ddns/mod.rs:59` blanket impl 那 1 处也消失（四家全挂上才成立），只剩 T5 的 2 处 `E0609`。
 
 **文件：**
 - 修改：`src-tauri/src/services/ddns/cloudflare.rs`
