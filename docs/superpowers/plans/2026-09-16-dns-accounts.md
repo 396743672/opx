@@ -1676,6 +1676,10 @@ async fn restore_txt(provider: &dyn dns::DnsProvider, fqdn: &str, before: Option
 运行：`cd src-tauri && cargo test --lib services::acme`
 预期：PASS（含原有 `directory_url_switches_on_staging`、`cert_paths_use_domain` 与新增 `cleanup_plan_restores_or_deletes`）。
 
+> **注意本任务的出口判据（2026-09-17 修正）**：判据是**本文件内的测试通过**，**不是**全仓 `cargo check` 全绿。改完 `AcmeSettings` 后全仓会新增 **4 处 `E0560`**（`commands/website.rs:525-526`、`services/acme/renew_scheduler.rs:34-35` 仍在用 `dns_provider`/`cloudflare_api_token` 两个已删字段）——**那是 T6 的活，T5 不要动**。原计划把出口写成「全绿」是错的（又犯了「把出口判据写到不属于它的任务上」的老毛病）。
+>
+> 实施记录（2026-09-17）：`cargo test --lib services::acme` → **9 passed**；实现者临时补掉那两个越界构造点后确认全仓全绿，随后回退了脚手架。三处清理循环（`set_value` 失败回滚 / `set_ready` 失败回滚 / 验证后统一清理）全部改为 `restore_txt(&*provider, f, old.as_deref())`，`get_value` 前置记录原值，`restore_txt` 内 `tracing::warn!(error = %format!("{:#}", e))` 不再静默吞错。
+
 - [ ] **步骤 5：Commit**
 
 ```bash
