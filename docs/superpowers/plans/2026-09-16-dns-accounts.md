@@ -729,7 +729,33 @@ pub trait DdnsProvider: Send + Sync {
 
 /// 唯一的 blanket impl：任何 DnsProvider 自动是 DdnsProvider。
 /// （不要额外为具体类型写 `impl DdnsProvider for X`，会与这条冲突。）
-impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {}
+///
+/// 方法体**必须逐个显式转发**：空实现 `impl<T: DnsProvider> DdnsProvider for T {}`
+/// 不会自动继承同名方法（编译器只看到「未实现」的 E0046），必须给出到达
+/// `DnsProvider` 同名方法的完整路径。
+impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {
+    fn id(&self) -> &str {
+        crate::services::acme::dns::DnsProvider::id(self)
+    }
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, anyhow::Result<String>> {
+        crate::services::acme::dns::DnsProvider::find_zone(self, domain)
+    }
+    fn get_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>> {
+        crate::services::acme::dns::DnsProvider::get_value(self, fqdn, rtype)
+    }
+    fn set_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+        value: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        crate::services::acme::dns::DnsProvider::set_value(self, fqdn, rtype, value)
+    }
+}
 ```
 
 同文件里的 `provider_for(s: &AppSettings)` 改为：
@@ -848,7 +874,22 @@ git commit -m "refactor(ddns): DdnsProvider 收窄 + blanket impl，sync_record 
 
 **这一步只搬 `impl`，不碰签名。四个文件的签名函数与常量一行不动。**
 
-**本任务的出口（可验证）**：T3 留下的 4 处 `E0046` 从 `aliyun.rs` / `cloudflare.rs` / `dnspod.rs` / `huawei.rs` 消失，且 `ddns/mod.rs:59` blanket impl 那 1 处也消失（四家全挂上才成立），只剩 T5 的 2 处 `E0609`。
+**本任务的出口（可验证）**：T3 留下的 4 处 `E0046` 从 `aliyun.rs` / `cloudflare.rs` / `dnspod.rs` / `huawei.rs` 消失，且 `ddns/mod.rs` blanket impl 那 1 处也消失（四家全挂上才成立），只剩 T5 的 2 处 `E0609`。
+
+> **实施记录（2026-09-17）**：本任务的出口**达成**——`cargo check --lib` 只剩 2 处 `E0609`。
+> `cargo test --lib services::ddns` 在临时给 `AcmeSettings` 补 `account` 脚手架后 **20 passed**
+> （四家原有测试一行未改，另含 T3 新增的 `sync_record_default_impl_three_branches` 与 T4 新增的 `sub_of_handles_root_and_subdomain`）。
+>
+> **但 T3 交出的 blanket impl 是坏的**：空实现 `impl<...> DdnsProvider for T {}` 报
+> `E0046: missing id, find_zone, get_value, set_value`，**它不随 T4 消失**。已在本任务修正为
+> 逐方法显式转发（见 T3 的代码块）。诊断过程值得记下来：
+> - 二分探测：只转发 `id` → 缺 `find_zone`/`get_value`/`set_value`；补齐四者 → E0046 清零。
+> - 排除的假设：不是 `?Sized` 的问题（去掉仍报错）；不是 `acme/dns/cloudflare.rs` 缺
+>   `delete_value`（六个方法俱在、文件 239 行完整、括号平衡）；不是 Rust 会用 `DnsProvider`
+>   的同名方法自动满足 `DdnsProvider`（用 `fn _probe_assert<T: DnsProvider>()` 打桩证明
+>   bound 可满足，但 impl 仍报未实现）。**结论：空体不继承，必须显式转发。**
+> - 有个子代理曾判断「T2 的文件损坏/`delete_value` 缺失」并据此要求越界修 T2。核实后
+>   **该判断是错的**（见上），但它的「先停下核实前提」的做法是对的。
 
 **文件：**
 - 修改：`src-tauri/src/services/ddns/cloudflare.rs`
