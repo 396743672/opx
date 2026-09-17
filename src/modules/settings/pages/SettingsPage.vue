@@ -268,59 +268,6 @@
 
       <!-- ===== 域名与 DNS ===== -->
       <div v-show="activeTab === 'dns'">
-        <!-- DNS 服务商（证书自动化） -->
-        <div class="px-5 pt-4 pb-1">
-          <h3 class="text-sm font-semibold tracking-tight">{{ $t('dnsProvider') }}</h3>
-        </div>
-        <div class="px-5 pb-4 divide-y divide-border">
-          <div class="flex items-center justify-between gap-4 py-3">
-            <span class="text-sm">{{ $t('dnsProviderDesc') }}</span>
-            <select
-              v-model="dnsProviderValue"
-              class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary cursor-pointer"
-            >
-              <option value="cloudflare">Cloudflare</option>
-            </select>
-          </div>
-          <div class="flex items-start justify-between gap-4 py-3">
-            <span class="text-sm">{{ $t('cloudflareToken') }}</span>
-            <div class="flex flex-col gap-1">
-              <input
-                v-model="cloudflareApiTokenValue"
-                type="password"
-                autocomplete="off"
-                class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
-              />
-              <span class="text-xs text-warning">{{ $t('dnsTokenPlaintextWarning') }}</span>
-            </div>
-          </div>
-          <div class="flex items-center justify-between gap-4 py-3">
-            <span class="text-sm">{{ $t('acmeStaging') }}</span>
-            <SwitchBtn v-model="acmeStagingValue" />
-          </div>
-          <div class="flex items-start justify-between gap-4 py-3">
-            <span class="text-sm">{{ $t('testToken') }}</span>
-            <div class="flex flex-col gap-1 items-end min-w-0">
-              <div class="flex items-center gap-2">
-                <input
-                  v-model="dnsTestZone"
-                  class="h-8 px-2 w-56 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
-                  :placeholder="$t('testTokenZonePlaceholder')"
-                />
-                <button class="btn text-xs h-7 px-2" :disabled="dnsTesting" @click="testToken">
-                  {{ dnsTesting ? $t('testTokenTesting') : $t('testToken') }}
-                </button>
-              </div>
-              <span
-                v-if="dnsTestResult"
-                class="text-xs max-w-72 text-right"
-                :class="dnsTestOk ? 'text-success' : 'text-destructive'"
-                style="overflow-wrap: anywhere; word-break: break-word"
-              >{{ dnsTestResult }}</span>
-            </div>
-          </div>
-        </div>
-
         <!-- DDNS 动态域名 -->
         <div class="px-5 pt-4 pb-1">
           <h3 class="text-sm font-semibold tracking-tight">{{ $t('ddnsSection') }}</h3>
@@ -438,7 +385,7 @@ watch(activeTab, (tab) => {
 const settingsTabs = computed<CategoryTab[]>(() => [
   { key: 'general', label: t('settingsTabGeneral'), icon: 'mdi:tune' },
   { key: 'monitor', label: t('settingsTabMonitor'), icon: 'mdi:bell-outline' },
-  { key: 'dns', label: t('settingsTabDns'), icon: 'mdi:dns-outline' },
+  { key: 'dns', label: t('settingsTabDdns'), icon: 'mdi:dns-outline' },
 ])
 
 const themeValue = ref<ThemeMode>('auto')
@@ -448,8 +395,6 @@ const askOnCloseValue = ref(true)
 const githubProxyValue = ref('')
 const proxyValue = ref('')
 const autostartValue = ref(false)
-const dnsProviderValue = ref('cloudflare')
-const cloudflareApiTokenValue = ref('')
 const acmeStagingValue = ref(false)
 const alertSystemCpuValue = ref(90)
 const alertSystemMemValue = ref(90)
@@ -468,11 +413,6 @@ const smtpToValue = ref('')
 const notifyTesting = ref(false)
 const notifyTestResult = ref('')
 const notifyTestOk = ref(false)
-// DNS Token 测试（不持久化）：填入该服务商账户下的域名，实际建/删一条临时 TXT 验证写权限
-const dnsTestZone = ref('')
-const dnsTesting = ref(false)
-const dnsTestResult = ref('')
-const dnsTestOk = ref(false)
 const ddnsEnabledValue = ref(false)
 const ddnsProviderValue = ref('cloudflare')
 const ddnsCloudflareTokenValue = ref('')
@@ -487,31 +427,6 @@ const ddnsIpv6Value = ref(false)
 const ddnsSyncing = ref(false)
 const ddnsSyncResult = ref('')
 const ddnsSyncOk = ref(false)
-
-async function testToken() {
-  const zone = dnsTestZone.value.trim()
-  if (!zone) {
-    dnsTestOk.value = false
-    dnsTestResult.value = t('testTokenNeedZone')
-    return
-  }
-  dnsTesting.value = true
-  dnsTestResult.value = t('testTokenTesting')
-  try {
-    await invoke('test_dns_token', {
-      provider: dnsProviderValue.value,
-      token: cloudflareApiTokenValue.value,
-      zone,
-    })
-    dnsTestOk.value = true
-    dnsTestResult.value = t('testTokenOk')
-  } catch (e) {
-    dnsTestOk.value = false
-    dnsTestResult.value = String(e)
-  } finally {
-    dnsTesting.value = false
-  }
-}
 
 onMounted(async () => {
   try {
@@ -540,8 +455,6 @@ watch(
       askOnCloseValue.value = s.ask_on_close
       githubProxyValue.value = s.github_proxy_url || ''
       proxyValue.value = s.proxy_url || ''
-      dnsProviderValue.value = s.dns_provider || 'cloudflare'
-      cloudflareApiTokenValue.value = s.cloudflare_api_token || ''
       acmeStagingValue.value = s.acme_use_staging
       alertSystemCpuValue.value = s.alert_system_cpu ?? 90
       alertSystemMemValue.value = s.alert_system_mem ?? 90
@@ -584,7 +497,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, dnsProviderValue, cloudflareApiTokenValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -597,8 +510,6 @@ async function save() {
   settingsStore.settings.ask_on_close = askOnCloseValue.value
   settingsStore.settings.github_proxy_url = githubProxyValue.value
   settingsStore.settings.proxy_url = proxyValue.value
-  settingsStore.settings.dns_provider = dnsProviderValue.value
-  settingsStore.settings.cloudflare_api_token = cloudflareApiTokenValue.value
   settingsStore.settings.acme_use_staging = acmeStagingValue.value
   // 数值输入被清空时 v-model.number 会给出 ''，直接写进 store 会让 save_settings 反序列化失败
   // 并污染后续所有保存 —— 这里归一到 [1,100]，非法值回落默认 90

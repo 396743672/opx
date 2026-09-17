@@ -154,13 +154,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
-import { useSettingsStore } from '@/stores/settings'
 import type { Site, SiteLocation } from '@/models/website'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
-const settingsStore = useSettingsStore()
 
 const form = ref<Site>(props.site)
 if (!form.value.ssl) {
@@ -171,11 +169,9 @@ const acmeBusy = ref(false)
 const acmeStatus = ref('')
 let unlistenAcme: (() => void) | null = null
 
-const hasDnsToken = computed(() => {
-  const s = settingsStore.settings
-  if (!s) return true // 设置未加载完成时不误报
-  return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
-})
+// ponytail: 临时占位 —— 原实现读已删除的全局 dns_provider/cloudflare_api_token；
+// T10 会把这个判断整体替换为「DNS 账号」下拉（计划 2026-09-16-dns-accounts T10 步骤 1）
+const hasDnsToken = computed(() => true)
 
 // ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
 const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')
