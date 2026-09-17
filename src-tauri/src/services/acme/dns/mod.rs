@@ -42,13 +42,37 @@ pub trait DnsProvider: Send + Sync {
 }
 
 /// 按账号（服务商 + 凭证）取实现；凭证缺失或服务商未知返回 None。
+///
+/// ponytail: 另三家的具体类型在 `services::ddns`（T4 把四家统一到 `DnsProvider`）。
+/// `Box<dyn DdnsProvider>` 无法转成 `Box<dyn DnsProvider>`，故这里按同一套凭证
+/// 规则把三家再挂一次；规则若变要同步改 `services::ddns::provider_for_account`。
+/// 升级路径：把 Cloudflare 也换成 ddns 那一份、两个工厂合一（先确认那边有剥
+/// TXT 引号的逻辑）。
 pub fn provider_for_account(a: &DnsAccount) -> Option<Box<dyn DnsProvider>> {
     match a.provider.as_str() {
         "cloudflare" if !a.token.trim().is_empty() => {
             Some(Box::new(cloudflare::Cloudflare::new(a.token.clone())))
         }
+        "aliyun" if has_key_pair(a) => Some(Box::new(crate::services::ddns::aliyun::Aliyun::new(
+            a.access_key_id.clone(),
+            a.access_key_secret.clone(),
+        ))),
+        "dnspod" if has_key_pair(a) => Some(Box::new(
+            crate::services::ddns::dnspod::Dnspod::new(
+                a.access_key_id.clone(),
+                a.access_key_secret.clone(),
+            ),
+        )),
+        "huawei" if has_key_pair(a) => Some(Box::new(crate::services::ddns::huawei::Huawei::new(
+            a.access_key_id.clone(),
+            a.access_key_secret.clone(),
+        ))),
         _ => None,
     }
+}
+
+fn has_key_pair(a: &DnsAccount) -> bool {
+    !a.access_key_id.trim().is_empty() && !a.access_key_secret.trim().is_empty()
 }
 
 /// zones 中与 domain 匹配（相等或以 `.` 结尾后缀）的最长 zone。
@@ -112,26 +136,22 @@ mod tests {
         unknown.provider = "nope".into();
         assert!(provider_for_account(&unknown).is_none());
 
-        // aliyun / dnspod / huawei 的双凭证校验由 ddns::provider_for_account 负责
-        // （见 T3）；此处只断「acme 侧不认识这三家时不得误放行」。
-        // 正例断言（双凭证齐全 → Some）留到 T4 把三家改成 impl DnsProvider 后补，
-        // 那时它们才结构上可能产出 Box<dyn DnsProvider>。
-        // T4 备注：四家已 impl DnsProvider（结构上可产出），但 acme 侧工厂仍只 match
-        // "cloudflare"（分派四家是 T7 的活）——T7 扩工厂后回来补四家正例断言。
+        // aliyun / dnspod / huawei：凭证不全不放行，齐全放行
+        // （具体类型挂在 ddns 那三家上，见 provider_for_account 的注释）
         for p in ["aliyun", "dnspod", "huawei"] {
             let mut half = base.clone();
             half.provider = p.into();
             half.access_key_id = "k".into(); // 只有 id，没有 secret
             assert!(
                 provider_for_account(&half).is_none(),
-                "{} 在 acme 侧未注册，不应放行",
+                "{} 缺 secret 不应放行",
                 p
             );
             let mut full = half.clone();
             full.access_key_secret = "s".into();
             assert!(
-                provider_for_account(&full).is_none(),
-                "{} 在 acme 侧未注册，凭证齐全也不应放行",
+                provider_for_account(&full).is_some(),
+                "{} 双凭证齐全应放行",
                 p
             );
         }

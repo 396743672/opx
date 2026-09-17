@@ -138,7 +138,7 @@ mod tests {
     /// 拿某个默认账号去签（会给用户搞出意外的证书）。
     #[test]
     fn account_resolution_requires_explicit_binding() {
-        let accounts = vec![crate::models::dns_account::DnsAccount {
+        let accounts = [crate::models::dns_account::DnsAccount {
             id: "acc-1".into(),
             name: "n".into(),
             provider: "cloudflare".into(),
