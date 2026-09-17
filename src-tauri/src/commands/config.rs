@@ -1,6 +1,6 @@
 use crate::models::settings::AppSettings;
 use crate::utils::paths;
-use crate::{audited, audited_async};
+use crate::audited;
 use std::fs;
 use tauri::AppHandle;
 
@@ -28,37 +28,6 @@ pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
             Ok(Default::default())
         }
     }
-}
-
-/// 校验 DNS 服务商 Token 是否具备 DNS 写入权限（DNS-01 签发必需）。
-/// 探针：在目标 zone 临时创建一条 TXT 再删除——这是唯一能区分「只读 Token」与
-/// 「可写 Token」的最小验证（`/user/tokens/verify` 只验有效性、不验权限）。
-#[tauri::command]
-pub async fn test_dns_token(provider: String, token: String, zone: String) -> Result<(), String> {
-    let target = format!("{} ({})", provider, zone);
-    audited_async!("test_dns_token", target, "", {
-        let zone = crate::commands::website::sanitize_domain(&zone)?;
-        let p = crate::services::acme::dns::provider_for_account(
-            &crate::models::dns_account::DnsAccount {
-                id: String::new(),
-                name: String::new(),
-                provider: provider.clone(),
-                token: token.clone(),
-                access_key_id: token.clone(),
-                access_key_secret: token.clone(),
-                zones: vec![],
-                tested_at: None,
-            },
-        )
-        .ok_or_else(|| format!("不支持的服务商: {}", provider))?;
-        let fqdn = format!("_opx-token-test.{}", zone);
-        let value = format!("opx-{}", chrono::Local::now().timestamp_millis());
-        p.set_value(&fqdn, "TXT", &value)
-            .await
-            .map_err(|e| format!("{:#}", e))?;
-        let _ = p.delete_value(&fqdn, "TXT").await; // 清理探针记录（尽力而为）
-        Ok(())
-    })
 }
 
 /// 保存设置（原子写：写 .tmp 再 rename）
