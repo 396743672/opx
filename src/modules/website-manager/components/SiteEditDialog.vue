@@ -65,6 +65,18 @@
                 </div>
               </template>
               <template v-else>
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="lbl" style="margin-bottom:0">{{ $t('dnsAccount') }}</label>
+                    <div class="hint" style="margin-top:0">{{ $t('acmeNeedAccount') }}</div>
+                  </div>
+                  <select v-model="form.ssl.dns_account_id" class="input" style="width:220px">
+                    <option :value="null">{{ $t('selectDnsAccount') }}</option>
+                    <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">
+                      {{ a.name }}（{{ a.provider }}）
+                    </option>
+                  </select>
+                </div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <button v-if="!isNew" class="btn primary" :disabled="acmeBusy" @click="issueCert">
                     <Icon icon="mdi:certificate-outline" />
@@ -76,7 +88,6 @@
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
                 </div>
                 <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
-                <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
               </template>
               <div class="hint">{{ $t('sslHint') }}</div>
             </template>
@@ -155,6 +166,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
 import type { Site, SiteLocation } from '@/models/website'
+import type { DnsAccount } from '@/models/dns-account'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
@@ -169,9 +181,8 @@ const acmeBusy = ref(false)
 const acmeStatus = ref('')
 let unlistenAcme: (() => void) | null = null
 
-// ponytail: 临时占位 —— 原实现读已删除的全局 dns_provider/cloudflare_api_token；
-// T10 会把这个判断整体替换为「DNS 账号」下拉（计划 2026-09-16-dns-accounts T10 步骤 1）
-const hasDnsToken = computed(() => true)
+// ponytail: 对话框自己拉账号列表（列表页未加载账号，少一层 prop）
+const dnsAccounts = ref<DnsAccount[]>([])
 
 // ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
 const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')
@@ -236,14 +247,19 @@ async function issueCert() {
     acmeStatus.value = t('acmeNeedSave')
     return
   }
-  if (!hasDnsToken.value) {
-    acmeStatus.value = t('acmeNeedToken')
+  if (!form.value.ssl.dns_account_id) {
+    acmeStatus.value = t('acmeNeedAccount')
     return
   }
   await doIssue()
 }
 
 onMounted(async () => {
+  try {
+    dnsAccounts.value = await invoke<DnsAccount[]>('list_dns_accounts')
+  } catch (e) {
+    console.error('load dns accounts failed:', e)
+  }
   unlistenAcme = await listen<{ domain: string; phase: string; message: string }>('acme-progress', (e) => {
     const cur = (props.site.server_name ?? '').trim().toLowerCase()
     if (e.payload.domain.trim().toLowerCase() !== cur) return
@@ -323,8 +339,8 @@ async function save() {
       await invoke('save_website', { site: form.value })
       // 选了 ACME 但尚无证书：保存时一并申请，一次操作完成
       if (sslNeedIssue.value) {
-        if (!hasDnsToken.value) {
-          saveError.value = t('acmeNeedToken') // 站点已保存，留在对话框提示去配置 Token
+        if (!form.value.ssl.dns_account_id) {
+          saveError.value = t('acmeNeedAccount') // 站点已保存，留在对话框提示选择 DNS 账号
           return
         }
         if (!(await doIssue())) return // 签发失败：留在对话框展示原因
