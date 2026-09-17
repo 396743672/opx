@@ -506,6 +506,7 @@ pub async fn issue_site_certificate(
     app: tauri::AppHandle,
     wm: State<'_, Arc<WebsiteManager>>,
     sm: State<'_, Arc<SoftwareManager>>,
+    dns_accounts: State<'_, Arc<crate::services::dns_account::DnsAccountManager>>,
     site_id: String,
 ) -> Result<(), String> {
     let site = wm
@@ -520,11 +521,17 @@ pub async fn issue_site_certificate(
 
     audited_async!("acme_issue", target, "", {
         use tauri::Emitter;
-        let settings = crate::commands::config::read_settings()?;
+        let accounts = dns_accounts.list();
+        let account = site
+            .ssl
+            .dns_account_id
+            .as_deref()
+            .and_then(|id| accounts.iter().find(|a| a.id == id))
+            .cloned()
+            .ok_or_else(|| "请先在站点 SSL 配置里选择 DNS 账号".to_string())?;
         let acme_settings = crate::services::acme::AcmeSettings {
-            dns_provider: settings.dns_provider.clone(),
-            cloudflare_api_token: settings.cloudflare_api_token.clone(),
-            use_staging: settings.acme_use_staging,
+            account,
+            use_staging: crate::commands::config::read_settings()?.acme_use_staging,
         };
 
         let nginx = resolve_nginx(&sm)?;
@@ -567,6 +574,19 @@ pub async fn issue_site_certificate(
         wm.persist().map_err(|e| e.to_string())?;
         Ok(())
     })
+}
+
+/// 返回所有站点的 (站点 id, 站点名, 绑定的账号 id)，供账号删除前的引用检查。
+#[tauri::command]
+pub fn list_account_refs(wm: State<'_, Arc<WebsiteManager>>) -> Vec<(String, String, String)> {
+    wm.list()
+        .into_iter()
+        .filter_map(|s| {
+            s.ssl
+                .dns_account_id
+                .map(|aid| (s.id.clone(), s.name.clone(), aid))
+        })
+        .collect()
 }
 
 fn sanitize_cert_name(s: &str) -> String {

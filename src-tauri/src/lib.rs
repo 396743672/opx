@@ -155,9 +155,13 @@ pub fn run() {
                 .inner()
                 .clone();
             let renew_app = app.handle().clone();
+            let renew_accounts = app
+                .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
+                .inner()
+                .clone();
             tauri::async_runtime::spawn(async move {
                 crate::services::acme::renew_scheduler::run_scheduler(
-                    renew_app, renew_wm, renew_sm,
+                    renew_app, renew_wm, renew_sm, renew_accounts,
                 )
                 .await;
             });
@@ -350,6 +354,7 @@ pub fn run() {
             commands::website::unlock_site_conf,
             commands::website::generate_self_signed_cert,
             commands::website::issue_site_certificate,
+            commands::website::list_account_refs,
             commands::dns_account::list_dns_accounts,
             commands::dns_account::save_dns_account,
             commands::dns_account::delete_dns_account,
