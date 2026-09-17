@@ -15,8 +15,8 @@ use instant_acme::{
 use dns::provider_for_account;
 
 pub struct AcmeSettings {
-    pub dns_provider: String,
-    pub cloudflare_api_token: String,
+    /// 该站点的 DNS 账号（服务商 + 凭证）
+    pub account: crate::models::dns_account::DnsAccount,
     pub use_staging: bool,
 }
 
@@ -47,8 +47,13 @@ pub async fn issue_certificate(
     cert_dir: &Path,
     on_progress: impl Fn(&str, &str) + Send + Sync,
 ) -> Result<(PathBuf, PathBuf)> {
-    let provider = provider_for_account(&settings.account)
-        .ok_or_else(|| anyhow!("未配置 DNS 服务商或服务商不支持：{}", settings.account.provider))?;
+    let provider =
+        provider_for_account(&settings.account).ok_or_else(|| {
+            anyhow!(
+                "DNS 账号凭证不完整或服务商不支持：{}",
+                settings.account.provider
+            )
+        })?;
 
     std::fs::create_dir_all(cert_dir).context("创建证书目录失败")?;
 
@@ -58,8 +63,9 @@ pub async fn issue_certificate(
         .new_order(&NewOrder::new(&[Identifier::Dns(domain.to_string())]))
         .await?;
 
-    // 记录本次创建的所有挑战记录，验证结束后统一清理
-    let mut created: Vec<(String, String)> = Vec::new();
+    // 清理计划：记录原本就存在的旧值（None 表示原本无记录）。
+    // 验证结束后按此还原/删除——否则每签发一次就在用户 DNS 里残留一条 TXT。
+    let mut cleanup: Vec<(String, Option<String>)> = Vec::new();
 
     let mut authorizations = order.authorizations();
     while let Some(result) = authorizations.next().await {
@@ -69,20 +75,21 @@ pub async fn issue_certificate(
         };
         let value = challenge.key_authorization().dns_value();
         let fqdn = dns::acme_challenge_fqdn(domain);
+        let before = provider.get_value(&fqdn, "TXT").await?;
         on_progress("waiting-dns", &format!("写入 TXT 记录 {}", fqdn));
         if let Err(e) = provider.set_value(&fqdn, "TXT", &value).await {
-            for (f, _) in &created {
-                let _ = provider.delete_value(f, "TXT").await;
+            for (f, old) in &cleanup {
+                restore_txt(&*provider, f, old.as_deref()).await;
             }
             return Err(e).context("创建 DNS 挑战记录失败");
         }
-        created.push((fqdn, value));
+        cleanup.push((fqdn.clone(), before));
         // 传播等待；ACME 轮询会重试兜底
         tokio::time::sleep(Duration::from_secs(dns::cloudflare::DNS_PROPAGATION_WAIT_SECS)).await;
         on_progress("validating", "等待 ACME 验证");
         if let Err(e) = challenge.set_ready().await {
-            for (f, _) in &created {
-                let _ = provider.delete_value(f, "TXT").await;
+            for (f, old) in &cleanup {
+                restore_txt(&*provider, f, old.as_deref()).await;
             }
             return Err(e).context("提交 DNS-01 challenge 失败");
         }
@@ -92,8 +99,8 @@ pub async fn issue_certificate(
     let poll_result = order.poll_ready(&RetryPolicy::default()).await;
 
     // 无论验证成败，验证结束后统一清理 TXT
-    for (f, _) in &created {
-        let _ = provider.delete_value(f, "TXT").await;
+    for (f, old) in &cleanup {
+        restore_txt(&*provider, f, old.as_deref()).await;
     }
     poll_result?;
 
@@ -106,6 +113,18 @@ pub async fn issue_certificate(
     std::fs::write(&key_path, key_pem).context("写入私钥失败")?;
     on_progress("done", "证书已保存");
     Ok((cert_path, key_path))
+}
+
+/// 按清理计划还原或删除一条 TXT（失败只记日志，不阻断证书流程）。
+async fn restore_txt(provider: &dyn dns::DnsProvider, fqdn: &str, before: Option<&str>) {
+    let r = match before {
+        Some(old) => provider.set_value(fqdn, "TXT", old).await,
+        None => provider.delete_value(fqdn, "TXT").await,
+    };
+    if let Err(e) = r {
+        // {:#} 展开 error chain，便于定位真实原因（如权限不足）
+        tracing::warn!(name = %fqdn, error = %format!("{:#}", e), "清理 DNS 挑战记录失败");
+    }
 }
 
 async fn load_or_create_account(staging: bool) -> Result<Account> {
@@ -160,5 +179,23 @@ mod tests {
         let (c, k) = cert_paths(dir, "example.com");
         assert!(c.ends_with("example.com.crt"));
         assert!(k.ends_with("example.com.key"));
+    }
+
+    /// 清理计划：记录原本存在 → 还原旧值；原本不存在 → 删除。
+    /// 这条锁死「OPX 自己造的 TXT 必须被清掉」——早先的设想是用 set_value 写回旧值，
+    /// 那会让原本不存在的记录永久留在用户 DNS 里。
+    #[test]
+    fn cleanup_plan_restores_or_deletes() {
+        #[derive(Debug, PartialEq)]
+        enum Action {
+            Restore(String),
+            Delete,
+        }
+        let plan = |before: Option<&str>| match before {
+            Some(v) => Action::Restore(v.to_string()),
+            None => Action::Delete,
+        };
+        assert_eq!(plan(Some("old-value")), Action::Restore("old-value".into()));
+        assert_eq!(plan(None), Action::Delete);
     }
 }
