@@ -25,9 +25,16 @@ pub trait DnsProvider: Send + Sync {
     /// 返回 domain 所属 zone（注册域名），用于拼接记录全名。
     fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>>;
     /// 读 name+type 的当前值（无记录 → None）
+    ///
+    /// 实现须返回**可直接比较**的值：Cloudflare 的 TXT content 带引号而
+    /// A/AAAA 是裸 IP，故 TXT 应剥引号后再返回——否则 DDNS 的读-比较-写
+    /// 会因 `"abc"` != `abc` 每轮误写一次。
     fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
         -> BoxFuture<'a, Result<Option<String>>>;
     /// 无记录则新建，有则更新
+    ///
+    /// **TTL 由各实现自定**（TXT 挑战求快、DDNS 的 A/AAAA 宜长），不在此签名里
+    /// 暴露；代价是同一条记录被 DDNS 与 ACME 交替写时会互相覆盖 TTL。
     fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
         -> BoxFuture<'a, Result<()>>;
     /// 删除 name+type 的记录；不存在时视为成功（幂等）

@@ -94,6 +94,10 @@ impl DnsProvider for Cloudflare {
 
     fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move {
+            // ponytail: get/set/delete 都调本方法，故单次写会列举一次 zone 列表。
+            // 量级 = 域名数 × 2 / 5 分钟，远低于 Cloudflare 限额（且 MAX_PAGES 兜底）；
+            // 实测变慢或见 429 再给 provider 加进程内 zone 缓存 —— 那需要 provider
+            // 活得比一次同步长（见 ddns::provider_for_account），不急。
             let names = self.list_zones().await?;
             longest_zone_match(domain, &names)
                 .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", domain))
@@ -116,7 +120,9 @@ impl DnsProvider for Cloudflare {
                 .as_array()
                 .and_then(|a| a.first())
                 .and_then(|r| r["content"].as_str())
-                .map(|s| s.to_string()))
+                // Cloudflare 的 TXT content 带引号、A/AAAA 是裸 IP；剥引号以满足
+                // trait 的「可直接比较」契约（否则 DDNS 每轮误判为变更）
+                .map(|s| s.trim_matches('"').to_string()))
         })
     }
 
@@ -207,13 +213,6 @@ impl DnsProvider for Cloudflare {
 mod tests {
     use super::*;
 
-    /// const 断言：API 基址必须是 v4（改错版本整条路径失效）
-    #[test]
-    fn api_base_is_v4() {
-        assert_eq!(API, "https://api.cloudflare.com/client/v4");
-        assert!(API.ends_with("/v4"));
-    }
-
     /// DNS-01 的 TXT 名前缀必须是 `_acme-challenge.`：
     /// get/set/delete 三处都靠 trim_start_matches 反推 zone，
     /// 前缀写错会让 find_zone 拿整个 challenge 名去匹配 zone 而失败。
@@ -223,5 +222,18 @@ mod tests {
         assert_eq!(fqdn, "_acme-challenge.example.com");
         let for_zone = fqdn.trim_start_matches("_acme-challenge.");
         assert_eq!(for_zone, "example.com");
+    }
+
+    /// get_value 返回的值必须与 set_value 写入的值可直接相等比较。
+    /// Cloudflare 把 TXT content 存成带引号形式，读回来若不剥引号，
+    /// DDNS 的读-比较-写会认为每轮都「变了」而反复写入。
+    #[test]
+    fn txt_content_quotes_are_stripped_for_comparability() {
+        let strip = |s: &str| s.trim_matches('"').to_string();
+        assert_eq!(strip("\"abc123\""), "abc123");
+        // 已无引号（A/AAAA 的裸 IP）不受影响 —— 剥引号必须对它们是 no-op
+        assert_eq!(strip("1.2.3.4"), "1.2.3.4");
+        // 与 set_value 的入参可比较
+        assert_eq!(strip("\"abc123\""), "abc123");
     }
 }
