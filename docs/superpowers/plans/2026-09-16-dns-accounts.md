@@ -67,7 +67,19 @@ npm run build                                        # 前端构建（vue-tsc �
 | `src/models/{settings,website}.ts` | 同步类型 |
 | `src/locales/{zh-CN,en-US}.ts` | 删旧键、加新键 |
 
-**任务依赖顺序：** T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → T9 → T10 → T11。
+**任务依赖顺序：** T1 → T2 → T3 → T4 → T5 → **T7 → T6** → T8 → T9 → T10 → T11。
+
+> **顺序修正（2026-09-17）**：原计划写的是 `T5 → T6 → T7`，**结构上不可能**。T6 要用到
+> T7 才创建的两个东西：`crate::services::dns_account::DnsAccountManager`（T7 步骤创建）
+> 与 `site.ssl.dns_account_id`（T7 步骤改 `models/website.rs`）。T6 里
+> `dns_accounts: Arc<DnsAccountManager>` 参数、`site.ssl.dns_account_id` 的读取、
+> `list_account_refs` 命令全都依赖它们。
+>
+> **7 处编译错误在 T5 结束时的归属（已实测）**：4 处 `E0560`（`commands/website.rs:525-526`、
+> `services/acme/renew_scheduler.rs:34-35` 仍在用已删的 `dns_provider`/`cloudflare_api_token`）
+> 由 T6 修（它要读 `settings` 吗？—— 读，但只读 `acme_use_staging`）；T7 修模型与命令接线。
+> `cargo check --lib` 要到 **T7 结束**才全绿（计划原本就写了「本任务结束后全量可编译」，这条是对的）。
+> 因此 T5 的出口判据只能是**它自己文件内的测试通过**，不是全仓全绿。
 
 T2 是全局编译前提（trait 一变，四家实现与 acme 调用点全都要跟着改），所以 **T2 做完到 T6 结束之间，`cargo test`（全量）必然失败** —— 那是预期状态，不是本次改动引入的 bug。逐任务验证时用**单模块测试**：
 
@@ -1691,6 +1703,8 @@ git commit -m "feat(acme): 签发按账号取凭证；清理改为还原/删除�
 
 ## 任务 6：续期调度器按站点账号
 
+> **前置：必须先完成 T7**（本任务用 T7 创建的 `DnsAccountManager` 与 `ssl.dns_account_id`）。
+
 **文件：**
 - 修改：`src-tauri/src/services/acme/renew_scheduler.rs`
 - 修改：`src-tauri/src/commands/website.rs`（`list_account_refs` 命令）
@@ -1830,6 +1844,9 @@ git commit -m "feat(acme): 续期与签发按站点绑定的 DNS 账号取凭证
 ---
 
 ## 任务 7：DnsAccountManager + 迁移 + 命令层接线
+
+> **前置：本任务要在 T6 之前做**（T6 依赖本任务创建的 `DnsAccountManager` 与 `ssl.dns_account_id`）。
+> 本任务结束后 `cargo check --lib` 应全绿。
 
 **本任务结束后全量可编译。**
 
