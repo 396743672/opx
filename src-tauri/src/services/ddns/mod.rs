@@ -56,7 +56,33 @@ pub trait DdnsProvider: Send + Sync {
 
 /// 唯一的 blanket impl：任何 DnsProvider 自动是 DdnsProvider。
 /// （不要额外为具体类型写 `impl DdnsProvider for X`，会与这条冲突。）
-impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {}
+///
+/// 方法体**必须逐个显式转发**：空实现 `impl<T: DnsProvider> DdnsProvider for T {}`
+/// 不会自动继承同名方法（编译器只看到「未实现」的 E0046），必须给出到达
+/// `DnsProvider` 同名方法的完整路径。
+impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {
+    fn id(&self) -> &str {
+        crate::services::acme::dns::DnsProvider::id(self)
+    }
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, anyhow::Result<String>> {
+        crate::services::acme::dns::DnsProvider::find_zone(self, domain)
+    }
+    fn get_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>> {
+        crate::services::acme::dns::DnsProvider::get_value(self, fqdn, rtype)
+    }
+    fn set_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+        value: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        crate::services::acme::dns::DnsProvider::set_value(self, fqdn, rtype, value)
+    }
+}
 
 /// 按账号取实现；凭证缺失返回 None（调用方给出「请先配置凭证」错误）。
 pub fn provider_for_account(
