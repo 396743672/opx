@@ -157,7 +157,7 @@ pub async fn test_alert_webhook() -> Result<(), String> {
 #[tauri::command]
 pub async fn sync_ddns_now() -> Result<String, String> {
     let s = read_settings()?;
-    let r = crate::services::ddns::sync_once(&s)
+    let r = crate::services::ddns::sync_once(&s, &crate::services::ddns::ddns_account_of(&s))
         .await
         .map_err(|e| format!("{:#}", e))?;
     let mut report = format!("公网 IP: {}", r.v4);

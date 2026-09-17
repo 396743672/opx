@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use super::sync_once;
+use super::{ddns_account_of, sync_once};
 
 pub const DDNS_INTERVAL_SECS: u64 = 300;
 
@@ -19,7 +19,7 @@ pub async fn run_ddns_scheduler() {
         if !s.ddns_enabled {
             continue;
         }
-        match sync_once(&s).await {
+        match sync_once(&s, &ddns_account_of(&s)).await {
             // 部分域名失败时本轮仍算完成：用 warn 让日志能直接筛出「有失败的一轮」，
             // 不必从 changes 文案里数失败条数
             Ok(r) if r.failures > 0 => {
