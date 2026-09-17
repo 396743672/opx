@@ -402,6 +402,7 @@ export default {
   uninstallBlockedNginxSites: '请先删除所有站点后再卸载 nginx',
   runningSiteConfigDisabled: '站点运行中，请先停用后再修改配置',
   confirmDeleteSite: '删除站点「{name}」？\n此操作将删除配置文件及上传文件，不可恢复。',
+  confirmDeleteDnsAccount: '删除 DNS 账号「{name}」？引用它的站点将无法自动申请证书。',
 
   // 设置
   appearance: '外观',

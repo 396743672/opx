@@ -402,6 +402,7 @@ export default {
   uninstallBlockedNginxSites: 'Delete all sites before uninstalling nginx',
   runningSiteConfigDisabled: 'Site is running. Stop it first to edit config.',
   confirmDeleteSite: 'Delete site "{name}"? This will delete config and uploaded files, cannot be recovered.',
+  confirmDeleteDnsAccount: 'Delete DNS account "{name}"? Sites using it can no longer issue certificates automatically.',
 
   // settings
   appearance: 'Appearance',
