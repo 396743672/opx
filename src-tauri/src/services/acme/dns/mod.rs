@@ -116,6 +116,8 @@ mod tests {
         // （见 T3）；此处只断「acme 侧不认识这三家时不得误放行」。
         // 正例断言（双凭证齐全 → Some）留到 T4 把三家改成 impl DnsProvider 后补，
         // 那时它们才结构上可能产出 Box<dyn DnsProvider>。
+        // T4 备注：四家已 impl DnsProvider（结构上可产出），但 acme 侧工厂仍只 match
+        // "cloudflare"（分派四家是 T7 的活）——T7 扩工厂后回来补四家正例断言。
         for p in ["aliyun", "dnspod", "huawei"] {
             let mut half = base.clone();
             half.provider = p.into();

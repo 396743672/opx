@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
-use super::{BoxFuture, DdnsProvider};
+use crate::services::acme::dns::{BoxFuture, DnsProvider};
 
 const API: &str = "https://api.cloudflare.com/client/v4";
 
@@ -52,96 +52,161 @@ impl Cloudflare {
         Ok(body)
     }
 
-    async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value> {
-        self.json(req.bearer_auth(&self.token).send().await?).await
+    async fn get(&self, url: &str) -> Result<Value> {
+        self.json(self.client.get(url).bearer_auth(&self.token).send().await?)
+            .await
     }
 
-    /// 列账户 zone 名并取最长匹配。
-    /// ponytail: 只查首页 50 个 zone；账户 zone 数超过 50 时请改为 ?name= 精确查询。
-    async fn find_zone(&self, fqdn: &str) -> Result<String> {
+    /// zone 名 → zone id
+    async fn zone_id(&self, zone: &str) -> Result<String> {
         let body = self
-            .send(self.client.get(format!("{}/zones?per_page=50", API)))
+            .get(&format!("{}/zones?name={}", API, zone))
             .await?;
-        let names: Vec<String> = body["result"]
+        body["result"]
             .as_array()
             .cloned()
             .unwrap_or_default()
-            .iter()
-            .filter_map(|z| z["name"].as_str().map(String::from))
-            .collect();
-        crate::services::acme::dns::longest_zone_match(fqdn, &names)
-            .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", fqdn))
+            .first()
+            .and_then(|z| z["id"].as_str().map(String::from))
+            .ok_or_else(|| anyhow!("未找到 zone id：{}", zone))
     }
 }
 
-impl DdnsProvider for Cloudflare {
+impl DnsProvider for Cloudflare {
     fn id(&self) -> &str {
         "cloudflare"
     }
 
-    fn sync_record<'a>(
-        &'a self,
-        fqdn: &'a str,
-        rtype: &'a str,
-        ip: &'a str,
-    ) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
+        Box::pin(async move {
+            const MAX_PAGES: u32 = 20;
+            let mut names: Vec<String> = Vec::new();
+            let mut page = 1u32;
+            loop {
+                let body = self
+                    .get(&format!("{}/zones?per_page=50&page={}", API, page))
+                    .await?;
+                let arr = body["result"].as_array().cloned().unwrap_or_default();
+                if arr.is_empty() {
+                    break;
+                }
+                for z in &arr {
+                    if let Some(n) = z["name"].as_str() {
+                        names.push(n.to_string());
+                    }
+                }
+                if arr.len() < 50 || page >= MAX_PAGES {
+                    break;
+                }
+                page += 1;
+            }
+            Ok(names)
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            let names = self.list_zones().await?;
+            crate::services::acme::dns::longest_zone_match(domain, &names)
+                .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", domain))
+        })
+    }
+
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
         Box::pin(async move {
             let zone = self.find_zone(fqdn).await?;
-            let zid = self
-                .send(self.client.get(format!("{}/zones?name={}", API, zone)))
-                .await?["result"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .first()
-                .and_then(|z| z["id"].as_str().map(String::from))
-                .ok_or_else(|| anyhow!("未找到 zone id：{}", zone))?;
-            let list = self
-                .send(self.client.get(format!(
+            let zone_id = self.zone_id(&zone).await?;
+            let body = self
+                .get(&format!(
                     "{}/zones/{}/dns_records?type={}&name={}",
-                    API, zid, rtype, fqdn
-                )))
+                    API, zone_id, rtype, fqdn
+                ))
                 .await?;
-            // CF 的 AAAA 记录 content 是裸 IP；TXT/CNAME 才带引号，这里统一去引号后比较
-            let cur = list["result"]
+            Ok(body["result"]
                 .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .first()
-                .map(|r| {
-                    (
-                        r["id"].as_str().unwrap_or("").to_string(),
-                        r["content"]
-                            .as_str()
-                            .unwrap_or("")
-                            .trim_matches('"')
-                            .to_string(),
-                    )
-                });
-            let body = serde_json::json!({ "type": rtype, "name": fqdn, "content": ip });
-            match cur {
+                .and_then(|a| a.first())
+                .and_then(|r| r["content"].as_str())
+                .map(|s| s.to_string()))
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            let list = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            let existing = list["result"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["id"].as_str())
+                .map(|s| s.to_string());
+            let body = serde_json::json!({
+                "type": rtype, "name": fqdn, "content": value, "ttl": 120
+            });
+            let resp = match existing {
+                Some(rid) => {
+                    self.client
+                        .put(format!("{}/zones/{}/dns_records/{}", API, zone_id, rid))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
+                }
                 None => {
-                    self.send(
-                        self.client
-                            .post(format!("{}/zones/{}/dns_records", API, zid))
-                            .json(&body),
-                    )
-                    .await?;
-                    Ok(format!("{} 记录新建 {}", rtype, ip))
+                    self.client
+                        .post(format!("{}/zones/{}/dns_records", API, zone_id))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
                 }
-                Some((rid, old)) if old != ip => {
-                    // 更新必须用 PATCH：PUT 会重置未提交的字段（ttl/proxied/comment 等）
-                    self.send(
-                        self.client
-                            .patch(format!("{}/zones/{}/dns_records/{}", API, zid, rid))
-                            .json(&body),
-                    )
-                    .await?;
-                    Ok(format!("{} 记录更新 {} → {}", rtype, old, ip))
+            };
+            self.json(resp).await.map(|_| ())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            let body = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            if let Some(records) = body["result"].as_array() {
+                for r in records {
+                    let Some(id) = r["id"].as_str() else { continue };
+                    match self
+                        .client
+                        .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
+                        .bearer_auth(&self.token)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) if resp.status().is_success() => {}
+                        Ok(resp) => tracing::warn!(
+                            status = %resp.status(), name = %fqdn, "删除 DNS 记录失败（响应非成功）"
+                        ),
+                        Err(e) => tracing::warn!(
+                            error = %e, name = %fqdn, "删除 DNS 记录请求失败"
+                        ),
+                    }
                 }
-                // 值未变：不发生任何写入，也就不会白刷 Cloudflare 的编辑配额
-                Some(_) => Ok("未变".to_string()),
             }
+            Ok(())
         })
     }
 }
