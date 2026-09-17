@@ -924,6 +924,14 @@ T2 的 `provider_for_account_rejects_missing_credentials`（`acme/dns/mod.rs`）
 
 （`acme::dns::provider_for_account` 目前仍只 match `"cloudflare"`，所以这条正例会**失败**——**不要**去改工厂。工厂收四家是 T7 的事（那时 `acme` 侧才有必要认识四家）。如果 T7 的实现在你这次执行时已经存在，则本条适用；否则**跳过步骤 0，只保留注释**，把「补正例」记进 T7 备注。）
 
+> **计划缺陷（2026-09-17，实施后补记）**：上面这句「工厂收四家是 T7 的活」**是错的** ——
+> T7 的任务段落里**从来没有这一步**，两个工厂（`acme::dns` 与 `ddns` 各一个）到最后
+> 都只收了一部分。实测后果：aliyun / dnspod / huawei 的账号在「测试连通」与签发时
+> 一律报「凭证不完整或服务商不支持」。已在提交 `951912d` 修复：acme 侧工厂按同一套
+> 凭证规则挂上三家（`Box<dyn DdnsProvider>` 转不成 `Box<dyn DnsProvider>`，只能各挂
+> 一次），并补回本步骤的正例断言。教训与 `feedback_plan_contracts` 同类：**把修复
+> 推给下一个任务时必须确认那个任务真的写了这一步**，否则缺陷会一路穿过所有出口判据。
+
 > **给 T7 的备注**：T7 把 `acme::dns::provider_for_account` 扩成分派四家时，记得回来把 T2 那条测试的正例断言补上。
 
 - [ ] **步骤 1：Cloudflare**
