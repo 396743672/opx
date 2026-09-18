@@ -341,6 +341,8 @@ export default {
   siteName: 'Site Name',
   serverNameLabel: 'Domain (optional)',
   serverNameHint: 'Leave empty to access by port only',
+  zoneHelper: 'Fill from zone',
+  zoneHelperHint: 'Root domain cached when the DNS account was tested; selecting one completes server_name',
   listenPort: 'Listen Port',
   sslEnable: 'Enable HTTPS',
   sslDomain: 'Domain (optional, defaults to site domain)',
