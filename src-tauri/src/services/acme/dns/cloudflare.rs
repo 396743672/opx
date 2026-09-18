@@ -16,7 +16,7 @@ pub struct Cloudflare {
 
 impl Cloudflare {
     pub fn new(token: String) -> Self {
-        Self { token, client: reqwest::Client::new() }
+        Self { token, client: crate::utils::http::client() }
     }
 
     async fn get(&self, url: &str) -> Result<Value> {

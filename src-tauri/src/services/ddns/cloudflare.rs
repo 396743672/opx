@@ -16,7 +16,7 @@ impl Cloudflare {
     pub fn new(token: String) -> Self {
         Self {
             token,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 

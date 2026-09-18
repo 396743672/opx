@@ -50,7 +50,7 @@ impl Aliyun {
         Self {
             key_id,
             key_secret,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 

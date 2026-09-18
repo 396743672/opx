@@ -58,8 +58,9 @@ pub fn run() {
                     {
                         crate::utils::download::init_download_config(
                             settings.github_proxy_url,
-                            settings.proxy_url,
+                            settings.proxy_url.clone(),
                         );
+                        crate::utils::http::set_global_proxy(&settings.proxy_url);
                     }
                 }
             }

@@ -109,7 +109,7 @@ impl Dnspod {
         Self {
             secret_id,
             secret_key,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 

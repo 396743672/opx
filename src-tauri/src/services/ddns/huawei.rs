@@ -79,7 +79,7 @@ impl Huawei {
         Self {
             ak,
             sk,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 
