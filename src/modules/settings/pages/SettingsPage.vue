@@ -395,7 +395,6 @@ const askOnCloseValue = ref(true)
 const githubProxyValue = ref('')
 const proxyValue = ref('')
 const autostartValue = ref(false)
-const acmeStagingValue = ref(false)
 const alertSystemCpuValue = ref(90)
 const alertSystemMemValue = ref(90)
 const alertProcessCpuValue = ref(90)
@@ -455,7 +454,6 @@ watch(
       askOnCloseValue.value = s.ask_on_close
       githubProxyValue.value = s.github_proxy_url || ''
       proxyValue.value = s.proxy_url || ''
-      acmeStagingValue.value = s.acme_use_staging
       alertSystemCpuValue.value = s.alert_system_cpu ?? 90
       alertSystemMemValue.value = s.alert_system_mem ?? 90
       alertProcessCpuValue.value = s.alert_process_cpu ?? 90
@@ -497,7 +495,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -510,7 +508,6 @@ async function save() {
   settingsStore.settings.ask_on_close = askOnCloseValue.value
   settingsStore.settings.github_proxy_url = githubProxyValue.value
   settingsStore.settings.proxy_url = proxyValue.value
-  settingsStore.settings.acme_use_staging = acmeStagingValue.value
   // 数值输入被清空时 v-model.number 会给出 ''，直接写进 store 会让 save_settings 反序列化失败
   // 并污染后续所有保存 —— 这里归一到 [1,100]，非法值回落默认 90
   const pct = (v: number) => (Number(v) >= 1 && Number(v) <= 100 ? Number(v) : 90)
