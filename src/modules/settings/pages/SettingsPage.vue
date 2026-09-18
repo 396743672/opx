@@ -275,8 +275,10 @@
         <div class="px-5 pb-4 border-b border-border">
           <div class="flex items-center justify-between gap-4 py-3">
             <div>
-              <span class="text-sm">{{ $t('acmeStaging') }}</span>
-              <div class="text-xs text-muted-foreground">{{ $t('acmeStagingDesc') }}</div>
+              <span class="text-sm" :class="{ 'text-warning': acmeStagingValue }">{{ $t('acmeStaging') }}</span>
+              <div class="text-xs" :class="acmeStagingValue ? 'text-warning' : 'text-muted-foreground'">
+                {{ acmeStagingValue ? $t('acmeStagingOn') : $t('acmeStagingDesc') }}
+              </div>
             </div>
             <SwitchBtn v-model="acmeStagingValue" />
           </div>

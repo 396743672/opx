@@ -359,6 +359,7 @@ export default {
   reissueCert: 'Re-request',
   acmeIssuing: 'Requesting certificate…',
   acmeDone: 'Certificate issued',
+  acmeStagingWarn: 'staging cert — browsers will not trust it',
   certExpiresAt: 'Expires at',
   acmeNeedIssue: 'A certificate will be requested when you save',
   acmeNeedSave: 'Save the site first, then request a certificate',
@@ -434,7 +435,8 @@ export default {
   // Certificate issuance (DNS accounts / ACME)
   certSection: 'Certificate Issuance',
   acmeStaging: 'Use Let\'s Encrypt staging environment',
-  acmeStagingDesc: 'Certificates issued are untrusted by browsers. For testing only; does not consume production rate limits',
+  acmeStagingDesc: 'For testing only; does not consume production rate limits',
+  acmeStagingOn: 'Enabled: newly issued certificates are untrusted by browsers',
   dnsAccounts: 'DNS Accounts',
   dnsAccountsDesc: 'DNS provider credentials used to issue and renew HTTPS certificates (DNS-01)',
   newDnsAccount: 'New Account',
