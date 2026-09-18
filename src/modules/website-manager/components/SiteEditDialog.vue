@@ -176,11 +176,13 @@ import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { useSettingsStore } from '@/stores/settings'
 import LocationEditor from './LocationEditor.vue'
 import type { Site, SiteLocation } from '@/models/website'
 import type { DnsAccount } from '@/models/dns-account'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
 
@@ -250,7 +252,11 @@ async function doIssue(): Promise<boolean> {
   acmeStatus.value = t('acmeIssuing')
   try {
     await invoke('issue_site_certificate', { siteId: props.site.id })
-    acmeStatus.value = t('acmeDone')
+    // staging 下流程同样「成功」，但浏览器不信任这张证书——必须说清楚，否则用户看到
+    // 「签发成功」再打开页面报证书错误会以为是 nginx 配错了
+    acmeStatus.value = settingsStore.settings?.acme_use_staging
+      ? `${t('acmeDone')} · ${t('acmeStagingWarn')}`
+      : t('acmeDone')
     // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
     try {
       const list = await invoke<Site[]>('list_websites')

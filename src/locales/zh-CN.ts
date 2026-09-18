@@ -359,6 +359,7 @@ export default {
   reissueCert: '重新申请',
   acmeIssuing: '正在申请证书…',
   acmeDone: '证书已签发',
+  acmeStagingWarn: '测试环境证书，浏览器不信任',
   certExpiresAt: '到期时间',
   acmeNeedIssue: '保存时将自动申请证书',
   acmeNeedSave: '请先保存站点，再申请证书',
@@ -434,7 +435,8 @@ export default {
   // 证书签发（DNS 账号 / ACME）
   certSection: '证书签发',
   acmeStaging: '使用 Let\'s Encrypt 测试环境',
-  acmeStagingDesc: '签出的证书不被浏览器信任，仅用于测试，不占用正式环境的签发频率限制',
+  acmeStagingDesc: '仅用于测试，不占用正式环境的签发频率限制',
+  acmeStagingOn: '已启用：新签发的证书不被浏览器信任',
   dnsAccounts: 'DNS 账号',
   dnsAccountsDesc: '用于自动申请与续期 HTTPS 证书（DNS-01）的域名服务商凭证',
   newDnsAccount: '新增账号',
