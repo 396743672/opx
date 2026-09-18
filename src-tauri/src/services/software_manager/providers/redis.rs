@@ -138,6 +138,9 @@ impl SoftwareProvider for RedisProvider {
         // redis-windows GitHub Releases API（社区维护的 Windows Redis 移植）
         let url = "https://api.github.com/repos/redis-windows/redis-windows/releases?per_page=20";
         let response = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，
+            // 宿主若设了不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?

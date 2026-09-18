@@ -113,6 +113,9 @@ impl SoftwareProvider for NodeProvider {
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         let url = "https://nodejs.org/dist/index.json";
         let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，
+            // 宿主若设了不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?;

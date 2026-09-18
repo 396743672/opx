@@ -123,6 +123,9 @@ impl SoftwareProvider for InfluxdbProvider {
         // tag 形如 `v2.9.1` → 去 v 前缀；跳过 v1/v3 与 beta/rc。
         let url = "https://api.github.com/repos/influxdata/influxdb/releases?per_page=30";
         let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，宿主若设了
+            // 不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?;

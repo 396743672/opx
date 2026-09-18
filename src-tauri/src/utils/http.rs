@@ -17,12 +17,9 @@ pub fn set_global_proxy(url: &str) {
     }
 }
 
-/// 给 DNS 服务商等出站请求用的客户端。
-///
-/// 目前每次调用新建一个，未复用连接池；DNS 操作是低频人工触发，
-/// 够用。若将来要复用，把这里换成 `OnceLock<reqwest::Client>` 并让
-/// `set_global_proxy` 负责重建。
-pub fn client() -> reqwest::Client {
+/// 已关掉环境变量代理探测、并按需挂上应用内全局代理的 builder。
+/// 供需要额外配置（timeout / redirect 等）的调用方使用。
+pub fn builder() -> reqwest::ClientBuilder {
     let proxy = GLOBAL_PROXY.lock().map(|g| g.clone()).unwrap_or_default();
     let mut b = reqwest::Client::builder().no_proxy();
     if !proxy.is_empty() {
@@ -32,7 +29,16 @@ pub fn client() -> reqwest::Client {
             Err(e) => tracing::warn!(proxy = %proxy, error = %e, "全局代理地址无效，本次请求改为直连"),
         }
     }
-    b.build().unwrap_or_else(|_| reqwest::Client::new())
+    b
+}
+
+/// 给 DNS 服务商等出站请求用的客户端。
+///
+/// 目前每次调用新建一个，未复用连接池；DNS 操作是低频人工触发，
+/// 够用。若将来要复用，把这里换成 `OnceLock<reqwest::Client>` 并让
+/// `set_global_proxy` 负责重建。
+pub fn client() -> reqwest::Client {
+    builder().build().unwrap_or_else(|_| reqwest::Client::new())
 }
 
 #[cfg(test)]
