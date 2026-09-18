@@ -431,8 +431,10 @@ export default {
   proxyDefaultHint: 'Default: https://ghfast.top',
   proxyEmptyDirect: 'http://127.0.0.1:7890 (empty = direct)',
 
-  // DNS accounts (certificate automation)
+  // Certificate issuance (DNS accounts / ACME)
+  certSection: 'Certificate Issuance',
   acmeStaging: 'Use Let\'s Encrypt staging environment',
+  acmeStagingDesc: 'Certificates issued are untrusted by browsers. For testing only; does not consume production rate limits',
   dnsAccounts: 'DNS Accounts',
   dnsAccountsDesc: 'DNS provider credentials used to issue and renew HTTPS certificates (DNS-01)',
   newDnsAccount: 'New Account',
