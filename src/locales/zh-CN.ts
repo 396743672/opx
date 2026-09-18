@@ -431,8 +431,10 @@ export default {
   proxyDefaultHint: '默认: https://ghfast.top',
   proxyEmptyDirect: 'http://127.0.0.1:7890（空=直连）',
 
-  // DNS 账号（证书自动化）
+  // 证书签发（DNS 账号 / ACME）
+  certSection: '证书签发',
   acmeStaging: '使用 Let\'s Encrypt 测试环境',
+  acmeStagingDesc: '签出的证书不被浏览器信任，仅用于测试，不占用正式环境的签发频率限制',
   dnsAccounts: 'DNS 账号',
   dnsAccountsDesc: '用于自动申请与续期 HTTPS 证书（DNS-01）的域名服务商凭证',
   newDnsAccount: '新增账号',
