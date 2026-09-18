@@ -2653,7 +2653,7 @@ git commit -m "feat(dns): 站点 SSL 配置改为选择 DNS 账号"
 
 ## 任务 11：全量验证与实机
 
-- [ ] **步骤 1：全量测试与构建**
+- [x] **步骤 1：全量测试与构建**
 
 运行：
 ```bash
@@ -2664,7 +2664,9 @@ npm run build
 ```
 预期：全绿。
 
-- [ ] **步骤 2：确认签名层零改动**
+> **结果（2026-09-18）**：`cargo test --lib` **212 passed**；`cargo clippy --all-targets` 无 error（warning 为存量、非本次引入）；`npx vue-tsc --noEmit` 零输出；`npm run build` 成功（仅有既存的 chunk >500KB 提示）。
+
+- [x] **步骤 2：确认签名层零改动**
 
 运行：
 ```bash
@@ -2673,7 +2675,9 @@ git log --oneline dev..HEAD
 ```
 预期：`ddns/*.rs` 的 diff **不含**任何 `*_canonical_request` / `*_authorization` / `hmac_sha256` / `hex` / `percent_encode` / `pe` / `HOST` / `SERVICE` / `VERSION` / `CONTENT_TYPE` 行的改动；测试函数名与数量不变（DNSPod 那 5 条必须原样在）。若不符，**回退重做任务 4**。
 
-- [ ] **步骤 3：实机验证（必须）**
+> **结果（2026-09-18）**：`git diff dev...d536c1f -- src-tauri/src/services/ddns/` 对上述签名层标识符**零命中**，符合预期。
+
+- [x] **步骤 3：实机验证**
 
 `npm run tauri dev`，按规格的清单逐项：
 
@@ -2687,7 +2691,12 @@ git log --oneline dev..HEAD
 8. 设置页 `dns` Tab 只剩 DDNS，控制台无报错
 9. 等一轮自动续期或手工触发，确认续期走账号凭证
 
-- [ ] **步骤 4：合并回 dev**
+> **结果（2026-09-18）：部分通过，按用户决定收尾。**
+> 用户当前**仅持有腾讯云（DNSPod）域名账号**，阿里云 / 华为云 / Cloudflare 三家无可用账号，其 TXT 写入路径（第 3 项的另三家、第 4 项的多账号并行）**无法实机验证**。
+> 未实测部分**不视为已验证**，作为已知风险保留（见设计文档「风险」节）。可动用的验证入口已备好：`src-tauri/tests/live_dns.rs`（`--ignored`，DNSPod 写-读-删闭环，含代理劫持与鉴权链路复现）。
+> 待办：日后取得另三家任一账号时，补跑该文件 + 上面第 3/4 项。
+
+- [x] **步骤 4：合并回 dev**
 
 按项目规则（合并即删分支）：
 
@@ -2698,3 +2707,5 @@ git push origin dev
 git branch -d feat/dns-accounts
 git push origin --delete feat/dns-accounts 2>/dev/null || true
 ```
+
+> **结果（2026-09-18 复核）**：已于 `d536c1f` 合并入 dev 并推送，`feat/dns-accounts` 本地/远端均已删除。dev 与 origin/dev 同步（0/0）。
