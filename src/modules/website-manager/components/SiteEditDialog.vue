@@ -486,13 +486,13 @@ watch(tab, async (t) => {
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .busy-bar { height: 6px; border-radius: 999px; background: var(--color-muted); overflow: hidden; }
 .busy-bar i { display: block; height: 100%; background: var(--color-primary); transition: width 0.3s ease-out; }
-.dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
-.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
+.dialog { width: 640px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
+.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); flex: none; }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
 .x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
-.body { padding: 16px 18px; }
-.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); }
+.body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); flex: none; }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
 .hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; overflow-wrap: anywhere; word-break: break-word; }
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; box-sizing: border-box; }
@@ -501,7 +501,7 @@ watch(tab, async (t) => {
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); }
+.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); flex: none; }
 .tab-bar button { height: 32px; padding: 0 14px; border: none; background: transparent; color: var(--color-muted-foreground); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab-bar button.active { color: var(--color-foreground); border-bottom-color: var(--color-primary); }
 .tab-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
