@@ -109,9 +109,10 @@ async function doTest() {
   testOk.value = null
   testMsg.value = ''
   try {
-    const zones = await invoke<string[]>('test_dns_account', { id: form.value.id })
+    // 后端返回落盘后的账号：直接覆盖表单，避免保存时用旧的空 zones 抹掉缓存
+    form.value = await invoke<DnsAccount>('test_dns_account', { id: form.value.id })
     testOk.value = true
-    testMsg.value = t('testOkZones', { n: zones.length })
+    testMsg.value = t('testOkZones', { n: form.value.zones.length })
   } catch (e) {
     testOk.value = false
     testMsg.value = `${t('testFailed')}: ${String(e)}`

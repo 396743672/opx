@@ -26,7 +26,7 @@
             <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
           </button>
           <button class="btn btn-sm" :disabled="!sources.length || exporting" @click="exportCombined">
-            <Icon icon="mdi:file-merge" /> {{ $t('exportCombined') }}
+            <Icon icon="mdi:file-export" /> {{ $t('exportCombined') }}
           </button>
         </div>
 

@@ -51,20 +51,22 @@ pub fn delete_dns_account(
 }
 
 /// 测试账号连通：拉 zone 列表并缓存（只验读权限；写权限留到签发时暴露）。
+///
+/// 返回**落盘后的账号**而非仅 zone 列表：前端拿它覆盖表单，避免「测试成功
+/// 后再保存」用旧的空 zones 把刚缓存的结果抹掉。
 #[tauri::command]
 pub async fn test_dns_account(
     m: State<'_, Arc<DnsAccountManager>>,
     id: String,
-) -> Result<Vec<String>, String> {
+) -> Result<DnsAccount, String> {
     let target = id.clone();
     audited_async!("test_dns_account", target, "", {
         let mut account = m.get(&id).ok_or_else(|| format!("未找到账号: {}", id))?;
         let provider = provider_for_account(&account)
             .ok_or_else(|| "凭证不完整或服务商不支持".to_string())?;
-        let zones = provider.list_zones().await.map_err(|e| format!("{:#}", e))?;
-        account.zones = zones.clone();
+        account.zones = provider.list_zones().await.map_err(|e| format!("{:#}", e))?;
         account.tested_at = Some(chrono::Local::now().to_rfc3339());
-        m.upsert(account).map_err(|e| format!("{:#}", e))?;
-        Ok(zones)
+        m.upsert(account.clone()).map_err(|e| format!("{:#}", e))?;
+        Ok(account)
     })
 }
