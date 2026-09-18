@@ -26,7 +26,19 @@
           <div class="flex gap-3 mb-3">
             <div class="flex-1">
               <label class="lbl">{{ $t('serverNameLabel') }}</label>
-              <input v-model="form.server_name" class="input w-full font-mono" placeholder="app.demo.com" />
+              <div class="flex gap-2">
+                <input v-model="form.server_name" class="input flex-1 font-mono" placeholder="app.demo.com" />
+                <select
+                  v-if="zoneOptions.length"
+                  class="input font-mono"
+                  style="width:180px"
+                  :title="$t('zoneHelperHint')"
+                  @change="onZonePick"
+                >
+                  <option value="">{{ $t('zoneHelper') }}</option>
+                  <option v-for="z in zoneOptions" :key="z" :value="z">{{ z }}</option>
+                </select>
+              </div>
               <div class="hint">{{ $t('serverNameHint') }}</div>
             </div>
             <div style="width:130px">
@@ -183,6 +195,26 @@ let unlistenAcme: (() => void) | null = null
 
 // ponytail: 对话框自己拉账号列表（列表页未加载账号，少一层 prop）
 const dnsAccounts = ref<DnsAccount[]>([])
+
+// 用缓存 zone 辅助填写 server_name。只在 SSL 走 ACME 且已选账号时出现，
+// 避免给不需要证书的站点凭空多一个下拉。
+const zoneOptions = computed(() => {
+  if (!form.value.ssl.enabled || certSource.value !== 'acme') return []
+  const a = dnsAccounts.value.find((x) => x.id === form.value.ssl.dns_account_id)
+  return a?.zones ?? []
+})
+
+/** 选中 zone 时把 server_name 的主域名部分换掉（保留子域前缀，如 app.demo.com → app.example.com） */
+function onZonePick(e: Event) {
+  const zone = (e.target as HTMLSelectElement).value
+  ;(e.target as HTMLSelectElement).value = '' // 复位成占位项，把它当一次性助手而非表单字段
+  if (!zone) return
+  const cur = (form.value.server_name ?? '').trim().replace(/\.$/, '')
+  const lower = cur.toLowerCase()
+  const sub = lower.endsWith(`.${zone}`) ? cur.slice(0, -(zone.length + 1)) : ''
+  form.value.server_name = sub ? `${sub}.${zone}` : zone
+  if (!genDomain.value) genDomain.value = form.value.server_name
+}
 
 // ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
 const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')

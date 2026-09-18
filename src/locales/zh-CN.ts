@@ -341,6 +341,8 @@ export default {
   siteName: '站点名称',
   serverNameLabel: '域名（可空）',
   serverNameHint: '留空则只按端口访问',
+  zoneHelper: '从域名后缀填充',
+  zoneHelperHint: 'DNS 账号测试时缓存的主域名，选中后自动补全 server_name',
   listenPort: '监听端口',
   sslEnable: '启用 HTTPS',
   sslDomain: '域名（可留空，默认用站点域名）',
