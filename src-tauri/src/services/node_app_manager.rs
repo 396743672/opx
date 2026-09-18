@@ -137,6 +137,7 @@ impl NodeAppManager {
             env_vars: payload.env_vars,
             auto_start: payload.auto_start,
             startup_order: payload.startup_order,
+            auto_restart: payload.auto_restart,
             status: NodeAppStatus::Stopped,
             pid: None,
             last_error: None,
@@ -208,6 +209,9 @@ impl NodeAppManager {
         }
         if let Some(v) = params.startup_order {
             app.startup_order = v;
+        }
+        if let Some(v) = params.auto_restart {
+            app.auto_restart = v;
         }
         let out = app.clone();
         drop(inner);
@@ -294,6 +298,14 @@ impl NodeAppManager {
 
     pub fn stop(&self, app_id: &str) -> Result<(), String> {
         let app = self.get(app_id).ok_or_else(|| "未找到应用".to_string())?;
+        // 先置 Stopping（进程随后可能死亡），避免看门狗把「已死但状态仍 Running」
+        // 误判为意外退出而重新拉起用户主动停止的应用（与 software/springboot 一致）
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
+                a.status = NodeAppStatus::Stopping;
+            }
+        }
         if let Some(pid) = app.pid {
             if health_check::is_process_alive(pid) {
                 lifecycle::stop_one(pid);
@@ -307,6 +319,46 @@ impl NodeAppManager {
         drop(inner);
         let _ = self.save();
         Ok(())
+    }
+
+    /// 只读快照：不改状态、不落盘（供看门狗判定意外退出）
+    pub fn snapshot(&self) -> Vec<NodeApp> {
+        self.inner.lock().unwrap().apps.clone()
+    }
+
+    /// 写回状态/pid/错误并落盘（看门狗复位或放弃时使用）
+    pub fn set_status(
+        &self,
+        app_id: &str,
+        status: NodeAppStatus,
+        pid: Option<u32>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        let a = inner
+            .apps
+            .iter_mut()
+            .find(|a| a.id == app_id)
+            .ok_or_else(|| format!("未找到 Node 应用: {}", app_id))?;
+        a.status = status;
+        a.pid = pid;
+        a.last_error = error;
+        let apps = inner.apps.clone();
+        if let Some(parent) = inner.data_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(content) = serde_json::to_string_pretty(&apps) {
+            let _ = fs::write(&inner.data_path, content);
+        }
+        Ok(())
+    }
+
+    /// 返回 auto_start 的应用（按 startup_order 升序），供启动编排协调器聚合
+    pub fn auto_start_list(&self) -> Vec<NodeApp> {
+        let apps = self.inner.lock().unwrap().apps.clone();
+        let mut pick: Vec<NodeApp> = apps.into_iter().filter(|a| a.auto_start).collect();
+        pick.sort_by_key(|a| a.startup_order);
+        pick
     }
 
     /// 应用启动时按 order 拉起 auto_start 的应用（node_exe 由命令层解析已装 Node）

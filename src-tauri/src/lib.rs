@@ -53,35 +53,41 @@ pub fn run() {
                 }
                 // 初始化下载代理配置
                 if let Ok(content) = std::fs::read_to_string(&sp) {
-                    if let Ok(settings) = serde_json::from_str::<crate::models::settings::AppSettings>(&content) {
+                    if let Ok(settings) =
+                        serde_json::from_str::<crate::models::settings::AppSettings>(&content)
+                    {
                         crate::utils::download::init_download_config(
                             settings.github_proxy_url,
-                            settings.proxy_url,
+                            settings.proxy_url.clone(),
                         );
+                        crate::utils::http::set_global_proxy(&settings.proxy_url);
                     }
                 }
             }
 
             // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
-            let software_mgr = std::sync::Arc::new(
-                crate::services::software_manager::SoftwareManager::new(),
-            );
+            let software_mgr =
+                std::sync::Arc::new(crate::services::software_manager::SoftwareManager::new());
             app.manage(software_mgr.clone());
+            // 旧全局 DNS 配置 → DNS 账号（一次性）。必须在 WebsiteManager::new()
+            // 之前：迁移会给 websites.json 写 dns_account_id，晚了就落不进内存。
+            if let Err(e) = crate::services::dns_account::run_startup_migration() {
+                tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
+            }
             app.manage(std::sync::Arc::new(
                 crate::services::website_manager::WebsiteManager::new(),
             ));
-            let springboot_mgr = std::sync::Arc::new(
-                crate::services::springboot_manager::SpringBootManager::new(),
-            );
+            let dns_account_mgr =
+                std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
+            app.manage(dns_account_mgr.clone());
+            let springboot_mgr =
+                std::sync::Arc::new(crate::services::springboot_manager::SpringBootManager::new());
             app.manage(springboot_mgr.clone());
-            // Node 应用管理：注册 State，并在启动时拉起 auto_start 的 Node 应用（用已装 Node）
-            let node_mgr = std::sync::Arc::new(
-                crate::services::node_app_manager::NodeAppManager::new(),
-            );
-            if let Some(exe) = crate::commands::node_app::resolve_node_exe(&software_mgr, None) {
-                node_mgr.auto_start_all(&exe);
-            }
-            app.manage(node_mgr);
+            // Node 应用管理：注册 State（auto_start 应用由底部统一启动编排协调器拉起）
+            let node_mgr =
+                std::sync::Arc::new(crate::services::node_app_manager::NodeAppManager::new());
+            let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
+            app.manage(node_mgr.clone());
             // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
             app.manage(std::sync::Arc::new(
                 crate::services::stack_manager::StackManager::new(software_mgr, springboot_mgr),
@@ -105,38 +111,104 @@ pub fn run() {
                 app.manage(std::sync::Mutex::new(g));
             }
 
-            // auto_start 拉起：按 startup_order 升序拉起 auto_start=true 的实例
-            // 后台异步执行，不阻塞 setup；单个实例慢启动不阻塞后续
-            let app_handle_for_auto = app.handle().clone();
-            let manager_arc = app
+            // 统一启动编排：把软件/Node/Stack 的 auto_start 收敛为单一有序序列，
+            // 失败逆序回滚已拉起项，产出并持久化启动报告。后台异步执行。
+            let app_handle_for_boot = app.handle().clone();
+            let sw_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
                 .clone();
-            // 定时备份调度（在 manager_arc 被 auto_start spawn 捕获前克隆）
-            let bs_manager = manager_arc.clone();
+            // 定时备份调度（复用协调器拿到的 software Arc clone）
+            let bs_manager = sw_mgr_arc.clone();
             let bs_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::software_manager::lifecycle::auto_start_all(
-                    &manager_arc,
-                    &app_handle_for_auto,
-                )
-                .await;
-            });
-
-            // 服务组自启：启用 auto_start 的服务组在应用启动后按序拉起
-            let app_handle_for_stack_auto = app.handle().clone();
             let stack_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
                 .inner()
                 .clone();
+            let node_mgr_arc = node_mgr.clone();
+            let node_exe_for_boot = node_exe.clone();
             tauri::async_runtime::spawn(async move {
-                stack_mgr_arc.auto_start_all(&app_handle_for_stack_auto).await;
+                crate::services::startup_bootstrap::run_bootstrap(
+                    sw_mgr_arc,
+                    node_mgr_arc,
+                    stack_mgr_arc,
+                    app_handle_for_boot,
+                    node_exe_for_boot,
+                )
+                .await;
             });
 
             // 定时备份调度：后台循环按配置间隔自动对实例做 Hot 快照
             tauri::async_runtime::spawn(async move {
-                crate::services::software_manager::backup_scheduler::run_scheduler(bs_manager, bs_app)
+                crate::services::software_manager::backup_scheduler::run_scheduler(
+                    bs_manager, bs_app,
+                )
+                .await;
+            });
+
+            // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
+            let renew_wm = app
+                .state::<std::sync::Arc<crate::services::website_manager::WebsiteManager>>()
+                .inner()
+                .clone();
+            let renew_sm = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let renew_app = app.handle().clone();
+            let renew_accounts = app
+                .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::acme::renew_scheduler::run_scheduler(
+                    renew_app, renew_wm, renew_sm, renew_accounts,
+                )
+                .await;
+            });
+
+            // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
+            let wd_software = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let wd_springboot = app
+                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+                .inner()
+                .clone();
+            let wd_node = node_mgr.clone();
+            let wd_app = app.handle().clone();
+            let wd_node_exe = node_exe.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::watchdog::run_watchdog(
+                    wd_software,
+                    wd_springboot,
+                    wd_node,
+                    wd_app,
+                    wd_node_exe,
+                )
+                .await;
+            });
+
+            // 指标采样器：30s 采样整机与运行中实例，落盘 7 天，并做阈值告警
+            let rec_app = app.handle().clone();
+            let rec_sw = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+            let rec_sb = app
+                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                crate::services::system_monitor::recorder::run_recorder(rec_app, rec_sw, rec_sb)
                     .await;
+            });
+
+            // DDNS 动态域名：5 分钟一轮公网 IP 检测与记录同步
+            // （常驻循环，停用只跳过本轮，改设置即时生效）
+            tauri::async_runtime::spawn(async move {
+                crate::services::ddns::scheduler::run_ddns_scheduler().await;
             });
 
             #[cfg(desktop)]
@@ -193,7 +265,11 @@ pub fn run() {
                     let handle = tray_for_listen.app_handle().clone();
                     if let Ok((menu, tooltip)) = build_tray_menu(&handle, &manager_for_listen) {
                         let _ = tray_for_listen.set_menu(Some(menu));
-                        let tooltip = if tooltip.is_empty() { None } else { Some(tooltip) };
+                        let tooltip = if tooltip.is_empty() {
+                            None
+                        } else {
+                            Some(tooltip)
+                        };
                         let _ = tray_for_listen.set_tooltip(tooltip);
                     }
                 });
@@ -211,13 +287,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::system::system_info,
             commands::system::system_history,
+            commands::system::process_metrics_history,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::get_autostart,
             commands::config::set_autostart,
+            commands::config::test_alert_webhook,
+            commands::config::sync_ddns_now,
             commands::app::quit_app,
             commands::app::exit_app,
             commands::app::hide_main_window,
+            commands::audit::list_audit_entries,
+            commands::audit::audit_stats,
+            commands::audit::export_audit_entries,
             commands::software::list_available_software,
             commands::software::refresh_catalog,
             commands::software::list_installed_software,
@@ -231,6 +313,9 @@ pub fn run() {
             commands::software::start_software,
             commands::software::stop_software,
             commands::software::restart_software,
+            commands::software::update_software_deps,
+            commands::software::resolve_software_deps,
+            commands::software::get_software_port_report,
             commands::software::get_software_status,
             commands::software::get_config_schema,
             commands::software::read_config_form,
@@ -269,6 +354,12 @@ pub fn run() {
             commands::website::set_site_conf,
             commands::website::unlock_site_conf,
             commands::website::generate_self_signed_cert,
+            commands::website::issue_site_certificate,
+            commands::website::list_account_refs,
+            commands::dns_account::list_dns_accounts,
+            commands::dns_account::save_dns_account,
+            commands::dns_account::delete_dns_account,
+            commands::dns_account::test_dns_account,
             commands::springboot::list_springboot_apps,
             commands::springboot::create_springboot_app,
             commands::springboot::update_springboot_app,
@@ -360,8 +451,10 @@ fn build_tray_menu(
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
     owned.push(Box::new(quit_item));
 
-    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> =
-        owned.iter().map(|b| b.as_ref() as &dyn IsMenuItem<tauri::Wry>).collect();
+    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = owned
+        .iter()
+        .map(|b| b.as_ref() as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
     let menu = Menu::with_items(app, &refs)?;
     Ok((menu, tooltip))
 }
@@ -403,7 +496,9 @@ mod tests {
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
-            source: crate::models::software::InstallSource::Builtin { version: "1.0".into() },
+            source: crate::models::software::InstallSource::Builtin {
+                version: "1.0".into(),
+            },
             pid: None,
             last_started_at: None,
             last_stopped_at: None,
@@ -411,6 +506,8 @@ mod tests {
             custom_start_command: None,
             icon: String::new(),
             category: None,
+            depends_on: vec![],
+            auto_restart: false,
         }
     }
 

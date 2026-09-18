@@ -334,6 +334,7 @@ mod tests {
             enabled: true,
             cert_path: Some("sites-data/certs/demo.crt".into()),
             key_path: Some("sites-data/certs/demo.key".into()),
+            ..Default::default()
         };
         let out = super::generate_server_block(&s);
         assert!(out.contains("listen 443 ssl;"), "{}", out);

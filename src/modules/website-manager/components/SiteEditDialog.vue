@@ -26,7 +26,19 @@
           <div class="flex gap-3 mb-3">
             <div class="flex-1">
               <label class="lbl">{{ $t('serverNameLabel') }}</label>
-              <input v-model="form.server_name" class="input w-full font-mono" placeholder="app.demo.com" />
+              <div class="flex gap-2">
+                <input v-model="form.server_name" class="input flex-1 font-mono" placeholder="app.demo.com" />
+                <select
+                  v-if="zoneOptions.length"
+                  class="input font-mono"
+                  style="width:180px"
+                  :title="$t('zoneHelperHint')"
+                  @change="onZonePick"
+                >
+                  <option value="">{{ $t('zoneHelper') }}</option>
+                  <option v-for="z in zoneOptions" :key="z" :value="z">{{ z }}</option>
+                </select>
+              </div>
               <div class="hint">{{ $t('serverNameHint') }}</div>
             </div>
             <div style="width:130px">
@@ -41,20 +53,54 @@
               <span class="text-sm">{{ $t('sslEnable') }}</span>
             </label>
             <template v-if="form.ssl.enabled">
-              <div class="flex gap-2">
-                <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
-                <button class="btn" :disabled="genning" @click="genCert">
-                  <Icon icon="mdi:shield-check-outline" /> {{ $t('genCert') }}
-                </button>
-              </div>
               <div>
-                <label class="lbl">{{ $t('sslCertPath') }}</label>
-                <input v-model="form.ssl.cert_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.crt" />
+                <label class="lbl">{{ $t('certSource') }}</label>
+                <select v-model="certSource" class="input w-full" :disabled="!!site.custom_conf">
+                  <option value="self-signed">{{ $t('certSelfSigned') }}</option>
+                  <option value="acme">{{ $t('certAcme') }}</option>
+                </select>
               </div>
-              <div>
-                <label class="lbl">{{ $t('sslKeyPath') }}</label>
-                <input v-model="form.ssl.key_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.key" />
-              </div>
+              <template v-if="certSource === 'self-signed'">
+                <div class="flex gap-2">
+                  <input v-model="genDomain" class="input flex-1 font-mono" :placeholder="$t('sslDomain')" />
+                  <button class="btn" :disabled="genning" @click="genCert">
+                    <Icon icon="mdi:shield-check-outline" /> {{ genning ? $t('genCerting') : $t('genCert') }}
+                  </button>
+                </div>
+                <div>
+                  <label class="lbl">{{ $t('sslCertPath') }}</label>
+                  <input v-model="form.ssl.cert_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.crt" />
+                </div>
+                <div>
+                  <label class="lbl">{{ $t('sslKeyPath') }}</label>
+                  <input v-model="form.ssl.key_path" class="input w-full font-mono" placeholder="sites-data/certs/demo.key" />
+                </div>
+              </template>
+              <template v-else>
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="lbl" style="margin-bottom:0">{{ $t('dnsAccount') }}</label>
+                    <div class="hint" style="margin-top:0">{{ $t('acmeNeedAccount') }}</div>
+                  </div>
+                  <select v-model="form.ssl.dns_account_id" class="input" style="width:220px">
+                    <option :value="null">{{ $t('selectDnsAccount') }}</option>
+                    <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">
+                      {{ a.name }}（{{ a.provider }}）
+                    </option>
+                  </select>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button v-if="!isNew" class="btn primary" :disabled="acmeBusy" @click="issueCert">
+                    <Icon icon="mdi:certificate-outline" />
+                    {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
+                  </button>
+                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ acmeStatus }}</span>
+                </div>
+                <div v-if="form.ssl.cert_expires_at" class="hint">
+                  {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
+                </div>
+                <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
+              </template>
               <div class="hint">{{ $t('sslHint') }}</div>
             </template>
           </div>
@@ -72,19 +118,33 @@
         </div>
 
         <div class="foot">
-          <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
+          <button class="btn" :disabled="saving" @click="$emit('close')">{{ $t('cancel') }}</button>
           <button
             class="btn primary"
             :disabled="saving || (tab === 'form' && !!site.custom_conf)"
             :title="tab === 'form' && site.custom_conf ? $t('customConfLocked') : ''"
             @click="save()"
           >
-            {{ $t('save') }}
+            {{ saving ? $t('saving') : $t('save') }}
           </button>
         </div>
       </div>
     </div>
   </Teleport>
+  <Teleport to="body">
+    <div v-if="busyKind" class="overlay" style="z-index:65">
+      <div class="confirm-box">
+        <div class="confirm-title" style="color: var(--color-primary)">
+          <Icon icon="mdi:progress-clock" /> {{ busyTitle }}
+        </div>
+        <p class="confirm-msg" style="margin-bottom: 12px">{{ busyText }}</p>
+        <div v-if="busyPct != null" class="busy-bar">
+          <i :style="{ width: busyPct + '%' }"></i>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <Teleport to="body">
     <div v-if="confirmUnlock" class="overlay" style="z-index:60">
       <div class="confirm-box">
@@ -111,21 +171,144 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { useSettingsStore } from '@/stores/settings'
 import LocationEditor from './LocationEditor.vue'
 import type { Site, SiteLocation } from '@/models/website'
+import type { DnsAccount } from '@/models/dns-account'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const form = ref<Site>(props.site)
 if (!form.value.ssl) {
-  form.value.ssl = { enabled: false, cert_path: null, key_path: null }
+  form.value.ssl = { enabled: false, cert_path: null, key_path: null, acme: false, cert_expires_at: null }
 }
+const certSource = ref<'self-signed' | 'acme'>(props.site.ssl?.acme ? 'acme' : 'self-signed')
+const acmeBusy = ref(false)
+const acmeStatus = ref('')
+let unlistenAcme: (() => void) | null = null
+
+// ponytail: 对话框自己拉账号列表（列表页未加载账号，少一层 prop）
+const dnsAccounts = ref<DnsAccount[]>([])
+
+// 用缓存 zone 辅助填写 server_name。只在 SSL 走 ACME 且已选账号时出现，
+// 避免给不需要证书的站点凭空多一个下拉。
+const zoneOptions = computed(() => {
+  if (!form.value.ssl.enabled || certSource.value !== 'acme') return []
+  const a = dnsAccounts.value.find((x) => x.id === form.value.ssl.dns_account_id)
+  return a?.zones ?? []
+})
+
+/** 选中 zone 时把 server_name 的主域名部分换掉（保留子域前缀，如 app.demo.com → app.example.com） */
+function onZonePick(e: Event) {
+  const zone = (e.target as HTMLSelectElement).value
+  ;(e.target as HTMLSelectElement).value = '' // 复位成占位项，把它当一次性助手而非表单字段
+  if (!zone) return
+  const cur = (form.value.server_name ?? '').trim().replace(/\.$/, '')
+  const lower = cur.toLowerCase()
+  const sub = lower.endsWith(`.${zone}`) ? cur.slice(0, -(zone.length + 1)) : ''
+  form.value.server_name = sub ? `${sub}.${zone}` : zone
+  if (!genDomain.value) genDomain.value = form.value.server_name
+}
+
+// ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
+const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')
+const acmePct = ref(0)
+/** 后端 acme-progress 的阶段 → 进度百分比（仅用于展示） */
+const PHASE_PCT: Record<string, number> = {
+  'creating-order': 10,
+  'waiting-dns': 35,
+  validating: 65,
+  downloading: 90,
+  done: 100,
+}
+const busyTitle = computed(() =>
+  busyKind.value === 'issue' ? t('issueCert') : busyKind.value === 'gen' ? t('genCert') : t('save'),
+)
+const busyText = computed(() => {
+  if (busyKind.value === 'issue') return acmeStatus.value || t('acmeIssuing')
+  if (busyKind.value === 'gen') return t('genCerting')
+  return t('saving')
+})
+const busyPct = computed(() => (busyKind.value === 'issue' ? acmePct.value : null))
+
+// 选了 ACME 但尚未签发（无证书路径）：保存时会自动申请证书
+const sslNeedIssue = computed(
+  () => certSource.value === 'acme' && !form.value.ssl.cert_path
+)
+
+/** 实际发起签发（不含前置校验），供「保存」与「申请证书」共用。返回是否成功。 */
+async function doIssue(): Promise<boolean> {
+  acmeBusy.value = true
+  busyKind.value = 'issue'
+  acmePct.value = 0
+  acmeStatus.value = t('acmeIssuing')
+  try {
+    await invoke('issue_site_certificate', { siteId: props.site.id })
+    // staging 下流程同样「成功」，但浏览器不信任这张证书——必须说清楚，否则用户看到
+    // 「签发成功」再打开页面报证书错误会以为是 nginx 配错了
+    acmeStatus.value = settingsStore.settings?.acme_use_staging
+      ? `${t('acmeDone')} · ${t('acmeStagingWarn')}`
+      : t('acmeDone')
+    // 成功后重新读取站点，拿到 cert_expires_at / 证书路径
+    try {
+      const list = await invoke<Site[]>('list_websites')
+      const fresh = list.find((s) => s.id === props.site.id)
+      if (fresh?.ssl) {
+        form.value.ssl = fresh.ssl
+        if (fresh.server_name) genDomain.value = fresh.server_name
+      }
+    } catch {
+      // 刷新失败不影响签发结果提示
+    }
+    return true
+  } catch (e) {
+    acmeStatus.value = String(e)
+    saveError.value = String(e)
+    return false
+  } finally {
+    acmeBusy.value = false
+    busyKind.value = ''
+  }
+}
+
+/** 独立的「申请证书/重新申请」按钮：需站点已保存（后端按 id 读取） */
+async function issueCert() {
+  if (props.isNew) {
+    acmeStatus.value = t('acmeNeedSave')
+    return
+  }
+  if (!form.value.ssl.dns_account_id) {
+    acmeStatus.value = t('acmeNeedAccount')
+    return
+  }
+  await doIssue()
+}
+
+onMounted(async () => {
+  try {
+    dnsAccounts.value = await invoke<DnsAccount[]>('list_dns_accounts')
+  } catch (e) {
+    console.error('load dns accounts failed:', e)
+  }
+  unlistenAcme = await listen<{ domain: string; phase: string; message: string }>('acme-progress', (e) => {
+    const cur = (props.site.server_name ?? '').trim().toLowerCase()
+    if (e.payload.domain.trim().toLowerCase() !== cur) return
+    acmeStatus.value = e.payload.message || e.payload.phase
+    acmePct.value = PHASE_PCT[e.payload.phase] ?? acmePct.value
+  })
+})
+onUnmounted(() => {
+  unlistenAcme?.()
+})
+
 const genDomain = ref(props.site.server_name || '')
 const genning = ref(false)
 
@@ -136,6 +319,7 @@ async function genCert() {
     return
   }
   genning.value = true
+  busyKind.value = 'gen'
   saveError.value = ''
   try {
     const [cert, key] = await invoke<string[]>('generate_self_signed_cert', { domain: d })
@@ -145,6 +329,7 @@ async function genCert() {
     saveError.value = String(e)
   } finally {
     genning.value = false
+    busyKind.value = ''
   }
 }
 const saving = ref(false)
@@ -171,7 +356,16 @@ function validateName(): boolean {
 
 async function save() {
   if (tab.value === 'form' && !validateName()) return
+  if (tab.value === 'form') {
+    form.value.ssl.acme = certSource.value === 'acme'
+    // 选了 ACME 但尚未签发：本次保存不启用 HTTPS（否则生成的配置缺 ssl_certificate，
+    // nginx -t 会失败）；签发成功后由后端写回 enabled=true + 证书路径。
+    if (form.value.ssl.acme && !form.value.ssl.cert_path) {
+      form.value.ssl.enabled = false
+    }
+  }
   saving.value = true
+  busyKind.value = 'save'
   try {
     if (tab.value === 'source') {
       await invoke('set_site_conf', {
@@ -181,12 +375,21 @@ async function save() {
     } else {
       // 保存即生效：nginx 运行中时后端自动校验并 reload
       await invoke('save_website', { site: form.value })
+      // 选了 ACME 但尚无证书：保存时一并申请，一次操作完成
+      if (sslNeedIssue.value) {
+        if (!form.value.ssl.dns_account_id) {
+          saveError.value = t('acmeNeedAccount') // 站点已保存，留在对话框提示选择 DNS 账号
+          return
+        }
+        if (!(await doIssue())) return // 签发失败：留在对话框展示原因
+      }
     }
     emit('saved')
   } catch (e) {
     saveError.value = String(e)
   } finally {
     saving.value = false
+    busyKind.value = ''
   }
 }
 
@@ -205,6 +408,7 @@ async function doUnlock() {
     saveError.value = String(e)
   } finally {
     saving.value = false
+    busyKind.value = ''
   }
 }
 
@@ -316,24 +520,26 @@ watch(tab, async (t) => {
 }
 .confirm-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .confirm-title svg { color: var(--color-destructive); }
-.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
+.confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; overflow-wrap: anywhere; word-break: break-word; max-height: 40vh; overflow-y: auto; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
-.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
+.busy-bar { height: 6px; border-radius: 999px; background: var(--color-muted); overflow: hidden; }
+.busy-bar i { display: block; height: 100%; background: var(--color-primary); transition: width 0.3s ease-out; }
+.dialog { width: 640px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
+.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); flex: none; }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
 .x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
-.body { padding: 16px 18px; }
-.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); }
+.body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); flex: none; }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
-.hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; }
+.hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; overflow-wrap: anywhere; word-break: break-word; }
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; box-sizing: border-box; }
 .input:focus { border-color: var(--color-primary); background: var(--color-card); }
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); }
+.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); flex: none; }
 .tab-bar button { height: 32px; padding: 0 14px; border: none; background: transparent; color: var(--color-muted-foreground); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab-bar button.active { color: var(--color-foreground); border-bottom-color: var(--color-primary); }
 .tab-bar button:disabled { opacity: 0.4; cursor: not-allowed; }

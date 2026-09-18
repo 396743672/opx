@@ -12,6 +12,12 @@ const routes = [
     meta: { title: 'systemMonitor' },
   },
   {
+    path: '/monitor',
+    name: 'monitor',
+    component: () => import('@/modules/monitor/pages/MonitorCenterPage.vue'),
+    meta: { title: 'monitorCenter' },
+  },
+  {
     path: '/repository',
     name: 'repository',
     component: () => import('@/modules/software-manager/pages/RepositoryPage.vue'),
@@ -30,6 +36,12 @@ const routes = [
     meta: { title: 'websiteManagement' },
   },
   {
+    path: '/dns-accounts',
+    name: 'dnsAccounts',
+    component: () => import('@/modules/dns-accounts/pages/DnsAccountsPage.vue'),
+    meta: { title: 'dnsAccounts' },
+  },
+  {
     path: '/springboot',
     name: 'springboot',
     component: () => import('@/modules/springboot-manager/pages/SpringBootPage.vue'),
@@ -40,6 +52,12 @@ const routes = [
     name: 'node-apps',
     component: () => import('@/modules/node-apps/NodeAppsPage.vue'),
     meta: { title: 'nodeApps' },
+  },
+  {
+    path: '/audit',
+    name: 'audit',
+    component: () => import('@/modules/audit/pages/AuditLogPage.vue'),
+    meta: { title: 'auditLog' },
   },
   {
     path: '/settings',

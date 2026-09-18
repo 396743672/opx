@@ -1,3 +1,4 @@
+pub mod dns_account;
 pub mod node_app;
 pub mod settings;
 pub mod stack;

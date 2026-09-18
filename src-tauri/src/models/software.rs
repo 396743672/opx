@@ -142,6 +142,14 @@ pub struct InstalledSoftware {
     /// 软件分类（来自 catalog，用于栈候选等按类型过滤）；自定义软件为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<SoftwareCategory>,
+
+    /// 依赖的其他已装软件 id（启动时按拓扑序自动拉起，须处于运行态）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+
+    /// 进程意外退出后自动重启
+    #[serde(default)]
+    pub auto_restart: bool,
 }
 
 // ===== C 扩展（日志查看器 + 备份/恢复）新增类型 =====
@@ -340,6 +348,8 @@ pub struct ConfigField {
 #[serde(tag = "type")]
 pub enum ConfigFieldType {
     Text,
+    /// 多行文本（如集群节点列表，一行一项）
+    Textarea,
     Number,
     Port,
     Password,
@@ -350,12 +360,6 @@ pub enum ConfigFieldType {
         options: Vec<String>,
         #[serde(default)]
         labels: Vec<String>,
-        /// 禁用的选项值（前置置灰，如 nacos cluster 扩展点）
-        #[serde(default)]
-        disabled_options: Vec<String>,
-        /// 禁用选项的提示 i18n key（hover 显示）
-        #[serde(default)]
-        disabled_hint_i18n: Option<String>,
     },
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },
@@ -415,5 +419,24 @@ pub struct InstallParams {
 pub struct CustomInstallParams {
     pub name: String,
     pub archive_path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 旧 installed.json 无 auto_restart 字段时必须能反序列化（默认 false），
+    /// 否则升级后加载旧数据会整体失败。
+    #[test]
+    fn installed_software_without_auto_restart_defaults_false() {
+        let json = r#"{
+            "id":"x","key":"k","version":"1.0","name":"n","install_path":"p",
+            "install_time":"2024-01-01T00:00:00","status":"Stopped","port":0,
+            "config":{},"is_custom":false,"auto_start_on_app_start":false,
+            "startup_order":0,"source":{"Builtin":{"version":"1.0"}}
+        }"#;
+        let sw: InstalledSoftware = serde_json::from_str(json).expect("old json loads");
+        assert!(!sw.auto_restart);
+    }
 }
 

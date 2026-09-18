@@ -1,11 +1,29 @@
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 use sysinfo::{System, Disks, Networks};
 use crate::models::system::{SystemInfo, DiskInfo, NetworkInfo};
 
 /// 全局复用的 Networks 句柄，避免每次新建导致统计重置
 static NETWORKS: Lazy<Mutex<Networks>> =
     Lazy::new(|| Mutex::new(Networks::new_with_refreshed_list()));
+
+/// 全局 System 实例：CPU% 依赖两次 refresh 的时间差，recorder 与 system_info 命令
+/// 必须共用同一实例，否则各自算出的增量都不准。
+static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| {
+    let mut s = System::new();
+    s.refresh_all();
+    thread::sleep(Duration::from_millis(200));
+    s.refresh_all();
+    Mutex::new(s)
+});
+
+/// 采样一次整机信息（复用全局 System 基线）。
+pub fn sample_system() -> SystemInfo {
+    let mut system = SYSTEM.lock().unwrap();
+    get_system_info(&mut system)
+}
 
 pub fn get_system_info(system: &mut System) -> SystemInfo {
     system.refresh_all();

@@ -26,6 +26,12 @@ export interface SslConfig {
   enabled: boolean
   cert_path?: string | null
   key_path?: string | null
+  /** 是否由 ACME（Let's Encrypt）签发 */
+  acme: boolean
+  /** ACME 证书到期时间（RFC3339 本地时间）；自签为空 */
+  cert_expires_at?: string | null
+  /** 签发/续期该站点证书所用的 DNS 账号 id */
+  dns_account_id?: string | null
 }
 
 export interface Site {
@@ -47,7 +53,7 @@ export function emptySite(): Site {
     name: '',
     server_name: '',
     listen: 80,
-    ssl: { enabled: false, cert_path: null, key_path: null },
+    ssl: { enabled: false, cert_path: null, key_path: null, acme: false, cert_expires_at: null, dns_account_id: null },
     enabled: false,
     locations: [
       { path: '/', kind: 'Static', source: 'Upload', root: '', spa_fallback: true, target: null, upstreams: [], proxy_headers: [], proxy_subpath: null },

@@ -21,7 +21,7 @@
         <span v-if="software.pid" class="kv">
           <Icon icon="mdi:identifier" /> PID <b class="tnum">{{ software.pid }}</b>
         </span>
-        <span v-if="runtimePort" class="kv">
+        <span v-if="runtimePort && !portChips.length" class="kv">
           <Icon icon="mdi:lan" /> {{ $t('port') }}
           <a
             v-if="webUrl && canOpenWeb"
@@ -33,6 +33,28 @@
           >{{ runtimePort }} <Icon icon="mdi:open-in-new" /></a>
           <b v-else class="tnum">{{ runtimePort }}</b>
         </span>
+        <span v-if="depsNames.length" class="kv">
+          <Icon icon="mdi:graph-outline" /> {{ $t('deps') }}
+          <span class="deps-list">
+            <span v-for="d in depsNames" :key="d" class="dep-chip">
+              <Icon icon="mdi:lan-connect" /> {{ d }}
+            </span>
+          </span>
+        </span>
+      </div>
+      <div v-if="portChips.length" class="port-map">
+        <span class="port-map-label"><Icon icon="mdi:lan-pending" /> {{ $t('listeningPorts') }}</span>
+        <template v-for="c in portChips" :key="c.port">
+          <a
+            v-if="c.open"
+            class="port-chip web-open"
+            :href="c.open"
+            target="_blank"
+            rel="noopener"
+            :title="$t('openInBrowser')"
+          >{{ c.port }} <Icon icon="mdi:open-in-new" /></a>
+          <span v-else class="port-chip" :class="c.state" :title="c.hint">{{ c.port }}</span>
+        </template>
       </div>
       <div v-if="software.last_error" class="error-text">
         <Icon icon="mdi:alert-circle" /> {{ translateError(software.last_error, t, te) }}
@@ -80,6 +102,9 @@
         <button class="btn" :disabled="!canStartupSettings" :title="$t('startupSettings')" @click="$emit('startup-settings')">
           <Icon icon="mdi:tune-vertical" /> {{ $t('startupSettings') }}
         </button>
+        <button class="btn" :disabled="!canStartupSettings" :title="$t('depsEdit')" @click="$emit('deps')">
+          <Icon icon="mdi:graph-outline" /> {{ $t('depsEdit') }}
+        </button>
       </template>
       <button class="btn danger" :disabled="!canUninstall" :title="uninstallHint" @click="$emit('uninstall')">
         <Icon icon="mdi:delete" /> {{ $t('uninstall') }}
@@ -89,11 +114,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
-import { InstalledSoftware, SoftwareCategory, SoftwareStatus } from '@/models/software'
+import { InstalledSoftware, SoftwareCategory, SoftwareStatus, type PortReport } from '@/models/software'
 import { translateError } from '@/utils/i18nError'
 
 const { t, te } = useI18n()
@@ -103,6 +129,8 @@ const props = defineProps<{
   actingStates?: Record<string, 'start' | 'stop'>
   upgradeTo?: string | null
   rollbackTo?: string | null
+  /** 依赖 id → 显示名（用于展示已配置依赖友好名，缺省回退为 id） */
+  depsNameMap?: Record<string, string>
 }>()
 
 defineEmits<{
@@ -116,6 +144,7 @@ defineEmits<{
   reset: []
   upgrade: []
   rollback: []
+  deps: []
 }>()
 
 const CATEGORY_CLASS: Record<string, string> = {
@@ -135,6 +164,12 @@ const categoryClass = computed(() => CATEGORY_CLASS[props.software.category ?? '
 // 图标：优先 catalog 软件专属图标（与软件仓库一致）；自定义软件回退为上传图标
 const categoryIcon = computed(() => props.software.icon || 'mdi:upload')
 
+// Nacos 主版本号：2.x 与 3.x 的控制台端口与 context path 规则不同；无法解析时按 3.x
+function nacosMajor(): number {
+  const m = /^(\d+)/.exec(String(props.software.version ?? ''))
+  return m ? Number(m[1]) : 3
+}
+
 // 运行端口：优先运行时字段，其次按软件从 config 取对应端口字段（默认值兜底）
 const runtimePort = computed(() => {
   const s = props.software
@@ -144,7 +179,8 @@ const runtimePort = computed(() => {
     case 'minio':
       return cfg.console_port || 9001
     case 'nacos':
-      return cfg.console_port || 8080
+      // 3.x 控制台独立端口；2.x 控制台与主端口共用
+      return nacosMajor() >= 3 ? cfg.console_port || 8080 : cfg.port || 8848
     case 'nginx':
       return cfg.listen || 80
     case 'elasticsearch':
@@ -171,7 +207,8 @@ const webUrl = computed(() => {
     case 'minio':
       return `http://${host}:${port}`
     case 'nacos': {
-      const path = s.config?.context_path || '/nacos'
+      // 3.x 控制台无需 context path；2.x 需带（默认 /nacos）
+      const path = nacosMajor() >= 3 ? '' : s.config?.context_path || '/nacos'
       return `http://${host}:${port}${path}`
     }
   }
@@ -187,8 +224,66 @@ const canOpenWeb = computed(
     props.software.status === SoftwareStatus.Starting,
 )
 
+// ===== 端口图谱（扩展 3）：运行态展示进程实际监听端口 + 配置端口冲突诊断 =====
+interface PortChip { port: number; state: string; hint: string; open?: string }
+
+const portReport = ref<PortReport | null>(null)
+
+function portHint(state: string, pid: number | null, name: string | null): string {
+  if (state === 'conflict') {
+    return name
+      ? t('portConflictBy', { pid: pid ?? '?', name })
+      : t('portConflictByPid', { pid: pid ?? '?' })
+  }
+  if (state === 'not-listening') return t('portNotListening')
+  if (state === 'unknown') return t('portUnknownOwner')
+  return t('listeningPorts')
+}
+
+const portChips = computed<PortChip[]>(() => {
+  if (props.software.status !== SoftwareStatus.Running || !portReport.value) return []
+  const chips: PortChip[] = portReport.value.configured.map((c) => ({
+    port: c.port,
+    state: c.state,
+    hint: portHint(c.state, c.owner_pid, c.owner_name),
+  }))
+  const seen = new Set(chips.map((c) => c.port))
+  for (const p of portReport.value.listening) {
+    if (!seen.has(p)) chips.push({ port: p, state: 'listening', hint: t('listeningPorts') })
+  }
+  // 已知可网页访问的端口才可点击打开（复用现有 webUrl）
+  const web = webUrl.value
+  if (web && canOpenWeb.value) {
+    const target = chips.find((c) => c.port === Number(runtimePort.value))
+    if (target) target.open = web
+  }
+  return chips
+})
+
+async function loadPortReport() {
+  if (props.software.status !== SoftwareStatus.Running) {
+    portReport.value = null
+    return
+  }
+  try {
+    portReport.value = await invoke<PortReport>('get_software_port_report', {
+      installedId: props.software.id,
+    })
+  } catch {
+    portReport.value = null
+  }
+}
+
+// ponytail: 仅运行态/pid 变化时拉取，不轮询；需感知运行中端口变更再加定时刷新
+watch(() => [props.software.status, props.software.pid], loadPortReport, { immediate: true })
+
 // JRE/JDK 是运行时依赖，不参与启停/配置（由 SpringBoot 应用拉起），仅支持卸载
 const isRuntime = computed(() => props.software.category === SoftwareCategory.Runtime)
+
+// 已配置依赖的显示名列表（缺省回退为 id）
+const depsNames = computed(() =>
+  (props.software.depends_on ?? []).map((id) => props.depsNameMap?.[id] || id),
+)
 
 const canStart = computed(
   () =>
@@ -366,6 +461,73 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.deps-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.dep-chip svg {
+  width: 10px;
+  height: 10px;
+}
+.port-map {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.port-map-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+.port-map-label svg {
+  width: 12px;
+  height: 12px;
+}
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  background: color-mix(in oklch, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+.port-chip svg {
+  width: 10px;
+  height: 10px;
+}
+.port-chip.web-open {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+.port-chip.conflict {
+  background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
+  color: var(--color-destructive);
+}
+.port-chip.not-listening,
+.port-chip.unknown {
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
 }
 .tag {
   font-size: 10px;

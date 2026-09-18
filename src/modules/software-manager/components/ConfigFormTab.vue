@@ -7,7 +7,7 @@
         v-for="field in visibleFields"
         :key="field.key"
         class="field"
-        :class="{ full: isPort(field) }"
+        :class="{ full: isPort(field) || isTextarea(field) }"
       >
         <label class="form-field-label" :class="{ danger: isEphemeral(field) }">{{ $t(field.label_i18n) }}</label>
         <input
@@ -16,6 +16,13 @@
           class="input"
           :placeholder="String(field.default_value ?? '')"
         />
+        <textarea
+          v-else-if="isTextarea(field)"
+          v-model="formData[field.key]"
+          class="input textarea"
+          rows="4"
+          :placeholder="String(field.default_value ?? '')"
+        ></textarea>
         <input
           v-else-if="isNumber(field) || isPort(field)"
           type="number"
@@ -34,8 +41,6 @@
             v-for="(opt, i) in selectOptions(field)"
             :key="opt"
             :value="opt"
-            :disabled="isDisabledOption(field, opt)"
-            :title="disabledHint(field, opt)"
           >
             {{ selectLabels(field)?.[i] ?? opt }}
           </option>
@@ -77,10 +82,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useI18n } from 'vue-i18n'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
-
-const { t } = useI18n()
 
 const props = defineProps<{ software: InstalledSoftware; schema: ConfigSchema | null }>()
 const emit = defineEmits<{ 'update:dirty': [boolean] }>()
@@ -119,6 +121,9 @@ watch(formData, () => emit('update:dirty', true), { deep: true })
 function isText(f: ConfigField) {
   return f.field_type.type === 'Text'
 }
+function isTextarea(f: ConfigField) {
+  return f.field_type.type === 'Textarea'
+}
 function isNumber(f: ConfigField) {
   return f.field_type.type === 'Number'
 }
@@ -139,16 +144,6 @@ function selectOptions(f: ConfigField): string[] {
 }
 function selectLabels(f: ConfigField): string[] | undefined {
   return f.field_type.type === 'Select' ? f.field_type.labels : undefined
-}
-
-// 禁用的选项（前置置灰，如 nacos cluster 扩展点）+ hover 提示
-function isDisabledOption(f: ConfigField, opt: string): boolean {
-  return f.field_type.type === 'Select' && (f.field_type.disabled_options ?? []).includes(opt)
-}
-function disabledHint(f: ConfigField, opt: string): string | undefined {
-  if (!isDisabledOption(f, opt)) return undefined
-  const key = f.field_type.type === 'Select' ? f.field_type.disabled_hint_i18n : undefined
-  return key ? t(key) : undefined
 }
 
 // Size 字段：值形如 "256mb"，拆成「数字 + 单位」编辑，单位只能从下拉里选（防手写单位出错）
@@ -251,6 +246,13 @@ defineExpose({ formData, validateRequired })
 .input:focus {
   border-color: var(--color-primary);
   background: var(--color-card);
+}
+.textarea {
+  height: auto;
+  min-height: 84px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.5;
 }
 .tnum {
   font-variant-numeric: tabular-nums;

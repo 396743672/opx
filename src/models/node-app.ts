@@ -16,6 +16,8 @@ export interface NodeApp {
   args: string[]
   env_vars: [string, string][]
   auto_start: boolean
+  /** 进程意外退出后自动重启 */
+  auto_restart: boolean
   startup_order: number
   status: NodeAppStatus
   pid: number | null
@@ -31,6 +33,7 @@ export interface CreateNodeAppParams {
   env_vars?: [string, string][]
   auto_start?: boolean
   startup_order?: number
+  auto_restart?: boolean
 }
 
 export interface UpdateNodeAppParams {
@@ -41,4 +44,5 @@ export interface UpdateNodeAppParams {
   env_vars?: [string, string][] | null
   auto_start?: boolean | null
   startup_order?: number | null
+  auto_restart?: boolean | null
 }

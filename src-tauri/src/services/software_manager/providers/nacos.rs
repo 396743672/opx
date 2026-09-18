@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, FieldCondition, FieldRule, HealthCheckSpec, LogSource,
+    MirrorSource, SoftwareCategory,
 };
 
 use super::{
@@ -24,6 +25,37 @@ fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
 }
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+
+/// 解析集群节点列表：按行/逗号切分，trim 后滤空行；每项须为 `host:port`
+/// （host 非空、port 1-65535）。返回规范化的 `host:port` 列表。
+/// 空列表或任一项非法返回 Err。
+fn parse_cluster_nodes(raw: &str) -> Result<Vec<String>, String> {
+    let mut nodes = Vec::new();
+    for token in raw.split(['\n', '\r', ',']) {
+        let t = token.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let (host, port) = t.rsplit_once(':').ok_or_else(|| format!("缺少端口: {t}"))?;
+        let (host, port) = (host.trim(), port.trim());
+        let port: u16 = port.parse().map_err(|_| format!("端口非法: {t}"))?;
+        if host.is_empty() || port == 0 {
+            return Err(format!("节点非法: {t}"));
+        }
+        nodes.push(format!("{host}:{port}"));
+    }
+    if nodes.is_empty() {
+        return Err("节点列表为空".to_string());
+    }
+    Ok(nodes)
+}
+
+/// 生成 cluster.conf 内容：每行一个 `host:port`，结尾换行。
+fn render_cluster_conf(nodes: &[String]) -> String {
+    let mut s = nodes.join("\n");
+    s.push('\n');
+    s
 }
 
 pub struct NacosProvider;
@@ -99,6 +131,9 @@ impl SoftwareProvider for NacosProvider {
         // Nacos GitHub Releases，tag 即版本号（如 2.5.3 / 3.2.3），过滤预发布/日期后缀。
         let url = "https://api.github.com/repos/alibaba/nacos/releases?per_page=30";
         let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，
+            // 宿主若设了不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?;
@@ -148,12 +183,9 @@ impl SoftwareProvider for NacosProvider {
             .join("target").join("nacos-server.jar");
         let working_dir = PathBuf::from(&ctx.install_path);
 
-        // 部署模式：standalone（默认）/ cluster（扩展点——前置置灰，不建实现）
-        // ponytail: cluster 扩展点 —— 后续按 nacos 官方多节点 RAFT 接入
+        // 部署模式：standalone（默认，单机）/ cluster（本实例作为集群一个节点加入外部集群）。
         let mode = config_str(&ctx.config, "mode", "standalone");
-        if mode != "standalone" {
-            return Err(anyhow::anyhow!("集群模式暂未支持，请使用单机模式（standalone）"));
-        }
+        let is_cluster = mode == "cluster";
 
         let mut args = vec![
             // nacos.home 指定安装根目录（conf/、data/、logs/ 都在其下）。
@@ -162,10 +194,23 @@ impl SoftwareProvider for NacosProvider {
             // loader.path 加载 plugins/ 下的数据源插件（Derby/MySQL 驱动等）。
             // 不设则 Derby 驱动类找不到，standalone 模式启动失败。
             format!("-Dloader.path={}", working_dir.join("plugins").to_string_lossy()),
-            "-Dnacos.standalone=true".to_string(),
-            "-jar".to_string(),
-            jar.to_string_lossy().to_string(),
         ];
+        if is_cluster {
+            // 集群模式：Nacos 官方要求外部 MySQL；写入 conf/cluster.conf。
+            // 不传 -Dnacos.standalone=true 即为集群模式。
+            if config_str(&ctx.config, "storage", "embedded") != "mysql" {
+                return Err(anyhow::anyhow!("i18n:nacosClusterNeedsMysql"));
+            }
+            let nodes = parse_cluster_nodes(&config_str(&ctx.config, "cluster_nodes", ""))
+                .map_err(|_| anyhow::anyhow!("i18n:nacosClusterNodesInvalid"))?;
+            let conf_dir = working_dir.join("conf");
+            std::fs::create_dir_all(&conf_dir)?;
+            std::fs::write(conf_dir.join("cluster.conf"), render_cluster_conf(&nodes))?;
+        } else {
+            args.push("-Dnacos.standalone=true".to_string());
+        }
+        args.push("-jar".to_string());
+        args.push(jar.to_string_lossy().to_string());
 
         // 服务端口：3.x 主 API 端口（默认 8848）
         let server_port = config_u64(&ctx.config, "port", 8848);
@@ -316,6 +361,15 @@ impl SoftwareProvider for NacosProvider {
     }
 
     fn config_schema(&self) -> Option<ConfigSchema> {
+        // mysql_* 连接字段仅在 storage=mysql 时显示（前端按 formData.storage 实时切换）
+        let show_if_mysql = |key: &str| FieldRule {
+            field_key: key.to_string(),
+            visible_when: Some(FieldCondition {
+                key: "storage".to_string(),
+                equals: serde_json::json!("mysql"),
+            }),
+            required: false,
+        };
         Some(ConfigSchema {
             fields: vec![
                 ConfigField {
@@ -340,12 +394,19 @@ impl SoftwareProvider for NacosProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec!["standalone".to_string(), "cluster".to_string()],
                         labels: vec![],
-                        disabled_options: vec!["cluster".to_string()],
-                        disabled_hint_i18n: Some("configField.nacosModeClusterHint".to_string()),
                     },
                     default_value: serde_json::json!("standalone"),
                     section: None,
                     description_i18n: Some("configField.nacosModeDesc".to_string()),
+                },
+                ConfigField {
+                    key: "cluster_nodes".to_string(),
+                    label_i18n: "configField.nacosClusterNodes".to_string(),
+                    // 仅 cluster 模式可见且必填（见 field_rules）。一行一个 ip:port，含本节点。
+                    field_type: ConfigFieldType::Textarea,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.nacosClusterNodesDesc".to_string()),
                 },
                 ConfigField {
                     key: "storage".to_string(),
@@ -353,8 +414,6 @@ impl SoftwareProvider for NacosProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec!["embedded".to_string(), "mysql".to_string()],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("embedded"),
                     section: None,
@@ -409,8 +468,6 @@ impl SoftwareProvider for NacosProvider {
                     field_type: ConfigFieldType::Select {
                         options: vec![],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!(""),
                     section: None,
@@ -436,8 +493,6 @@ impl SoftwareProvider for NacosProvider {
                             "ai".to_string(),
                         ],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("all"),
                     section: None,
@@ -453,7 +508,21 @@ impl SoftwareProvider for NacosProvider {
                 },
             ],
             ephemeral_keys: vec![],
-            field_rules: vec![],
+            field_rules: vec![
+                FieldRule {
+                    field_key: "cluster_nodes".to_string(),
+                    visible_when: Some(FieldCondition {
+                        key: "mode".to_string(),
+                        equals: serde_json::json!("cluster"),
+                    }),
+                    required: true,
+                },
+                show_if_mysql("mysql_host"),
+                show_if_mysql("mysql_port"),
+                show_if_mysql("mysql_db"),
+                show_if_mysql("mysql_user"),
+                show_if_mysql("mysql_password"),
+            ],
         })
     }
 
@@ -494,6 +563,66 @@ mod tests {
         for bad in ["3.3.0-BETA", "3.2.1-2026.04.03", "3.1.0-bugfix"] {
             assert!(!vs.contains(&bad.to_string()), "should skip {bad}");
         }
+    }
+
+    #[test]
+    fn parse_cluster_nodes_accepts_lines_commas_and_whitespace() {
+        let raw = "192.168.1.1:8848\n  10.0.0.2:8848 , [::1]:8848\r\n\n  nacos.example.com:8848  \n";
+        let nodes = parse_cluster_nodes(raw).unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                "192.168.1.1:8848",
+                "10.0.0.2:8848",
+                "[::1]:8848",
+                "nacos.example.com:8848",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_cluster_nodes_rejects_bad_input() {
+        // 空/纯空白
+        assert!(parse_cluster_nodes("").is_err());
+        assert!(parse_cluster_nodes("  \n , \n").is_err());
+        // 缺端口
+        assert!(parse_cluster_nodes("192.168.1.1").is_err());
+        // 端口非法：0 / 越界 / 非数字
+        assert!(parse_cluster_nodes("192.168.1.1:0").is_err());
+        assert!(parse_cluster_nodes("192.168.1.1:65536").is_err());
+        assert!(parse_cluster_nodes("192.168.1.1:abc").is_err());
+        // host 为空
+        assert!(parse_cluster_nodes(":8848").is_err());
+    }
+
+    #[test]
+    fn render_cluster_conf_one_per_line_with_trailing_newline() {
+        let nodes = vec!["192.168.1.1:8848".to_string(), "10.0.0.2:8848".to_string()];
+        assert_eq!(render_cluster_conf(&nodes), "192.168.1.1:8848\n10.0.0.2:8848\n");
+    }
+
+    #[test]
+    fn config_schema_gates_mysql_and_cluster_fields() {
+        let schema = NacosProvider.config_schema().expect("nacos has schema");
+        let rule = |key: &str| {
+            schema
+                .field_rules
+                .iter()
+                .find(|r| r.field_key == key)
+                .unwrap_or_else(|| panic!("missing rule for {key}"))
+        };
+        // mysql_* 连接字段：仅 storage=mysql 时可见
+        for k in ["mysql_host", "mysql_port", "mysql_db", "mysql_user", "mysql_password"] {
+            let cond = rule(k).visible_when.as_ref().expect("has condition");
+            assert_eq!(cond.key, "storage");
+            assert_eq!(cond.equals, serde_json::json!("mysql"));
+        }
+        // cluster_nodes：仅 mode=cluster 时可见且必填
+        let cluster = rule("cluster_nodes");
+        assert!(cluster.required);
+        let cond = cluster.visible_when.as_ref().expect("has condition");
+        assert_eq!(cond.key, "mode");
+        assert_eq!(cond.equals, serde_json::json!("cluster"));
     }
 }
 

@@ -6,18 +6,21 @@ use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{
-    BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams, CustomStartCommand,
-    InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource, SnapshotMeta,
-    SoftwareStatus, UninstallSafetyReport,
+    BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams,
+    CustomStartCommand, InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource,
+    SnapshotMeta, SoftwareStatus, UninstallSafetyReport,
 };
-use crate::oplog;
+use crate::services::software_manager::config_editor::FormData;
+use crate::services::software_manager::providers::custom_templates;
+use crate::services::software_manager::providers::{
+    ConfigContext, DataDirContext, HealthContext, StartContext,
+};
 use crate::services::software_manager::{
     backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
     log_viewer, providers, uninstall_guard, SoftwareManager,
 };
-use crate::services::software_manager::config_editor::FormData;
-use crate::services::software_manager::providers::custom_templates;
-use crate::services::software_manager::providers::{ConfigContext, DataDirContext, HealthContext, StartContext};
+use crate::utils::topo::topo_layers;
+use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -140,8 +143,9 @@ pub async fn install_software(
     app: AppHandle,
     params: InstallParams,
 ) -> Result<String, String> {
-    oplog!("install", &params.key, &params.version);
     let install_id = uuid::Uuid::new_v4().to_string();
+    oplog_begin!("install", &params.key, &params.version);
+    installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -159,11 +163,25 @@ pub async fn upgrade_software(
     installed_id: String,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
+    let audit_target = manager
+        .find_installed(&installed_id)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    oplog_begin!("upgrade", &audit_target);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = do_upgrade(&manager_arc, &app, &installed_id_for_task, &install_id_for_task).await {
+        let audit_target_for_task = audit_target.clone();
+        let r = do_upgrade(
+            &manager_arc,
+            &app,
+            &installed_id_for_task,
+            &install_id_for_task,
+        )
+        .await;
+        oplog_result!("upgrade", &audit_target_for_task, "", r);
+        if let Err(ref e) = r {
             let _ = app.emit(
                 "install-progress",
                 serde_json::json!({
@@ -188,7 +206,6 @@ async fn do_upgrade(
     let software = manager
         .find_installed(installed_id)
         .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
-    oplog!("upgrade", &software.name);
 
     // 目标版本：compute_upgrades 中该软件的 target_version（无可升级则报错）
     let catalog = manager.get_catalog();
@@ -224,7 +241,10 @@ async fn do_upgrade(
                 .await
                 .map_err(|e| anyhow::anyhow!("停止线程异常: {}", e))?;
             if !ok {
-                return Err(anyhow::anyhow!("停止旧版本进程失败（PID {} 仍在运行）", pid));
+                return Err(anyhow::anyhow!(
+                    "停止旧版本进程失败（PID {} 仍在运行）",
+                    pid
+                ));
             }
         }
         manager
@@ -244,7 +264,10 @@ async fn do_upgrade(
     let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
     let bak_zip_path = old_install_path.with_file_name(format!(
         "{}.bak.zip",
-        old_install_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+        old_install_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
     ));
 
     // 2.5 把新版本父目录建好（download_and_extract 解压时落到新目录）
@@ -282,21 +305,34 @@ async fn do_upgrade(
     };
 
     // 4. 下载+解压到新目录
-    installer::download_and_extract(&params, &new_install_path, app, install_id, version_info, mirror)
-        .await
-        .map_err(|e| {
-            // 解压失败：回滚新目录（旧目录未动）
-            let _ = std::fs::remove_dir_all(&new_install_path);
-            e
-        })?;
+    installer::download_and_extract(
+        &params,
+        &new_install_path,
+        app,
+        install_id,
+        version_info,
+        mirror,
+    )
+    .await
+    .map_err(|e| {
+        // 解压失败：回滚新目录（旧目录未动）
+        let _ = std::fs::remove_dir_all(&new_install_path);
+        e
+    })?;
 
     // 5. 迁移用户数据/配置：从旧目录复制 data_dirs + config_file_path 到新目录
     //    迁移失败时回滚：删除已装好的新目录，旧目录不动，旧记录不动
-    copy_paths_to_new(&old_install_path, &old_install_path, &new_install_path, &data_dirs, &config_file_path)
-        .map_err(|e| {
-            let _ = std::fs::remove_dir_all(&new_install_path);
-            e
-        })?;
+    copy_paths_to_new(
+        &old_install_path,
+        &old_install_path,
+        &new_install_path,
+        &data_dirs,
+        &config_file_path,
+    )
+    .map_err(|e| {
+        let _ = std::fs::remove_dir_all(&new_install_path);
+        e
+    })?;
 
     // 5.5 压缩备份旧目录为 {old_ver}.bak.zip（已有同名先删），成功后删除旧目录。
     //     压缩失败回滚：删除新目录、旧目录保留（zip 未生成则无害）。
@@ -340,6 +376,8 @@ async fn do_upgrade(
         custom_start_command: None,
         icon: String::new(),
         category: software.category.clone(),
+        depends_on: vec![],
+        auto_restart: software.auto_restart,
     };
 
     // remove_installed 会删除旧安装目录（旧目录已压缩删除，此时路径不存在，不误删 .bak.zip 备份）
@@ -349,12 +387,10 @@ async fn do_upgrade(
     let _ = old_removed;
 
     // add_installed 失败时回滚：恢复旧记录，新目录保持已装状态、.bak.zip 保留（zip 备份不删除）
-    manager
-        .add_installed(new_record)
-        .map_err(|e| {
-            let _ = manager.add_installed(old_removed);
-            anyhow::anyhow!("写入新记录失败: {}", e)
-        })?;
+    manager.add_installed(new_record).map_err(|e| {
+        let _ = manager.add_installed(old_removed);
+        anyhow::anyhow!("写入新记录失败: {}", e)
+    })?;
 
     // 7. emit completed（install_id 由前端 createTask 给定）
     let _ = app.emit(
@@ -434,9 +470,12 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> anyhow::R
 fn zip_dir(src: &std::path::Path, dst_zip: &std::path::Path) -> std::io::Result<()> {
     let file = std::fs::File::create(dst_zip)?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
+    let opts =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for entry in walkdir::WalkDir::new(src)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path == src || path.is_dir() {
             continue;
@@ -479,8 +518,9 @@ pub async fn install_custom(
     app: AppHandle,
     params: CustomInstallParams,
 ) -> Result<String, String> {
-    oplog!("install_custom", &params.name);
     let install_id = uuid::Uuid::new_v4().to_string();
+    oplog_begin!("install_custom", &params.name);
+    installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -505,39 +545,43 @@ pub async fn uninstall_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("uninstall", &software.name);
-    let report = uninstall_guard::check_uninstall_safety(&software)
-        .map_err(|e| e.to_string())?;
-    if !report.safe {
-        let reasons = report
-            .blockers
-            .iter()
-            .map(|b| b.kind.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!("卸载被阻止：{}", reasons));
-    }
+    let target = software.name.clone();
+    let detail = String::new();
 
-    // 强杀兜底（防意外残留 PID）
-    if let Some(pid) = software.pid {
-        if health_check::is_process_alive(pid) {
-            let _ = lifecycle::stop_one(pid);
+    audited_async!("uninstall", target, detail, {
+        let report =
+            uninstall_guard::check_uninstall_safety(&software).map_err(|e| e.to_string())?;
+        if !report.safe {
+            let reasons = report
+                .blockers
+                .iter()
+                .map(|b| b.kind.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!("卸载被阻止：{}", reasons));
         }
-    }
-    lifecycle::unregister(&installed_id);
 
-    // 删除记录 + 安装目录。
-    // ponytail: remove_installed 内含 remove_dir_all 删整个安装目录（可能数百 MB），
-    // 同步执行会阻塞 async worker → 前端 await 挂起、卸载框不关。移入 spawn_blocking。
-    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-    let id_for_remove = installed_id.clone();
-    tokio::task::spawn_blocking(move || manager_arc.remove_installed(&id_for_remove))
-        .await
-        .map_err(|e| format!("卸载线程异常: {}", e))?
-        .map_err(|e| e.to_string())?;
+        // 强杀兜底（防意外残留 PID）
+        if let Some(pid) = software.pid {
+            if health_check::is_process_alive(pid) {
+                let _ = lifecycle::stop_one(pid);
+            }
+        }
+        lifecycle::unregister(&installed_id);
 
-    let _ = app.emit("software-uninstalled", &installed_id);
-    Ok(true)
+        // 删除记录 + 安装目录。
+        // ponytail: remove_installed 内含 remove_dir_all 删整个安装目录（可能数百 MB），
+        // 同步执行会阻塞 async worker → 前端 await 挂起、卸载框不关。移入 spawn_blocking。
+        let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+        let id_for_remove = installed_id.clone();
+        tokio::task::spawn_blocking(move || manager_arc.remove_installed(&id_for_remove))
+            .await
+            .map_err(|e| format!("卸载线程异常: {}", e))?
+            .map_err(|e| e.to_string())?;
+
+        let _ = app.emit("software-uninstalled", &installed_id);
+        Ok(true)
+    })
 }
 
 // ===== 启停命令（任务 10.1）=====
@@ -557,24 +601,63 @@ pub async fn start_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("start", &software.name);
+    let audit_target = software.name.clone();
+    let audit_detail = format!("{} ({})", software.version, software.id);
+    oplog_begin!("start", &audit_target, &audit_detail);
 
-    lifecycle::validate_start_transition(software.status).map_err(|e| e.to_string())?;
+    if let Err(e) = lifecycle::validate_start_transition(software.status) {
+        oplog_fail!("start", &audit_target, &audit_detail, &e);
+        return Err(e.to_string());
+    }
 
     // PID 残留校验：旧 PID 仍存活则拒绝启动
     if let Some(pid) = software.pid {
         if health_check::is_process_alive(pid) {
-            return Err(format!("进程 {} 仍在运行，请先停止", pid));
+            let msg = format!("进程 {} 仍在运行，请先停止", pid);
+            oplog_fail!("start", &audit_target, &audit_detail, &msg);
+            return Err(msg);
         }
     }
 
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let app_handle = app.clone();
+    let audit_target_task = audit_target.clone();
+    let audit_detail_task = audit_detail.clone();
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
-        let result = do_start_software(&manager_arc, &app_handle, &installed_id_for_task, init_password).await;
+        // 依赖编排：先按拓扑序拉起未运行的依赖，再启动自身
+        if let Err(e) = ensure_dependencies(&manager_arc, &app_handle, &installed_id_for_task).await
+        {
+            let msg = format!("依赖编排失败：{}", e);
+            oplog_fail!("start", &audit_target_task, &audit_detail_task, &msg);
+            tracing::warn!(error = %e, installed_id = %installed_id_for_task, "依赖编排失败");
+            let _ = manager_arc.update_runtime_fields(
+                &installed_id_for_task,
+                SoftwareStatus::Error,
+                None,
+                None,
+                None,
+                Some(msg.clone()),
+            );
+            lifecycle::emit_status_changed(
+                &app_handle,
+                &installed_id_for_task,
+                SoftwareStatus::Error,
+                None,
+                Some(msg.clone()),
+            );
+            return;
+        }
+        let result = do_start_software(
+            &manager_arc,
+            &app_handle,
+            &installed_id_for_task,
+            init_password,
+        )
+        .await;
+        oplog_result!("start", &audit_target_task, &audit_detail_task, result);
         if let Err(e) = result {
             let _ = manager_arc.update_runtime_fields(
                 &installed_id_for_task,
@@ -602,12 +685,146 @@ pub async fn start_software(
     Ok(())
 }
 
+/// 更新软件的依赖清单（需已安装的软件 id；自动去重、剔除自引用与不存在项）。
+#[tauri::command]
+pub async fn update_software_deps(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    depends_on: Vec<String>,
+) -> Result<InstalledSoftware, String> {
+    manager
+        .update_dependencies(&installed_id, depends_on)
+        .map_err(|e| e.to_string())?;
+    manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))
+}
+
+/// 解析某软件的依赖拓扑（分层 + 环检测），供前端依赖图/启动预览。返回被拉起的依赖顺序。
+#[tauri::command]
+pub async fn resolve_software_deps(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<serde_json::Value, String> {
+    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+    let software = manager_arc
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let deps_ids: Vec<String> = software.depends_on.clone();
+    let deps = |n: &str| -> Vec<String> {
+        manager_arc
+            .find_installed(n)
+            .map(|sw| sw.depends_on)
+            .unwrap_or_default()
+    };
+    let tiebreak: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    // 闭包展开
+    let mut visited: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = vec![installed_id.clone()];
+    while let Some(id) = stack.pop() {
+        if visited.contains(&id) {
+            continue;
+        }
+        visited.push(id.clone());
+        for dep in deps(&id) {
+            stack.push(dep);
+        }
+    }
+    let plan = crate::utils::topo::topo_layers(&visited, deps, &tiebreak);
+    let missing: Vec<String> = visited
+        .iter()
+        .filter(|id| id.as_str() != installed_id && manager_arc.find_installed(id).is_none())
+        .cloned()
+        .collect();
+    Ok(serde_json::json!({
+        "layers": plan.layers,
+        "cycle": plan.cycle,
+        "missing": missing,
+        "direct": deps_ids,
+    }))
+}
+
+/// 单个配置端口的诊断状态
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PortStatus {
+    pub port: u16,
+    /// listening=本软件正常监听 / conflict=被其他进程占用 / not-listening=未监听 / unknown=已监听但宿主未知
+    pub state: String,
+    pub owner_pid: Option<u32>,
+    pub owner_name: Option<String>,
+}
+
+/// 某软件的端口图谱报告
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PortReport {
+    /// 配置声明的端口及诊断
+    pub configured: Vec<PortStatus>,
+    /// 本软件进程实际监听的所有端口（含配置外的）
+    pub listening: Vec<u16>,
+}
+
+/// 采集某软件的端口监听与冲突诊断（仅运行中实例有意义）。
+#[tauri::command]
+pub async fn get_software_port_report(
+    manager: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+) -> Result<PortReport, String> {
+    let software = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+
+    // 1. 配置端口（自定义软件走 custom_start_command，无 provider）
+    let providers_list = providers::all_providers();
+    let provider = providers_list.iter().find(|p| p.key() == software.key);
+    let configured_ports = collect_configured_ports(&software, provider.map(|p| &**p));
+
+    // 2. 实际监听（命令失败降级为空集）
+    let entries = crate::services::software_manager::netutils::listen_entries();
+    let my_pid = software.pid;
+    let mut listening: Vec<u16> = entries
+        .iter()
+        .filter(|e| my_pid.map_or(false, |p| e.pid == Some(p)))
+        .map(|e| e.port)
+        .collect();
+    listening.sort_unstable();
+    listening.dedup();
+
+    // 3. 配置端口 × 监听集 → 诊断
+    let mut configured = Vec::new();
+    for port in configured_ports {
+        let owner = entries.iter().find(|e| e.port == port);
+        let (state, owner_pid, owner_name) = match owner {
+            None => ("not-listening", None, None),
+            Some(e) => match (my_pid, e.pid) {
+                (Some(mine), Some(op)) if mine == op => ("listening", Some(op), None),
+                (_, Some(op)) => (
+                    "conflict",
+                    Some(op),
+                    crate::services::software_manager::process_monitor::process_name(op),
+                ),
+                (_, None) => ("unknown", None, None),
+            },
+        };
+        configured.push(PortStatus {
+            port,
+            state: state.to_string(),
+            owner_pid,
+            owner_name,
+        });
+    }
+
+    Ok(PortReport {
+        configured,
+        listening,
+    })
+}
+
 /// 收集软件启动将监听的端口，用于启动前占用校验。
 /// 标准软件：取 config_schema 中 field_type=Port 的字段，从 config 读端口值（缺失回退字段默认值）。
 /// 自定义软件：从 custom_start_command 的健康检查规格推导（Tcp 端口 / Http url 端口）。
 fn collect_configured_ports(
     software: &InstalledSoftware,
-    provider: &dyn providers::SoftwareProvider,
+    provider: Option<&dyn providers::SoftwareProvider>,
 ) -> Vec<u16> {
     use crate::models::software::{ConfigFieldType, CustomHealthSpec};
     let mut ports = Vec::new();
@@ -626,10 +843,13 @@ fn collect_configured_ports(
                 CustomHealthSpec::None => {}
             }
         }
-    } else if let Some(schema) = provider.config_schema() {
+    } else if let Some(schema) = provider.and_then(|p| p.config_schema()) {
         for field in &schema.fields {
             if matches!(field.field_type, ConfigFieldType::Port) {
-                let v = software.config.get(&field.key).unwrap_or(&field.default_value);
+                let v = software
+                    .config
+                    .get(&field.key)
+                    .unwrap_or(&field.default_value);
                 if let Some(p) = v.as_u64() {
                     if (1..=65535).contains(&p) {
                         ports.push(p as u16);
@@ -645,13 +865,22 @@ fn collect_configured_ports(
 /// 解析启动用的 JDK/JRE install_path：
 /// 优先用软件配置里选的 jdk（存 installed_id，来自表单选择，与 SpringBoot 一致），
 /// 其次自动找已装 JDK/JRE（优先 JDK 其次 JRE）。找不到返回 None。
-fn find_installed_jdk(manager: &Arc<SoftwareManager>, config: &serde_json::Value) -> Option<String> {
+fn find_installed_jdk(
+    manager: &Arc<SoftwareManager>,
+    config: &serde_json::Value,
+) -> Option<String> {
     let installed = manager.get_installed();
     // 1. 配置里显式选了 JDK（installed_id）→ 按 id 解析路径
-    if let Some(id) = config.get("jdk").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(id) = config
+        .get("jdk")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         if let Some(sw) = installed.iter().find(|s| s.id == id) {
             return Some(
-                crate::utils::paths::resolve_install_path(&sw.install_path).to_string_lossy().to_string(),
+                crate::utils::paths::resolve_install_path(&sw.install_path)
+                    .to_string_lossy()
+                    .to_string(),
             );
         }
     }
@@ -660,7 +889,11 @@ fn find_installed_jdk(manager: &Arc<SoftwareManager>, config: &serde_json::Value
         .iter()
         .filter(|s| s.key == "jdk" || s.key == "jre")
         .min_by_key(|s| if s.key == "jdk" { 0 } else { 1 })
-        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+        .map(|s| {
+            crate::utils::paths::resolve_install_path(&s.install_path)
+                .to_string_lossy()
+                .to_string()
+        })
 }
 
 /// 找已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时建库建表用）。
@@ -670,7 +903,11 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
         .get_installed()
         .iter()
         .find(|s| s.key == "mysql")
-        .map(|s| crate::utils::paths::resolve_install_path(&s.install_path).to_string_lossy().to_string())
+        .map(|s| {
+            crate::utils::paths::resolve_install_path(&s.install_path)
+                .to_string_lossy()
+                .to_string()
+        })
 }
 
 /// 执行 post-start HTTP 初始化（如 InfluxDB 2 onboarding）。
@@ -678,17 +915,16 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
 /// 探针：先 GET probe_url，响应包含 probe_done_marker 则已初始化，跳过；否则 POST body。
 fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result<bool> {
     let client = reqwest::blocking::Client::builder()
+        // 该初始化打的是 127.0.0.1 本机端口，环境代理（ALL_PROXY 等）必然劫持并失败，
+        // 这里显式关掉环境变量探测；无需支持用户代理，故不引 utils::http
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| anyhow::anyhow!("HTTP client 构建失败: {}", e))?;
 
     // 1. 幂等探测
     if let Some(probe_url) = &ps.probe_url {
-        if let Ok(resp) = client
-            .get(probe_url)
-            .header("User-Agent", "OPX")
-            .send()
-        {
+        if let Ok(resp) = client.get(probe_url).header("User-Agent", "OPX").send() {
             if resp.status().is_success() {
                 if let Ok(text) = resp.text() {
                     if text.contains(&ps.probe_done_marker) {
@@ -721,6 +957,123 @@ fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result
     )
 }
 
+/// 解析并拉起目标软件的依赖（拓扑序，最底层依赖先启动）。
+///
+/// 语义（与设计文档一致）：
+/// - 依赖须处于运行态：未运行（Stopped/Unknown/Error）则先自动启动；已运行跳过；
+/// - 依赖未安装 → 报错并列出缺失项；
+/// - 依赖成环 → 报错并返回环路径；
+/// - 依赖启动失败 → 中止本次启动链，已拉起的依赖保留运行（不回滚，避免误杀共享依赖）。
+///
+/// 返回本次已拉起的依赖 id 列表。
+async fn ensure_dependencies(
+    manager: &Arc<SoftwareManager>,
+    app: &AppHandle,
+    target_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    // 1. DFS 展开依赖闭包（含 target，用于环检测；visited 防环无限递归）
+    let mut visited: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = vec![target_id.to_string()];
+    while let Some(id) = stack.pop() {
+        if visited.contains(&id) {
+            continue;
+        }
+        visited.push(id.clone());
+        if let Some(sw) = manager.find_installed(&id) {
+            for dep in &sw.depends_on {
+                stack.push(dep.clone());
+            }
+        }
+    }
+
+    // 2. 拓扑分层 + 环检测（target 也纳入，确保 target→依赖成环能检出）
+    let deps = |n: &str| -> Vec<String> {
+        manager
+            .find_installed(n)
+            .map(|sw| sw.depends_on)
+            .unwrap_or_default()
+    };
+    let tiebreak: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let plan = topo_layers(&visited, deps, &tiebreak);
+    if let Some(cycle) = plan.cycle {
+        return Err(anyhow::anyhow!("检测到依赖环：{}", cycle.join(" -> ")));
+    }
+
+    // 3. 校验依赖均已安装
+    let mut missing: Vec<String> = Vec::new();
+    for id in &visited {
+        if id.as_str() == target_id {
+            continue;
+        }
+        if manager.find_installed(id).is_none() {
+            missing.push(id.clone());
+        }
+    }
+    if !missing.is_empty() {
+        return Err(anyhow::anyhow!("依赖未安装：{}", missing.join(", ")));
+    }
+
+    // 4. 逐层拉起未运行的依赖（layers[0] 为最底层）
+    let mut started: Vec<String> = Vec::new();
+    for layer in &plan.layers {
+        for dep_id in layer {
+            if dep_id.as_str() == target_id {
+                continue;
+            }
+            let sw = manager
+                .find_installed(dep_id)
+                .ok_or_else(|| anyhow::anyhow!("依赖不存在：{}", dep_id))?;
+            if sw.status == SoftwareStatus::Running {
+                continue; // 已在运行，跳过
+            }
+            // 拉起依赖（递归，依赖的依赖也按自身 depends_on 编排）。
+            // 必须等到健康检查把状态翻成 Running 才能放行：
+            // do_start_software 在 spawn 后即返回，不等的话依赖端口尚未监听，
+            // 依赖方（如 Nacos 连 MySQL）会在依赖就绪前启动而报错。
+            let dep_name = sw.name.clone();
+            let dep_detail = format!("{} ({}, 依赖编排)", sw.version, sw.id);
+            let outcome = match do_start_software(manager, app, dep_id, None).await {
+                Ok(()) => wait_dependency_ready(manager, dep_id).await,
+                Err(e) => Err(e),
+            };
+            // 被拉起的依赖也是用户可见的启动动作，补记操作结果（否则操作记录缺失）
+            oplog_result!("start", dep_name, dep_detail, outcome);
+            outcome?;
+            started.push(dep_id.clone());
+        }
+    }
+
+    Ok(started)
+}
+
+/// 等待依赖编排拉起的软件就绪（健康检查把状态翻成 Running）。
+/// do_start_software 返回时状态为 Starting，健康检查在游离任务中异步完成；
+/// 轮询状态直到 Running / Error / 超时。健康检查本身最多 60s，这里给 90s 余量。
+async fn wait_dependency_ready(manager: &Arc<SoftwareManager>, dep_id: &str) -> anyhow::Result<()> {
+    for _ in 0..90 {
+        let sw = manager
+            .find_installed(dep_id)
+            .ok_or_else(|| anyhow::anyhow!("依赖记录消失：{}", dep_id))?;
+        match sw.status {
+            SoftwareStatus::Running => return Ok(()),
+            SoftwareStatus::Error => {
+                let msg = sw.last_error.unwrap_or_else(|| "未知原因".to_string());
+                return Err(anyhow::anyhow!("依赖 [{}] 启动失败：{}", sw.name, msg));
+            }
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let name = manager
+        .find_installed(dep_id)
+        .map(|s| s.name)
+        .unwrap_or_else(|| dep_id.to_string());
+    Err(anyhow::anyhow!(
+        "依赖 [{}] 未在 90s 内就绪，请检查其日志",
+        name
+    ))
+}
+
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
@@ -740,7 +1093,7 @@ pub async fn do_start_software(
 
     // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
     // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
-    for port in collect_configured_ports(&software, &**provider) {
+    for port in collect_configured_ports(&software, Some(&**provider)) {
         if !health_check::is_port_free(port) {
             return Err(anyhow::anyhow!(
                 "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",
@@ -863,9 +1216,10 @@ pub async fn do_start_software(
 
             // 用 spawn_blocking 包裹阻塞的 output() 调用
             // fri 的所有权移入闭包，闭包内 &fri 借用闭包自身拥有的数据，满足 'static
-            let init_result = tokio::task::spawn_blocking(move || lifecycle::run_first_run_init(&fri))
-                .await
-                .map_err(|e| anyhow::anyhow!("初始化任务 join 失败: {}", e));
+            let init_result =
+                tokio::task::spawn_blocking(move || lifecycle::run_first_run_init(&fri))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("初始化任务 join 失败: {}", e));
 
             // 初始化失败时恢复状态为 Error（否则会卡在 Initializing 无法卸载/重启）
             let output = match init_result {
@@ -986,13 +1340,14 @@ pub async fn do_start_software(
                         timeout_ms: 1000,
                     }
                 }
-                crate::models::software::CustomHealthSpec::Http { url, expected_status } => {
-                    crate::models::software::HealthCheckSpec::Http {
-                        url: url.clone(),
-                        expected_status: *expected_status,
-                        timeout_ms: 1000,
-                    }
-                }
+                crate::models::software::CustomHealthSpec::Http {
+                    url,
+                    expected_status,
+                } => crate::models::software::HealthCheckSpec::Http {
+                    url: url.clone(),
+                    expected_status: *expected_status,
+                    timeout_ms: 1000,
+                },
             },
             None => crate::models::software::HealthCheckSpec::ProcessOnly,
         }
@@ -1016,11 +1371,10 @@ pub async fn do_start_software(
     let post_start_for_check = post_start;
     tokio::spawn(async move {
         // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
-        let pid_alive = tokio::task::spawn_blocking(move || {
-            health_check::is_process_alive(pid_for_check)
-        })
-        .await
-        .unwrap_or(false);
+        let pid_alive =
+            tokio::task::spawn_blocking(move || health_check::is_process_alive(pid_for_check))
+                .await
+                .unwrap_or(false);
         if !pid_alive {
             let _ = manager_clone.update_runtime_fields(
                 &installed_id_clone,
@@ -1077,10 +1431,8 @@ pub async fn do_start_software(
                     let config_fields = ps.config_fields.clone();
                     let manager_ps = manager_clone.clone();
                     let installed_ps = installed_id_clone.clone();
-                    let onb = tokio::task::spawn_blocking(move || {
-                        run_post_start_http_init(&ps)
-                    })
-                    .await;
+                    let onb =
+                        tokio::task::spawn_blocking(move || run_post_start_http_init(&ps)).await;
                     match onb {
                         Ok(Ok(true)) => {
                             // 回写 config（initialized + 额外字段）
@@ -1184,17 +1536,78 @@ pub async fn stop_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("stop", &software.name);
+    let target = software.name.clone();
+    let detail = format!("{} ({})", software.version, software.id);
 
-    lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
+    audited_async!("stop", target, detail, {
+        lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
 
-    // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
-    let pid = match software.pid {
-        Some(p) => p,
-        None => {
-            manager
-                .update_runtime_fields(
+        // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
+        let pid = match software.pid {
+            Some(p) => p,
+            None => {
+                manager
+                    .update_runtime_fields(
+                        &installed_id,
+                        SoftwareStatus::Stopped,
+                        None,
+                        None,
+                        Some(Local::now().naive_local()),
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?;
+                lifecycle::unregister(&installed_id);
+                lifecycle::emit_status_changed(
+                    &app,
                     &installed_id,
+                    SoftwareStatus::Stopped,
+                    None,
+                    None,
+                );
+                return Ok(true);
+            }
+        };
+
+        // 更新状态为 Stopping
+        manager
+            .update_runtime_fields(
+                &installed_id,
+                SoftwareStatus::Stopping,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
+
+        let pid_for_status = pid;
+        // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
+        let result = tokio::time::timeout(
+            Duration::from_secs(15),
+            tokio::task::spawn_blocking(move || lifecycle::stop_one(pid)),
+        )
+        .await;
+
+        let graceful = match result {
+            Ok(Ok((true, _))) => true,
+            other => {
+                tracing::warn!(installed_id = %installed_id, pid = pid_for_status,
+                stop_result = ?other, "stop_one incomplete/unexpected");
+                false
+            }
+        };
+
+        let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+        let app_clone = app.clone();
+        let installed_id_clone = installed_id.clone();
+
+        // 停止成功：置 Stopped。停止失败（进程仍存活）：如实反馈 Error，保留 pid 供下次 stop，
+        // 避免 UI 假报"已停止"导致进程残留占用端口。
+        if graceful {
+            manager_arc
+                .update_runtime_fields(
+                    &installed_id_clone,
                     SoftwareStatus::Stopped,
                     None,
                     None,
@@ -1202,99 +1615,42 @@ pub async fn stop_software(
                     None,
                 )
                 .map_err(|e| e.to_string())?;
-            lifecycle::unregister(&installed_id);
+            lifecycle::unregister(&installed_id_clone);
             lifecycle::emit_status_changed(
-                &app,
-                &installed_id,
+                &app_clone,
+                &installed_id_clone,
                 SoftwareStatus::Stopped,
                 None,
                 None,
             );
-            return Ok(true);
-        }
-    };
-
-    // 更新状态为 Stopping
-    manager
-        .update_runtime_fields(
-            &installed_id,
-            SoftwareStatus::Stopping,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-    lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
-
-    let pid_for_status = pid;
-    // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
-    let result = tokio::time::timeout(
-        Duration::from_secs(15),
-        tokio::task::spawn_blocking(move || lifecycle::stop_one(pid)),
-    ).await;
-
-    let graceful = match result {
-        Ok(Ok((true, _))) => true,
-        other => {
-            tracing::warn!(installed_id = %installed_id, pid = pid_for_status,
-                stop_result = ?other, "stop_one incomplete/unexpected");
-            false
-        }
-    };
-
-    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-    let app_clone = app.clone();
-    let installed_id_clone = installed_id.clone();
-
-    // 停止成功：置 Stopped。停止失败（进程仍存活）：如实反馈 Error，保留 pid 供下次 stop，
-    // 避免 UI 假报"已停止"导致进程残留占用端口。
-    if graceful {
-        manager_arc
-            .update_runtime_fields(
-                &installed_id_clone,
-                SoftwareStatus::Stopped,
-                None,
-                None,
-                Some(Local::now().naive_local()),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        lifecycle::unregister(&installed_id_clone);
-        lifecycle::emit_status_changed(
-            &app_clone,
-            &installed_id_clone,
-            SoftwareStatus::Stopped,
-            None,
-            None,
-        );
-        tracing::info!(installed_id = %installed_id_clone, pid = pid_for_status, "software stopped");
-        Ok(graceful)
-    } else {
-        let msg = format!(
-            "进程 PID {} 未能停止，可能仍在运行并占用端口，请重试或手动结束该进程。",
-            pid_for_status
-        );
-        manager_arc
-            .update_runtime_fields(
+            tracing::info!(installed_id = %installed_id_clone, pid = pid_for_status, "software stopped");
+            Ok(graceful)
+        } else {
+            let msg = format!(
+                "进程 PID {} 未能停止，可能仍在运行并占用端口，请重试或手动结束该进程。",
+                pid_for_status
+            );
+            manager_arc
+                .update_runtime_fields(
+                    &installed_id_clone,
+                    SoftwareStatus::Error,
+                    Some(pid_for_status),
+                    None,
+                    None,
+                    Some(msg.clone()),
+                )
+                .map_err(|e| e.to_string())?;
+            lifecycle::emit_status_changed(
+                &app_clone,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 Some(pid_for_status),
-                None,
-                None,
                 Some(msg.clone()),
-            )
-            .map_err(|e| e.to_string())?;
-        lifecycle::emit_status_changed(
-            &app_clone,
-            &installed_id_clone,
-            SoftwareStatus::Error,
-            Some(pid_for_status),
-            Some(msg.clone()),
-        );
-        tracing::error!(installed_id = %installed_id_clone, pid = pid_for_status, "software stop failed, process may still hold ports");
-        Err(msg)
-    }
+            );
+            tracing::error!(installed_id = %installed_id_clone, pid = pid_for_status, "software stop failed, process may still hold ports");
+            Err(msg)
+        }
+    })
 }
 
 /// 重启软件
@@ -1308,53 +1664,58 @@ pub async fn restart_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("restart", &software.name);
+    let target = software.name.clone();
+    let detail = format!("{} ({})", software.version, software.id);
 
-    let should_stop = software.status == SoftwareStatus::Running
-        || software.status == SoftwareStatus::Starting;
-    if should_stop {
-        let pid = software.pid.ok_or_else(|| "无 PID".to_string())?;
-        let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
-            .await
-            .map_err(|e| format!("停止失败: {}", e))?;
-        manager
-            .update_runtime_fields(
-                &installed_id,
-                SoftwareStatus::Stopped,
-                None,
-                None,
-                None,
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        lifecycle::unregister(&installed_id);
-    }
+    audited_async!("restart", target, detail, {
+        let should_stop = software.status == SoftwareStatus::Running
+            || software.status == SoftwareStatus::Starting;
+        if should_stop {
+            let pid = software.pid.ok_or_else(|| "无 PID".to_string())?;
+            let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+                .await
+                .map_err(|e| format!("停止失败: {}", e))?;
+            manager
+                .update_runtime_fields(
+                    &installed_id,
+                    SoftwareStatus::Stopped,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+            lifecycle::unregister(&installed_id);
+        }
 
-    // 再启动
-    let app_clone = app.clone();
-    let installed_id_clone = installed_id.clone();
-    let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-    if let Err(e) = do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password).await {
-        // 启动失败（如端口占用）：置为 Error 并 emit，让管理页显示失败原因
-        let msg = format!("启动失败：{}", e);
-        let _ = manager_arc.update_runtime_fields(
-            &installed_id_clone,
-            SoftwareStatus::Error,
-            None,
-            None,
-            None,
-            Some(msg.clone()),
-        );
-        lifecycle::emit_status_changed(
-            &app_clone,
-            &installed_id_clone,
-            SoftwareStatus::Error,
-            None,
-            Some(msg.clone()),
-        );
-        return Err(msg);
-    }
-    Ok(())
+        // 再启动
+        let app_clone = app.clone();
+        let installed_id_clone = installed_id.clone();
+        let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
+        if let Err(e) =
+            do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password).await
+        {
+            // 启动失败（如端口占用）：置为 Error 并 emit，让管理页显示失败原因
+            let msg = format!("启动失败：{}", e);
+            let _ = manager_arc.update_runtime_fields(
+                &installed_id_clone,
+                SoftwareStatus::Error,
+                None,
+                None,
+                None,
+                Some(msg.clone()),
+            );
+            lifecycle::emit_status_changed(
+                &app_clone,
+                &installed_id_clone,
+                SoftwareStatus::Error,
+                None,
+                Some(msg.clone()),
+            );
+            return Err(msg);
+        }
+        Ok(())
+    })
 }
 
 /// 查询单个软件状态
@@ -1398,19 +1759,8 @@ pub async fn get_config_schema(
     if has_jdk_field {
         fill_jdk_options(&mut schema, manager.inner(), provider.min_jdk_version());
     }
-    // 非 mysql 数据库模式：隐藏 mysql_* 连接字段（避免误导配置不生效的连接信息）
-    if software.key == "nacos" {
-        let storage = software
-            .config
-            .get("storage")
-            .and_then(|v| v.as_str())
-            .unwrap_or("embedded");
-        if storage != "mysql" {
-            schema
-                .fields
-                .retain(|f| !f.key.starts_with("mysql_"));
-        }
-    }
+    // 注：nacos 的 mysql_* 连接字段是否显示，交由 schema.field_rules（visible_when storage=mysql）
+    // 在前端按表单实时值切换，避免此处按已保存 config 静态剥离导致改 storage 后字段不出现。
 
     Ok(Some(schema))
 }
@@ -1423,7 +1773,9 @@ fn parse_jdk_major(version: &str) -> Option<u32> {
     if let Some(rest) = v.strip_prefix("1.") {
         rest.split('.').next().and_then(|s| s.parse::<u32>().ok())
     } else {
-        v.split(['.', '-']).next().and_then(|s| s.parse::<u32>().ok())
+        v.split(['.', '-'])
+            .next()
+            .and_then(|s| s.parse::<u32>().ok())
     }
 }
 
@@ -1454,15 +1806,32 @@ fn fill_jdk_options(
     let ids: Vec<String> = jdks.iter().map(|s| s.id.clone()).collect();
     let labels: Vec<String> = jdks
         .iter()
-        .map(|s| format!("{} ({}) {}", s.name, s.version, if s.key == "jdk" { "[JDK]" } else { "[JRE]" }))
+        .map(|s| {
+            format!(
+                "{} ({}) {}",
+                s.name,
+                s.version,
+                if s.key == "jdk" { "[JDK]" } else { "[JRE]" }
+            )
+        })
         .collect();
     for field in &mut schema.fields {
         if field.key == "jdk" {
-            if let ConfigFieldType::Select { options, labels: lbls, .. } = &mut field.field_type {
+            if let ConfigFieldType::Select {
+                options,
+                labels: lbls,
+                ..
+            } = &mut field.field_type
+            {
                 *options = ids.clone();
                 *lbls = labels.clone();
                 // 默认选中第一个 JDK（若默认值为空）
-                if field.default_value.as_str().map(|s| s.is_empty()).unwrap_or(true) {
+                if field
+                    .default_value
+                    .as_str()
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+                {
                     field.default_value = serde_json::json!(ids[0]);
                 }
             }
@@ -1473,9 +1842,7 @@ fn fill_jdk_options(
 /// 读表单数据：优先从 installed.json 的 config 字段读（权威来源），
 /// 缺失字段用 schema default_value 兜底
 #[tauri::command]
-pub async fn read_config_form(
-    installed_id: String,
-) -> Result<FormData, String> {
+pub async fn read_config_form(installed_id: String) -> Result<FormData, String> {
     let software = load_software_for_id(&installed_id)?;
     if software.is_custom {
         return Err("自定义软件无表单 schema".to_string());
@@ -1522,75 +1889,78 @@ pub async fn write_config_form(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("config_form", &format!("{} ({})", software.name, installed_id));
-    if software.is_custom {
-        return Err("自定义软件无表单 schema".to_string());
-    }
-    let providers_list = providers::all_providers();
-    let provider = providers_list
-        .iter()
-        .find(|p| p.key() == software.key)
-        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
-    let schema = provider
-        .config_schema()
-        .ok_or_else(|| "该软件无表单 schema".to_string())?;
+    let target = format!("{} ({})", software.name, installed_id);
+    let detail = String::new();
 
-    // 归一化 innodb_buffer_pool_size：前端 Number 输入传纯数字（如 512），
-    // MySQL 要求带 M/G 单位后缀；若值不含单位则自动追加 "M"
-    if let Some(v) = data.get("innodb_buffer_pool_size") {
-        let needs_suffix = match v {
-            serde_json::Value::Number(_) => true,
-            serde_json::Value::String(s) => !s.ends_with('M') && !s.ends_with('G'),
-            _ => false,
-        };
-        if needs_suffix {
-            let num_str = match v {
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::String(s) => s.clone(),
-                _ => String::new(),
+    audited_async!("config_form", target, detail, {
+        if software.is_custom {
+            return Err("自定义软件无表单 schema".to_string());
+        }
+        let providers_list = providers::all_providers();
+        let provider = providers_list
+            .iter()
+            .find(|p| p.key() == software.key)
+            .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+        let schema = provider
+            .config_schema()
+            .ok_or_else(|| "该软件无表单 schema".to_string())?;
+
+        // 归一化 innodb_buffer_pool_size：前端 Number 输入传纯数字（如 512），
+        // MySQL 要求带 M/G 单位后缀；若值不含单位则自动追加 "M"
+        if let Some(v) = data.get("innodb_buffer_pool_size") {
+            let needs_suffix = match v {
+                serde_json::Value::Number(_) => true,
+                serde_json::Value::String(s) => !s.ends_with('M') && !s.ends_with('G'),
+                _ => false,
             };
-            if !num_str.is_empty() {
-                data.insert(
-                    "innodb_buffer_pool_size".to_string(),
-                    serde_json::Value::String(format!("{}M", num_str)),
-                );
+            if needs_suffix {
+                let num_str = match v {
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => String::new(),
+                };
+                if !num_str.is_empty() {
+                    data.insert(
+                        "innodb_buffer_pool_size".to_string(),
+                        serde_json::Value::String(format!("{}M", num_str)),
+                    );
+                }
             }
         }
-    }
 
-    let cctx = ConfigContext {
-        install_path: software.install_path.clone(),
-        version: software.version.clone(),
-        config: software.config.clone(),
-    };
-    // MinIO/RustFS 无配置文件（config_file_path 返回 None），此时仅更新 installed.json 的 config 字段
-    if let Some(file_path) = provider.config_file_path(&cctx) {
-        let full_path = std::path::Path::new(&software.install_path).join(file_path);
-        config_editor::write_form_to_config(&full_path, &schema, &data).map_err(|e| e.to_string())?;
-    }
-
-    // 同步 config 到 installed.json
-    let mut new_config = software.config.clone();
-    if let Some(obj) = new_config.as_object_mut() {
-        for (k, v) in &data {
-            // 跳过 ephemeral 字段（如 MySQL 初始化密码），绝不写入 installed.json（不落盘）
-            if schema.ephemeral_keys.iter().any(|ek| ek == k) {
-                continue;
-            }
-            obj.insert(k.clone(), v.clone());
+        let cctx = ConfigContext {
+            install_path: software.install_path.clone(),
+            version: software.version.clone(),
+            config: software.config.clone(),
+        };
+        // MinIO/RustFS 无配置文件（config_file_path 返回 None），此时仅更新 installed.json 的 config 字段
+        if let Some(file_path) = provider.config_file_path(&cctx) {
+            let full_path = std::path::Path::new(&software.install_path).join(file_path);
+            config_editor::write_form_to_config(&full_path, &schema, &data)
+                .map_err(|e| e.to_string())?;
         }
-    }
-    manager
-        .update_config(&installed_id, new_config)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+
+        // 同步 config 到 installed.json
+        let mut new_config = software.config.clone();
+        if let Some(obj) = new_config.as_object_mut() {
+            for (k, v) in &data {
+                // 跳过 ephemeral 字段（如 MySQL 初始化密码），绝不写入 installed.json（不落盘）
+                if schema.ephemeral_keys.iter().any(|ek| ek == k) {
+                    continue;
+                }
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        manager
+            .update_config(&installed_id, new_config)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    })
 }
 
 /// 读配置文件源码（整个文件内容）
 #[tauri::command]
-pub async fn read_config_source(
-    installed_id: String,
-) -> Result<String, String> {
+pub async fn read_config_source(installed_id: String) -> Result<String, String> {
     let software = load_software_for_id(&installed_id)?;
     let providers_list = providers::all_providers();
     let provider = providers_list
@@ -1619,29 +1989,31 @@ pub async fn write_config_source(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("config_source", &format!("{} ({})", software.name, installed_id));
-    let providers_list = providers::all_providers();
-    let provider = providers_list
-        .iter()
-        .find(|p| p.key() == software.key)
-        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
-    let cctx = ConfigContext {
-        install_path: software.install_path.clone(),
-        version: software.version.clone(),
-        config: software.config.clone(),
-    };
-    let file_path = provider
-        .config_file_path(&cctx)
-        .ok_or_else(|| "该软件无配置文件".to_string())?;
-    let full_path = std::path::Path::new(&software.install_path).join(file_path);
-    config_editor::write_config_source(&full_path, &content).map_err(|e| e.to_string())
+    let target = format!("{} ({})", software.name, installed_id);
+    let detail = String::new();
+
+    audited_async!("config_source", target, detail, {
+        let providers_list = providers::all_providers();
+        let provider = providers_list
+            .iter()
+            .find(|p| p.key() == software.key)
+            .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+        let cctx = ConfigContext {
+            install_path: software.install_path.clone(),
+            version: software.version.clone(),
+            config: software.config.clone(),
+        };
+        let file_path = provider
+            .config_file_path(&cctx)
+            .ok_or_else(|| "该软件无配置文件".to_string())?;
+        let full_path = std::path::Path::new(&software.install_path).join(file_path);
+        config_editor::write_config_source(&full_path, &content).map_err(|e| e.to_string())
+    })
 }
 
 /// 辅助：按 installed_id 从 installed.json 读单条记录（不依赖 State）
 /// 适用于不需要修改 installed.json 的只读命令（如 get_config_schema、read_config_form）
-fn load_software_for_id(
-    installed_id: &str,
-) -> Result<InstalledSoftware, String> {
+fn load_software_for_id(installed_id: &str) -> Result<InstalledSoftware, String> {
     let path = crate::utils::paths::config_dir().join("installed.json");
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let list: crate::models::software::InstalledSoftwareList =
@@ -1663,18 +2035,14 @@ fn load_software_for_id(
 /// - 运行中/启动中/停止中/初始化中 → 阻止
 /// - JRE 且是默认或被依赖 → 阻止
 #[tauri::command]
-pub async fn check_uninstall_safety(
-    installed_id: String,
-) -> Result<UninstallSafetyReport, String> {
+pub async fn check_uninstall_safety(installed_id: String) -> Result<UninstallSafetyReport, String> {
     let software = load_software_for_id(&installed_id)?;
     uninstall_guard::check_uninstall_safety(&software).map_err(|e| e.to_string())
 }
 
 /// 检查 JRE 是否被使用（默认 JRE / 被 SpringBoot 应用依赖）
 #[tauri::command]
-pub async fn check_jre_in_use(
-    jre_installed_id: String,
-) -> Result<JreUsageReport, String> {
+pub async fn check_jre_in_use(jre_installed_id: String) -> Result<JreUsageReport, String> {
     uninstall_guard::check_jre_in_use(&jre_installed_id).map_err(|e| e.to_string())
 }
 
@@ -1696,11 +2064,16 @@ pub async fn save_custom_start_command(
     installed_id: String,
     cmd: CustomStartCommand,
 ) -> Result<(), String> {
-    let name = manager.find_installed(&installed_id).map(|s| s.name).unwrap_or_default();
-    oplog!("save_start_command", &format!("{} ({})", name, installed_id));
-    manager
-        .set_custom_start_command(&installed_id, cmd)
-        .map_err(|e| e.to_string())
+    let name = manager
+        .find_installed(&installed_id)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    let target = format!("{} ({})", name, installed_id);
+    audited_async!("save_start_command", target, "", {
+        manager
+            .set_custom_start_command(&installed_id, cmd)
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// 列出内置自定义模板
@@ -1722,26 +2095,30 @@ pub async fn list_custom_templates() -> Result<Vec<serde_json::Value>, String> {
         .collect())
 }
 
-/// 保存启动设置（auto_start + startup_order）
+/// 保存启动设置（auto_start + startup_order + auto_restart）
 #[tauri::command]
 pub async fn save_startup_settings(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
     auto_start: bool,
     order: u32,
+    auto_restart: bool,
 ) -> Result<(), String> {
-    let name = manager.find_installed(&installed_id).map(|s| s.name).unwrap_or_default();
-    oplog!("save_startup", &format!("{} ({})", name, installed_id));
-    manager
-        .update_startup_settings(&installed_id, auto_start, order)
-        .map_err(|e| e.to_string())
+    let name = manager
+        .find_installed(&installed_id)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    let target = format!("{} ({})", name, installed_id);
+    audited_async!("save_startup", target, "", {
+        manager
+            .update_startup_settings(&installed_id, auto_start, order, auto_restart)
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// 列出配置文件的备份列表
 #[tauri::command]
-pub async fn list_config_backups(
-    installed_id: String,
-) -> Result<Vec<serde_json::Value>, String> {
+pub async fn list_config_backups(installed_id: String) -> Result<Vec<serde_json::Value>, String> {
     let software = load_software_for_id(&installed_id)?;
     let providers_list = providers::all_providers();
     let provider = providers_list
@@ -1761,7 +2138,10 @@ pub async fn list_config_backups(
     if !backup_dir.exists() {
         return Ok(Vec::new());
     }
-    let filename = full_path.file_name().and_then(|n| n.to_str()).unwrap_or("config");
+    let filename = full_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config");
     let suffix = format!("_{}", filename);
     let mut entries: Vec<_> = std::fs::read_dir(&backup_dir)
         .map_err(|e| e.to_string())?
@@ -1800,33 +2180,39 @@ pub async fn restore_config_backup(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("restore_backup", &format!("{} ({})", software.name, installed_id));
-    let providers_list = providers::all_providers();
-    let provider = providers_list
-        .iter()
-        .find(|p| p.key() == software.key)
-        .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
-    let cctx = ConfigContext {
-        install_path: software.install_path.clone(),
-        version: software.version.clone(),
-        config: software.config.clone(),
-    };
-    let file_path = provider
-        .config_file_path(&cctx)
-        .ok_or_else(|| "该软件无配置文件".to_string())?;
-    let full_path = std::path::Path::new(&software.install_path).join(file_path);
-    let backup_dir = full_path.parent().unwrap().join("backups");
-    let backup_path = backup_dir.join(&backup_name);
+    let target = format!("{} ({})", software.name, installed_id);
+    let detail = String::new();
 
-    // 当前配置先备份，再还原
-    config_editor::backup_config(&full_path).map_err(|e| e.to_string())?;
-    std::fs::copy(&backup_path, &full_path).map_err(|e| e.to_string())?;
-    Ok(())
+    audited_async!("restore_backup", target, detail, {
+        let providers_list = providers::all_providers();
+        let provider = providers_list
+            .iter()
+            .find(|p| p.key() == software.key)
+            .ok_or_else(|| format!("未找到 provider: {}", software.key))?;
+        let cctx = ConfigContext {
+            install_path: software.install_path.clone(),
+            version: software.version.clone(),
+            config: software.config.clone(),
+        };
+        let file_path = provider
+            .config_file_path(&cctx)
+            .ok_or_else(|| "该软件无配置文件".to_string())?;
+        let full_path = std::path::Path::new(&software.install_path).join(file_path);
+        let backup_dir = full_path.parent().unwrap().join("backups");
+        let backup_path = backup_dir.join(&backup_name);
+
+        // 当前配置先备份，再还原
+        config_editor::backup_config(&full_path).map_err(|e| e.to_string())?;
+        std::fs::copy(&backup_path, &full_path).map_err(|e| e.to_string())?;
+        Ok(())
+    })
 }
 
 /// 采样进程的 CPU / 内存使用
 #[tauri::command]
-pub fn sample_process_resources(pids: Vec<u32>) -> Result<Vec<crate::services::software_manager::process_monitor::ProcessSample>, String> {
+pub fn sample_process_resources(
+    pids: Vec<u32>,
+) -> Result<Vec<crate::services::software_manager::process_monitor::ProcessSample>, String> {
     Ok(crate::services::software_manager::process_monitor::sample_processes(&pids))
 }
 
@@ -1885,7 +2271,8 @@ pub async fn download_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources = log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sources =
+        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -1900,7 +2287,8 @@ pub async fn export_combined_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources = log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sources =
+        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -1951,14 +2339,13 @@ pub async fn create_snapshot(
     name: Option<String>,
     note: Option<String>,
 ) -> Result<SnapshotMeta, String> {
-    backup::create_snapshot(&manager, &app, &installed_id, mode, name, note).map_err(|e| e.to_string())
+    backup::create_snapshot(&manager, &app, &installed_id, mode, name, note)
+        .map_err(|e| e.to_string())
 }
 
 /// 列出某实例的全部快照
 #[tauri::command]
-pub async fn list_snapshots(
-    installed_id: String,
-) -> Result<Vec<SnapshotMeta>, String> {
+pub async fn list_snapshots(installed_id: String) -> Result<Vec<SnapshotMeta>, String> {
     backup::list_snapshots(&installed_id).map_err(|e| e.to_string())
 }
 
@@ -1970,15 +2357,13 @@ pub async fn restore_snapshot(
     snapshot_id: String,
     force: bool,
 ) -> Result<(), String> {
-    backup::restore_snapshot(&manager, &installed_id, &snapshot_id, force).map_err(|e| e.to_string())
+    backup::restore_snapshot(&manager, &installed_id, &snapshot_id, force)
+        .map_err(|e| e.to_string())
 }
 
 /// 删除快照（删 zip + 更新 manifest）
 #[tauri::command]
-pub async fn delete_snapshot(
-    installed_id: String,
-    snapshot_id: String,
-) -> Result<(), String> {
+pub async fn delete_snapshot(installed_id: String, snapshot_id: String) -> Result<(), String> {
     backup::delete_snapshot(&installed_id, &snapshot_id).map_err(|e| e.to_string())
 }
 
@@ -2022,13 +2407,14 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// 计算已装软件的升级目标：catalog 中高于当前版本的最高版本
-fn compute_upgrades(installed: &[InstalledSoftware], catalog: &Catalog) -> Vec<crate::models::software::UpgradeInfo> {
+fn compute_upgrades(
+    installed: &[InstalledSoftware],
+    catalog: &Catalog,
+) -> Vec<crate::models::software::UpgradeInfo> {
     use crate::models::software::UpgradeInfo;
     let mut out = Vec::new();
     for sw in installed {
-        if sw.is_custom
-            || sw.category == Some(crate::models::software::SoftwareCategory::Runtime)
-        {
+        if sw.is_custom || sw.category == Some(crate::models::software::SoftwareCategory::Runtime) {
             continue;
         }
         let Some(entry) = catalog.entries.iter().find(|e| e.key == sw.key) else {
@@ -2054,7 +2440,9 @@ fn compute_upgrades(installed: &[InstalledSoftware], catalog: &Catalog) -> Vec<c
 
 /// 升级检测：基于当前 catalog（含内置 + 远程合并缓存）纯本地对比，立即返回
 #[tauri::command]
-pub fn check_upgrades(manager: State<'_, Arc<SoftwareManager>>) -> Vec<crate::models::software::UpgradeInfo> {
+pub fn check_upgrades(
+    manager: State<'_, Arc<SoftwareManager>>,
+) -> Vec<crate::models::software::UpgradeInfo> {
     let catalog = manager.get_catalog();
     let installed = manager.get_installed();
     compute_upgrades(&installed, &catalog)
@@ -2066,13 +2454,16 @@ pub fn check_upgrades(manager: State<'_, Arc<SoftwareManager>>) -> Vec<crate::mo
 fn scan_rollback_backup(install_path: &str) -> Option<String> {
     let dir = crate::utils::paths::resolve_install_path(install_path);
     let key_dir = dir.parent()?;
-    std::fs::read_dir(key_dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
-        if !e.path().is_file() {
-            return None;
-        }
-        let name = e.file_name().to_string_lossy().into_owned();
-        name.strip_suffix(".bak.zip").map(|s| s.to_string())
-    })
+    std::fs::read_dir(key_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find_map(|e| {
+            if !e.path().is_file() {
+                return None;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".bak.zip").map(|s| s.to_string())
+        })
 }
 
 /// 一键回滚：把升级时保留的 <old_ver>.bak.zip 解压恢复为旧版本目录，
@@ -2085,95 +2476,97 @@ pub async fn rollback_software(
     let software = manager
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    oplog!("rollback", &software.name);
+    let target = software.name.clone();
+    let detail = String::new();
 
-    // 1. 解析 key、当前版本目录与同 key 的 .bak.zip 备份
-    let key = software.key.clone();
-    let key_dir = crate::utils::paths::apps_dir().join(&key);
-    let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+    audited_async!("rollback", target, detail, {
+        // 1. 解析 key、当前版本目录与同 key 的 .bak.zip 备份
+        let key = software.key.clone();
+        let key_dir = crate::utils::paths::apps_dir().join(&key);
+        let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
 
-    let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
-        .map_err(|e| format!("读取目录失败: {}", e))?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_suffix(".bak.zip")
-                .map(|v| (v.to_string(), e.path()))
-        })
-        .collect();
-    baks.sort_by(|a, b| crate::commands::software::compare_versions(&a.0, &b.0));
-    let (old_ver, bak_zip_path) = baks
-        .pop()
-        .ok_or_else(|| "无可用回滚备份".to_string())?;
+        let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
+            .map_err(|e| format!("读取目录失败: {}", e))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".bak.zip")
+                    .map(|v| (v.to_string(), e.path()))
+            })
+            .collect();
+        baks.sort_by(|a, b| crate::commands::software::compare_versions(&a.0, &b.0));
+        let (old_ver, bak_zip_path) = baks.pop().ok_or_else(|| "无可用回滚备份".to_string())?;
 
-    // 2. 运行中/启动中 → 停止并等待
-    if software.status == SoftwareStatus::Running || software.status == SoftwareStatus::Starting {
-        let pid = software
-            .pid
-            .ok_or_else(|| "进程状态为运行中但无 PID，无法停止".to_string())?;
-        let (ok, _) = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
-            .await
-            .map_err(|e| format!("停止线程异常: {}", e))?;
-        if !ok {
-            return Err(format!("停止当前版本进程失败（PID {} 仍在运行），请先手动停止", pid));
+        // 2. 运行中/启动中 → 停止并等待
+        if software.status == SoftwareStatus::Running || software.status == SoftwareStatus::Starting
+        {
+            let pid = software
+                .pid
+                .ok_or_else(|| "进程状态为运行中但无 PID，无法停止".to_string())?;
+            let (ok, _) = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+                .await
+                .map_err(|e| format!("停止线程异常: {}", e))?;
+            if !ok {
+                return Err(format!(
+                    "停止当前版本进程失败（PID {} 仍在运行），请先手动停止",
+                    pid
+                ));
+            }
+            manager
+                .update_runtime_fields(
+                    &software.id,
+                    SoftwareStatus::Stopped,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| format!("状态更新失败: {}", e))?;
+            lifecycle::unregister(&software.id);
         }
-        manager
-            .update_runtime_fields(
-                &software.id,
-                SoftwareStatus::Stopped,
-                None,
-                None,
-                None,
-                None,
-            )
-            .map_err(|e| format!("状态更新失败: {}", e))?;
-        lifecycle::unregister(&software.id);
-    }
 
-    // 3. 删当前版本目录 → 解压 .bak.zip 恢复旧版本目录
-    let restore_path = key_dir.join(&old_ver);
-    if old_install_path.exists() {
-        std::fs::remove_dir_all(&old_install_path)
-            .map_err(|e| format!("删除当前版本目录失败: {}", e))?;
-    }
-    if restore_path.exists() {
-        std::fs::remove_dir_all(&restore_path)
-            .map_err(|e| format!("清理旧版本目录失败: {}", e))?;
-    }
-    unzip_to(&bak_zip_path, &restore_path)
-        .map_err(|e| format!("解压恢复备份失败: {}", e))?;
+        // 3. 删当前版本目录 → 解压 .bak.zip 恢复旧版本目录
+        let restore_path = key_dir.join(&old_ver);
+        if old_install_path.exists() {
+            std::fs::remove_dir_all(&old_install_path)
+                .map_err(|e| format!("删除当前版本目录失败: {}", e))?;
+        }
+        if restore_path.exists() {
+            std::fs::remove_dir_all(&restore_path)
+                .map_err(|e| format!("清理旧版本目录失败: {}", e))?;
+        }
+        unzip_to(&bak_zip_path, &restore_path).map_err(|e| format!("解压恢复备份失败: {}", e))?;
 
-    // 回滚后旧备份使命结束：删除 .bak.zip，避免残留导致同一版本可无限回滚
-    let _ = std::fs::remove_file(&bak_zip_path);
+        // 回滚后旧备份使命结束：删除 .bak.zip，避免残留导致同一版本可无限回滚
+        let _ = std::fs::remove_file(&bak_zip_path);
 
-    // 4. 更新记录：version/name/install_path 回退到旧版，其余字段保持
-    let catalog = manager.get_catalog();
-    let catalog_name = catalog
-        .entries
-        .iter()
-        .find(|e| e.key == key)
-        .map(|e| e.name.clone())
-        .unwrap_or_else(|| software.name.clone());
-    let mut new_record = software.clone();
-    new_record.version = old_ver.clone();
-    new_record.name = format!("{} {}", catalog_name, old_ver);
-    new_record.install_path = format!("{}/{}", key, old_ver);
-    new_record.status = SoftwareStatus::Unknown;
-    new_record.pid = None;
-    new_record.last_error = None;
+        // 4. 更新记录：version/name/install_path 回退到旧版，其余字段保持
+        let catalog = manager.get_catalog();
+        let catalog_name = catalog
+            .entries
+            .iter()
+            .find(|e| e.key == key)
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| software.name.clone());
+        let mut new_record = software.clone();
+        new_record.version = old_ver.clone();
+        new_record.name = format!("{} {}", catalog_name, old_ver);
+        new_record.install_path = format!("{}/{}", key, old_ver);
+        new_record.status = SoftwareStatus::Unknown;
+        new_record.pid = None;
+        new_record.last_error = None;
 
-    let removed = manager
-        .remove_installed(&installed_id)
-        .map_err(|e| format!("删除旧记录失败: {}", e))?;
-    manager
-        .add_installed(new_record)
-        .map_err(|e| {
+        let removed = manager
+            .remove_installed(&installed_id)
+            .map_err(|e| format!("删除旧记录失败: {}", e))?;
+        manager.add_installed(new_record).map_err(|e| {
             let _ = manager.add_installed(removed);
             format!("写入新记录失败: {}", e)
         })?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -2181,7 +2574,10 @@ mod tests {
     use super::compare_versions;
     use std::cmp::Ordering;
 
-    use crate::models::software::{Catalog, CatalogEntry, CatalogVersion, InstalledSoftware, InstallSource, SoftwareCategory, SoftwareStatus};
+    use crate::models::software::{
+        Catalog, CatalogEntry, CatalogVersion, InstallSource, InstalledSoftware, SoftwareCategory,
+        SoftwareStatus,
+    };
 
     fn dummy_installed(key: &str, version: &str) -> InstalledSoftware {
         InstalledSoftware {
@@ -2197,14 +2593,19 @@ mod tests {
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
-            source: InstallSource::Mirror { mirror_name: "m".into(), url: "http://x".into() },
+            source: InstallSource::Mirror {
+                mirror_name: "m".into(),
+                url: "http://x".into(),
+            },
             pid: None,
             last_started_at: None,
             last_stopped_at: None,
             last_error: None,
             custom_start_command: None,
-        icon: String::new(),
+            icon: String::new(),
             category: None,
+            depends_on: vec![],
+            auto_restart: false,
         }
     }
 
@@ -2223,7 +2624,11 @@ mod tests {
                     .map(|v| CatalogVersion {
                         version: v.to_string(),
                         mirrors: vec![],
-                        archive: crate::models::software::ArchiveInfo { format: crate::models::software::ArchiveFormat::Zip, size: None, sha256: None },
+                        archive: crate::models::software::ArchiveInfo {
+                            format: crate::models::software::ArchiveFormat::Zip,
+                            size: None,
+                            sha256: None,
+                        },
                     })
                     .collect(),
                 default_version: versions[0].to_string(),
@@ -2284,10 +2689,7 @@ mod tests {
         std::fs::rename(&old, &bak).unwrap();
 
         // 混合：相对 data/、绝对 {old}/data（模拟默认 provider 返回绝对路径）
-        let data_dirs = vec![
-            PathBuf::from("data"),
-            old.join("data"),
-        ];
+        let data_dirs = vec![PathBuf::from("data"), old.join("data")];
         let config = Some(PathBuf::from("conf/nginx.conf"));
         super::copy_paths_to_new(&bak, &old, &new, &data_dirs, &config).unwrap();
 
@@ -2340,11 +2742,16 @@ mod tests {
         assert!(names.contains(&"root.txt".to_string()));
         assert!(names.contains(&"sub/dir/deep.txt".to_string()));
         assert!(names.contains(&"sub/a.txt".to_string()));
-        assert!(names.iter().all(|n| !n.starts_with('/') && !n.contains("..")));
+        assert!(names
+            .iter()
+            .all(|n| !n.starts_with('/') && !n.contains("..")));
 
         super::unzip_to(&zip_path, &dst).unwrap();
         assert_eq!(std::fs::read(dst.join("root.txt")).unwrap(), b"root");
-        assert_eq!(std::fs::read(dst.join("sub/dir/deep.txt")).unwrap(), b"deep middleware");
+        assert_eq!(
+            std::fs::read(dst.join("sub/dir/deep.txt")).unwrap(),
+            b"deep middleware"
+        );
         assert_eq!(std::fs::read(dst.join("sub/a.txt")).unwrap(), b"a");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -2368,7 +2775,10 @@ mod tests {
         make_apps_layout(&tmp, "mysql", "8.0.36", "5.7.44");
         let install_path = tmp.join("apps/mysql/8.0.36").to_string_lossy().into_owned();
         // paths::resolve_install_path 对绝对路径直接返回
-        assert_eq!(super::scan_rollback_backup(&install_path).as_deref(), Some("5.7.44"));
+        assert_eq!(
+            super::scan_rollback_backup(&install_path).as_deref(),
+            Some("5.7.44")
+        );
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 }

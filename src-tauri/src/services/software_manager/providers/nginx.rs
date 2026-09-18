@@ -137,6 +137,9 @@ impl SoftwareProvider for NginxProvider {
         // 爬 nginx.org/en/download.html，正则提取版本号
         let url = "https://nginx.org/en/download.html";
         let response = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，
+            // 宿主若设了不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?
@@ -264,8 +267,6 @@ impl SoftwareProvider for NginxProvider {
                             "16".to_string(),
                         ],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     // auto = nginx 自动取 CPU 核数（最优），故默认 auto 即按当前系统 CPU 最优
                     default_value: serde_json::json!("auto"),
@@ -284,8 +285,6 @@ impl SoftwareProvider for NginxProvider {
                             "8192".to_string(),
                         ],
                         labels: vec![],
-                        disabled_options: vec![],
-                        disabled_hint_i18n: None,
                     },
                     default_value: serde_json::json!("1024"),
                     section: None,

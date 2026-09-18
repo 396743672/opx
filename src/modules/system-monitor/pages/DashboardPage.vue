@@ -65,122 +65,11 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
         <CardHeader :title="$t('cpuUsage')" :subtitle="$t('trendHint')" hide-refresh />
-        <TrendChart metric="cpu" :points="systemStore.history" color-var="--color-chart-1" />
+        <TrendChart metric="cpu" :points="sysHistory" color-var="--color-chart-1" />
       </div>
       <div class="rounded-lg border border-border bg-card p-4 shadow-card">
         <CardHeader :title="$t('memoryUsage')" :subtitle="$t('trendHint')" hide-refresh />
-        <TrendChart metric="memory" :points="systemStore.history" color-var="--color-chart-2" />
-      </div>
-    </div>
-
-    <!-- 服务组概览 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader icon="mdi:layers-outline" :title="$t('stacks')" />
-      <div v-if="stackOverview.length === 0" class="py-3 text-sm text-muted-foreground">
-        {{ $t('noStacks') }}
-      </div>
-      <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <div
-          v-for="sg in stackOverview"
-          :key="sg.id"
-          class="rounded-md border border-border p-3 flex items-center justify-between"
-        >
-          <div>
-            <div class="text-sm font-medium">{{ sg.name }}</div>
-            <div class="text-xs text-muted-foreground tnum">
-              {{ sg.running }} / {{ sg.total }} {{ $t('stackMembers') }}
-            </div>
-          </div>
-          <Icon
-            :icon="sg.failed ? 'mdi:alert-circle' : sg.running === sg.total && sg.total > 0 ? 'mdi:check-circle' : 'mdi:circle-outline'"
-            class="shrink-0"
-            :class="sg.failed ? 'text-destructive' : sg.running === sg.total && sg.total > 0 ? 'text-success' : 'text-muted-foreground'"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- 进程资源监控 -->
-    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
-      <CardHeader icon="mdi:chart-timeline-variant" :title="$t('processMonitor')" />
-      <div v-if="processRows.length === 0" class="py-3 text-sm text-muted-foreground">
-        {{ $t('noRunningProcess') }}
-      </div>
-      <div v-else class="space-y-1">
-        <div v-for="row in processRows" :key="row.pid" class="border border-border rounded-md">
-          <!-- 表格行 -->
-          <div class="flex items-center justify-between px-3 py-2 text-sm">
-            <span class="flex items-center gap-2 min-w-0">
-              <Icon :icon="row.type === 'springboot' ? 'mdi:leaf' : 'mdi:server'" :class="row.type === 'springboot' ? 'text-green-500' : 'text-info'" />
-              <span class="truncate">{{ row.name }}</span>
-              <span class="text-xs text-muted-foreground tnum">({{ row.pid }})</span>
-            </span>
-            <span class="flex items-center gap-4 shrink-0">
-              <span class="text-xs tnum" :class="row.cpu >= 90 ? 'text-destructive' : ''">
-                CPU {{ row.cpu.toFixed(1) }}%
-              </span>
-              <span class="text-xs tnum" :class="row.memPct >= 90 ? 'text-destructive' : ''">
-                内存 {{ formatBytes(row.memBytes) }}
-              </span>
-              <button class="btn btn-sm" @click="toggleProcess(row.pid)">
-                {{ expandedPids.has(row.pid) ? $t('collapse') : $t('view') }}
-              </button>
-            </span>
-          </div>
-          <!-- 行内展开趋势图 -->
-          <div v-if="expandedPids.has(row.pid)" class="border-t border-border p-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <div class="text-xs text-muted-foreground mb-1">{{ $t('cpuUsage') }}</div>
-              <TrendChart metric="cpu" :points="processPoints(row.pid)" color-var="--color-chart-1" :height="120" />
-            </div>
-            <div>
-              <div class="text-xs text-muted-foreground mb-1">{{ $t('memoryUsage') }}（占整机 %）</div>
-              <TrendChart metric="memory" :points="processPoints(row.pid)" color-var="--color-chart-2" :height="120" :max="100" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ⚡ 服务与应用概览（示例） -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader :title="$t('installedSoftware')" hide-refresh />
-        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
-          <div v-for="s in installedSoftware" :key="s.id" class="flex items-center justify-between text-sm">
-            <span class="flex items-center gap-2">
-              <span class="w-1.5 h-1.5 rounded-full" :class="s.status === SoftwareStatus.Running ? 'bg-success' : 'bg-muted-foreground/40'"></span>
-              {{ s.name }}
-            </span>
-            <span class="text-xs text-muted-foreground">{{ s.version }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader :title="$t('runningServices')" hide-refresh />
-        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
-          <div v-for="s in runningSoftware" :key="s.id" class="flex items-center justify-between text-sm">
-            <span class="flex items-center gap-2">
-              <span class="w-1.5 h-1.5 rounded-full bg-success"></span>
-              {{ s.name }}
-            </span>
-            <span class="text-xs text-success">{{ $t('running') }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="rounded-lg border border-border bg-card p-4 shadow-card">
-        <CardHeader :title="$t('runningApps')" hide-refresh />
-        <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
-          <div v-for="app in runningApps" :key="app.id" class="flex items-center justify-between text-sm">
-            <span class="flex items-center gap-2">
-              <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
-              {{ app.name }}
-            </span>
-            <span class="text-xs text-muted-foreground tnum">:{{ app.port }}</span>
-          </div>
-        </div>
+        <TrendChart metric="memory" :points="sysHistory" color-var="--color-chart-2" />
       </div>
     </div>
 
@@ -258,25 +147,75 @@
       </div>
     </div>
 
+    <!-- 运行中服务与应用：默认收起，避免首页被软件列表占满 -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card">
+      <button
+        class="w-full flex items-center justify-between cursor-pointer text-left"
+        :aria-expanded="showRunningList"
+        @click="showRunningList = !showRunningList"
+      >
+        <span class="flex items-center gap-2 text-sm font-semibold tracking-tight">
+          <Icon icon="mdi:server-network" class="text-muted-foreground" />
+          {{ $t('runningServicesAndApps') }} ({{ runningTotal }})
+        </span>
+        <Icon
+          :icon="showRunningList ? 'mdi:chevron-up' : 'mdi:chevron-down'"
+          class="text-muted-foreground"
+        />
+      </button>
+      <div v-if="showRunningList" class="mt-4">
+        <div
+          v-if="runningTotal === 0"
+          class="py-3 text-sm text-muted-foreground"
+        >
+          {{ $t('noRunningServicesOrApps') }}
+        </div>
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <div class="text-xs text-muted-foreground mb-2">{{ $t('runningServices') }}</div>
+            <div class="space-y-1">
+              <div
+                v-for="s in runningSoftware"
+                :key="s.id"
+                class="flex items-center justify-between text-sm border border-border rounded-md px-3 py-2"
+              >
+                <span class="flex items-center gap-2 min-w-0">
+                  <span class="w-1.5 h-1.5 rounded-full bg-success shrink-0"></span>
+                  <span class="truncate">{{ s.name }}</span>
+                </span>
+                <span class="text-xs text-muted-foreground shrink-0">{{ s.version }}</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-muted-foreground mb-2">{{ $t('runningApps') }}</div>
+            <div class="space-y-1">
+              <div
+                v-for="app in runningApps"
+                :key="app.id"
+                class="flex items-center justify-between text-sm border border-border rounded-md px-3 py-2"
+              >
+                <span class="flex items-center gap-2 min-w-0">
+                  <span class="w-1.5 h-1.5 rounded-full bg-info shrink-0"></span>
+                  <span class="truncate">{{ app.name }}</span>
+                </span>
+                <span class="text-xs text-muted-foreground tnum shrink-0">:{{ app.port }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useSystemStore } from '@/stores/system'
-import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
-import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
-import { useStackStore } from '@/stores/stack'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { InstalledSoftware } from '@/models/software'
-import { SoftwareStatus } from '@/models/software'
-import type { SpringBootApp } from '@/models/springboot'
-import { AppStatus } from '@/models/springboot'
-import type { ProcessSample } from '@/models/process'
+import { useRunningSoftware } from '@/composables/useRunningSoftware'
 import type { HistoryPoint } from '@/models/system'
-import { toast } from '@/composables/useToast'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
@@ -285,102 +224,24 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
-const { t } = useI18n()
 const systemStore = useSystemStore()
-const sbStore = useSpringBootStore()
-const lifecycleStore = useLifecycleStore()
-const stackStore = useStackStore()
+const { runningSoftware, runningApps } = useRunningSoftware()
 
-const installedSoftware = ref<InstalledSoftware[]>([])
-const runningApps = ref<SpringBootApp[]>([])
-let unlistenSb: UnlistenFn | null = null
+const showRunningList = ref(false)
+const runningTotal = computed(() => runningSoftware.value.length + runningApps.value.length)
 
-const runningSoftware = computed(() =>
-  installedSoftware.value.filter(s => {
-    const st = lifecycleStore.getStatus(s.id)
-    const status = st !== SoftwareStatus.Unknown ? st : s.status
-    return status === SoftwareStatus.Running
-  })
-)
+// 趋势曲线读后端持久化序列（30s 粒度），前端不再累积历史、不做告警判定
+const sysHistory = ref<HistoryPoint[]>([])
 
-// ===== 进程资源监控 =====
-const expandedPids = ref<Set<number>>(new Set())
-/** 告警去重：pid:metric 已告警标记 */
-const alerted = ref<Set<string>>(new Set())
-/** 最近一次采样结果（pid -> sample），用于表格实时值回填 */
-const latestSamples = ref<Map<number, ProcessSample>>(new Map())
-
-interface ProcRow { name: string; type: 'software' | 'springboot'; pid: number; cpu: number; memBytes: number; memPct: number }
-
-const processRows = computed<ProcRow[]>(() => {
-  const rows: ProcRow[] = []
-  for (const s of runningSoftware.value) {
-    if (s.pid == null) continue
-    const smp = latestSamples.value.get(s.pid)
-    const memPct = systemStore.memTotal > 0 ? ((smp?.mem_bytes ?? 0) / systemStore.memTotal) * 100 : 0
-    rows.push({ name: s.name, type: 'software', pid: s.pid, cpu: smp?.cpu_usage ?? 0, memBytes: smp?.mem_bytes ?? 0, memPct })
-  }
-  for (const a of runningApps.value) {
-    if (a.pid == null) continue
-    const smp = latestSamples.value.get(a.pid)
-    const memPct = systemStore.memTotal > 0 ? ((smp?.mem_bytes ?? 0) / systemStore.memTotal) * 100 : 0
-    rows.push({ name: a.name, type: 'springboot', pid: a.pid, cpu: smp?.cpu_usage ?? 0, memBytes: smp?.mem_bytes ?? 0, memPct })
-  }
-  return rows
-})
-
-function processPoints(pid: number): HistoryPoint[] {
-  return systemStore.processSamples[pid] ?? []
-}
-
-function toggleProcess(pid: number) {
-  const next = new Set(expandedPids.value)
-  next.has(pid) ? next.delete(pid) : next.add(pid)
-  expandedPids.value = next
-}
-
-const THRESHOLD_CPU = 90
-const THRESHOLD_MEM = 90
-// 冷启动首个采样 CPU% 因 sysinfo 增量算法可能虚高，故跳过首个 tick 的告警判定
-const firstTick = ref(true)
-function checkAlerts() {
-  if (firstTick.value) {
-    firstTick.value = false
-    return
-  }
-  for (const row of processRows.value) {
-    if (row.cpu >= THRESHOLD_CPU) {
-      const key = `${row.pid}:cpu`
-      if (!alerted.value.has(key)) {
-        alerted.value.add(key)
-        toast(t('processAlertCpu', { name: row.name, value: row.cpu.toFixed(0) }), 'err')
-      }
-    } else {
-      alerted.value.delete(`${row.pid}:cpu`)
-    }
-    if (row.memPct >= THRESHOLD_MEM) {
-      const key = `${row.pid}:mem`
-      if (!alerted.value.has(key)) {
-        alerted.value.add(key)
-        toast(t('processAlertMem', { name: row.name, value: row.memPct.toFixed(0) }), 'err')
-      }
-    } else {
-      alerted.value.delete(`${row.pid}:mem`)
-    }
+async function loadMetricsHistory() {
+  try {
+    sysHistory.value = await invoke<HistoryPoint[]>('system_history')
+  } catch {
+    // 首次尚无历史文件：保持空数组即可
   }
 }
 
 const systemInfo = computed(() => systemStore.systemInfo)
-
-// 服务组概览：各服务组 running/总数 聚合、failed 标红
-const stackOverview = computed(() =>
-  stackStore.stacks.map((s) => {
-    const rt = stackStore.getRuntime(s.id)
-    const running = rt.filter((m) => m.status === 'running').length
-    const failed = rt.some((m) => m.status === 'failed')
-    return { id: s.id, name: s.name, total: s.items.length, running, failed }
-  })
-)
 
 const bootTimeStr = computed(() =>
   systemInfo.value ? formatBootTime(systemInfo.value.boot_time) : '-'
@@ -389,45 +250,24 @@ const bootTimeStr = computed(() =>
 /* 运行时长 */
 const nowTick = ref(Date.now())
 let tickTimer: number | null = null
-let procTimer: number | null = null
+let metricsTimer: number | null = null
 const uptime = computed(() => {
   const boot = systemInfo.value?.boot_time
   if (!boot) return '-'
   return formatUptime(Math.floor(nowTick.value / 1000) - boot)
 })
 
-onMounted(async () => {
-  installedSoftware.value = await invoke<InstalledSoftware[]>('list_installed_software')
-  await sbStore.fetchApps()
-  runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
+onMounted(() => {
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
   }, 1000)
-  // 进程采样 + 告警：与整机轮询同频（1s）
-  procTimer = window.setInterval(async () => {
-    const pids = processRows.value.map((r) => r.pid).filter((p) => p != null)
-    if (pids.length === 0) return
-    const samples = await systemStore.sampleProcesses(pids)
-    for (const s of samples) {
-      latestSamples.value.set(s.pid, s)
-    }
-    checkAlerts()
-  }, 1000)
-  // ponytail: 监听启动/停止事件，运行列表实时刷新
-  await lifecycleStore.initListener()
-  await stackStore.loadStacks()
-  await stackStore.subscribe()
-  unlistenSb = await listen('springboot-status-changed', async () => {
-    await sbStore.fetchApps()
-    runningApps.value = sbStore.apps.filter(a => a.status === AppStatus.Running)
-  })
+  // 趋势曲线：读后端持久化序列，与后端采样间隔一致（30s）
+  loadMetricsHistory()
+  metricsTimer = window.setInterval(loadMetricsHistory, 30_000)
 })
 
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
-  if (procTimer) clearInterval(procTimer)
-  lifecycleStore.destroyListener()
-  stackStore.unsubscribe()
-  unlistenSb?.()
+  if (metricsTimer) clearInterval(metricsTimer)
 })
 </script>

@@ -25,12 +25,11 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::commands::software as sw_commands;
-use crate::models::software::{SoftwareStatus};
+use crate::models::software::SoftwareStatus;
 use crate::models::springboot::AppStatus;
 use crate::models::stack::{
-    CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberReport,
-    StackMemberRuntime, StackMemberStatus, StackRunReport, StackStartPlan,
-    StackStatusEvent, UpdateStackPayload,
+    CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberReport, StackMemberRuntime,
+    StackMemberStatus, StackRunReport, StackStartPlan, StackStatusEvent, UpdateStackPayload,
 };
 use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
@@ -71,10 +70,7 @@ impl StackManagerInner {
 
 impl StackManager {
     /// 生产构造：使用 `data_dir/stacks.json` 作为持久化文件
-    pub fn new(
-        software_mgr: Arc<SoftwareManager>,
-        springboot_mgr: Arc<SpringBootManager>,
-    ) -> Self {
+    pub fn new(software_mgr: Arc<SoftwareManager>, springboot_mgr: Arc<SpringBootManager>) -> Self {
         let data_path = Self::default_data_path();
         let stacks = Self::read_stacks(&data_path);
         Self {
@@ -160,9 +156,7 @@ impl StackManager {
         {
             let mut inner = self.inner.lock().unwrap();
             inner.stacks.push(stack.clone());
-            inner
-                .save()
-                .map_err(|e| e.to_string())?;
+            inner.save().map_err(|e| e.to_string())?;
         }
         Ok(stack)
     }
@@ -249,9 +243,7 @@ impl StackManager {
 
     /// 对已保存的栈计算启动计划（无环 -> Ok，有环 -> Err(环路径)）
     pub fn build_plan(&self, id: &str) -> Result<StackStartPlan, String> {
-        let stack = self
-            .get(id)
-            .ok_or_else(|| format!("未找到栈: {}", id))?;
+        let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
         Self::compute_plan(&stack)
     }
 
@@ -377,9 +369,7 @@ impl StackManager {
 
     /// 一键启动：逐批（layers 顺序）启动，批内并发；依赖就绪探测 + 重试 + 回滚。
     pub async fn start(&self, app: &AppHandle, id: &str) -> Result<StackStartPlan, String> {
-        let stack = self
-            .get(id)
-            .ok_or_else(|| format!("未找到栈: {}", id))?;
+        let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
 
         // 运行前再次拓扑排序（双重保险）
         let plan = Self::compute_plan(&stack)?;
@@ -446,10 +436,8 @@ impl StackManager {
                 .iter()
                 .map(|d| (d.clone(), self.ref_running(d)))
                 .collect();
-            let results = future::join_all(
-                external_deps.iter().map(|d| self.start_external(app, d)),
-            )
-            .await;
+            let results =
+                future::join_all(external_deps.iter().map(|d| self.start_external(app, d))).await;
             let mut ext_err: Option<String> = None;
             for (dep, res) in external_deps.iter().zip(results.into_iter()) {
                 match res {
@@ -490,10 +478,7 @@ impl StackManager {
                     &member_status,
                     &t0,
                 );
-                return Err(format!(
-                    "外部依赖启动失败，已回滚本次拉起的依赖: {}",
-                    err
-                ));
+                return Err(format!("外部依赖启动失败，已回滚本次拉起的依赖: {}", err));
             }
         }
 
@@ -625,10 +610,7 @@ impl StackManager {
                     continue;
                 }
                 if !self.is_member_running(di) {
-                    return Err(format!(
-                        "依赖成员 {} 未就绪（需先成功启动）",
-                        dep_ref
-                    ));
+                    return Err(format!("依赖成员 {} 未就绪（需先成功启动）", dep_ref));
                 }
             } else if !self.ref_running(dep_ref) {
                 return Err(format!("外部依赖 {} 未就绪", dep_ref));
@@ -656,7 +638,8 @@ impl StackManager {
         Err(last_err.unwrap_or_else(|| "启动失败（未知原因）".to_string()))
     }
 
-    /// 实际执行一次启动（不含重试），返回是否成功
+    /// 实际执行一次启动（不含重试），返回是否成功。
+    /// 服务组拉起的成员也是用户可见的启动动作，补记操作结果（否则操作记录缺失）。
     async fn start_once(&self, app: &AppHandle, item: &StackItem) -> Result<(), String> {
         match item.ref_type {
             StackItemRefType::Software => {
@@ -665,31 +648,40 @@ impl StackManager {
                         // 已在运行，视为就绪
                         Ok(())
                     }
-                    Some(_) => {
-                        sw_commands::do_start_software(
-                            &self.software_mgr,
-                            app,
-                            &item.ref_id,
-                            None,
-                        )
-                        .await
-                        .map_err(|e| format!("启动软件 {} 失败: {}", item.ref_id, e))?;
-                        self.wait_ready(item).await
+                    Some(sw) => {
+                        let detail = format!("{} ({}, 服务组)", sw.version, sw.id);
+                        let r = async {
+                            sw_commands::do_start_software(
+                                &self.software_mgr,
+                                app,
+                                &item.ref_id,
+                                None,
+                            )
+                            .await
+                            .map_err(|e| format!("启动软件 {} 失败: {}", item.ref_id, e))?;
+                            self.wait_ready(item).await
+                        }
+                        .await;
+                        crate::oplog_result!("start", sw.name, detail, r);
+                        r
                     }
                     None => Err(format!("未找到已装软件: {}", item.ref_id)),
                 }
             }
             StackItemRefType::Springboot => match self.springboot_mgr.find_app(&item.ref_id) {
                 Ok(app_model) if app_model.status == AppStatus::Running => Ok(()),
-                Ok(_) => {
-                    sb_lifecycle::start_app(
+                Ok(m) => {
+                    let target = format!("{} ({})", m.name, m.id);
+                    let r = sb_lifecycle::start_app(
                         &item.ref_id,
                         &self.springboot_mgr,
                         &self.software_mgr,
                         app,
                     )
                     .await
-                    .map_err(|e| format!("启动 Spring Boot {} 失败: {}", item.ref_id, e))
+                    .map_err(|e| format!("启动 Spring Boot {} 失败: {}", item.ref_id, e));
+                    crate::oplog_result!("springboot_start", target, "服务组", r);
+                    r
                 }
                 Err(e) => Err(format!("未找到 Spring Boot 应用: {}", e)),
             },
@@ -723,7 +715,9 @@ impl StackManager {
                     None => return false,
                 };
                 let pid_alive = match sw.pid {
-                    Some(pid) => crate::services::software_manager::health_check::is_process_alive(pid),
+                    Some(pid) => {
+                        crate::services::software_manager::health_check::is_process_alive(pid)
+                    }
                     None => return false,
                 };
                 if !pid_alive {
@@ -743,7 +737,9 @@ impl StackManager {
                     Err(_) => return false,
                 };
                 let pid_alive = match app_model.pid {
-                    Some(pid) => crate::services::software_manager::health_check::is_process_alive(pid),
+                    Some(pid) => {
+                        crate::services::software_manager::health_check::is_process_alive(pid)
+                    }
                     None => return false,
                 };
                 if !pid_alive {
@@ -861,19 +857,12 @@ impl StackManager {
 
     /// 一键停止：逆序优雅停止（按拓扑分层逆序，后启动的先停）
     pub async fn stop(&self, app: &AppHandle, id: &str) -> Result<(), String> {
-        let stack = self
-            .get(id)
-            .ok_or_else(|| format!("未找到栈: {}", id))?;
+        let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
 
         // 逆序：有拓扑计划则按分层逆序，否则按成员逆序
         let order: Vec<String> = match Self::compute_plan(&stack) {
             Ok(plan) => plan.layers.iter().rev().flatten().cloned().collect(),
-            Err(_) => stack
-                .items
-                .iter()
-                .rev()
-                .map(|i| i.ref_id.clone())
-                .collect(),
+            Err(_) => stack.items.iter().rev().map(|i| i.ref_id.clone()).collect(),
         };
 
         for ref_id in &order {
@@ -888,10 +877,7 @@ impl StackManager {
 
         // 停止本次由栈拉起的组外依赖（启动前已在运行的不停，避免误杀用户独立使用的服务）。
         // 从持久化的栈记录读取，应用重启后仍能正确停止上次拉起的依赖。
-        let managed = stack
-            .managed_externals
-            .clone()
-            .unwrap_or_default();
+        let managed = stack.managed_externals.clone().unwrap_or_default();
         if !managed.is_empty() {
             for dep in managed.iter().rev() {
                 self.stop_external(app, dep).await;
@@ -933,7 +919,10 @@ impl StackManager {
                     None => return,
                 };
                 // 已停止：直接确保状态
-                if !matches!(sw.status, SoftwareStatus::Running | SoftwareStatus::Starting) {
+                if !matches!(
+                    sw.status,
+                    SoftwareStatus::Running | SoftwareStatus::Starting
+                ) {
                     self.software_mgr
                         .update_runtime_fields(
                             &item.ref_id,
@@ -1016,16 +1005,13 @@ impl StackManager {
 
     /// 导出栈为 JSON 文件（含 items / depends_on），供团队分享
     pub fn export_stack(&self, id: &str, path: &str) -> Result<(), String> {
-        let stack = self
-            .get(id)
-            .ok_or_else(|| format!("未找到栈: {}", id))?;
-        let content = serde_json::to_string_pretty(&stack)
-            .map_err(|e| format!("序列化栈失败: {}", e))?;
+        let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
+        let content =
+            serde_json::to_string_pretty(&stack).map_err(|e| format!("序列化栈失败: {}", e))?;
         if let Some(parent) = PathBuf::from(path).parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        std::fs::write(path, content)
-            .map_err(|e| format!("写入导出文件 {} 失败: {}", path, e))?;
+        std::fs::write(path, content).map_err(|e| format!("写入导出文件 {} 失败: {}", path, e))?;
         Ok(())
     }
 
@@ -1033,8 +1019,8 @@ impl StackManager {
     pub fn import_stack(&self, path: &str) -> Result<Stack, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("读取导入文件 {} 失败: {}", path, e))?;
-        let mut stack: Stack = serde_json::from_str(&content)
-            .map_err(|e| format!("解析栈 JSON 失败: {}", e))?;
+        let mut stack: Stack =
+            serde_json::from_str(&content).map_err(|e| format!("解析栈 JSON 失败: {}", e))?;
         stack.id = Uuid::new_v4().to_string();
         stack.created_at = now_utc();
         stack.updated_at = String::new();
@@ -1216,7 +1202,7 @@ mod tests {
                 name: "demo".to_string(),
                 description: "roundtrip".to_string(),
                 items: vec![item("A", 0, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .expect("create 应成功");
         assert_eq!(mgr.list().len(), 1);
@@ -1265,15 +1251,27 @@ mod tests {
     #[test]
     fn test_build_run_report_aggregates_elapsed() {
         let members = vec![
-            ("mysql".to_string(), StackMemberStatus::Running, 1200u64, String::new()),
-            ("redis".to_string(), StackMemberStatus::Running, 800u64, String::new()),
-            ("app".to_string(), StackMemberStatus::Failed, 3000u64, "port busy".to_string()),
+            (
+                "mysql".to_string(),
+                StackMemberStatus::Running,
+                1200u64,
+                String::new(),
+            ),
+            (
+                "redis".to_string(),
+                StackMemberStatus::Running,
+                800u64,
+                String::new(),
+            ),
+            (
+                "app".to_string(),
+                StackMemberStatus::Failed,
+                3000u64,
+                "port busy".to_string(),
+            ),
         ];
-        let report = StackManager::build_run_report(
-            "2026-08-26T00:00:00Z".to_string(),
-            5000u64,
-            members,
-        );
+        let report =
+            StackManager::build_run_report("2026-08-26T00:00:00Z".to_string(), 5000u64, members);
         assert_eq!(report.total_elapsed_ms, 5000);
         assert_eq!(report.members.len(), 3);
         assert_eq!(report.members[2].status, StackMemberStatus::Failed);
@@ -1382,7 +1380,7 @@ mod tests {
                 name: "p".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let plan = mgr.build_plan(&created.id).expect("已保存栈应有计划");
@@ -1408,7 +1406,7 @@ mod tests {
                 name: name.to_string(),
                 description: String::new(),
                 items: vec![],
-            auto_start: false,
+                auto_start: false,
             });
             assert!(res.is_err(), "空白名称 '{}' 应被拒绝", name);
         }
@@ -1429,7 +1427,7 @@ mod tests {
                 name: "  spaced  ".to_string(),
                 description: "desc".to_string(),
                 items: vec![item("A", 0, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .expect("合法栈应创建成功");
         assert!(!created.id.is_empty(), "创建后应生成 id");
@@ -1453,7 +1451,7 @@ mod tests {
                 name: "empty".to_string(),
                 description: String::new(),
                 items: vec![],
-            auto_start: false,
+                auto_start: false,
             })
             .expect("无成员的空栈应允许创建");
         assert!(created.items.is_empty());
@@ -1476,7 +1474,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let updated = mgr
@@ -1509,7 +1507,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let res = mgr.update(
@@ -1518,7 +1516,7 @@ mod tests {
                 name: Some("  ".to_string()),
                 description: None,
                 items: None,
-                    auto_start: None,
+                auto_start: None,
             },
         );
         assert!(res.is_err(), "更新为空名称应被拒绝");
@@ -1539,7 +1537,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[]), item("B", 1, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let updated = mgr
@@ -1572,7 +1570,7 @@ mod tests {
                 name: Some("x".to_string()),
                 description: None,
                 items: None,
-                    auto_start: None,
+                auto_start: None,
             },
         );
         assert!(res.is_err(), "更新不存在的栈应返回错误");
@@ -1597,7 +1595,7 @@ mod tests {
                 name: "orig".to_string(),
                 description: String::new(),
                 items: vec![item("A", 0, &[])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         // 尝试更新为环（A<->B）
@@ -1607,7 +1605,7 @@ mod tests {
                 name: None,
                 description: None,
                 items: Some(vec![item("A", 0, &["B"]), item("B", 0, &["A"])]),
-                    auto_start: None,
+                auto_start: None,
             },
         );
         assert!(res.is_err(), "更新为环应被拒绝");
@@ -1638,7 +1636,7 @@ mod tests {
                 name: "d".to_string(),
                 description: String::new(),
                 items: vec![],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let ok = mgr.delete(&created.id).expect("delete 不应返回错误");
@@ -1677,7 +1675,7 @@ mod tests {
                 name: "roundtrip".to_string(),
                 description: "d".to_string(),
                 items: vec![item("A", 0, &[]), item("B", 1, &["A"])],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
 
@@ -1775,7 +1773,7 @@ mod tests {
                 name: "a".to_string(),
                 description: String::new(),
                 items: vec![],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         let b = mgr
@@ -1783,7 +1781,7 @@ mod tests {
                 name: "b".to_string(),
                 description: String::new(),
                 items: vec![],
-            auto_start: false,
+                auto_start: false,
             })
             .unwrap();
         assert_eq!(mgr.list().len(), 2);

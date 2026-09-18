@@ -40,11 +40,14 @@ import { useSystemStore } from '@/stores/system'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
+import { toast } from '@/composables/useToast'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
 const lifecycleStore = useLifecycleStore()
+const { t } = useI18n()
 
 const showCloseDialog = ref(false)
 const showStopProgress = ref(false)
@@ -60,6 +63,9 @@ const defaultChoice = computed<'tray' | 'exit'>(() =>
 let unlistenClose: UnlistenFn | null = null
 let unlistenStopComplete: UnlistenFn | null = null
 let unlistenTrayStop: UnlistenFn | null = null
+let unlistenAutoRestartGiveUp: UnlistenFn | null = null
+let unlistenProcessExited: UnlistenFn | null = null
+let unlistenResourceAlert: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -106,6 +112,8 @@ async function onChoose(choice: 'tray' | 'exit', remember: boolean) {
 }
 
 onMounted(async () => {
+  // 软件状态事件全局监听：不依赖具体页面挂载，避免切页期间事件丢失（状态刷新与错误弹窗）
+  await lifecycleStore.initListener()
   // 禁用右键菜单和 F12 等开发者工具快捷键
   document.addEventListener('contextmenu', (e) => e.preventDefault())
   document.addEventListener('keydown', (e) => {
@@ -158,6 +166,34 @@ onMounted(async () => {
     }
   })
 
+  unlistenAutoRestartGiveUp = await listen<{ name: string }>('auto-restart-giveup', (e) => {
+    toast(t('autoRestartGiveUp', { name: e.payload?.name ?? '' }), 'err')
+  })
+
+  // SpringBoot / Node 进程被外部结束（未开自动重启）：toast 提示（软件实例走全局错误弹窗）
+  unlistenProcessExited = await listen<{ name: string }>('process-exited', (e) => {
+    toast(t('processStopped', { name: e.payload?.name ?? '' }), 'err')
+  })
+
+  // 资源采样超阈值：toast 提示
+  unlistenResourceAlert = await listen<{ kind: string; name: string; metric: string; value: number; threshold: number }>(
+    'resource-alert',
+    (e) => {
+      const p = e.payload
+      if (!p) return
+      toast(
+        t('resourceAlert', {
+          // 系统级告警后端不带名称（审计文案另算），按 kind 本地化
+          name: p.kind === 'system' ? t('systemOverall') : p.name,
+          metric: p.metric === 'cpu' ? 'CPU' : t('memory'),
+          value: p.value,
+          threshold: p.threshold,
+        }),
+        'err',
+      )
+    },
+  )
+
   window.clearTimeout(bootTimeout)
 })
 
@@ -165,6 +201,9 @@ onUnmounted(() => {
   unlistenClose?.()
   unlistenStopComplete?.()
   unlistenTrayStop?.()
+  unlistenAutoRestartGiveUp?.()
+  unlistenProcessExited?.()
+  unlistenResourceAlert?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

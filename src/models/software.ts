@@ -96,6 +96,9 @@ export interface InstalledSoftware {
   icon: string
   // 来自 catalog 的软件分类；自定义软件为 null
   category: SoftwareCategory | null
+  depends_on: string[]
+  /** 进程意外退出后自动重启 */
+  auto_restart: boolean
 }
 
 export interface InstalledSoftwareList {
@@ -183,10 +186,11 @@ export interface ConfigField {
 /// serde tag="type"（无 content，因 unit variant 无负载）
 export type ConfigFieldType =
   | { type: 'Text' }
+  | { type: 'Textarea' }
   | { type: 'Number' }
   | { type: 'Port' }
   | { type: 'Password' }
-  | { type: 'Select'; options: string[]; labels?: string[]; disabled_options?: string[]; disabled_hint_i18n?: string }
+  | { type: 'Select'; options: string[]; labels?: string[] }
   | { type: 'Size'; units: string[] }
   | { type: 'Boolean' }
 
@@ -223,6 +227,23 @@ export interface SoftwareStatusEvent {
   pid: number | null
   error: string | null
   timestamp: string
+}
+
+/// 单个配置端口的诊断状态（对应后端 PortStatus）
+export type PortState = 'listening' | 'conflict' | 'not-listening' | 'unknown'
+
+export interface PortStatus {
+  port: number
+  state: PortState
+  owner_pid: number | null
+  owner_name: string | null
+}
+
+/// 端口图谱报告（对应后端 PortReport）
+export interface PortReport {
+  configured: PortStatus[]
+  /// 本软件进程实际监听的所有端口（含配置外的）
+  listening: number[]
 }
 
 /// 内置自定义模板

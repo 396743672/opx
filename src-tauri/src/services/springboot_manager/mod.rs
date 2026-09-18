@@ -59,6 +59,11 @@ impl SpringBootManager {
         apps
     }
 
+    /// 只读快照：不做死进程纠正、不落盘（供看门狗判定意外退出）
+    pub fn snapshot_apps(&self) -> Vec<SpringBootApp> {
+        self.store.read().unwrap().applications.clone()
+    }
+
     pub fn find_app(&self, id: &str) -> Result<SpringBootApp> {
         let mut app = self.store.read().unwrap().applications.iter()
             .find(|a| a.id == id)

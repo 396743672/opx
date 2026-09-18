@@ -241,8 +241,8 @@ rm -rf dist
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
 | `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
-| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.4.0_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.4.0_x64_zh-CN.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.0_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.0_x64_zh-CN.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -253,8 +253,8 @@ rm -rf dist
 
 ### 产物位置总览
 打包产物在 `src-tauri/target/release/bundle/` 下：
-- `msi/opx_0.4.0_x64_zh-CN.msi` — MSI 安装包（推荐企业分发，组策略部署友好）
-- `nsis/opx_0.4.0_x64-setup.exe` — NSIS 安装程序（推荐普通用户分发）
+- `msi/opx_0.5.0_x64_zh-CN.msi` — MSI 安装包（推荐企业分发，组策略部署友好）
+- `nsis/opx_0.5.0_x64-setup.exe` — NSIS 安装程序（推荐普通用户分发）
 - `src-tauri/target/release/opx.exe` — 免安装可执行文件（需目标机有 WebView2，Win11 自带）
 
 > **注意**：MSI 与 NSIS 安装包内已内嵌 WebView2 Bootstrapper，安装时会自动引导安装 WebView2 Runtime。免安装 exe 不含，需目标机预装 WebView2。
@@ -268,7 +268,7 @@ rm -rf dist
 6. 发版前确认 `git status` 干净、已提交推送
 
 ### 版本号管理
-打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.4.0`）。发新版本时同步更新 `tauri.conf.json` 和 `package.json` 的 `version`，保持一致。
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.0`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致。
 
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装
