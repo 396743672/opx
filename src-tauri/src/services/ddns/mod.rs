@@ -17,6 +17,19 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait DdnsProvider: Send + Sync {
     fn id(&self) -> &str;
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, anyhow::Result<String>>;
+    fn get_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>>;
+    fn set_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+        value: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
+
     /// 把 fqdn 的 rtype("A"/"AAAA") 记录同步为 ip。返回动作文案：
     /// "A 记录新建 1.2.3.4" / "A 记录更新 old → new" / "未变"
     fn sync_record<'a>(
@@ -24,44 +37,113 @@ pub trait DdnsProvider: Send + Sync {
         fqdn: &'a str,
         rtype: &'a str,
         ip: &'a str,
-    ) -> BoxFuture<'a, anyhow::Result<String>>;
+    ) -> BoxFuture<'a, anyhow::Result<String>> {
+        Box::pin(async move {
+            match self.get_value(fqdn, rtype).await? {
+                Some(old) if old == ip => Ok("未变".to_string()),
+                Some(old) => {
+                    self.set_value(fqdn, rtype, ip).await?;
+                    Ok(format!("{} 记录更新 {} → {}", rtype, old, ip))
+                }
+                None => {
+                    self.set_value(fqdn, rtype, ip).await?;
+                    Ok(format!("{} 记录新建 {}", rtype, ip))
+                }
+            }
+        })
+    }
 }
 
-/// 按 settings.ddns_provider + 凭证取实现；凭证缺失返回 None
-/// （调用方给出「请先配置凭证」错误）。
-pub fn provider_for(s: &crate::models::settings::AppSettings) -> Option<Box<dyn DdnsProvider>> {
-    match s.ddns_provider.as_str() {
-        "cloudflare" if !s.ddns_cloudflare_token.trim().is_empty() => Some(Box::new(
-            cloudflare::Cloudflare::new(s.ddns_cloudflare_token.clone()),
+/// 唯一的 blanket impl：任何 DnsProvider 自动是 DdnsProvider。
+/// （不要额外为具体类型写 `impl DdnsProvider for X`，会与这条冲突。）
+///
+/// 方法体**必须逐个显式转发**：空实现 `impl<T: DnsProvider> DdnsProvider for T {}`
+/// 不会自动继承同名方法（编译器只看到「未实现」的 E0046），必须给出到达
+/// `DnsProvider` 同名方法的完整路径。
+impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {
+    fn id(&self) -> &str {
+        crate::services::acme::dns::DnsProvider::id(self)
+    }
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, anyhow::Result<String>> {
+        crate::services::acme::dns::DnsProvider::find_zone(self, domain)
+    }
+    fn get_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>> {
+        crate::services::acme::dns::DnsProvider::get_value(self, fqdn, rtype)
+    }
+    fn set_value<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: &'a str,
+        value: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        crate::services::acme::dns::DnsProvider::set_value(self, fqdn, rtype, value)
+    }
+}
+
+/// 按账号取实现；凭证缺失返回 None（调用方给出「请先配置凭证」错误）。
+pub fn provider_for_account(
+    a: &crate::models::dns_account::DnsAccount,
+) -> Option<Box<dyn DdnsProvider>> {
+    match a.provider.as_str() {
+        "cloudflare" if !a.token.trim().is_empty() => Some(Box::new(
+            cloudflare::Cloudflare::new(a.token.clone()),
         )),
         "aliyun"
-            if !s.ddns_aliyun_access_key_id.trim().is_empty()
-                && !s.ddns_aliyun_access_key_secret.trim().is_empty() =>
+            if !a.access_key_id.trim().is_empty() && !a.access_key_secret.trim().is_empty() =>
         {
             Some(Box::new(aliyun::Aliyun::new(
-                s.ddns_aliyun_access_key_id.clone(),
-                s.ddns_aliyun_access_key_secret.clone(),
+                a.access_key_id.clone(),
+                a.access_key_secret.clone(),
             )))
         }
         "dnspod"
-            if !s.ddns_dnspod_secret_id.trim().is_empty()
-                && !s.ddns_dnspod_secret_key.trim().is_empty() =>
+            if !a.access_key_id.trim().is_empty() && !a.access_key_secret.trim().is_empty() =>
         {
             Some(Box::new(dnspod::Dnspod::new(
-                s.ddns_dnspod_secret_id.clone(),
-                s.ddns_dnspod_secret_key.clone(),
+                a.access_key_id.clone(),
+                a.access_key_secret.clone(),
             )))
         }
         "huawei"
-            if !s.ddns_huawei_access_key.trim().is_empty()
-                && !s.ddns_huawei_secret_key.trim().is_empty() =>
+            if !a.access_key_id.trim().is_empty() && !a.access_key_secret.trim().is_empty() =>
         {
             Some(Box::new(huawei::Huawei::new(
-                s.ddns_huawei_access_key.clone(),
-                s.ddns_huawei_secret_key.clone(),
+                a.access_key_id.clone(),
+                a.access_key_secret.clone(),
             )))
         }
         _ => None,
+    }
+}
+
+/// 把设置页的 `ddns_*` 字段折成 `DnsAccount`，供 `sync_once` 用。
+///
+/// **这是刻意的适配层**：DDNS 的凭证字段与证书账号解耦（用户明确要求「证书可以
+/// 是其他家的」），DDNS 不引入账号概念，只是复用同一个 provider 工厂。
+pub fn ddns_account_of(s: &crate::models::settings::AppSettings) -> crate::models::dns_account::DnsAccount {
+    crate::models::dns_account::DnsAccount {
+        id: String::new(),
+        name: "ddns".into(),
+        provider: s.ddns_provider.clone(),
+        token: s.ddns_cloudflare_token.clone(),
+        access_key_id: match s.ddns_provider.as_str() {
+            "aliyun" => s.ddns_aliyun_access_key_id.clone(),
+            "dnspod" => s.ddns_dnspod_secret_id.clone(),
+            "huawei" => s.ddns_huawei_access_key.clone(),
+            _ => String::new(),
+        },
+        access_key_secret: match s.ddns_provider.as_str() {
+            "aliyun" => s.ddns_aliyun_access_key_secret.clone(),
+            "dnspod" => s.ddns_dnspod_secret_key.clone(),
+            "huawei" => s.ddns_huawei_secret_key.clone(),
+            _ => String::new(),
+        },
+        zones: Vec::new(),
+        tested_at: None,
     }
 }
 
@@ -104,7 +186,10 @@ fn is_change(action: &str) -> bool {
 /// 单个域名失败只记审计并继续下一个，不中断整轮。
 /// 全程持 `SYNC_GUARD`（锁覆盖 API 调用，这正是加锁的目的）；已有同步在跑时
 /// 立即返回错误，不排队 —— 设置页点击需要即时可见的反馈，而非静默等待。
-pub async fn sync_once(s: &crate::models::settings::AppSettings) -> anyhow::Result<SyncResult> {
+pub async fn sync_once(
+    s: &crate::models::settings::AppSettings,
+    account: &crate::models::dns_account::DnsAccount,
+) -> anyhow::Result<SyncResult> {
     let _guard = SYNC_GUARD
         .try_lock()
         .map_err(|_| anyhow::anyhow!("已有同步进行中，请稍后再试"))?;
@@ -115,8 +200,9 @@ pub async fn sync_once(s: &crate::models::settings::AppSettings) -> anyhow::Resu
     if domains.is_empty() {
         anyhow::bail!("未配置域名");
     }
-    let provider = provider_for(s)
-        .ok_or_else(|| anyhow::anyhow!("DDNS 服务商凭证未配置（{}）", s.ddns_provider))?;
+    // 凭证由调用方折成 DnsAccount 传入（DDNS 的 ddns_* 字段与证书账号刻意解耦）。
+    let provider = provider_for_account(account)
+        .ok_or_else(|| anyhow::anyhow!("DDNS 服务商凭证未配置（{}）", account.provider))?;
     let v4 = ip::detect_public_ip(false).await?;
     let v6 = if s.ddns_enable_ipv6 {
         match ip::detect_public_ip(true).await {
@@ -197,8 +283,11 @@ mod tests {
     #[tokio::test]
     async fn sync_once_rejects_second_concurrent_entry() {
         let s = crate::models::settings::AppSettings::default();
+        let account = ddns_account_of(&s);
         let held = SYNC_GUARD.try_lock().expect("首轮应能拿到锁");
-        let err = sync_once(&s).await.expect_err("已有同步时第二路必须报错");
+        let err = sync_once(&s, &account)
+            .await
+            .expect_err("已有同步时第二路必须报错");
         assert!(
             err.to_string().contains("已有同步进行中"),
             "错误文案应指向并发冲突，实际: {}",
@@ -206,5 +295,83 @@ mod tests {
         );
         drop(held); // 释放后恢复可用
         assert!(SYNC_GUARD.try_lock().is_ok());
+    }
+
+    /// sync_record 的默认实现必须走「读-比较-写」三分支：
+    /// 无记录 → 新建文案；值不同 → 更新文案；值相同 → "未变"。
+    /// 用一个只记账的假 provider 验证，不碰网络。
+    struct Fake {
+        cur: Option<String>,
+        /// `Mutex` 而非 `RefCell`：`DnsProvider: Sync`，`RefCell` 过不了 Send/Sync 约束。
+        writes: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl crate::services::acme::dns::DnsProvider for Fake {
+        fn id(&self) -> &str {
+            "fake"
+        }
+        fn list_zones<'a>(
+            &'a self,
+        ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<Vec<String>>> {
+            Box::pin(async { Ok(vec!["example.com".to_string()]) })
+        }
+        fn find_zone<'a>(
+            &'a self,
+            _domain: &'a str,
+        ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<String>> {
+            Box::pin(async { Ok("example.com".to_string()) })
+        }
+        fn get_value<'a>(
+            &'a self,
+            _fqdn: &'a str,
+            _rtype: &'a str,
+        ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<Option<String>>> {
+            Box::pin(async move { Ok(self.cur.clone()) })
+        }
+        fn set_value<'a>(
+            &'a self,
+            _fqdn: &'a str,
+            _rtype: &'a str,
+            value: &'a str,
+        ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<()>> {
+            Box::pin(async move {
+                self.writes.lock().unwrap().push(value.to_string());
+                Ok(())
+            })
+        }
+        fn delete_value<'a>(
+            &'a self,
+            _fqdn: &'a str,
+            _rtype: &'a str,
+        ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_record_default_impl_three_branches() {
+        // 无记录 → 新建
+        let p = Fake { cur: None, writes: Default::default() };
+        let action = DdnsProvider::sync_record(&p, "a.example.com", "A", "1.2.3.4")
+            .await
+            .unwrap();
+        assert_eq!(action, "A 记录新建 1.2.3.4");
+        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
+
+        // 值不同 → 更新
+        let p = Fake { cur: Some("9.9.9.9".into()), writes: Default::default() };
+        let action = DdnsProvider::sync_record(&p, "a.example.com", "A", "1.2.3.4")
+            .await
+            .unwrap();
+        assert_eq!(action, "A 记录更新 9.9.9.9 → 1.2.3.4");
+        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
+
+        // 值相同 → 未变，且绝不写
+        let p = Fake { cur: Some("1.2.3.4".into()), writes: Default::default() };
+        let action = DdnsProvider::sync_record(&p, "a.example.com", "A", "1.2.3.4")
+            .await
+            .unwrap();
+        assert_eq!(action, "未变");
+        assert!(p.writes.lock().unwrap().is_empty(), "值未变时不应发起写入");
     }
 }

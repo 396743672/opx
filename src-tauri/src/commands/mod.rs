@@ -1,6 +1,7 @@
 pub mod app;
 pub mod audit;
 pub mod config;
+pub mod dns_account;
 pub mod node_app;
 pub mod software;
 pub mod stack;

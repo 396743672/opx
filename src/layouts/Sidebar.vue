@@ -131,6 +131,7 @@ const groups: NavGroup[] = [
       { path: '/repository', titleKey: 'softwareRepository', icon: 'mdi:download-box' },
       { path: '/software', titleKey: 'softwareManagement', icon: 'mdi:package-variant-closed' },
       { path: '/websites', titleKey: 'websiteManagement', icon: 'mdi:web-box' },
+      { path: '/dns-accounts', titleKey: 'dnsAccounts', icon: 'mdi:dns-outline' },
       { path: '/springboot', titleKey: 'springBoot', icon: 'mdi:leaf' },
       { path: '/node-apps', titleKey: 'nodeApps', icon: 'mdi:language-javascript' },
       { path: '/stacks', titleKey: 'stacks', icon: 'mdi:layers-outline' },

@@ -68,6 +68,9 @@ pub async fn tcp_probe(host: &str, port: u16, timeout: Duration) -> bool {
 pub async fn http_probe(url: &str, expected_status: u16, timeout: Duration) -> bool {
     // 健康检查语义上不应跟随重定向（如 Nginx 默认 301 → /index.html）
     let client = match reqwest::Client::builder()
+        // 探的是 127.0.0.1 本机端口，环境代理（ALL_PROXY 等）必然劫持并失败，
+        // 这里显式关掉环境变量探测；无需支持用户代理，故不引 utils::http
+        .no_proxy()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()

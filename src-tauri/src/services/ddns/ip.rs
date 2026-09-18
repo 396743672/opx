@@ -22,7 +22,9 @@ const SOURCES_V6: &[&str] = &[
 /// 依次请求源列表；提取失败换下一源，全失败时汇总**每一个**源的原因。
 pub async fn detect_public_ip(v6: bool) -> Result<String> {
     let sources: &[&str] = if v6 { SOURCES_V6 } else { SOURCES_V4 };
-    let client = reqwest::Client::builder()
+    // 走共享工厂：reqwest 默认读 ALL_PROXY 等环境变量，会把直连可通的公网请求
+    // 交给环境里的 HTTP 代理（不支持 CONNECT 到 443）而失败
+    let client = crate::utils::http::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
     // 收集每个源的原因：只留最后一个会掩盖「首个源有内容但家族不符」这类真问题

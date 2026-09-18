@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::{BoxFuture, DdnsProvider};
+use crate::services::acme::dns::{BoxFuture, DnsProvider};
 
 const HOST: &str = "dns.myhuaweicloud.com";
 
@@ -79,7 +79,7 @@ impl Huawei {
         Self {
             ak,
             sk,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 
@@ -173,20 +173,63 @@ impl Huawei {
     }
 }
 
-impl DdnsProvider for Huawei {
+impl DnsProvider for Huawei {
     fn id(&self) -> &str {
         "huawei"
     }
 
-    fn sync_record<'a>(
-        &'a self,
-        fqdn: &'a str,
-        rtype: &'a str,
-        ip: &'a str,
-    ) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async move {
-            let (_zone, zid) = self.find_zone(fqdn).await?;
+            // ponytail: zone 列表留 v2 —— 仅能确认同组 zone 接口（POST /v2/zones、
+            // GET /v2/zones/{zone_id}）为 v2，ListPublicZones 文档页取不到。
+            // 若首次查找即 404，就是这里：改 /v2.1/zones（同记录集一处前缀）。
+            let body = self
+                .call("GET", "/v2/zones", &[("limit", "100".into())], None)
+                .await?;
+            Ok(body["zones"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|z| z["name"].as_str().map(String::from))
+                .collect())
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move { Ok(Huawei::find_zone(self, domain).await?.0) })
+    }
+
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
+        Box::pin(async move {
+            let (_zone, zid) = Huawei::find_zone(self, fqdn).await?;
             let name = record_name(fqdn); // 华为记录名带尾点
+            let list = self
+                .call(
+                    "GET",
+                    &format!("/v2.1/zones/{}/recordsets", zid),
+                    &[("type", rtype.to_string()), ("name", name)],
+                    None,
+                )
+                .await?;
+            Ok(list["recordsets"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["records"].as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()))
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let (_zone, zid) = Huawei::find_zone(self, fqdn).await?;
+            let name = record_name(fqdn);
             let list = self
                 .call(
                     "GET",
@@ -195,28 +238,24 @@ impl DdnsProvider for Huawei {
                     None,
                 )
                 .await?;
-            // 列表接口返回体字段名为 "recordsets"（ShowRecordSetByZone 响应）。
-            let cur = list["recordsets"]
+            let existing = list["recordsets"]
                 .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .first()
-                .map(|r| {
-                    (
-                        r["id"].as_str().unwrap_or("").to_string(),
-                        r["records"]
-                            .as_array()
-                            .cloned()
-                            .unwrap_or_default()
-                            .first()
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
+                .and_then(|a| a.first())
+                .and_then(|r| r["id"].as_str())
+                .map(|s| s.to_string());
+            let body = serde_json::json!({
+                "name": name, "type": rtype, "ttl": 300, "records": [value]
+            });
+            match existing {
+                Some(rid) => {
+                    self.call(
+                        "PUT",
+                        &format!("/v2.1/zones/{}/recordsets/{}", zid, rid),
+                        &[],
+                        Some(&body),
                     )
-                });
-            let body =
-                serde_json::json!({ "name": name, "type": rtype, "ttl": 300, "records": [ip] });
-            match cur {
+                    .await?;
+                }
                 None => {
                     self.call(
                         "POST",
@@ -225,20 +264,43 @@ impl DdnsProvider for Huawei {
                         Some(&body),
                     )
                     .await?;
-                    Ok(format!("{} 记录新建 {}", rtype, ip))
                 }
-                Some((rid, old)) if old != ip => {
-                    self.call(
-                        "PUT",
-                        &format!("/v2.1/zones/{}/recordsets/{}", zid, rid),
-                        &[],
-                        Some(&body),
-                    )
-                    .await?;
-                    Ok(format!("{} 记录更新 {} → {}", rtype, old, ip))
-                }
-                Some(_) => Ok("未变".to_string()),
             }
+            Ok(())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let (_zone, zid) = Huawei::find_zone(self, fqdn).await?;
+            let name = record_name(fqdn);
+            let list = self
+                .call(
+                    "GET",
+                    &format!("/v2.1/zones/{}/recordsets", zid),
+                    &[("type", rtype.to_string()), ("name", name)],
+                    None,
+                )
+                .await?;
+            let ids: Vec<String> = list["recordsets"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|r| r["id"].as_str().map(String::from))
+                .collect();
+            for rid in ids {
+                self.call(
+                    "DELETE",
+                    &format!("/v2.1/zones/{}/recordsets/{}", zid, rid),
+                    &[],
+                    None,
+                )
+                .await?;
+            }
+            Ok(())
         })
     }
 }

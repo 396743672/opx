@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha1::Sha1;
 
-use super::{BoxFuture, DdnsProvider};
+use crate::services::acme::dns::{BoxFuture, DnsProvider};
 
 const API: &str = "https://alidns.aliyuncs.com/";
 
@@ -50,7 +50,7 @@ impl Aliyun {
         Self {
             key_id,
             key_secret,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 
@@ -99,35 +99,62 @@ impl Aliyun {
     }
 
     /// 列账户域名（首页 100；ponytail: 更多请用 DomainName 过滤）
-    async fn find_zone(&self, fqdn: &str) -> Result<String> {
-        let body = self
-            .call("DescribeDomains", &[("PageSize", "100".into())])
-            .await?;
-        let names: Vec<String> = body["Domains"]["Domain"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|d| d["DomainName"].as_str().map(String::from))
-            .collect();
+    async fn zone_of(&self, fqdn: &str) -> Result<String> {
+        let names = self.list_zones().await?;
         crate::services::acme::dns::longest_zone_match(fqdn, &names)
             .ok_or_else(|| anyhow!("该域名不在阿里云账户的解析中：{}", fqdn))
     }
 }
 
-impl DdnsProvider for Aliyun {
+impl DnsProvider for Aliyun {
     fn id(&self) -> &str {
         "aliyun"
     }
 
-    fn sync_record<'a>(
-        &'a self,
-        fqdn: &'a str,
-        rtype: &'a str,
-        ip: &'a str,
-    ) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async move {
-            let zone = self.find_zone(fqdn).await?;
+            // ponytail: 首页 100；更多请用 DomainName 关键字过滤
+            let body = self
+                .call("DescribeDomains", &[("PageSize", "100".into())])
+                .await?;
+            Ok(body["Domains"]["Domain"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|d| d["DomainName"].as_str().map(String::from))
+                .collect())
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move { self.zone_of(domain).await })
+    }
+
+    /// 返回 (RecordId, Value)：无记录 → None
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
+        Box::pin(async move {
+            let list = self
+                .call(
+                    "DescribeSubDomainRecords",
+                    &[("SubDomain", fqdn.to_string()), ("Type", rtype.to_string())],
+                )
+                .await?;
+            Ok(list["DomainRecords"]["Record"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["Value"].as_str())
+                .map(|s| s.to_string()))
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.zone_of(fqdn).await?;
             let rr = fqdn
                 .strip_suffix(&format!(".{}", zone))
                 .unwrap_or("@")
@@ -139,46 +166,62 @@ impl DdnsProvider for Aliyun {
                     &[("SubDomain", fqdn.to_string()), ("Type", rtype.to_string())],
                 )
                 .await?;
-            let cur = list["DomainRecords"]["Record"]
+            let existing = list["DomainRecords"]["Record"]
                 .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .first()
-                .map(|r| {
-                    (
-                        r["RecordId"].as_str().unwrap_or("").to_string(),
-                        r["Value"].as_str().unwrap_or("").to_string(),
-                    )
-                });
-            match cur {
-                None => {
-                    self.call(
-                        "AddDomainRecord",
-                        &[
-                            ("DomainName", zone.clone()),
-                            ("RR", rr.clone()),
-                            ("Type", rtype.to_string()),
-                            ("Value", ip.to_string()),
-                        ],
-                    )
-                    .await?;
-                    Ok(format!("{} 记录新建 {}", rtype, ip))
-                }
-                Some((rid, old)) if old != ip => {
+                .and_then(|a| a.first())
+                .and_then(|r| r["RecordId"].as_str())
+                .map(|s| s.to_string());
+            match existing {
+                Some(rid) => {
                     self.call(
                         "UpdateDomainRecord",
                         &[
                             ("RecordId", rid),
-                            ("RR", rr.clone()),
+                            ("RR", rr),
                             ("Type", rtype.to_string()),
-                            ("Value", ip.to_string()),
+                            ("Value", value.to_string()),
                         ],
                     )
                     .await?;
-                    Ok(format!("{} 记录更新 {} → {}", rtype, old, ip))
                 }
-                Some(_) => Ok("未变".to_string()),
+                None => {
+                    self.call(
+                        "AddDomainRecord",
+                        &[
+                            ("DomainName", zone),
+                            ("RR", rr),
+                            ("Type", rtype.to_string()),
+                            ("Value", value.to_string()),
+                        ],
+                    )
+                    .await?;
+                }
             }
+            Ok(())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let list = self
+                .call(
+                    "DescribeSubDomainRecords",
+                    &[("SubDomain", fqdn.to_string()), ("Type", rtype.to_string())],
+                )
+                .await?;
+            let ids: Vec<String> = list["DomainRecords"]["Record"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|r| r["RecordId"].as_str().map(String::from))
+                .collect();
+            for rid in ids {
+                self.call("DeleteDomainRecord", &[("RecordId", rid)]).await?;
+            }
+            Ok(())
         })
     }
 }

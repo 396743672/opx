@@ -36,6 +36,12 @@ const routes = [
     meta: { title: 'websiteManagement' },
   },
   {
+    path: '/dns-accounts',
+    name: 'dnsAccounts',
+    component: () => import('@/modules/dns-accounts/pages/DnsAccountsPage.vue'),
+    meta: { title: 'dnsAccounts' },
+  },
+  {
     path: '/springboot',
     name: 'springboot',
     component: () => import('@/modules/springboot-manager/pages/SpringBootPage.vue'),

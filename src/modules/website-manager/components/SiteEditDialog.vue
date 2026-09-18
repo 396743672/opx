@@ -65,6 +65,18 @@
                 </div>
               </template>
               <template v-else>
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="lbl" style="margin-bottom:0">{{ $t('dnsAccount') }}</label>
+                    <div class="hint" style="margin-top:0">{{ $t('acmeNeedAccount') }}</div>
+                  </div>
+                  <select v-model="form.ssl.dns_account_id" class="input" style="width:220px">
+                    <option :value="null">{{ $t('selectDnsAccount') }}</option>
+                    <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">
+                      {{ a.name }}（{{ a.provider }}）
+                    </option>
+                  </select>
+                </div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <button v-if="!isNew" class="btn primary" :disabled="acmeBusy" @click="issueCert">
                     <Icon icon="mdi:certificate-outline" />
@@ -76,7 +88,6 @@
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
                 </div>
                 <div v-if="sslNeedIssue" class="hint">{{ $t('acmeNeedIssue') }}</div>
-                <div v-if="!hasDnsToken" class="hint">{{ $t('acmeNeedToken') }}</div>
               </template>
               <div class="hint">{{ $t('sslHint') }}</div>
             </template>
@@ -154,13 +165,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import LocationEditor from './LocationEditor.vue'
-import { useSettingsStore } from '@/stores/settings'
 import type { Site, SiteLocation } from '@/models/website'
+import type { DnsAccount } from '@/models/dns-account'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
-const settingsStore = useSettingsStore()
 
 const form = ref<Site>(props.site)
 if (!form.value.ssl) {
@@ -171,11 +181,8 @@ const acmeBusy = ref(false)
 const acmeStatus = ref('')
 let unlistenAcme: (() => void) | null = null
 
-const hasDnsToken = computed(() => {
-  const s = settingsStore.settings
-  if (!s) return true // 设置未加载完成时不误报
-  return s.dns_provider === 'cloudflare' ? !!s.cloudflare_api_token : false
-})
+// ponytail: 对话框自己拉账号列表（列表页未加载账号，少一层 prop）
+const dnsAccounts = ref<DnsAccount[]>([])
 
 // ===== 忙碌弹窗（保存 / 申请证书 / 生成自签证书）=====
 const busyKind = ref<'' | 'save' | 'issue' | 'gen'>('')
@@ -240,14 +247,19 @@ async function issueCert() {
     acmeStatus.value = t('acmeNeedSave')
     return
   }
-  if (!hasDnsToken.value) {
-    acmeStatus.value = t('acmeNeedToken')
+  if (!form.value.ssl.dns_account_id) {
+    acmeStatus.value = t('acmeNeedAccount')
     return
   }
   await doIssue()
 }
 
 onMounted(async () => {
+  try {
+    dnsAccounts.value = await invoke<DnsAccount[]>('list_dns_accounts')
+  } catch (e) {
+    console.error('load dns accounts failed:', e)
+  }
   unlistenAcme = await listen<{ domain: string; phase: string; message: string }>('acme-progress', (e) => {
     const cur = (props.site.server_name ?? '').trim().toLowerCase()
     if (e.payload.domain.trim().toLowerCase() !== cur) return
@@ -327,8 +339,8 @@ async function save() {
       await invoke('save_website', { site: form.value })
       // 选了 ACME 但尚无证书：保存时一并申请，一次操作完成
       if (sslNeedIssue.value) {
-        if (!hasDnsToken.value) {
-          saveError.value = t('acmeNeedToken') // 站点已保存，留在对话框提示去配置 Token
+        if (!form.value.ssl.dns_account_id) {
+          saveError.value = t('acmeNeedAccount') // 站点已保存，留在对话框提示选择 DNS 账号
           return
         }
         if (!(await doIssue())) return // 签发失败：留在对话框展示原因
@@ -474,13 +486,13 @@ watch(tab, async (t) => {
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .busy-bar { height: 6px; border-radius: 999px; background: var(--color-muted); overflow: hidden; }
 .busy-bar i { display: block; height: 100%; background: var(--color-primary); transition: width 0.3s ease-out; }
-.dialog { width: 640px; max-height: 90vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
-.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
+.dialog { width: 640px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); box-shadow: 0 8px 24px oklch(0 0 0 / 0.45); }
+.head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); flex: none; }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
 .x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
-.body { padding: 16px 18px; }
-.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); }
+.body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); flex: none; }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
 .hint { font-size: 11px; color: var(--color-muted-foreground); margin-top: 3px; overflow-wrap: anywhere; word-break: break-word; }
 .input { height: 32px; padding: 0 10px; background: var(--color-muted); border: 1px solid transparent; border-radius: 6px; color: var(--color-foreground); font-size: 13px; outline: none; box-sizing: border-box; }
@@ -489,7 +501,7 @@ watch(tab, async (t) => {
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); }
+.tab-bar { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--color-border); flex: none; }
 .tab-bar button { height: 32px; padding: 0 14px; border: none; background: transparent; color: var(--color-muted-foreground); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab-bar button.active { color: var(--color-foreground); border-bottom-color: var(--color-primary); }
 .tab-bar button:disabled { opacity: 0.4; cursor: not-allowed; }

@@ -36,10 +36,14 @@ pub fn build_builtin_catalog() -> Catalog {
     }
 }
 
-/// 从 mirror_url 拉取远程 catalog，10 秒超时，失败返回 None
+/// 从 mirror_url 拉取远程 catalog，10 秒超时，失败返回 None。
+/// 注：镜像 URL 的 github 改写（github_proxy_url）在下载侧 utils::download 里做，
+/// 这里只负责把 mirror_url 当普通地址拉取。
 pub async fn fetch_remote_catalog(mirror_url: &str) -> Option<Catalog> {
     let url = format!("{}/catalog.json", mirror_url.trim_end_matches('/'));
-    let response = reqwest::Client::builder()
+    // 走共享工厂：reqwest 默认读 ALL_PROXY 等环境变量，会把直连可通的镜像请求
+    // 交给环境里的 HTTP 代理（不支持 CONNECT 到 443）而失败
+    let response = crate::utils::http::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .ok()?

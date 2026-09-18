@@ -16,7 +16,7 @@ pub struct Cloudflare {
 
 impl Cloudflare {
     pub fn new(token: String) -> Self {
-        Self { token, client: reqwest::Client::new() }
+        Self { token, client: crate::utils::http::client() }
     }
 
     async fn get(&self, url: &str) -> Result<Value> {
@@ -63,7 +63,7 @@ impl DnsProvider for Cloudflare {
         "cloudflare"
     }
 
-    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async move {
             // ponytail: 分页上限，防账户 zone 过多时反复全量列举；20 * 50 = 1000 个 zone，
             // 超出请改用按 name 过滤查询
@@ -88,64 +88,152 @@ impl DnsProvider for Cloudflare {
                 }
                 page += 1;
             }
+            Ok(names)
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            // ponytail: get/set/delete 都调本方法，故单次写会列举一次 zone 列表。
+            // 量级 = 域名数 × 2 / 5 分钟，远低于 Cloudflare 限额（且 MAX_PAGES 兜底）；
+            // 实测变慢或见 429 再给 provider 加进程内 zone 缓存 —— 那需要 provider
+            // 活得比一次同步长（见 ddns::provider_for_account），不急。
+            let names = self.list_zones().await?;
             longest_zone_match(domain, &names)
                 .ok_or_else(|| anyhow!("该域名不在 Cloudflare 账户的 zone 中：{}", domain))
         })
     }
 
-    fn create_txt<'a>(&'a self, fqdn: &'a str, value: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
-            let zone_id = self.zone_id(&zone).await?;
-            let body = serde_json::json!({ "type": "TXT", "name": fqdn, "content": value, "ttl": 120 });
-            let resp = self
-                .client
-                .post(format!("{}/zones/{}/dns_records", API, zone_id))
-                .bearer_auth(&self.token)
-                .json(&body)
-                .send()
-                .await?;
-            Self::json(resp).await.map(|_| ())
-        })
-    }
-
-    fn delete_txt<'a>(&'a self, fqdn: &'a str, value: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
         Box::pin(async move {
             let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
             let zone_id = self.zone_id(&zone).await?;
             let body = self
                 .get(&format!(
-                    "{}/zones/{}/dns_records?type=TXT&name={}",
-                    API, zone_id, fqdn
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            Ok(body["result"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["content"].as_str())
+                // Cloudflare 的 TXT content 带引号、A/AAAA 是裸 IP；剥引号以满足
+                // trait 的「可直接比较」契约（否则 DDNS 每轮误判为变更）
+                .map(|s| s.trim_matches('"').to_string()))
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            // 读现有记录 id：有则 PUT，无则 POST（Cloudflare 无 UPSERT，需分两步）
+            let list = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
+                ))
+                .await?;
+            let existing = list["result"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r["id"].as_str())
+                .map(|s| s.to_string());
+            let body = serde_json::json!({
+                "type": rtype, "name": fqdn, "content": value, "ttl": 120
+            });
+            let resp = match existing {
+                Some(rid) => {
+                    self.client
+                        .put(format!("{}/zones/{}/dns_records/{}", API, zone_id, rid))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
+                }
+                None => {
+                    self.client
+                        .post(format!("{}/zones/{}/dns_records", API, zone_id))
+                        .bearer_auth(&self.token)
+                        .json(&body)
+                        .send()
+                        .await?
+                }
+            };
+            Self::json(resp).await.map(|_| ())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.find_zone(fqdn.trim_start_matches("_acme-challenge.")).await?;
+            let zone_id = self.zone_id(&zone).await?;
+            let body = self
+                .get(&format!(
+                    "{}/zones/{}/dns_records?type={}&name={}",
+                    API, zone_id, rtype, fqdn
                 ))
                 .await?;
             if let Some(records) = body["result"].as_array() {
                 for r in records {
-                    if r["content"].as_str() == Some(value) {
-                        if let Some(id) = r["id"].as_str() {
-                            // 清理失败不阻断签发，但要留痕（否则 DNS 里会静默残留 TXT）
-                            match self
-                                .client
-                                .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
-                                .bearer_auth(&self.token)
-                                .send()
-                                .await
-                            {
-                                Ok(resp) if resp.status().is_success() => {}
-                                Ok(resp) => tracing::warn!(
-                                    status = %resp.status(), name = %fqdn,
-                                    "删除 ACME 挑战 TXT 记录失败（响应非成功）"
-                                ),
-                                Err(e) => tracing::warn!(
-                                    error = %e, name = %fqdn,
-                                    "删除 ACME 挑战 TXT 记录请求失败"
-                                ),
-                            }
-                        }
+                    let Some(id) = r["id"].as_str() else { continue };
+                    // 清理失败不阻断签发，但要留痕（否则 DNS 里会静默残留记录）
+                    match self
+                        .client
+                        .delete(format!("{}/zones/{}/dns_records/{}", API, zone_id, id))
+                        .bearer_auth(&self.token)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) if resp.status().is_success() => {}
+                        Ok(resp) => tracing::warn!(
+                            status = %resp.status(), name = %fqdn,
+                            "删除 DNS 记录失败（响应非成功）"
+                        ),
+                        Err(e) => tracing::warn!(
+                            error = %e, name = %fqdn,
+                            "删除 DNS 记录请求失败"
+                        ),
                     }
                 }
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// DNS-01 的 TXT 名前缀必须是 `_acme-challenge.`：
+    /// get/set/delete 三处都靠 trim_start_matches 反推 zone，
+    /// 前缀写错会让 find_zone 拿整个 challenge 名去匹配 zone 而失败。
+    #[test]
+    fn challenge_prefix_is_stripped_for_zone_lookup() {
+        let fqdn = crate::services::acme::dns::acme_challenge_fqdn("example.com");
+        assert_eq!(fqdn, "_acme-challenge.example.com");
+        let for_zone = fqdn.trim_start_matches("_acme-challenge.");
+        assert_eq!(for_zone, "example.com");
+    }
+
+    /// get_value 返回的值必须与 set_value 写入的值可直接相等比较。
+    /// Cloudflare 把 TXT content 存成带引号形式，读回来若不剥引号，
+    /// DDNS 的读-比较-写会认为每轮都「变了」而反复写入。
+    #[test]
+    fn txt_content_quotes_are_stripped_for_comparability() {
+        let strip = |s: &str| s.trim_matches('"').to_string();
+        assert_eq!(strip("\"abc123\""), "abc123");
+        // 已无引号（A/AAAA 的裸 IP）不受影响 —— 剥引号必须对它们是 no-op
+        assert_eq!(strip("1.2.3.4"), "1.2.3.4");
+        // 与 set_value 的入参可比较
+        assert_eq!(strip("\"abc123\""), "abc123");
     }
 }

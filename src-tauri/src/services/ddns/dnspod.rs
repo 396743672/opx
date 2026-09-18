@@ -8,7 +8,7 @@ use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::{BoxFuture, DdnsProvider};
+use crate::services::acme::dns::{BoxFuture, DnsProvider};
 
 /// TC3 服务名：与 HOST 首段相同，且必须同时出现在 CredentialScope 与派生密钥的
 /// service 段。腾讯云有 `dnspod`（DescribeXxx）与 `dnsapi`（Xxx 老式命名）两套：
@@ -90,12 +90,26 @@ pub struct Dnspod {
     client: reqwest::Client,
 }
 
+/// DNSPod 的子域名：fqdn 相对 zone 的部分，根域用 "@"。
+/// （qname 比对要转小写——zone 来自 API 列表，大小写不保证一致）
+fn sub_of(fqdn: &str, zone: &str) -> String {
+    let s = fqdn
+        .strip_suffix(&format!(".{}", zone))
+        .unwrap_or("@")
+        .to_string();
+    if s.is_empty() {
+        "@".to_string()
+    } else {
+        s
+    }
+}
+
 impl Dnspod {
     pub fn new(secret_id: String, secret_key: String) -> Self {
         Self {
             secret_id,
             secret_key,
-            client: reqwest::Client::new(),
+            client: crate::utils::http::client(),
         }
     }
 
@@ -151,44 +165,47 @@ impl Dnspod {
 
     /// 列账户域名（首页 100）并取最长匹配。
     /// ponytail: 同 Cloudflare，仅首页 100 个域名；超出请改用 DescribeDomain 精确查询。
-    async fn find_zone(&self, fqdn: &str) -> Result<String> {
-        let body = self
-            .call(
-                "DescribeDomainList",
-                serde_json::json!({ "Offset": 0, "Limit": 100 }),
-            )
-            .await?;
-        let names: Vec<String> = body["DomainList"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|d| d["Name"].as_str().map(String::from))
-            .collect();
+    async fn zone_of(&self, fqdn: &str) -> Result<String> {
+        let names = self.list_zones().await?;
         crate::services::acme::dns::longest_zone_match(fqdn, &names)
             .ok_or_else(|| anyhow!("该域名不在 DNSPod 账户中：{}", fqdn))
     }
 }
 
-impl DdnsProvider for Dnspod {
+impl DnsProvider for Dnspod {
     fn id(&self) -> &str {
         "dnspod"
     }
 
-    fn sync_record<'a>(
-        &'a self,
-        fqdn: &'a str,
-        rtype: &'a str,
-        ip: &'a str,
-    ) -> BoxFuture<'a, Result<String>> {
+    fn list_zones<'a>(&'a self) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async move {
-            let zone = self.find_zone(fqdn).await?;
-            // 根域（fqdn == zone）DNSPod 用 "@" 表示
-            let sub = fqdn
-                .strip_suffix(&format!(".{}", zone))
-                .unwrap_or("@")
-                .to_string();
-            let sub = if sub.is_empty() { "@".to_string() } else { sub };
+            // ponytail: 首页 100；更多请用 DescribeDomain 精确查询
+            let body = self
+                .call(
+                    "DescribeDomainList",
+                    serde_json::json!({ "Offset": 0, "Limit": 100 }),
+                )
+                .await?;
+            Ok(body["DomainList"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|d| d["Name"].as_str().map(String::from))
+                .collect())
+        })
+    }
+
+    fn find_zone<'a>(&'a self, domain: &'a str) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move { self.zone_of(domain).await })
+    }
+
+    fn get_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<Option<String>>>
+    {
+        Box::pin(async move {
+            let zone = self.zone_of(fqdn).await?;
+            let sub = sub_of(fqdn, &zone);
             let list = self
                 .call(
                     "DescribeRecordList",
@@ -197,19 +214,43 @@ impl DdnsProvider for Dnspod {
                     }),
                 )
                 .await;
-            let cur = match list {
+            match list {
+                Ok(v) => Ok(v["RecordList"]
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|r| r["Value"].as_str())
+                    .map(|s| s.to_string())),
+                // DNSPod：该 name+type 无记录时报 ResourceNotFound.NoDataOfRecord（实测值）
+                Err(e)
+                    if e.to_string().contains("NoDataOfRecord")
+                        || e.to_string().contains("NoFoundData") =>
+                {
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            }
+        })
+    }
+
+    fn set_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str, value: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.zone_of(fqdn).await?;
+            let sub = sub_of(fqdn, &zone);
+            let list = self
+                .call(
+                    "DescribeRecordList",
+                    serde_json::json!({
+                        "Domain": zone, "SubDomain": sub, "RecordType": rtype
+                    }),
+                )
+                .await;
+            let existing = match list {
                 Ok(v) => v["RecordList"]
                     .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .first()
-                    .map(|r| {
-                        (
-                            r["RecordId"].as_u64().unwrap_or(0),
-                            r["Value"].as_str().unwrap_or("").to_string(),
-                        )
-                    }),
-                // DNSPod：该 name+type 无记录时报 ResourceNotFound.NoDataOfRecord（实测值）
+                    .and_then(|a| a.first())
+                    .and_then(|r| r["RecordId"].as_u64()),
                 Err(e)
                     if e.to_string().contains("NoDataOfRecord")
                         || e.to_string().contains("NoFoundData") =>
@@ -218,31 +259,70 @@ impl DdnsProvider for Dnspod {
                 }
                 Err(e) => return Err(e),
             };
-            match cur {
+            match existing {
+                Some(rid) => {
+                    self.call(
+                        "ModifyRecord",
+                        serde_json::json!({
+                            "Domain": zone, "RecordId": rid, "SubDomain": sub,
+                            "RecordType": rtype, "RecordLine": "默认", "Value": value
+                        }),
+                    )
+                    .await?;
+                }
                 None => {
                     self.call(
                         "CreateRecord",
                         serde_json::json!({
                             "Domain": zone, "SubDomain": sub, "RecordType": rtype,
-                            "RecordLine": "默认", "Value": ip
+                            "RecordLine": "默认", "Value": value
                         }),
                     )
                     .await?;
-                    Ok(format!("{} 记录新建 {}", rtype, ip))
                 }
-                Some((rid, old)) if old != ip => {
-                    self.call(
-                        "ModifyRecord",
-                        serde_json::json!({
-                            "Domain": zone, "RecordId": rid, "SubDomain": sub,
-                            "RecordType": rtype, "RecordLine": "默认", "Value": ip
-                        }),
-                    )
-                    .await?;
-                    Ok(format!("{} 记录更新 {} → {}", rtype, old, ip))
-                }
-                Some(_) => Ok("未变".to_string()),
             }
+            Ok(())
+        })
+    }
+
+    fn delete_value<'a>(&'a self, fqdn: &'a str, rtype: &'a str)
+        -> BoxFuture<'a, Result<()>>
+    {
+        Box::pin(async move {
+            let zone = self.zone_of(fqdn).await?;
+            let sub = sub_of(fqdn, &zone);
+            let list = self
+                .call(
+                    "DescribeRecordList",
+                    serde_json::json!({
+                        "Domain": zone, "SubDomain": sub, "RecordType": rtype
+                    }),
+                )
+                .await;
+            let ids: Vec<u64> = match list {
+                Ok(v) => v["RecordList"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|r| r["RecordId"].as_u64())
+                    .collect(),
+                Err(e)
+                    if e.to_string().contains("NoDataOfRecord")
+                        || e.to_string().contains("NoFoundData") =>
+                {
+                    Vec::new()
+                }
+                Err(e) => return Err(e),
+            };
+            for rid in ids {
+                self.call(
+                    "DeleteRecord",
+                    serde_json::json!({ "Domain": zone, "RecordId": rid }),
+                )
+                .await?;
+            }
+            Ok(())
         })
     }
 }
@@ -250,6 +330,17 @@ impl DdnsProvider for Dnspod {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 子域名拆解：根域 → "@"，子域 → 相对部分，大小写差异不应误判。
+    /// 这条锁住的是 set/delete 共用的路径——拆错就会写到别的记录上。
+    #[test]
+    fn sub_of_handles_root_and_subdomain() {
+        assert_eq!(sub_of("example.com", "example.com"), "@");
+        assert_eq!(sub_of("a.example.com", "example.com"), "a");
+        assert_eq!(sub_of("a.b.example.com", "example.com"), "a.b");
+        // 不匹配的 zone：保守返回 "@"（调用方已由 zone_of 保证匹配，此处仅防呆）
+        assert_eq!(sub_of("example.com", "other.com"), "@");
+    }
 
     /// 「无记录」判定必须认得线上实际错误码：计划里写的是 NoFoundData，
     /// 实测 2021-03-23 的 dnspod 端点返回 NoDataOfRecord —— 认不出就会把

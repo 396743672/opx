@@ -58,8 +58,9 @@ pub fn run() {
                     {
                         crate::utils::download::init_download_config(
                             settings.github_proxy_url,
-                            settings.proxy_url,
+                            settings.proxy_url.clone(),
                         );
+                        crate::utils::http::set_global_proxy(&settings.proxy_url);
                     }
                 }
             }
@@ -68,9 +69,17 @@ pub fn run() {
             let software_mgr =
                 std::sync::Arc::new(crate::services::software_manager::SoftwareManager::new());
             app.manage(software_mgr.clone());
+            // 旧全局 DNS 配置 → DNS 账号（一次性）。必须在 WebsiteManager::new()
+            // 之前：迁移会给 websites.json 写 dns_account_id，晚了就落不进内存。
+            if let Err(e) = crate::services::dns_account::run_startup_migration() {
+                tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
+            }
             app.manage(std::sync::Arc::new(
                 crate::services::website_manager::WebsiteManager::new(),
             ));
+            let dns_account_mgr =
+                std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
+            app.manage(dns_account_mgr.clone());
             let springboot_mgr =
                 std::sync::Arc::new(crate::services::springboot_manager::SpringBootManager::new());
             app.manage(springboot_mgr.clone());
@@ -147,9 +156,13 @@ pub fn run() {
                 .inner()
                 .clone();
             let renew_app = app.handle().clone();
+            let renew_accounts = app
+                .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
+                .inner()
+                .clone();
             tauri::async_runtime::spawn(async move {
                 crate::services::acme::renew_scheduler::run_scheduler(
-                    renew_app, renew_wm, renew_sm,
+                    renew_app, renew_wm, renew_sm, renew_accounts,
                 )
                 .await;
             });
@@ -279,7 +292,6 @@ pub fn run() {
             commands::config::save_settings,
             commands::config::get_autostart,
             commands::config::set_autostart,
-            commands::config::test_dns_token,
             commands::config::test_alert_webhook,
             commands::config::sync_ddns_now,
             commands::app::quit_app,
@@ -343,6 +355,11 @@ pub fn run() {
             commands::website::unlock_site_conf,
             commands::website::generate_self_signed_cert,
             commands::website::issue_site_certificate,
+            commands::website::list_account_refs,
+            commands::dns_account::list_dns_accounts,
+            commands::dns_account::save_dns_account,
+            commands::dns_account::delete_dns_account,
+            commands::dns_account::test_dns_account,
             commands::springboot::list_springboot_apps,
             commands::springboot::create_springboot_app,
             commands::springboot::update_springboot_app,

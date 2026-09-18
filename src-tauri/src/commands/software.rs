@@ -915,6 +915,9 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
 /// 探针：先 GET probe_url，响应包含 probe_done_marker 则已初始化，跳过；否则 POST body。
 fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result<bool> {
     let client = reqwest::blocking::Client::builder()
+        // 该初始化打的是 127.0.0.1 本机端口，环境代理（ALL_PROXY 等）必然劫持并失败，
+        // 这里显式关掉环境变量探测；无需支持用户代理，故不引 utils::http
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| anyhow::anyhow!("HTTP client 构建失败: {}", e))?;

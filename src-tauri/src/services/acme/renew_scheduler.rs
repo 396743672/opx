@@ -18,7 +18,12 @@ pub fn needs_renewal(expires: Option<&str>, now: chrono::DateTime<chrono::Local>
     exp.with_timezone(&chrono::Local) - now < chrono::Duration::days(days)
 }
 
-pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<SoftwareManager>) {
+pub async fn run_scheduler(
+    _app: AppHandle,
+    wm: Arc<WebsiteManager>,
+    sm: Arc<SoftwareManager>,
+    dns_accounts: Arc<crate::services::dns_account::DnsAccountManager>,
+) {
     let mut tick = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     tick.tick().await; // 消耗初始化 tick
     loop {
@@ -30,11 +35,7 @@ pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<Sof
                 continue;
             }
         };
-        let acme = crate::services::acme::AcmeSettings {
-            dns_provider: settings.dns_provider.clone(),
-            cloudflare_api_token: settings.cloudflare_api_token.clone(),
-            use_staging: settings.acme_use_staging,
-        };
+        let accounts = dns_accounts.list();
 
         // 每轮解析一次 nginx 与证书目录，避免逐站点重算
         let Ok(nginx) = crate::commands::website::resolve_nginx(&sm) else {
@@ -47,6 +48,25 @@ pub async fn run_scheduler(_app: AppHandle, wm: Arc<WebsiteManager>, sm: Arc<Sof
             if !needs_renewal(site.ssl.cert_expires_at.as_deref(), chrono::Local::now(), RENEW_BEFORE_DAYS) {
                 continue;
             }
+            // 必须显式绑定账号：未绑/账号已删都跳过并留痕，
+            // 绝不退回某个「默认」账号——那会签出用户没预期的证书。
+            let Some(account) = site
+                .ssl
+                .dns_account_id
+                .as_deref()
+                .and_then(|id| accounts.iter().find(|a| a.id == id))
+            else {
+                tracing::warn!(
+                    site = %site.id,
+                    bound = ?site.ssl.dns_account_id,
+                    "站点未绑定有效的 DNS 账号，跳过续期"
+                );
+                continue;
+            };
+            let acme = crate::services::acme::AcmeSettings {
+                account: account.clone(),
+                use_staging: settings.acme_use_staging,
+            };
             let Some(raw) = site.server_name.clone() else { continue };
             let domain = match crate::commands::website::sanitize_domain(&raw) {
                 Ok(d) => d,
@@ -112,5 +132,30 @@ mod tests {
         // 充足 → false
         let far = (now() + chrono::Duration::days(80)).to_rfc3339();
         assert!(!needs_renewal(Some(&far), now(), 30));
+    }
+
+    /// 站点该用哪个账号：绑了就用绑的；没绑就是配置缺失，必须跳过而不是
+    /// 拿某个默认账号去签（会给用户搞出意外的证书）。
+    #[test]
+    fn account_resolution_requires_explicit_binding() {
+        let accounts = [crate::models::dns_account::DnsAccount {
+            id: "acc-1".into(),
+            name: "n".into(),
+            provider: "cloudflare".into(),
+            token: "t".into(),
+            access_key_id: String::new(),
+            access_key_secret: String::new(),
+            zones: vec![],
+            tested_at: None,
+        }];
+        let pick = |bound: Option<&str>| -> Option<String> {
+            let id = bound?;
+            accounts.iter().find(|a| a.id == id).map(|a| a.id.clone())
+        };
+        assert_eq!(pick(Some("acc-1")), Some("acc-1".into()));
+        // 未绑定 → None（跳过并 warn）
+        assert_eq!(pick(None), None);
+        // 绑了但账号已删 → None（跳过并 warn，而不是退回默认）
+        assert_eq!(pick(Some("gone")), None);
     }
 }

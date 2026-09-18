@@ -19,7 +19,7 @@ impl WebsiteManager {
         }
     }
 
-    fn store_path() -> PathBuf {
+    pub fn store_path() -> PathBuf {
         paths::config_dir().join("websites.json")
     }
 

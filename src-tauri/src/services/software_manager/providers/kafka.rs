@@ -164,6 +164,9 @@ impl SoftwareProvider for KafkaProvider {
         // 爬 Apache archive 索引页，解析所有已发布版本目录（3.x/4.x 统一为 kafka_2.13-{v}.tgz 命名）。
         let url = "https://archive.apache.org/dist/kafka/";
         let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，
+            // 宿主若设了不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?;

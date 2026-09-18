@@ -124,6 +124,9 @@ impl SoftwareProvider for ElasticsearchProvider {
         // 爬 Maven Central metadata，解析 Elasticsearch 正式版本（跳过 alpha/beta/rc/snapshot）。
         let url = "https://repo1.maven.org/maven2/org/elasticsearch/elasticsearch/maven-metadata.xml";
         let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，宿主若设了
+            // 不支持 CONNECT 的 HTTP 代理，公网直连被劫持后必失败
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .ok()?;
