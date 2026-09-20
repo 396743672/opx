@@ -1,0 +1,56 @@
+name: CI
+
+# 触发策略（GitHub Actions 原生支持，无需 step 内兜底）：
+# - dev/master/main 的 push 触发验证；纯文档改动（*.md / docs / README / RELEASE_NOTES）通过 paths-ignore 跳过
+# - 对 master 的 PR 触发验证
+# - 任意 commit message 含 [skip ci] 或 [ci skip] 原生跳过整条流水线
+on:
+  push:
+    branches: [dev, master, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'README*'
+      - 'RELEASE_NOTES*'
+  pull_request:
+    branches: [master, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'README*'
+      - 'RELEASE_NOTES*'
+
+# 同一分支多次 push 时取消旧的运行，节省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck + Test (Windows)
+    # 关键：用 GitHub 云 windows-latest，免自托管、永远在线、自带 MSVC + Windows SDK
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust (stable, MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend (vue-tsc typecheck + vite build)
+        run: npm run build
+
+      - name: Run backend tests (cargo test)
+        working-directory: src-tauri
+        run: cargo test
