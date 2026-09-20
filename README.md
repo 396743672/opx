@@ -195,10 +195,11 @@ npm install              # 安装前端依赖
 
 #### 2. Release 打包（生成可分发安装包）
 ```bash
-# 一键打包：自动跑前端构建(vue-tsc+vite) + Rust release 编译 + 生成 MSI 与 NSIS 安装包 + 免安装 exe
+# 一键打包：自动跑前端构建(vue-tsc+vite) + Rust release 编译 + 生成 NSIS 安装包 + 免安装 exe
+# 产物由 tauri.conf.json 的 bundle.targets 决定，当前为 ["nsis"]，故不产 MSI
 npm run tauri:build
 
-# 仅生成 NSIS .exe 安装包（跳过 MSI，无需 WiX）—— 国内推荐
+# 仅生成 NSIS .exe 安装包（与上方 tauri:build 等价，显式指定）—— 国内推荐
 npm run tauri:build:nsis
 
 # 仅生成 MSI 安装包（跳过 NSIS，需 WiX 工具）
@@ -240,9 +241,9 @@ rm -rf dist
 
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
-| `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
+| `npm run tauri:build` | NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/` + `target/release/opx.exe` | 完整发版分发 |
 | `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.0_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.0_x64_zh-CN.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.0_x64_zh-CN.msi` + `target/release/opx.exe` | 企业部署（组策略友好，需 WiX） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -252,12 +253,13 @@ rm -rf dist
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
 
 ### 产物位置总览
-打包产物在 `src-tauri/target/release/bundle/` 下：
-- `msi/opx_0.5.0_x64_zh-CN.msi` — MSI 安装包（推荐企业分发，组策略部署友好）
+打包产物在 `src-tauri/target/release/bundle/` 下（当前 `bundle.targets = ["nsis"]`，故默认只产 NSIS）：
 - `nsis/opx_0.5.0_x64-setup.exe` — NSIS 安装程序（推荐普通用户分发）
 - `src-tauri/target/release/opx.exe` — 免安装可执行文件（需目标机有 WebView2，Win11 自带）
 
-> **注意**：MSI 与 NSIS 安装包内已内嵌 WebView2 Bootstrapper，安装时会自动引导安装 WebView2 Runtime。免安装 exe 不含，需目标机预装 WebView2。
+> 要 MSI 须显式跑 `npm run tauri:build:msi`（需 WiX），产物在 `bundle/msi/`。
+
+> **注意**：NSIS 与 MSI 安装包内已内嵌 WebView2 Bootstrapper，安装时会自动引导安装 WebView2 Runtime。免安装 exe 不含，需目标机预装 WebView2。
 
 ### 打包前检查清单
 1. `npm run build` 必须无类型错误、无构建报错（vue-tsc + vite）

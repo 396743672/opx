@@ -124,7 +124,7 @@ const DOC_URLS: Record<string, string> = {
   mysql: 'https://dev.mysql.com/doc/refman/8.4/en/',
   redis: 'https://redis.io/docs/latest/',
   nginx: 'https://nginx.org/en/docs/',
-  minio: 'https://min.io/docs/minio/',
+  minio: 'https://silo.pgsty.com/docs/',
   rustfs: 'https://github.com/influxdata/rustfs',
   postgresql: 'https://www.postgresql.org/docs/current/',
   mongodb: 'https://www.mongodb.com/docs/manual/',

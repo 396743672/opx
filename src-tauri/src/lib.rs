@@ -15,6 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // 单例：第二实例启动时激活已有窗口
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -211,6 +213,20 @@ pub fn run() {
                 crate::services::ddns::scheduler::run_ddns_scheduler().await;
             });
 
+            // 应用更新自动检查：启动 10s 后首查，之后每 24h 一次（受 auto_check_update 控制）
+            let au_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    if let Ok(s) = crate::commands::config::read_settings() {
+                        if s.auto_check_update {
+                            crate::commands::update::auto_check(au_app.clone()).await;
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+                }
+            });
+
             #[cfg(desktop)]
             {
                 // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
@@ -400,6 +416,8 @@ pub fn run() {
             commands::stack::restart_stack,
             commands::stack::export_stack,
             commands::stack::import_stack,
+            commands::update::check_app_update,
+            commands::update::install_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");

@@ -1,0 +1,151 @@
+name: Release
+
+# 触发策略：只有 master（保护分支）的 push 才发版。
+# dev 是开发分支，push 只由 ci.yml 跑类型检查 + 测试，不会发版。
+# 版本号取自 src-tauri/tauri.conf.json：若 v<版本> 这个 tag 已存在，说明该版本发过，直接跳过，
+# 因此日常往 master 合并「不该发版的改动」也不会重复发布；要发版就把版本号改大。
+# 另保留 workflow_dispatch，必要时可在 Actions 页面手动触发。
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 发版不能并发：同一时间只允许一条发布流水线，后续排队而不是取消。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # 先解析版本号并判断是否已发布。这一步很轻（ubuntu + 几十秒），
+  # 版本没变时 release job 整条被跳过，不用白等 20 多分钟的 Windows 构建。
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      skip: ${{ steps.resolve.outputs.skip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve version and check existing tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # 直接查远程 tag，不依赖本地是否 fetch 过 tags
+          if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VERSION 已存在，跳过发版（本次 master 合并未改动版本号）"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::将发布 v$VERSION"
+          fi
+
+  release:
+    name: Build and publish
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # 快速失败：先用密钥签一个临时文件。若 Secret 缺失/名字写错，这里 10 秒内报错，
+      # 不必等 25 分钟的 release 构建跑完才发现签名不可用。
+      # 注意：私钥为「空密码」密钥，必须显式提供 TAURI_SIGNING_PRIVATE_KEY_PASSWORD；
+      # tauri-cli 在密码环境变量缺失时会转而交互式索要密码，CI 无 TTY 将直接失败。
+      - name: Preflight - verify updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: |
+          set -e
+          echo "TAURI_SIGNING_PRIVATE_KEY length: ${#TAURI_SIGNING_PRIVATE_KEY}"
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY 为空，请在仓库 Settings → Secrets and variables → Actions 中创建。"
+            exit 1
+          fi
+          printf 'opx-preflight' > ./.preflight.bin
+          npx tauri signer sign ./.preflight.bin
+          rm -f ./.preflight.bin ./.preflight.bin.sig
+          echo "signing key OK"
+
+      # 产出三种资产：setup.exe(NSIS) + .msi(WiX) + 各自的 .sig，以及 latest.json。
+      # ⚠️ updaterJsonPreferNsis 必须为 true：该 input 默认 false，而同时存在 nsis 与 msi 时，
+      # 默认行为会让 latest.json 的 windows-x86_64 指向 .msi —— 老用户是 NSIS 装的，
+      # 更新时会被 msiexec 再装一遍，造成双份安装。置 true 后 windows-x86_64 仍指向 setup.exe。
+      - name: Build, sign and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        with:
+          projectPath: ./src-tauri
+          tagName: 'v__VERSION__'
+          releaseName: 'opx v__VERSION__'
+          releaseBody: |
+            Windows 发布包，按需选择：
+
+            - `opx_x.y.z_x64-setup.exe` — NSIS 安装版（推荐，支持应用内一键更新）
+            - `opx_x.y.z_x64_en-US.msi` — WiX/MSI 安装版（适合企业批量部署）
+            - `opx_x.y.z_x64-portable.zip` — 免安装便携版，解压即用（不含自动更新，需手动下载新版）
+
+            已安装用户可在应用内「设置 → 应用更新」一键升级。
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --bundles nsis,msi
+
+      # 便携版：Tauri 的 bundle target 里没有 zip（合法值只有 nsis/msi/app/dmg/deb/rpm/appimage），
+      # 所以这里自行把编译产物 opx.exe 打成 zip 并补传到同一个 Release。
+      # 路径 target/release/opx.exe 由 tauri-action 的 projectPath=./src-tauri 决定。
+      - name: Package portable (no-install) zip
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'src-tauri/target/release/opx.exe'
+          if (-not (Test-Path $exe)) { throw "未找到便携版二进制: $exe" }
+          $zip = "opx_${env:VERSION}_x64-portable.zip"
+          Compress-Archive -LiteralPath $exe -DestinationPath $zip -Force
+          Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item $zip).Length)
+          gh release upload "v$env:VERSION" $zip --clobber
+
+      # 生成 ghfast.top 镜像版 latest.json（内部安装包 url 也走镜像），与原始 latest.json 一并发布，
+      # 使国内用户在无 VPN、未配全局代理时也能经 GitHub 加速镜像完成更新。
+      - name: Publish ghfast.top mirror latest.json
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="v$VERSION"
+          echo "release tag: $TAG"
+          mkdir -p dist-updater
+          gh release download "$TAG" -p 'latest.json' --dir dist-updater --clobber
+          node scripts/make-ghproxy-latest.mjs dist-updater/latest.json
+          gh release upload "$TAG" dist-updater/latest-ghproxy.json --clobber

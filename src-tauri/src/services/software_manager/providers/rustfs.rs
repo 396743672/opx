@@ -52,18 +52,32 @@ impl SoftwareProvider for RustfsProvider {
 
         #[cfg(windows)]
         {
-            // latest（网络 zip）
+            // 1.0.0（上游 GitHub Release 资产）
+            // 原官网 CDN（dl.rustfs.com）不支持 Range（请求 0-99 却返回 200 全量），故改以 GitHub 资产为主：
+            // 支持断点续传，且 URL 含 github.com 会被 download::resolve_url 自动加上 ghfast.top 前缀。
+            // 版本固定为 1.0.0 而非 "latest"——latest 内容可变，与 sha256 校验、断点续传的前提冲突。
             versions.push(CatalogVersion {
-                version: "latest".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:rustfsOfficial".to_string(),
-                    url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-latest.zip".to_string(),
-                    builtin: None,
-                }],
+                version: "1.0.0".to_string(),
+                mirrors: vec![
+                    MirrorSource {
+                        name: "i18n:rustfsOfficial".to_string(),
+                        url: "https://github.com/rustfs/rustfs/releases/download/1.0.0/rustfs-windows-x86_64-v1.0.0.zip".to_string(),
+                        builtin: None,
+                    },
+                    // 兜底：上游官网 CDN（实测无 Range 支持，多源回退时自动退化为整包重下）
+                    MirrorSource {
+                        name: "i18n:rustfsCdn".to_string(),
+                        url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-v1.0.0.zip".to_string(),
+                        builtin: None,
+                    },
+                ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
+                    // 官方 SHA256SUMS 与 GitHub 独立 digest 双向互证（105,040,603 B）
+                    size: Some(105_040_603),
+                    sha256: Some(
+                        "4ccf5858ce8e6f70f01af2394c8cc0e0878ee77faa6c20d3179153476554b7d8".to_string(),
+                    ),
                 },
             });
         }
@@ -79,7 +93,7 @@ impl SoftwareProvider for RustfsProvider {
             category: SoftwareCategory::Storage,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "latest".to_string(),
+            default_version: "1.0.0".to_string(),
         }
     }
 

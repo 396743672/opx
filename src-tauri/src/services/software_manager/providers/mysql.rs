@@ -60,6 +60,14 @@ impl SoftwareProvider for MySqlProvider {
             versions.push(CatalogVersion {
                 version: "8.4.11".to_string(),
                 mirrors: vec![
+                    // 自持源优先：MySQL 官方 CDN 在国内慢且易断，故把官方原版 zip 固化到
+                    // 自有 Release（URL 含 github.com → 自动经 ghfast.top 加速）。
+                    // 官方 CDN 保留在第二位，作为 UI 可切换的兜底源。
+                    MirrorSource {
+                        name: "i18n:selfHosted".to_string(),
+                        url: format!("{}/mysql-8.4.11-winx64.zip", super::RESOURCE_BASE),
+                        builtin: None,
+                    },
                     MirrorSource {
                         name: "i18n:official".to_string(),
                         url: "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-winx64.zip".to_string(),
@@ -68,8 +76,11 @@ impl SoftwareProvider for MySqlProvider {
                 ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
+                    // 官方 8.4.11 winx64 zip 实测值；两源同源，故共用同一校验值
+                    size: Some(281_191_914),
+                    sha256: Some(
+                        "a492371d687d2bab088b0062581144a0044b8964baefdf4faa579292b423d25c".to_string(),
+                    ),
                 },
             });
         }

@@ -255,6 +255,9 @@ pub enum BackupMode {
 /// 软件升级检测结果：target_version 为比当前版本高的最高可用版本
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeInfo {
+    /// 已装实例 id。同一 key 可并存多个实例（如 minio 的 SILO 与旧版），
+    /// 升级状态必须按实例判定，否则旧实例的"可升级"会污染新实例。
+    pub installed_id: String,
     pub key: String,
     pub name: String,
     pub current_version: String,
