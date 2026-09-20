@@ -54,8 +54,8 @@
             :key="item.id"
             :software="mergeStatus(item)"
             :acting-states="actingStates"
-            :upgrade-to="upgradeMap[item.key]"
-            :rollback-to="rollbackMap[item.key]"
+            :upgrade-to="upgradeMap[item.id]"
+            :rollback-to="rollbackMap[item.id]"
             :deps-name-map="depsNameMap"
             @start="onStart(item)"
             @stop="onStop(item)"
@@ -178,9 +178,11 @@ const backupInitialTab = ref<'snapshots' | 'reset'>('snapshots')
 // 防重：记录每个软件当前正在执行的操作（'start' | 'stop'），用于防止重复点击
 const actingStates = ref<Record<string, 'start' | 'stop'>>({})
 const installStore = useInstallStore()
-// key → 目标升级版本（无可升级则无该 key）
+// 实例 id → 目标升级版本（无可升级则无该 id）
+// 注意：必须按实例 id 而非 key 索引——同一 key 可并存多个实例（如 minio 的 SILO 与旧版），
+// 按 key 索引会让旧实例的可升级状态覆盖到新实例上。
 const upgradeMap = ref<Record<string, string>>({})
-// key → 可回滚的旧版本（同 key 存在 <ver>.bak 备份时）
+// 实例 id → 可回滚的旧版本（该实例目录下存在 <ver>.bak 备份时）
 const rollbackMap = ref<Record<string, string>>({})
 const allCollapsed = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -190,8 +192,10 @@ function applyUpgrades(list: UpgradeInfo[]) {
   const map: Record<string, string> = {}
   const rb: Record<string, string> = {}
   for (const u of list) {
-    if (u.target_version) map[u.key] = u.target_version
-    if (u.rollback_to) rb[u.key] = u.rollback_to
+    const id = u.installed_id
+    if (!id) continue
+    if (u.target_version) map[id] = u.target_version
+    if (u.rollback_to) rb[id] = u.rollback_to
   }
   upgradeMap.value = map
   rollbackMap.value = rb

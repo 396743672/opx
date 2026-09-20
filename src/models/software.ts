@@ -106,7 +106,10 @@ export interface InstalledSoftwareList {
 }
 
 /// 可升级信息（check_upgrades 返回）
+/// 按「已装实例」而非软件 key 维度：同一 key 可并存多个实例，
+/// 旧实例的可升级状态不能标记到新实例上。
 export interface UpgradeInfo {
+  installed_id: string
   key: string
   name: string
   current_version: string

@@ -106,7 +106,7 @@ pub async fn fetch_remote_versions_for(
             }
         }
         Ok(None) => {
-            // 该软件不支持动态拉取（如 MySQL/MinIO/RustFS），返回空
+            // 该软件不支持动态拉取（如 MySQL/RustFS/Redis），返回空
             Ok(vec![])
         }
         Err(e) => Err(e),
@@ -207,12 +207,13 @@ async fn do_upgrade(
         .find_installed(installed_id)
         .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
 
-    // 目标版本：compute_upgrades 中该软件的 target_version（无可升级则报错）
+    // 目标版本：compute_upgrades 中该实例的 target_version（无可升级则报错）。
+    // 必须按 installed_id 匹配：同一 key 可并存多个实例，按 key 取会拿到别的实例的目标版本。
     let catalog = manager.get_catalog();
     let installed_all = manager.get_installed();
     let target_version = compute_upgrades(&installed_all, &catalog)
         .into_iter()
-        .find(|u| u.key == software.key)
+        .find(|u| u.installed_id == installed_id)
         .and_then(|u| u.target_version)
         .ok_or_else(|| anyhow::anyhow!("{} 已是最新版本", software.name))?;
 
@@ -2428,6 +2429,7 @@ fn compute_upgrades(
             .max_by(|x, y| compare_versions(x, y))
             .map(|s| s.to_string());
         out.push(UpgradeInfo {
+            installed_id: sw.id.clone(),
             key: sw.key.clone(),
             name: entry.name.clone(),
             current_version: sw.version.clone(),
@@ -2643,6 +2645,34 @@ mod tests {
         let ups = super::compute_upgrades(&installed, &catalog);
         assert_eq!(ups.len(), 1);
         assert_eq!(ups[0].target_version.as_deref(), Some("8.4.0"));
+    }
+
+    /// 回归：同一 key 并存多实例时，升级状态必须按实例判定。
+    /// 曾按 key 聚合，导致旧实例的"可升级"标记到已是最新版的实例上。
+    #[test]
+    fn compute_upgrades_is_per_instance_not_per_key() {
+        let installed = vec![
+            dummy_installed("minio", "RELEASE.2026-09-16T00-00-00Z"),
+            dummy_installed("minio", "RELEASE.2025-04-22"),
+        ];
+        let catalog = dummy_catalog(
+            "minio",
+            &["RELEASE.2026-09-16T00-00-00Z", "RELEASE.2025-04-22"],
+        );
+        let ups = super::compute_upgrades(&installed, &catalog);
+        assert_eq!(ups.len(), 2);
+        assert_eq!(ups[0].installed_id, "minio-RELEASE.2026-09-16T00-00-00Z");
+        assert_eq!(ups[1].installed_id, "minio-RELEASE.2025-04-22");
+
+        assert_eq!(
+            ups[0].target_version, None,
+            "已是最新版的实例不应被标记为可升级"
+        );
+        assert_eq!(
+            ups[1].target_version.as_deref(),
+            Some("RELEASE.2026-09-16T00-00-00Z"),
+            "旧版实例应可升级到新版"
+        );
     }
 
     #[test]
