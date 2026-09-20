@@ -383,6 +383,7 @@ export default {
   autoStartOnBootDesc: 'Windows 启动时自动运行 OPX',
   proxySettings: '下载代理',
   githubProxy: 'GitHub 加速代理',
+  githubProxyMultiHint: '可填多个，每行一个；按顺序尝试，失败自动轮换',
   globalProxy: '全局代理',
   resetDefault: '还原默认',
   proxyDefaultHint: '默认: https://ghfast.top',

@@ -80,12 +80,16 @@
           <h3 class="text-sm font-semibold tracking-tight">{{ $t('proxySettings') }}</h3>
         </div>
         <div class="px-5 pb-4 divide-y divide-border">
-          <div class="flex items-center justify-between gap-4 py-3">
-            <span class="text-sm">{{ $t('githubProxy') }}</span>
-            <div class="flex gap-2 items-center">
-              <input
+          <div class="flex items-start justify-between gap-4 py-3">
+            <div class="flex flex-col gap-0.5">
+              <span class="text-sm">{{ $t('githubProxy') }}</span>
+              <span class="text-xs text-muted-foreground">{{ $t('githubProxyMultiHint') }}</span>
+            </div>
+            <div class="flex gap-2 items-start">
+              <textarea
                 v-model="githubProxyValue"
-                class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+                rows="2"
+                class="px-2 py-1 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono resize-y"
                 :placeholder="$t('proxyDefaultHint')"
               />
               <button

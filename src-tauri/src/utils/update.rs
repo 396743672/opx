@@ -56,7 +56,11 @@ fn mirror_endpoint(mirror: &str) -> String {
 pub async fn build_updater(app: &AppHandle) -> Result<Updater> {
     let settings = crate::commands::config::read_settings().unwrap_or_default();
     let proxy_url = settings.proxy_url.trim().to_string();
-    let github_proxy = settings.github_proxy_url.trim().to_string();
+    // 加速前缀支持配置多个（换行/逗号分隔，下载侧会轮换）；updater 只能挂一个端点，取首个
+    let github_proxy = crate::utils::download::parse_proxy_list(&settings.github_proxy_url)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
 
     let (endpoint_strs, proxy) = if !proxy_url.is_empty() {
         (vec![direct_endpoint()], Some(proxy_url))

@@ -383,6 +383,7 @@ export default {
   autoStartOnBootDesc: 'Launch OPX automatically when Windows starts',
   proxySettings: 'Download Proxy',
   githubProxy: 'GitHub Accelerator',
+  githubProxyMultiHint: 'Multiple allowed, one per line; tried in order, auto-rotates on failure',
   globalProxy: 'Global Proxy',
   resetDefault: 'Reset to Default',
   proxyDefaultHint: 'Default: https://ghfast.top',

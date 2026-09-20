@@ -28,7 +28,8 @@ pub struct AppSettings {
     /// 关闭窗口时是否每次弹窗询问
     pub ask_on_close: bool,
     pub jre_default_id: Option<String>,
-    /// GitHub 下载加速代理（如 https://ghfast.top），空=不使用
+    /// GitHub 下载加速代理前缀。可填多个（换行/逗号/分号分隔）——
+    /// 下载时按顺序尝试，某个前缀重试仍失败则轮换到下一个。空=回退内置默认（ghfast.top）
     pub github_proxy_url: String,
     /// 全局下载代理（如 http://127.0.0.1:7890），空=直连
     pub proxy_url: String,
