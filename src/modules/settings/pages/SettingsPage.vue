@@ -104,6 +104,51 @@
             />
           </div>
         </div>
+
+        <!-- 应用更新 -->
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('updateSection') }}</h3>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div>
+              <span class="text-sm">{{ $t('autoCheckUpdate') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('autoCheckUpdateDesc') }}</div>
+            </div>
+            <SwitchBtn v-model="autoCheckUpdateValue" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1 min-w-0">
+              <button
+                class="btn text-xs h-7 px-2 self-start"
+                :disabled="checking || installing"
+                @click="onCheckUpdate"
+              >{{ checking ? $t('checkingUpdate') : $t('checkUpdate') }}</button>
+              <span v-if="updateInfo" class="text-xs text-success">
+                {{ $t('updateAvailable', { version: updateInfo.version }) }}
+              </span>
+              <span
+                v-if="error"
+                class="text-xs text-destructive"
+                style="overflow-wrap: anywhere; word-break: break-word"
+              >{{ error }}</span>
+            </div>
+            <div v-if="updateInfo" class="flex flex-col gap-1 items-end min-w-0">
+              <button
+                class="btn text-xs h-7 px-2 bg-primary text-primary-foreground hover:bg-primary/90"
+                :disabled="installing"
+                @click="onInstallUpdate"
+              >{{ installing ? $t('installingUpdate') : $t('installUpdate') }}</button>
+              <div v-if="installing" class="w-40 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div class="h-full bg-primary transition-all" :style="{ width: progress + '%' }"></div>
+              </div>
+              <span v-if="installing" class="text-xs text-muted-foreground">{{ progress }}%</span>
+            </div>
+          </div>
+          <div v-if="updateInfo && updateInfo.notes" class="py-3">
+            <span class="text-xs text-muted-foreground whitespace-pre-line">{{ updateInfo.notes }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- ===== 监控与告警 ===== -->
@@ -376,6 +421,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from '@/stores/settings'
+import { useUpdater } from '@/composables/useUpdater'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
 import SwitchBtn from '@/components/SwitchBtn.vue'
@@ -385,6 +431,8 @@ const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const route = useRoute()
 const router = useRouter()
+const { checking, installing, updateInfo, progress, error, check: runCheck, install: runInstall } =
+  useUpdater()
 
 // Tab 分区：选中状态存 URL query —— 刷新保持、可从别处直达；非法值回落首 Tab
 const TAB_KEYS = ['general', 'monitor', 'dns'] as const
@@ -410,6 +458,7 @@ const closeActionValue = ref<CloseWindowAction>(CloseWindowAction.CloseToTray)
 const askOnCloseValue = ref(true)
 const githubProxyValue = ref('')
 const proxyValue = ref('')
+const autoCheckUpdateValue = ref(false)
 const autostartValue = ref(false)
 const acmeStagingValue = ref(false)
 const alertSystemCpuValue = ref(90)
@@ -461,6 +510,14 @@ async function onToggleAutostart(v: boolean) {
   }
 }
 
+async function onCheckUpdate() {
+  await runCheck()
+}
+
+async function onInstallUpdate() {
+  await runInstall()
+}
+
 watch(
   () => settingsStore.settings,
   (s) => {
@@ -471,6 +528,7 @@ watch(
       askOnCloseValue.value = s.ask_on_close
       githubProxyValue.value = s.github_proxy_url || ''
       proxyValue.value = s.proxy_url || ''
+      autoCheckUpdateValue.value = s.auto_check_update
       acmeStagingValue.value = s.acme_use_staging
       alertSystemCpuValue.value = s.alert_system_cpu ?? 90
       alertSystemMemValue.value = s.alert_system_mem ?? 90
@@ -513,7 +571,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -526,6 +584,7 @@ async function save() {
   settingsStore.settings.ask_on_close = askOnCloseValue.value
   settingsStore.settings.github_proxy_url = githubProxyValue.value
   settingsStore.settings.proxy_url = proxyValue.value
+  settingsStore.settings.auto_check_update = autoCheckUpdateValue.value
   settingsStore.settings.acme_use_staging = acmeStagingValue.value
   // 数值输入被清空时 v-model.number 会给出 ''，直接写进 store 会让 save_settings 反序列化失败
   // 并污染后续所有保存 —— 这里归一到 [1,100]，非法值回落默认 90

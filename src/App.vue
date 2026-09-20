@@ -66,6 +66,7 @@ let unlistenTrayStop: UnlistenFn | null = null
 let unlistenAutoRestartGiveUp: UnlistenFn | null = null
 let unlistenProcessExited: UnlistenFn | null = null
 let unlistenResourceAlert: UnlistenFn | null = null
+let unlistenUpdateAvailable: UnlistenFn | null = null
 let exitTimer: number | null = null
 
 async function executeTray() {
@@ -194,6 +195,12 @@ onMounted(async () => {
     },
   )
 
+  // 启动自动检查到可用更新：toast 提示（手动「立即更新」在设置页进行）
+  unlistenUpdateAvailable = await listen<{ version: string | null }>('update-available', (e) => {
+    const v = e.payload?.version
+    if (v) toast(t('updateAvailable', { version: v }), 'info')
+  })
+
   window.clearTimeout(bootTimeout)
 })
 
@@ -204,6 +211,7 @@ onUnmounted(() => {
   unlistenAutoRestartGiveUp?.()
   unlistenProcessExited?.()
   unlistenResourceAlert?.()
+  unlistenUpdateAvailable?.()
   if (exitTimer) clearTimeout(exitTimer)
 })
 </script>

@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,5 +36,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/396743672/opx/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMUY3MDdDMEMwRjA4MUMKUldRY0NBOE1mSEFmTW1YOG5wWGNZei93SG1ITDN2bDdJNjdhQnZmRWRaNEJIbFArVkF1Rk16VzcK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -770,4 +770,19 @@ export default {
   auditAllResults: '全部结果',
   auditResultUnset: '未采集',
   auditFailed: '失败 {n}',
+
+  // 应用更新
+  updateSection: '应用更新',
+  autoCheckUpdate: '启动时自动检查更新',
+  autoCheckUpdateDesc: '每隔 24 小时在后台检查一次新版本',
+  checkUpdate: '检查更新',
+  checkingUpdate: '检查中…',
+  updateAvailable: '发现新版本 v{version}',
+  updateUpToDate: '已是最新版本',
+  updateCheckFailed: '检查更新失败：{msg}',
+  installUpdate: '立即更新',
+  installingUpdate: '更新中…',
+  updateInstallFailed: '更新失败：{msg}',
+  updateDownloadProgress: '下载更新 {percent}%',
+  updateInstalled: '更新完成，即将重启',
 }

@@ -770,4 +770,19 @@ export default {
   auditAllResults: 'All results',
   auditResultUnset: 'Not recorded',
   auditFailed: '{n} failed',
+
+  // App update
+  updateSection: 'App Update',
+  autoCheckUpdate: 'Check for updates on startup',
+  autoCheckUpdateDesc: 'Background check every 24 hours',
+  checkUpdate: 'Check for Updates',
+  checkingUpdate: 'Checking…',
+  updateAvailable: 'New version v{version} available',
+  updateUpToDate: 'Up to date',
+  updateCheckFailed: 'Update check failed: {msg}',
+  installUpdate: 'Update Now',
+  installingUpdate: 'Updating…',
+  updateInstallFailed: 'Update failed: {msg}',
+  updateDownloadProgress: 'Downloading update {percent}%',
+  updateInstalled: 'Update complete, restarting',
 }

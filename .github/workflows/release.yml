@@ -1,0 +1,58 @@
+name: Release
+
+# 打 tag（v*）即触发：构建 + ed25519 签名 + 发 GitHub Releases + 生成 latest.json，
+# 并额外产出 latest-ghproxy.json（内部 url 改写为 ghfast.top 镜像，供国内走加速代理更新）。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build, sign and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          projectPath: ./src-tauri
+          tagName: 'v__VERSION__'
+          releaseName: 'opx v__VERSION__'
+          releaseBody: '自动构建的 Windows 安装包；应用内「设置 → 应用更新」可一键升级。'
+          releaseDraft: false
+          prerelease: false
+          updater: true
+          updater_includeUpdaterJson: true
+          args: --bundles nsis
+
+      # 生成 ghfast.top 镜像版 latest.json（内部安装包 url 也走镜像），与原始 latest.json 一并发布，
+      # 使国内用户在无 VPN、未配全局代理时也能经 GitHub 加速镜像完成更新。
+      - name: Publish ghfast.top mirror latest.json
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist-updater
+          gh release download "v__VERSION__" -p 'latest.json' --dir dist-updater --clobber
+          node scripts/make-ghproxy-latest.mjs dist-updater/latest.json
+          gh release upload "v__VERSION__" dist-updater/latest-ghproxy.json --clobber
