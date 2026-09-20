@@ -15,10 +15,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -29,11 +29,33 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      # 快速失败：先用密钥签一个临时文件。若 Secret 缺失/名字写错，这里 10 秒内报错，
+      # 不必等 25 分钟的 release 构建跑完才发现签名不可用。
+      # 注意：私钥为「空密码」密钥，必须显式提供 TAURI_SIGNING_PRIVATE_KEY_PASSWORD；
+      # tauri-cli 在密码环境变量缺失时会转而交互式索要密码，CI 无 TTY 将直接失败。
+      - name: Preflight - verify updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: |
+          set -e
+          echo "TAURI_SIGNING_PRIVATE_KEY length: ${#TAURI_SIGNING_PRIVATE_KEY}"
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY 为空，请在仓库 Settings → Secrets and variables → Actions 中创建。"
+            exit 1
+          fi
+          printf 'opx-preflight' > ./.preflight.bin
+          npx tauri signer sign ./.preflight.bin
+          rm -f ./.preflight.bin ./.preflight.bin.sig
+          echo "signing key OK"
+
       - name: Build, sign and publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           projectPath: ./src-tauri
           tagName: 'v__VERSION__'
@@ -41,8 +63,7 @@ jobs:
           releaseBody: '自动构建的 Windows 安装包；应用内「设置 → 应用更新」可一键升级。'
           releaseDraft: false
           prerelease: false
-          updater: true
-          updater_includeUpdaterJson: true
+          includeUpdaterJson: true
           args: --bundles nsis
 
       # 生成 ghfast.top 镜像版 latest.json（内部安装包 url 也走镜像），与原始 latest.json 一并发布，
@@ -52,7 +73,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
+          TAG="${{ github.ref_name }}"
+          echo "release tag: $TAG"
           mkdir -p dist-updater
-          gh release download "v__VERSION__" -p 'latest.json' --dir dist-updater --clobber
+          gh release download "$TAG" -p 'latest.json' --dir dist-updater --clobber
           node scripts/make-ghproxy-latest.mjs dist-updater/latest.json
-          gh release upload "v__VERSION__" dist-updater/latest-ghproxy.json --clobber
+          gh release upload "$TAG" dist-updater/latest-ghproxy.json --clobber
