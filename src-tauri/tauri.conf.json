@@ -43,7 +43,7 @@
       "endpoints": [
         "https://github.com/396743672/opx/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMUY3MDdDMEMwRjA4MUMKUldRY0NBOE1mSEFmTW1YOG5wWGNZei93SG1ITDN2bDdJNjdhQnZmRWRaNEJIbFArVkF1Rk16VzcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCQkNDNTQ5OEVDOTE5RUYKUldUdkdjbU9TY1c4T3hFaDFCYUsxRmZkT2pnT0dFd1FLVm5OWG5ISDdSRlZXakY1WE5JMmI2TE0K",
       "windows": {
         "installMode": "passive"
       }
