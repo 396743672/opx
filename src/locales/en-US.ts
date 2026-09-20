@@ -193,6 +193,7 @@ export default {
   selfHosted: 'Self-hosted (GitHub accelerated)',
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO Official',
+  siloOfficial: 'SILO Official (community fork)',
   rustfsOfficial: 'RustFS Official',
   rustfsCdn: 'RustFS CDN',
   postgresqlOfficial: 'PostgreSQL Official',

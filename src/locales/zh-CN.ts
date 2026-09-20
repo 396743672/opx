@@ -193,6 +193,7 @@ export default {
   selfHosted: '自有源（GitHub 加速）',
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO 官方',
+  siloOfficial: 'SILO 官方（社区维护版）',
   rustfsOfficial: 'RustFS 官方',
   rustfsCdn: 'RustFS 官网 CDN',
   postgresqlOfficial: 'PostgreSQL 官方',

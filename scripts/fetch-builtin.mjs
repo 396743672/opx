@@ -42,17 +42,19 @@ const BUILTIN = {
     '1.31.2': 'https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip',
   },
   minio: {
-    // MinIO 社区版预编译二进制（官方 2025-10 已停发、上游随时下架），固化在自有 Release。
-    // 注意：产物是单个 .exe（非 zip），故显式声明 ext。
-    // 资产名须与上游逐字一致（运行时缓存文件名取 URL basename）。
+    // 主版本 SILO（MinIO 的社区维护 fork，pgsty/silo）：上游 MinIO 已归档、官方拒修 CVE，
+    // SILO 在同一代码库上恢复完整 Web 控制台并持续发布预编译二进制（自带 sha256 + sigstore）。
+    // 产物是 tar.gz，内含 LICENSE / NOTICE / README.md / silo.exe（无顶层目录，直解到安装根）；
+    // 运行时缓存名为 `{版本}.tar.gz`（见 installer.rs 的 TarGz 分支），与此处 key 对齐。
+    'RELEASE.2026-09-16T00-00-00Z': {
+      url: 'https://github.com/pgsty/silo/releases/download/RELEASE.2026-09-16T00-00-00Z/silo_20260916000000.0.0_windows_amd64.tar.gz',
+      ext: '.tar.gz',
+    },
+    // 兜底版本：上游最后一个保留完整 Web 控制台的官方版本，固化在自有 Release。
+    // 注意：产物是单个 .exe，故显式声明 ext；资产名须与上游逐字一致
+    // （Executable 的运行时缓存文件名取 URL basename）。
     'RELEASE.2025-04-22': {
       url: `${RESOURCE_BASE}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe`,
-      ext: '.exe',
-    },
-    // 上游最后一个带二进制的版本（RELEASE.2025-10-15 起只有源码）。
-    // 原 dl.min.io 源实测已 410 Gone，故直接用上游 GitHub Release 资产。
-    'RELEASE.2025-09-07': {
-      url: 'https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.windows-amd64.RELEASE.2025-09-07T16-13-09Z.exe',
       ext: '.exe',
     },
   },
