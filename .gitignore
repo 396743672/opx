@@ -34,3 +34,7 @@ design-mockup.html
 src-tauri/data/
 opx_0.1.0_x64-portable.zip
 src-tauri/vcrun.bat
+
+# 构建时由 scripts/fetch-builtin.mjs 下载/复制生成（jre/redis/rustfs/minio 等），非源码，不入库
+src-tauri/resources/software/**/*.zip
+src-tauri/resources/software/manifest.json
