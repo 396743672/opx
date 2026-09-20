@@ -83,18 +83,24 @@ impl SoftwareProvider for MinioProvider {
                     ),
                 },
             });
-            // latest（网络 exe）
+            // RELEASE.2025-09-07（上游最后一个带预编译二进制的版本）
+            // 原 "latest" 指向 dl.min.io，实测已 HTTP 410 Gone（上游停发后下架），改指 GitHub Release 资产；
+            // URL 含 github.com，运行时会被 download::resolve_url 自动加上 ghfast.top 前缀。
+            // 注：RELEASE.2025-10-15 起上游只发源码（该 tag 资产数为 0），2025-09-07 是可用的最新版。
             versions.push(CatalogVersion {
-                version: "latest".to_string(),
+                version: "RELEASE.2025-09-07".to_string(),
                 mirrors: vec![MirrorSource {
                     name: "i18n:minioOfficial".to_string(),
-                    url: "https://dl.min.io/server/minio/release/windows-amd64/minio.exe".to_string(),
+                    url: "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.windows-amd64.RELEASE.2025-09-07T16-13-09Z.exe".to_string(),
                     builtin: None,
                 }],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Executable,
-                    size: None,
-                    sha256: None,
+                    // 官方 .sha256sum 与 GitHub 独立 digest 双向互证（113,115,136 B）
+                    size: Some(113_115_136),
+                    sha256: Some(
+                        "af709e6ba68488404e85acdd22a3030d0f5e56a108d4b27d744f18ceb50861b4".to_string(),
+                    ),
                 },
             });
         }

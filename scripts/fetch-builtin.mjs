@@ -26,8 +26,13 @@ const BUILTIN = {
       'https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u422-b05/OpenJDK8U-jre_x64_windows_hotspot_8u422b05.zip',
   },
   mysql: {
-    // MySQL 本地 zip（8.4.10 离线内置版本）
-    '8.4.10': { localPath: 'C:/Users/39674/Desktop/mysql-8.4.10-winx64.zip' },
+    // MySQL 8.4.11（上游 cdn.mysql.com 国内慢/易断，固化在自有 Release；
+    // URL 含 github.com，运行时会被 resolve_url 自动加上 ghfast.top 前缀）
+    // 注：原 '8.4.10' 指向 C:/Users/39674/... 为另一台机器的死链，已移除。
+    '8.4.11': {
+      url: `${RESOURCE_BASE}/mysql-8.4.11-winx64.zip`,
+      ext: '.zip',
+    },
   },
   redis: {
     '7.4.9':
@@ -44,10 +49,17 @@ const BUILTIN = {
       url: `${RESOURCE_BASE}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe`,
       ext: '.exe',
     },
+    // 上游最后一个带二进制的版本（RELEASE.2025-10-15 起只有源码）。
+    // 原 dl.min.io 源实测已 410 Gone，故直接用上游 GitHub Release 资产。
+    'RELEASE.2025-09-07': {
+      url: 'https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.windows-amd64.RELEASE.2025-09-07T16-13-09Z.exe',
+      ext: '.exe',
+    },
   },
   rustfs: {
-    '1.0.0-beta.8':
-      'https://github.com/rustfs/rustfs/releases/download/1.0.0-beta.8/rustfs-windows-x86_64-latest.zip',
+    // 原指向 dl.rustfs.com，该 CDN 不支持 Range（请求分片返回 200 全量），改用上游 GitHub 资产
+    '1.0.0':
+      'https://github.com/rustfs/rustfs/releases/download/1.0.0/rustfs-windows-x86_64-v1.0.0.zip',
   },
 }
 

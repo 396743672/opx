@@ -194,6 +194,7 @@ export default {
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO Official',
   rustfsOfficial: 'RustFS Official',
+  rustfsCdn: 'RustFS CDN',
   postgresqlOfficial: 'PostgreSQL Official',
   mongodbOfficial: 'MongoDB Official',
   nacosOfficial: 'Nacos Official',
