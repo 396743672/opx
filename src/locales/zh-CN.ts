@@ -190,6 +190,7 @@ export default {
   offline: '离线',
   huaweiMirror: '华为镜像',
   official: '官方',
+  selfHosted: '自有源（GitHub 加速）',
   redisWindowsGithub: 'redis-windows GitHub',
   minioOfficial: 'MinIO 官方',
   rustfsOfficial: 'RustFS 官方',

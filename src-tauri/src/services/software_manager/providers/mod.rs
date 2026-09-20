@@ -23,6 +23,13 @@ pub mod influxdb3;
 pub mod node;
 pub mod custom_templates;
 
+/// 自持资源分发基址：体积较大的内置软件包固化在自有 GitHub Release（tag `res-v1`）上，
+/// 避免依赖上游 URL（MySQL 官方 CDN 慢/易断、MinIO 已停发社区版二进制随时可能下架）。
+///
+/// URL 含 `github.com`，因此会被 `utils::download::resolve_url` 自动加上
+/// `github_proxy_url`（默认 ghfast.top）前缀，国内无需额外配置即走加速。
+pub const RESOURCE_BASE: &str = "https://github.com/396743672/opx/releases/download/res-v1";
+
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
     fn catalog_entry(&self) -> CatalogEntry;

@@ -16,6 +16,10 @@ import { spawn } from 'node:child_process'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RESOURCES_DIR = join(__dirname, '..', 'src-tauri', 'resources', 'software')
 
+// 自持资源分发基址：体积较大 / 上游不稳定的内置包固化在自有 GitHub Release（tag res-v1）。
+// URL 含 github.com，运行时下载会被 utils::download::resolve_url 自动加上 ghfast.top 前缀。
+const RESOURCE_BASE = 'https://github.com/396743672/opx/releases/download/res-v1'
+
 const BUILTIN = {
   jre: {
     '1.8':
@@ -33,8 +37,13 @@ const BUILTIN = {
     '1.31.2': 'https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip',
   },
   minio: {
-    // MinIO 本地 zip（离线内置版本），从本地路径复制
-    'RELEASE.2025-04-22': { localPath: 'D:/软件/onlilne/minio/RELEASE.2025-04-22T15-44-28Z.zip' },
+    // MinIO 社区版预编译二进制（官方 2025-10 已停发、上游随时下架），固化在自有 Release。
+    // 注意：产物是单个 .exe（非 zip），故显式声明 ext。
+    // 资产名须与上游逐字一致（运行时缓存文件名取 URL basename）。
+    'RELEASE.2025-04-22': {
+      url: `${RESOURCE_BASE}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe`,
+      ext: '.exe',
+    },
   },
   rustfs: {
     '1.0.0-beta.8':
@@ -87,14 +96,15 @@ async function main() {
     for (const [version, source] of Object.entries(versions)) {
       const keyDir = join(RESOURCES_DIR, key)
       mkdirSync(keyDir, { recursive: true })
-      // 文件扩展名：统一用 .zip（minio 内置是 zip，rustfs/jre/mysql/redis/nginx 也是 zip）
-      const ext = '.zip'
-      const zipPath = join(keyDir, `${version}${ext}`)
-
-      // source 可能是 URL 字符串或 { localPath: "..." } 对象
-      const isLocal = typeof source === 'object' && source !== null && source.localPath
+      // source 有三种形态：URL 字符串、{ localPath }、或 { url, ext }
+      const isObj = typeof source === 'object' && source !== null
+      const isLocal = isObj && !!source.localPath
       const localPath = isLocal ? source.localPath : null
-      const url = isLocal ? null : source
+      const url = isLocal ? null : isObj ? source.url : source
+
+      // 文件扩展名：默认 .zip；source.ext 可覆盖（如 minio 产物是单个 .exe）
+      const ext = (isObj && source.ext) || '.zip'
+      const zipPath = join(keyDir, `${version}${ext}`)
 
       if (existsSync(zipPath) && !force) {
         console.log(`✓ 跳过已存在: ${key}/${version}${ext}`)

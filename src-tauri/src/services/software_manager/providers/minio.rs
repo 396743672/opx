@@ -55,15 +55,32 @@ impl SoftwareProvider for MinioProvider {
             // RELEASE.2025-04-22（GitHub 发布页）
             versions.push(CatalogVersion {
                 version: "RELEASE.2025-04-22".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:minioOfficial".to_string(),
-                    url: "https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe".to_string(),
-                    builtin: None,
-                }],
+                mirrors: vec![
+                    // 自持源优先：MinIO 已于 2025-10 停发社区版预编译二进制（仓库 2026-04 归档），
+                    // 上游资产随时可能下架，故固化到自有 Release。
+                    // ⚠️ 资产名必须与上游逐字一致：ArchiveFormat::Executable 的缓存文件名取 URL
+                    // basename（installer.rs），改名会导致已缓存文件失效、用户重新下载 121MB。
+                    MirrorSource {
+                        name: "i18n:selfHosted".to_string(),
+                        url: format!(
+                            "{}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe",
+                            super::RESOURCE_BASE
+                        ),
+                        builtin: None,
+                    },
+                    MirrorSource {
+                        name: "i18n:minioOfficial".to_string(),
+                        url: "https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe".to_string(),
+                        builtin: None,
+                    },
+                ],
                 archive: ArchiveInfo {
                     format: ArchiveFormat::Executable,
-                    size: None,
-                    sha256: None,
+                    // 实测值（`minio --version` 自报 RELEASE.2025-04-22T22-12-26Z）；两源同源
+                    size: Some(121_008_640),
+                    sha256: Some(
+                        "2ceb3b3d68bdf1c4def9702cb02c5c8adb235197d1c8f2eaad24136833ab9a57".to_string(),
+                    ),
                 },
             });
             // latest（网络 exe）
