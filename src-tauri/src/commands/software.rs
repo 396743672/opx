@@ -289,12 +289,12 @@ async fn do_upgrade(
         .iter()
         .find(|v| v.version == target_version)
         .ok_or_else(|| anyhow::anyhow!("{} 不支持版本 {}", catalog_entry.name, target_version))?;
-    // 选可联网下载的镜像（builtin 镜像无真实 URL，download_and_extract 走 HTTP 下载）
-    let mirror = version_info
+    // 选可联网下载的镜像（builtin 镜像无真实 URL，download_and_extract 走 HTTP 下载）。
+    // 只定「首选源」的下标，实际下载由 download_with_mirror_fallback 按序回退。
+    let preferred_index = version_info
         .mirrors
         .iter()
-        .find(|m| m.builtin.is_none())
-        .or_else(|| version_info.mirrors.first())
+        .position(|m| m.builtin.is_none() && m.url.starts_with("http"))
         .ok_or_else(|| anyhow::anyhow!("{} 无可用镜像源", target_version))?;
 
     let params = InstallParams {
@@ -304,14 +304,14 @@ async fn do_upgrade(
         set_as_default_jre: false,
     };
 
-    // 4. 下载+解压到新目录
-    installer::download_and_extract(
+    // 4. 下载+解压到新目录（首选源不可达时自动回退其余可联网镜像）
+    installer::download_with_mirror_fallback(
         &params,
         &new_install_path,
         app,
         install_id,
         version_info,
-        mirror,
+        preferred_index,
     )
     .await
     .map_err(|e| {

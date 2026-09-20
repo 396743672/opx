@@ -179,10 +179,10 @@ pub async fn install_software(
         );
         return;
     }
-    let mirror = &version_info.mirrors[params.mirror_index];
+    let selected_mirror = &version_info.mirrors[params.mirror_index];
 
     // builtin 分流：若选中的镜像带 builtin 标记，走本地解压
-    if mirror.builtin.is_some() {
+    if selected_mirror.builtin.is_some() {
         install_from_builtin(
             app,
             manager,
@@ -190,7 +190,7 @@ pub async fn install_software(
             install_id,
             entry,
             version_info,
-            mirror,
+            selected_mirror,
         )
         .await;
         return;
@@ -243,13 +243,15 @@ pub async fn install_software(
 
     let result: Result<()> = async {
         // 下载到缓存→SHA 校验→解压到 install_path→provider.post_install（含进度事件）
-        download_and_extract(
+        // 多源回退：选中源不可达时自动尝试其余可联网镜像（自持源 → 官方源），
+        // 避免「只试一次就整体失败、排序在后的兜底源永远用不上」。
+        let used_mirror = download_with_mirror_fallback(
             &params,
             &install_path,
             &app,
             &install_id,
             version_info,
-            mirror,
+            params.mirror_index,
         )
         .await?;
 
@@ -272,8 +274,8 @@ pub async fn install_software(
             auto_start_on_app_start: false,
             startup_order: 0,
             source: InstallSource::Mirror {
-                mirror_name: mirror.name.clone(),
-                url: mirror.url.clone(),
+                mirror_name: used_mirror.name.clone(),
+                url: used_mirror.url.clone(),
             },
             pid: None,
             last_started_at: None,
@@ -713,6 +715,88 @@ pub async fn download_and_extract(
     Ok(())
 }
 
+/// 候选镜像排序：`preferred_index` 指定的镜像优先，其余按目录声明顺序补齐。
+///
+/// 只保留可联网下载的镜像（`builtin` 镜像没有真实地址，本地资源分支由
+/// `install_from_builtin` 负责）。`sort_by_key` 是稳定排序，故「其余」保持声明顺序，
+/// 回退次序可预期。
+fn mirror_candidates(version_info: &CatalogVersion, preferred_index: usize) -> Vec<&MirrorSource> {
+    let mut candidates: Vec<(usize, &MirrorSource)> = version_info
+        .mirrors
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.builtin.is_none() && m.url.starts_with("http"))
+        .collect();
+    // 首选源排最前；其余同权，稳定排序保持声明顺序
+    candidates.sort_by_key(|(i, _)| usize::from(*i != preferred_index));
+    candidates.into_iter().map(|(_, m)| m).collect()
+}
+
+/// 按候选顺序依次尝试镜像，返回首个「下载 + SHA 校验 + 解压」全链路成功的镜像。
+///
+/// 中间失败只记日志、**不 emit `failed`**：emit_event 会在 failed 终态消费
+/// `INSTALL_AUDIT_CTX` 中的审计上下文并写入失败记录，导致后续成功也无审计可写。
+/// 最终失败由调用方统一上报。
+pub async fn download_with_mirror_fallback(
+    params: &InstallParams,
+    install_path: &Path,
+    app: &AppHandle,
+    install_id: &str,
+    version_info: &CatalogVersion,
+    preferred_index: usize,
+) -> Result<MirrorSource> {
+    let candidates = mirror_candidates(version_info, preferred_index);
+    if candidates.is_empty() {
+        return Err(anyhow::anyhow!(
+            "{} {} 无可用镜像源",
+            params.key,
+            params.version
+        ));
+    }
+    let total = candidates.len();
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for (attempt, mirror) in candidates.into_iter().enumerate() {
+        if attempt > 0 {
+            // 上一源若在解压阶段失败，install_path 会留下半成品；先清空再试，避免新旧内容叠加。
+            // Executable 格式需要目录存在才能 copy，故清空后补建。
+            cleanup_path(install_path);
+            let _ = fs::create_dir_all(install_path);
+            eprintln!(
+                "[software] mirror fallback -> {} ({})",
+                mirror.name, mirror.url
+            );
+        }
+
+        match download_and_extract(params, install_path, app, install_id, version_info, mirror).await
+        {
+            Ok(()) => {
+                if attempt > 0 {
+                    eprintln!(
+                        "[software] mirror fallback succeeded: key={}, version={}, mirror={}",
+                        params.key, params.version, mirror.name
+                    );
+                }
+                return Ok(mirror.clone());
+            }
+            Err(e) => {
+                eprintln!(
+                    "[software] mirror failed ({}/{}): {} ({}) -> {}",
+                    attempt + 1,
+                    total,
+                    mirror.name,
+                    mirror.url,
+                    e
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+
+    // candidates 非空已在上方保证，循环必然留下错误
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("所有镜像源均失败")))
+}
+
 /// 从内置 zip 安装（离线安装）
 async fn install_from_builtin(
     app: AppHandle,
@@ -1081,4 +1165,77 @@ async fn install_from_builtin(
     }
 
     manager.remove_install_task(&install_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::software::{ArchiveInfo, BuiltinInfo};
+
+    fn mirror(name: &str, builtin: bool) -> MirrorSource {
+        MirrorSource {
+            name: name.to_string(),
+            url: if builtin {
+                format!("builtin://{}", name)
+            } else {
+                format!("https://example.com/{}.zip", name)
+            },
+            builtin: builtin.then(|| BuiltinInfo {
+                version: "1.0.0".to_string(),
+                sha256: String::new(),
+                size: 0,
+            }),
+        }
+    }
+
+    fn version(mirrors: Vec<MirrorSource>) -> CatalogVersion {
+        CatalogVersion {
+            version: "1.0.0".to_string(),
+            mirrors,
+            archive: ArchiveInfo {
+                format: ArchiveFormat::Zip,
+                size: None,
+                sha256: None,
+            },
+        }
+    }
+
+    fn names(mirrors: &[&MirrorSource]) -> Vec<String> {
+        mirrors.iter().map(|m| m.name.clone()).collect()
+    }
+
+    /// 首选源排最前，其余保持声明顺序作为兜底
+    #[test]
+    fn candidates_put_preferred_first_and_keep_declaration_order() {
+        let v = version(vec![mirror("self-hosted", false), mirror("official", false)]);
+        assert_eq!(
+            names(&mirror_candidates(&v, 1)),
+            vec!["official", "self-hosted"]
+        );
+        assert_eq!(
+            names(&mirror_candidates(&v, 0)),
+            vec!["self-hosted", "official"]
+        );
+    }
+
+    /// builtin 镜像无真实下载地址，不进入 HTTP 下载候选
+    #[test]
+    fn candidates_skip_builtin_mirrors() {
+        let v = version(vec![mirror("builtin", true), mirror("official", false)]);
+        assert_eq!(names(&mirror_candidates(&v, 0)), vec!["official"]);
+    }
+
+    /// 首选下标越界或指向 builtin 时不应 panic，退回声明顺序
+    #[test]
+    fn candidates_are_safe_when_preferred_index_is_out_of_range() {
+        let v = version(vec![mirror("a", false), mirror("b", false)]);
+        assert_eq!(names(&mirror_candidates(&v, 99)), vec!["a", "b"]);
+    }
+
+    /// 全部是 builtin 镜像时没有可联网源，由调用方报错
+    #[test]
+    fn candidates_empty_when_no_downloadable_mirror() {
+        let v = version(vec![mirror("builtin", true)]);
+        assert!(mirror_candidates(&v, 0).is_empty());
+    }
 }
