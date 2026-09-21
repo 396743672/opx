@@ -128,6 +128,7 @@ const DOC_URLS: Record<string, string> = {
   rustfs: 'https://github.com/influxdata/rustfs',
   postgresql: 'https://www.postgresql.org/docs/current/',
   mongodb: 'https://www.mongodb.com/docs/manual/',
+  consul: 'https://developer.hashicorp.com/consul/docs',
   nacos: 'https://nacos.io/docs/',
   kafka: 'https://kafka.apache.org/documentation/',
   elasticsearch: 'https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html',
