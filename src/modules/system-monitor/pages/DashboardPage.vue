@@ -207,15 +207,73 @@
       </div>
     </div>
 
+    <!-- 最近一次启动报告：开机统一启动编排的逐项结果（失败聚焦） -->
+    <div class="rounded-lg border border-border bg-card p-4 shadow-card mb-4">
+      <CardHeader
+        :title="$t('lastRunReport')"
+        :subtitle="reportSubtitle"
+        hide-refresh
+      />
+      <div v-if="!startupItems.length" class="py-3 text-sm text-muted-foreground">
+        {{ $t('startupReportEmpty') }}
+      </div>
+      <template v-else>
+        <div
+          v-if="startupReport?.rolled_back"
+          class="mb-3 flex items-center gap-2 text-xs text-[var(--color-danger,red)]"
+        >
+          <Icon icon="mdi:backup-restore" />
+          {{ $t('startupRolledBack') }}
+        </div>
+        <div class="space-y-1.5">
+          <div
+            v-for="item in startupItems"
+            :key="item.kind + ':' + item.id"
+            class="flex items-center gap-3 text-sm border border-border rounded-md px-3 py-2"
+            :class="item.status === 'failed' ? 'border-[var(--color-danger,red)]' : ''"
+          >
+            <Icon :icon="statusIcon(item.status)" :class="statusClass(item.status)" />
+            <span class="text-xs text-muted-foreground shrink-0 w-14">
+              {{ kindLabel(item.kind) }}
+            </span>
+            <span class="truncate flex-1">{{ item.name }}</span>
+            <span
+              v-if="item.status === 'skipped'"
+              class="text-xs text-muted-foreground shrink-0"
+            >
+              {{ $t('startupSkipped') }}
+            </span>
+            <span
+              v-if="item.message"
+              class="text-xs shrink-0 max-w-[40%] truncate"
+              :class="
+                item.status === 'failed'
+                  ? 'text-[var(--color-danger,red)]'
+                  : 'text-muted-foreground'
+              "
+            >
+              {{ item.message }}
+            </span>
+            <span class="text-xs text-muted-foreground tnum shrink-0">
+              {{ fmtMs(item.elapsed_ms) }}
+            </span>
+          </div>
+        </div>
+      </template>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSystemStore } from '@/stores/system'
 import { useRunningSoftware } from '@/composables/useRunningSoftware'
 import type { HistoryPoint } from '@/models/system'
+import type { StartupItemReport, StartupItemStatus, StartupReport } from '@/models/startup'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
@@ -224,6 +282,7 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { Icon } from '@iconify/vue'
 import { formatBytes, formatRate, formatUptime, formatBootTime } from '@/utils/format'
 
+const { t } = useI18n()
 const systemStore = useSystemStore()
 const { runningSoftware, runningApps } = useRunningSoftware()
 
@@ -242,6 +301,73 @@ async function loadMetricsHistory() {
 }
 
 const systemInfo = computed(() => systemStore.systemInfo)
+
+// ===== 最近一次启动报告（开机统一启动编排的结果）=====
+// 后端已把报告落盘（startup_report.json），这里读回显；启动尚未结束时靠
+// startup-progress 事件逐项增量补齐，保证用户看到实时进度而非空白。
+const startupReport = ref<StartupReport | null>(null)
+const startupItems = computed<StartupItemReport[]>(() => startupReport.value?.items ?? [])
+let unlistenStartupProgress: UnlistenFn | null = null
+
+const reportSubtitle = computed(() => {
+  const r = startupReport.value
+  if (!r || !r.items.length) return undefined
+  const at = r.started_at ? r.started_at.replace('T', ' ').slice(0, 19) : ''
+  return `${at} · ${t('startupTotalElapsed')}: ${fmtMs(r.total_elapsed_ms)}`
+})
+
+async function loadStartupReport() {
+  try {
+    startupReport.value = await invoke<StartupReport | null>('get_last_startup_report')
+  } catch {
+    // 无报告或读取失败：保持空态
+    startupReport.value = null
+  }
+}
+
+/** 增量合并单项：同 kind+id 覆盖（回滚/跳过状态会随后端纠正），否则追加 */
+function mergeStartupItem(item: StartupItemReport) {
+  const current = startupReport.value ?? {
+    started_at: '',
+    total_elapsed_ms: 0,
+    items: [],
+    rolled_back: false,
+  }
+  const idx = current.items.findIndex((i) => i.kind === item.kind && i.id === item.id)
+  const items = [...current.items]
+  if (idx >= 0) items[idx] = item
+  else items.push(item)
+  startupReport.value = {
+    ...current,
+    started_at: current.started_at || new Date().toISOString(),
+    items,
+  }
+}
+
+function kindLabel(kind: string): string {
+  const map: Record<string, string> = {
+    software: t('startupKindSoftware'),
+    node: t('startupKindNode'),
+    stack: t('startupKindStack'),
+  }
+  return map[kind] ?? kind
+}
+
+function statusIcon(status: StartupItemStatus): string {
+  if (status === 'failed') return 'mdi:alert-circle'
+  if (status === 'skipped') return 'mdi:minus-circle-outline'
+  return 'mdi:check-circle'
+}
+
+function statusClass(status: StartupItemStatus): string {
+  if (status === 'failed') return 'text-[var(--color-danger,red)] shrink-0'
+  if (status === 'skipped') return 'text-muted-foreground shrink-0'
+  return 'text-success shrink-0'
+}
+
+function fmtMs(ms: number): string {
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms'
+}
 
 const bootTimeStr = computed(() =>
   systemInfo.value ? formatBootTime(systemInfo.value.boot_time) : '-'
@@ -264,10 +390,24 @@ onMounted(() => {
   // 趋势曲线：读后端持久化序列，与后端采样间隔一致（30s）
   loadMetricsHistory()
   metricsTimer = window.setInterval(loadMetricsHistory, 30_000)
+  // 启动报告：先读落盘结果，再订阅实时进度（应用刚启动时报告可能仍在生成）
+  loadStartupReport()
+  listen<StartupItemReport>('startup-progress', (event) => {
+    mergeStartupItem(event.payload)
+  })
+    .then((un) => {
+      unlistenStartupProgress = un
+      // 订阅建立前可能已错过若干进度事件，补读一次落盘报告兜底
+      return loadStartupReport()
+    })
+    .catch(() => {
+      // 事件订阅失败（如非 Tauri 环境）不影响落盘报告展示
+    })
 })
 
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
   if (metricsTimer) clearInterval(metricsTimer)
+  unlistenStartupProgress?.()
 })
 </script>

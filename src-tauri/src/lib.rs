@@ -304,6 +304,7 @@ pub fn run() {
             commands::system::system_info,
             commands::system::system_history,
             commands::system::process_metrics_history,
+            commands::system::get_last_startup_report,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::get_autostart,
