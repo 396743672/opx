@@ -2394,7 +2394,8 @@ pub async fn reset_instance(
 
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
 /// 任一段含非数字时退化为字符串比较（v1 < v2）。
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+/// 升级检测与 provider 的远程版本排序共用同一份语义，故对 crate 内可见。
+pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let ap: Vec<&str> = a.split('.').collect();
     let bp: Vec<&str> = b.split('.').collect();
     for i in 0..ap.len().min(bp.len()) {

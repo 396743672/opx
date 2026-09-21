@@ -31,6 +31,63 @@ fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+/// InfluxDB 官方分发基址（`dl.influxdata.com` 目录不可枚举，只能按版本号拼 URL）。
+const RELEASES_BASE: &str = "https://dl.influxdata.com/influxdb/releases";
+/// 版本清单来源：`influxdata/influxdb` 的 Release（tag 形如 `v3.11.4`）。
+/// 该 Release **不带资产**（二进制另发在 `dl.influxdata.com`），故版本号取自 tag。
+const RELEASES_URL: &str = "https://api.github.com/repos/influxdata/influxdb/releases?per_page=30";
+/// 远程版本发现最多取几个（每个版本一次请求已是上限，给最新 3 个足够）。
+const REMOTE_MAX_VERSIONS: usize = 3;
+
+/// 归档 URL（内置 catalog 与远程发现共用同一拼装规则；Windows 为 zip，其余平台为 linux tar.gz）。
+fn archive_url(version: &str) -> String {
+    #[cfg(windows)]
+    let name = format!("influxdb3-core-{}-windows_amd64.zip", version);
+    #[cfg(not(windows))]
+    let name = format!("influxdb3-core-{}-linux-amd64.tar.gz", version);
+    format!("{}/{}", RELEASES_BASE, name)
+}
+
+fn archive_format() -> ArchiveFormat {
+    if cfg!(windows) {
+        ArchiveFormat::Zip
+    } else {
+        ArchiveFormat::TarGz
+    }
+}
+
+/// 纯解析：从 `influxdata/influxdb` 的 Release 列表提取 InfluxDB 3 正式版号，按版本号降序、最多 N 个。
+///
+/// 该仓库是 v1 / v2 / v3 共用仓库，标签混在一起，必须严格过滤：
+/// - 跳过 `prerelease`；
+/// - 只保留 `3.x.y` 三段纯数字（`v2.9.1` / `v1.13.1` 是 influxd 老架构，
+///   `v3.11.0-rc1` 之类预发布名也因非纯数字被排除）。
+fn parse_v3_releases(releases: &[serde_json::Value]) -> Vec<String> {
+    let mut versions: Vec<String> = Vec::new();
+    for r in releases {
+        if r.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(tag) = r.get("tag_name").and_then(|t| t.as_str()) else {
+            continue;
+        };
+        let ver = tag.strip_prefix('v').unwrap_or(tag);
+        if !ver.starts_with("3.") {
+            continue;
+        }
+        let Ok(re) = regex::Regex::new(r"^\d+\.\d+\.\d+$") else {
+            continue;
+        };
+        if !re.is_match(ver) || versions.iter().any(|v| v == ver) {
+            continue;
+        }
+        versions.push(ver.to_string());
+    }
+    versions.sort_by(|a, b| crate::commands::software::compare_versions(b, a));
+    versions.truncate(REMOTE_MAX_VERSIONS);
+    versions
+}
+
 /// InfluxDB 3 Core（influxdb3）：Rust 重写的新架构时序数据库。
 /// 与 InfluxDB 2.x（influxd）是两个独立产品，不共享二进制/配置/数据，
 /// 故单独一个 provider（key=influxdb3），互不干扰。
@@ -54,19 +111,9 @@ impl SoftwareProvider for Influxdb3Provider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        // InfluxDB 3 Core Windows 包为 zip，UNIX 为 tar.gz；版本写死已知可用版本。
-        // dl.influxdata.com 目录不可枚举，故此处为静态列表（不动态拉取）。
-        #[cfg(windows)]
-        let (make_url, format) = (
-            |v: &str| format!("https://dl.influxdata.com/influxdb/releases/influxdb3-core-{v}-windows_amd64.zip"),
-            ArchiveFormat::Zip,
-        );
-        #[cfg(not(windows))]
-        let (make_url, format) = (
-            |v: &str| format!("https://dl.influxdata.com/influxdb/releases/influxdb3-core-{v}-linux-amd64.tar.gz"),
-            ArchiveFormat::TarGz,
-        );
-
+        // InfluxDB 3 Core Windows 包为 zip，UNIX 为 tar.gz。
+        // dl.influxdata.com 目录不可枚举，故内置版本为静态列表（新版本由 fetch_remote_versions 补）。
+        let format = archive_format();
         let versions = [
             "3.11.2", "3.10.0", "3.4.0", "3.3.0",
         ]
@@ -75,7 +122,7 @@ impl SoftwareProvider for Influxdb3Provider {
             version: v.to_string(),
             mirrors: vec![MirrorSource {
                 name: "i18n:influxdbOfficial".to_string(),
-                url: make_url(v),
+                url: archive_url(v),
                 builtin: None,
             }],
             archive: ArchiveInfo {
@@ -95,6 +142,50 @@ impl SoftwareProvider for Influxdb3Provider {
             icon: "mdi:chart-line".to_string(),
             versions,
             default_version: "3.11.2".to_string(),
+        }
+    }
+
+    /// 动态拉取 InfluxDB 3 Core 正式版（GitHub Release 的 `v3.x.y` 标签 + 官方分发 URL 拼装）。
+    /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
+    fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            // blocking builder 无 read_timeout，timeout 是「连接→读体完成」的总 deadline：
+            // Release 列表约 165 KB，本机实测 5.2s，慢网下 15s 会在读体中途被掐断
+            // （报成 decoding 错误，症状像解析失败）→ 统一放宽到 60s，详见 rustfs.rs 同名注释。
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(RELEASES_URL)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[influxdb3] GitHub API 返回 {}", resp.status());
+            return None;
+        }
+        let releases: Vec<serde_json::Value> = resp.json().ok()?;
+        let format = archive_format();
+        let versions: Vec<CatalogVersion> = parse_v3_releases(&releases)
+            .into_iter()
+            .map(|v| CatalogVersion {
+                mirrors: vec![MirrorSource {
+                    name: "i18n:influxdbOfficial".to_string(),
+                    url: archive_url(&v),
+                    builtin: None,
+                }],
+                version: v,
+                // 官方不在 Release / 分发目录旁发布校验和，size/sha256 留空（与内置版本一致）
+                archive: ArchiveInfo { format: format.clone(), size: None, sha256: None },
+            })
+            .collect();
+        if versions.is_empty() {
+            None
+        } else {
+            Some(versions)
         }
     }
 
@@ -330,6 +421,59 @@ mod tests {
                 assert_eq!(timeout_ms, 1000);
             }
             _ => panic!("expected Http health check"),
+        }
+    }
+
+    fn release(tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease })
+    }
+
+    #[test]
+    fn parse_keeps_only_v3_stable_newest_first() {
+        let releases = vec![
+            release("v3.11.4", false),
+            release("v3.11.3", false),
+            // 同仓库的 v1 / v2 标签：influxd 老架构，与本 provider 无关
+            release("v2.9.1", false),
+            release("v1.13.1", false),
+            release("v3.11.5-rc1", false),
+            release("v3.12.0", true),
+            release("v3.10.6", false),
+            release("garbage", false),
+        ];
+        assert_eq!(
+            parse_v3_releases(&releases),
+            vec!["3.11.4", "3.11.3", "3.10.6"]
+        );
+    }
+
+    #[test]
+    fn parse_handles_empty_input_and_duplicates() {
+        assert!(parse_v3_releases(&[]).is_empty());
+        let dup = vec![release("v3.9.0", false), release("v3.9.0", false)];
+        assert_eq!(parse_v3_releases(&dup), vec!["3.9.0"]);
+    }
+
+    #[test]
+    fn archive_url_matches_platform_package_name() {
+        #[cfg(windows)]
+        assert_eq!(
+            archive_url("3.11.4"),
+            "https://dl.influxdata.com/influxdb/releases/influxdb3-core-3.11.4-windows_amd64.zip"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            archive_url("3.11.4"),
+            "https://dl.influxdata.com/influxdb/releases/influxdb3-core-3.11.4-linux-amd64.tar.gz"
+        );
+    }
+
+    #[test]
+    fn catalog_versions_use_same_url_rule() {
+        let entry = Influxdb3Provider::new().catalog_entry();
+        for v in &entry.versions {
+            assert_eq!(v.mirrors[0].url, archive_url(&v.version));
+            assert_eq!(v.archive.format, archive_format());
         }
     }
 }
