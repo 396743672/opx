@@ -37,4 +37,6 @@ src-tauri/vcrun.bat
 
 # 构建时由 scripts/fetch-builtin.mjs 下载/复制生成（jre/redis/rustfs/minio 等），非源码，不入库
 src-tauri/resources/software/**/*.zip
+src-tauri/resources/software/**/*.tar.gz
+src-tauri/resources/software/**/*.exe
 src-tauri/resources/software/manifest.json
