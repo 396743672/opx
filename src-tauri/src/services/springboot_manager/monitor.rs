@@ -1,4 +1,5 @@
 use crate::models::springboot::JvmInfo;
+use crate::utils::process::hidden;
 
 /// 通过 jcmd 采集 JVM 指标
 /// `jdk_path: Some(path)` 时从 JDK 目录找 jcmd，否则走 PATH
@@ -28,7 +29,7 @@ fn run_jcmd(pid: u32, command: &str, jdk_path: Option<&str>) -> Option<String> {
     let jcmd = jcmd.as_deref().unwrap_or(std::path::Path::new(
         if cfg!(windows) { "jcmd.exe" } else { "jcmd" }
     ));
-    let output = std::process::Command::new(jcmd)
+    let output = hidden(jcmd)
         .args([&pid.to_string(), command])
         .output()
         .ok()?;

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Mutex;
 
 use crate::models::node_app::{
@@ -9,6 +9,7 @@ use crate::models::node_app::{
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
 use crate::utils::paths;
+use crate::utils::process::hidden;
 
 pub struct NodeAppManager {
     inner: Mutex<NodeAppManagerInner>,
@@ -261,7 +262,7 @@ impl NodeAppManager {
             }
         }
 
-        let mut cmd = Command::new(node_exe);
+        let mut cmd = hidden(node_exe);
         cmd.arg(&entry);
         for a in &app.args {
             cmd.arg(a);

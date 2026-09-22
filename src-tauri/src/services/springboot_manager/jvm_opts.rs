@@ -1,4 +1,5 @@
 use crate::models::springboot::JvmOptsTemplate;
+use crate::utils::process::hidden;
 
 /// 根据 JDK 安装路径检测版本并生成优化参数
 pub fn detect_jdk_version(jdk_path: &str) -> Option<u32> {
@@ -11,7 +12,7 @@ pub fn detect_jdk_version(jdk_path: &str) -> Option<u32> {
         java_bin
     };
     if !java_bin.exists() { return None; }
-    let output = std::process::Command::new(&java_bin)
+    let output = hidden(&java_bin)
         .arg("-version")
         .output()
         .ok()?;

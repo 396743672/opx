@@ -8,6 +8,7 @@ use crate::models::springboot::AppStatus;
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
+use crate::utils::process::hidden;
 
 // ponytail: sysinfo 判活，跨平台，不依赖 tasklist 输出编码
 pub(crate) fn is_pid_alive(pid: u32) -> bool {
@@ -75,7 +76,7 @@ pub async fn start_app(
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 构建命令
-    let mut cmd = std::process::Command::new(&java_bin);
+    let mut cmd = hidden(&java_bin);
     for opt in &app.jvm_opts {
         cmd.arg(opt);
     }
@@ -200,12 +201,12 @@ pub async fn stop_app(
             .find_installed(&app.jdk_installed_id)
             .map(|jdk| std::path::PathBuf::from(&jdk.install_path).join("bin").join("jcmd.exe"));
         if let Some(ref jcmd) = jcmd_path {
-            let _ = std::process::Command::new(jcmd)
+            let _ = hidden(jcmd)
                 .args([&pid.to_string(), "Shutdown"])
                 .output();
         }
         // 兜底：taskkill /PID（WM_CLOSE 信号）
-        let _ = std::process::Command::new("taskkill")
+        let _ = hidden("taskkill")
             .args(["/PID", &pid.to_string()])
             .output();
 
@@ -219,7 +220,7 @@ pub async fn stop_app(
             // 10s 未退出 → 强制终止
             #[cfg(windows)]
             {
-                let _ = std::process::Command::new("taskkill")
+                let _ = hidden("taskkill")
                     .args(["/PID", &pid.to_string(), "/F"])
                     .output();
             }
