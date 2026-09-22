@@ -212,11 +212,13 @@ impl SoftwareProvider for NacosProvider {
         args.push("-jar".to_string());
         args.push(jar.to_string_lossy().to_string());
 
-        // 服务端口：3.x 主 API 端口（默认 8848）
+        // 主服务端口（默认 8848）。必须无条件用 JVM 系统属性显式传入：系统属性优先级高于
+        // 环境变量，否则宿主注入的 SERVER_PORT / SERVER__PORT 会被 Spring Boot 的宽松绑定
+        // 解析成 server.port，覆盖 conf 配置（Nacos 会绑到宿主端口上，启动即失败）。
+        // 2.x 只认 server.port，3.x 另认 nacos.server.main.port，两者都传以兼容。
         let server_port = config_u64(&ctx.config, "port", 8848);
-        if server_port != 8848 {
-            args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
-        }
+        args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
+        args.insert(0, format!("-Dserver.port={}", server_port));
         // 控制台端口：3.x 独立（默认 8080）；2.x 与主端口共用，此参数被忽略（无害）
         let console_port = config_u64(&ctx.config, "console_port", 8080);
         if console_port != 8080 {
@@ -623,6 +625,38 @@ mod tests {
         let cond = cluster.visible_when.as_ref().expect("has condition");
         assert_eq!(cond.key, "mode");
         assert_eq!(cond.equals, serde_json::json!("cluster"));
+    }
+
+    #[test]
+    fn start_command_always_pins_server_port() {
+        // 回归：主端口必须无条件用 JVM 系统属性显式传入（系统属性优先级高于环境变量）。
+        // 曾因「仅非默认端口才传」且用的是 2.x 不认的 nacos.server.main.port，
+        // 导致宿主注入的 SERVER__PORT 经 Spring Boot 宽松绑定覆盖 server.port，Nacos 启动失败。
+        let make = |port: u64| StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\nacos\\2.5.4".to_string(),
+            version: "2.5.4".to_string(),
+            config: serde_json::json!({ "port": port }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+        for port in [8848u64, 9999] {
+            let cmd = NacosProvider
+                .start_command(&make(port))
+                .expect("start_command 应成功");
+            for flag in [
+                format!("-Dserver.port={port}"),
+                format!("-Dnacos.server.main.port={port}"),
+            ] {
+                assert!(
+                    cmd.args.iter().any(|a| *a == flag),
+                    "端口 {port} 缺参数 {flag}；实际 args={:?}",
+                    cmd.args
+                );
+            }
+        }
     }
 }
 
