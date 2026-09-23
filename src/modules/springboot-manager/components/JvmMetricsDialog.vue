@@ -54,10 +54,11 @@
             <!-- 趋势：瞬时快照看不出堆是否在持续爬升，而持续爬升才是泄漏信号 -->
             <section class="trend">
               <div class="trend-hd">{{ $t('jvmHeapTrend', { n: (HISTORY * REFRESH_MS) / 1000 }) }}</div>
-              <svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true">
+              <svg class="spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+                <path v-if="sparkArea" :d="sparkArea" class="spark-area" :class="barColor" />
                 <path v-if="sparkPath" :d="sparkPath" class="spark-line" :class="barColor" />
               </svg>
-              <div class="trend-ft">{{ trendRange }}</div>
+              <div class="trend-ft">{{ trendLabel }}</div>
             </section>
 
             <div class="grid">
@@ -149,29 +150,56 @@ const status = computed<{ level: 'ok' | 'warn' | 'danger'; text: string }>(() =>
 })
 
 /**
- * 折线路径。纵轴按窗口内的极值归一化——若按 0~heap_max 归一化，
- * 30% 附近的正常波动会被压成一条直线，趋势就白画了。
- * 归一化会让曲线看起来比实际陡，故下方同时标注纵轴取值范围。
+ * 趋势纵轴范围：以窗口数据为中心，跨度取「实际极差」与「最小跨度」中的较大者。
+ *
+ * 只按极值归一化会把平稳状态画成陡峭斜线——实测 323 → 325 MB（波动 2 MB，
+ * 占 Xmx 0.1%）被铺满整个绘图区，看起来像内存持续增长。故给跨度设下限：
+ * 波动小于下限时呈现为一条平线，这才是真实观感；真出现持续爬升时极差会
+ * 超过下限，纵轴自动切换回真实跨度。
  */
-const sparkPath = computed(() => {
+const MIN_SPAN_RATIO = 0.05
+const MIN_SPAN_BYTES = 32 * 1024 * 1024
+const SPARK_H = 40
+const SPARK_PAD = 4
+
+const trendAxis = computed(() => {
   const h = heapHistory.value
-  if (h.length < 2) return ''
-  const min = Math.min(...h)
-  const span = Math.max(Math.max(...h) - min, 1)
-  const H = 26
+  if (h.length < 2) return null
+  const lo = Math.min(...h)
+  const hi = Math.max(...h)
+  const center = (lo + hi) / 2
+  const floor = (metrics.value?.heap_max ?? 0) * MIN_SPAN_RATIO
+  const span = Math.max(hi - lo, floor, MIN_SPAN_BYTES)
+  return { lo, hi, min: center - span / 2, span }
+})
+
+/** 折线路径（纵轴按 trendAxis） */
+const sparkPath = computed(() => {
+  const axis = trendAxis.value
+  if (!axis) return ''
+  const drawH = SPARK_H - SPARK_PAD * 2
+  const h = heapHistory.value
   return h
     .map((v, i) => {
       const x = (i / (h.length - 1)) * 100
-      const y = H - 2 - ((v - min) / span) * (H - 4)
+      const y = SPARK_PAD + (1 - (v - axis.min) / axis.span) * drawH
       return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
 })
 
-const trendRange = computed(() => {
-  const h = heapHistory.value
-  if (h.length < 2) return ''
-  return `${formatSize(Math.min(...h))} – ${formatSize(Math.max(...h))}`
+/** 折线下方的淡填充：单线在空白区里显得孤立，填充给曲线一个体量基准 */
+const sparkArea = computed(() => {
+  const p = sparkPath.value
+  if (!p) return ''
+  return `${p} L100,${SPARK_H} L0,${SPARK_H} Z`
+})
+
+/** 标注真实区间而非纵轴范围——纵轴有最小跨度，不标实际波动幅度会看不出变化大小 */
+const trendLabel = computed(() => {
+  const axis = trendAxis.value
+  if (!axis) return ''
+  return `${formatSize(axis.lo)} – ${formatSize(axis.hi)}`
 })
 
 function formatSize(bytes: number): string {
@@ -282,6 +310,11 @@ onBeforeUnmount(() => {
 .spark-line.ok { stroke: var(--color-success); }
 .spark-line.warn { stroke: var(--color-warning); }
 .spark-line.danger { stroke: var(--color-destructive); }
+/* 填充跟随折线配色，10% 透明度——只做「有体量」的视觉锚点，不喧宾夺主 */
+.spark-area { stroke: none; }
+.spark-area.ok { fill: var(--color-success); fill-opacity: 0.1; }
+.spark-area.warn { fill: var(--color-warning); fill-opacity: 0.1; }
+.spark-area.danger { fill: var(--color-destructive); fill-opacity: 0.1; }
 .trend-ft {
   margin-top: 4px; text-align: right; font-size: 11px;
   color: var(--color-muted-foreground);
