@@ -71,24 +71,29 @@ impl SoftwareProvider for InfluxdbProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         let version = "2.9.1".to_string();
         // 平台差异在编译期选取对应官方包（Windows 为 zip，其余为 tar.gz）。
+        //
+        // ⚠️ 必须用 dl.influxdata.com（Cloudflare 前置），**不要**用官方安装文档写的
+        // download.influxdata.com：后者解析到 AWS us-east-1 的固定 IP，国内网络直连与
+        // 走代理均不可达（实测 TCP 443 0.19s 即失败，curl http=000），而两者指向同一份包。
+        // influxdb3 亦使用 dl. 前缀，保持一致。
         #[cfg(windows)]
         let (url, format) = (
-            "https://download.influxdata.com/influxdb/releases/influxdb2-2.9.1-windows_amd64.zip".to_string(),
+            "https://dl.influxdata.com/influxdb/releases/influxdb2-2.9.1-windows_amd64.zip".to_string(),
             ArchiveFormat::Zip,
         );
         #[cfg(target_os = "linux")]
         let (url, format) = (
-            "https://download.influxdata.com/influxdb/releases/influxdb2-2.9.1_linux_amd64.tar.gz".to_string(),
+            "https://dl.influxdata.com/influxdb/releases/influxdb2-2.9.1_linux_amd64.tar.gz".to_string(),
             ArchiveFormat::TarGz,
         );
         #[cfg(target_os = "macos")]
         let (url, format) = (
-            "https://download.influxdata.com/influxdb/releases/influxdb2-2.9.1_darwin_amd64.tar.gz".to_string(),
+            "https://dl.influxdata.com/influxdb/releases/influxdb2-2.9.1_darwin_amd64.tar.gz".to_string(),
             ArchiveFormat::TarGz,
         );
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         let (url, format) = (
-            "https://download.influxdata.com/influxdb/releases/influxdb2-2.9.1_linux_amd64.tar.gz".to_string(),
+            "https://dl.influxdata.com/influxdb/releases/influxdb2-2.9.1_linux_amd64.tar.gz".to_string(),
             ArchiveFormat::TarGz,
         );
 
@@ -173,7 +178,7 @@ impl SoftwareProvider for InfluxdbProvider {
                     mirrors: vec![MirrorSource {
                         name: "i18n:influxdbOfficial".to_string(),
                         url: format!(
-                            "https://download.influxdata.com/influxdb/releases/{}",
+                            "https://dl.influxdata.com/influxdb/releases/{}",
                             url_part(&v)
                         ),
                         builtin: None,
@@ -525,6 +530,43 @@ mod tests {
                 assert_eq!(timeout_ms, 1000);
             }
             _ => panic!("expected Http health check"),
+        }
+    }
+
+    /// InfluxDB 2 的首次初始化走 post_start_http_init（健康检查通过后 POST /api/v2/setup），
+    /// 而**不是** first_run_init：不需要额外的 influx CLI 二进制，也无需临时凭据文件。
+    /// 断言 onboarding 请求与幂等探针的契约（实测 2.9.1：首次 201、重复 422 conflict）。
+    #[test]
+    fn post_start_init_onboards_via_http() {
+        let p = InfluxdbProvider::new();
+        let ps = p
+            .post_start_http_init(&HealthContext {
+                installed_id: "influxdb-1".to_string(),
+                install_path: test_install_path(),
+                port: 0,
+                config: test_config(),
+            })
+            .expect("influxdb 应提供 post-start 初始化");
+
+        assert_eq!(ps.url, "http://127.0.0.1:8086/api/v2/setup");
+        // 探针必须是同一端点（GET 返回 {"allowed":...}），marker 交给命令层去空白匹配
+        assert_eq!(ps.probe_url.as_deref(), Some("http://127.0.0.1:8086/api/v2/setup"));
+        assert_eq!(ps.probe_done_marker, r#""allowed":false"#);
+
+        // body 必须含 onboarding 全部必填项，缺一即 422
+        for key in ["username", "password", "org", "bucket", "token"] {
+            assert!(ps.body.get(key).is_some(), "onboarding body 缺少 {key}");
+        }
+        assert_eq!(ps.body["org"], "opx");
+        assert_eq!(ps.body["bucket"], "opx");
+        // 密码需满足 InfluxDB 最短长度要求（实测 >= 8 才通过）
+        let password = ps.body["password"].as_str().unwrap_or_default();
+        assert!(password.len() >= 8, "onboarding 密码不足 8 位会被拒");
+
+        // token/org/bucket 需回写 config 供前端展示连接信息
+        let keys: Vec<&str> = ps.config_fields.iter().map(|(k, _)| k.as_str()).collect();
+        for expect in ["admin_user", "admin_token", "org", "bucket"] {
+            assert!(keys.contains(&expect), "config 回写缺少 {expect}");
         }
     }
 }

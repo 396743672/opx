@@ -144,8 +144,10 @@ async function main() {
 
       const hash = sha256(zipPath)
       const size = statSync(zipPath).size
-      manifest[key][version] = { sha256: hash, size }
-      console.log(`  sha256: ${hash.slice(0, 16)}... size: ${size}`)
+      // 一并写入 ext：check-resources.mjs 需据此定位文件（minio 有 .tar.gz / .exe 两种产物，
+      // 不能硬编码 .zip）。Rust 侧 BuiltinManifest 只取 sha256/size，多余字段被忽略。
+      manifest[key][version] = { sha256: hash, size, ext }
+      console.log(`  sha256: ${hash.slice(0, 16)}... size: ${size} (ext ${ext})`)
     }
   }
 

@@ -911,6 +911,26 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
         })
 }
 
+/// 幂等探针判定：响应体与 marker 各自去掉全部空白后做子串匹配。
+///
+/// InfluxDB 的 `/api/v2/setup` 会带缩进换行返回（实测 `{\n\t"allowed": false\n}`），
+/// 若 marker 写成 `"allowed":false` 直接 `contains` 必然漏判（冒号后有空格），
+/// 表现为「每次启动都重复 POST 一次初始化」。规范化空白后比较与 JSON 排版无关。
+fn probe_reports_done(body: &str, marker: &str) -> bool {
+    let normalize = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
+    let marker = normalize(marker);
+    !marker.is_empty() && normalize(body).contains(&marker)
+}
+
+/// 重复初始化判定：该响应是否表示「已经初始化过」而非真失败。
+///
+/// InfluxDB 2.x 对重复 onboarding 返回 **422** 且 body 为
+/// `{"code":"conflict","message":"onboarding has already been completed"}`
+/// （实测 2.9.1；部分版本为 409）。两者均视为幂等跳过，避免每次启动刷 error 日志。
+fn post_init_already_done(status: u16, body: &str) -> bool {
+    status == 409 || (status == 422 && body.to_lowercase().contains("conflict"))
+}
+
 /// 执行 post-start HTTP 初始化（如 InfluxDB 2 onboarding）。
 /// 返回 Ok(true) 表示本次执行完成；Ok(false) 表示状态已满足无需执行（幂等跳过）。
 /// 探针：先 GET probe_url，响应包含 probe_done_marker 则已初始化，跳过；否则 POST body。
@@ -928,7 +948,7 @@ fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result
         if let Ok(resp) = client.get(probe_url).header("User-Agent", "OPX").send() {
             if resp.status().is_success() {
                 if let Ok(text) = resp.text() {
-                    if text.contains(&ps.probe_done_marker) {
+                    if probe_reports_done(&text, &ps.probe_done_marker) {
                         return Ok(false); // 已初始化，跳过
                     }
                 }
@@ -944,18 +964,18 @@ fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result
         .json(&ps.body)
         .send()
         .map_err(|e| anyhow::anyhow!("post-start init 请求失败: {}", e))?;
-    // 2xx（包含 201 Onboarding 完成）视为成功；4xx conflict（已 onboarding）视为跳过
-    if resp.status().is_success() {
+    // 2xx（包含 201 Onboarding 完成）视为成功；冲突（已 onboarding）视为跳过。
+    // 注意：status() 为 &self、text() 消费 resp，故先取状态码再取 body。
+    let status = resp.status();
+    if status.is_success() {
         return Ok(true);
     }
-    if resp.status().as_u16() == 409 {
-        return Ok(false); // InfluxDB: onboarding already completed
+    let code = status.as_u16();
+    let body = resp.text().unwrap_or_default();
+    if post_init_already_done(code, &body) {
+        return Ok(false); // InfluxDB: onboarding already completed (409/422 conflict)
     }
-    anyhow::bail!(
-        "post-start init 返回 {}: {}",
-        resp.status(),
-        resp.text().unwrap_or_default()
-    )
+    anyhow::bail!("post-start init 返回 {}: {}", status, body)
 }
 
 /// 解析并拉起目标软件的依赖（拓扑序，最底层依赖先启动）。
@@ -2394,7 +2414,8 @@ pub async fn reset_instance(
 
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
 /// 任一段含非数字时退化为字符串比较（v1 < v2）。
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+/// 升级检测与 provider 的远程版本排序共用同一份语义，故对 crate 内可见。
+pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let ap: Vec<&str> = a.split('.').collect();
     let bp: Vec<&str> = b.split('.').collect();
     for i in 0..ap.len().min(bp.len()) {
@@ -2573,7 +2594,7 @@ pub async fn rollback_software(
 
 #[cfg(test)]
 mod tests {
-    use super::compare_versions;
+    use super::{compare_versions, post_init_already_done, probe_reports_done};
     use std::cmp::Ordering;
 
     use crate::models::software::{
@@ -2645,6 +2666,35 @@ mod tests {
         let ups = super::compute_upgrades(&installed, &catalog);
         assert_eq!(ups.len(), 1);
         assert_eq!(ups[0].target_version.as_deref(), Some("8.4.0"));
+    }
+
+    /// 回归：InfluxDB 的 /api/v2/setup 带缩进返回，探针必须与 JSON 排版无关。
+    /// 实测 body 为 `{\n\t"allowed": false\n}`（冒号后有空格），原先直接 contains
+    /// 写死无空格的 marker 会导致幂等探测永不命中 → 每次启动重复初始化。
+    #[test]
+    fn probe_reports_done_ignores_whitespace() {
+        let marker = r#""allowed":false"#;
+        // 未初始化（首次启动）→ 不应命中
+        assert!(!probe_reports_done("{\n\t\"allowed\": true\n}", marker));
+        // 已初始化（实测 InfluxDB 2.9.1 格式）→ 必须命中
+        assert!(probe_reports_done("{\n\t\"allowed\": false\n}", marker));
+        // 紧凑格式同样命中
+        assert!(probe_reports_done(r#"{"allowed":false}"#, marker));
+        // 空 marker 不得误判为已完成
+        assert!(!probe_reports_done("anything", ""));
+    }
+
+    /// 回归：InfluxDB 2.9.1 对重复 onboarding 返回 422 + code=conflict（非 409），
+    /// 原先只认 409 → 每次启动都走 bail 记一条 "post-start init failed" 错误日志。
+    #[test]
+    fn post_init_already_done_accepts_conflict() {
+        let influx_422 = r#"{"code":"conflict","message":"onboarding has already been completed"}"#;
+        assert!(post_init_already_done(422, influx_422));
+        assert!(post_init_already_done(409, "")); // 其他版本用 409
+        // 真失败不得被吞掉
+        assert!(!post_init_already_done(422, r#"{"code":"invalid","message":"password too short"}"#));
+        assert!(!post_init_already_done(500, ""));
+        assert!(!post_init_already_done(404, "not found"));
     }
 
     /// 回归：同一 key 并存多实例时，升级状态必须按实例判定。

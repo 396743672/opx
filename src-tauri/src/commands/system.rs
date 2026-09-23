@@ -22,3 +22,9 @@ pub fn process_metrics_history() -> Result<std::collections::HashMap<String, Vec
         .unwrap_or_default();
     Ok(h.processes)
 }
+
+/// 最近一次应用启动编排报告（无记录返回 null，前端展示空态）
+#[tauri::command]
+pub fn get_last_startup_report() -> Option<crate::models::startup::StartupReport> {
+    crate::services::startup_bootstrap::last_report()
+}

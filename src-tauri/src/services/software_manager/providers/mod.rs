@@ -15,6 +15,7 @@ pub mod minio;
 pub mod rustfs;
 pub mod postgresql;
 pub mod mongodb;
+pub mod consul;
 pub mod nacos;
 pub mod kafka;
 pub mod elasticsearch;
@@ -329,6 +330,7 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(rustfs::RustfsProvider::new()),
         Box::new(postgresql::PostgreSqlProvider::new()),
         Box::new(mongodb::MongoDbProvider::new()),
+        Box::new(consul::ConsulProvider::new()),
         Box::new(nacos::NacosProvider::new()),
         Box::new(kafka::KafkaProvider::new()),
         Box::new(elasticsearch::ElasticsearchProvider::new()),

@@ -4,5 +4,6 @@ pub mod settings;
 pub mod stack;
 pub mod software;
 pub mod springboot;
+pub mod startup;
 pub mod system;
 pub mod website;
