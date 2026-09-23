@@ -187,7 +187,9 @@ const canReset = computed(
 async function loadSnapshots() {
   loadingSnaps.value = true
   try {
-    snapshots.value = await ops.loadSnapshots(selectedId.value)
+    const list = await ops.loadSnapshots(selectedId.value)
+    // 按创建时间降序：最新快照排在最上面（后端按 manifest 写入顺序返回，未排序）
+    snapshots.value = list.slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
   } catch (e) {
     console.error('load snapshots failed:', e)
     snapshots.value = []
