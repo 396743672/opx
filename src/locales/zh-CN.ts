@@ -355,7 +355,7 @@ export default {
   stopTimeout: '停止等待时长（秒）',
   stopTimeoutHint: '发出优雅停止请求后，等待应用自行退出的上限，默认 30 秒（对齐 Spring Boot 的 stop 阶段超时）',
   gracefulStopUrl: '优雅停止地址',
-  gracefulStopUrlHint: '留空则按端口自动推导。需应用暴露 shutdown 端点（默认关闭）：把它加入 management.endpoints.web.exposure.include，并启用该端点——2.x/3.x 用 management.endpoint.shutdown.enabled=true，4.x 用 management.endpoint.shutdown.access=unrestricted',
+  gracefulStopUrlHint: '留空则按端口自动推导。需应用暴露 shutdown 端点，否则会直接强制终止而不再空等。2.x/3.x 配 management.endpoint.shutdown.enabled=true，4.x 配 management.endpoint.shutdown.access=unrestricted，两版都要加进 management.endpoints.web.exposure.include',
   gracefulStopUrlNoPort: '未填端口，将跳过优雅停止请求',
   stoppingElapsed: '已等待 {n}s',
   jvmThreadPeak: '峰值线程',

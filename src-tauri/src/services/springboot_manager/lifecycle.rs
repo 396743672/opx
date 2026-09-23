@@ -204,20 +204,48 @@ pub async fn stop_app(
 
     let mut force_msg = None;
     if let Some(pid) = app.pid {
-        // ① 请应用自己关（才会走 shutdown hook、关连接池、等在途请求）
-        match resolve_actuator_url(app.actuator_shutdown_url.as_deref(), app.port) {
-            Some(url) => match request_shutdown(&url).await {
-                Ok(()) => tracing::info!(app_id, pid, %url, "已请求 Actuator 优雅停止"),
-                // 多数应用没开这个端点，属预期——记下原因继续走等待/强杀
-                Err(why) => {
-                    tracing::info!(app_id, pid, %url, why = %why, "Actuator 优雅停止不可用")
-                }
-            },
-            None => tracing::info!(app_id, pid, "未配置端口与 Actuator 地址，跳过优雅停止请求"),
-        }
+        // ① 发出优雅停止请求。两条通道按平台分工：
+        //    Unix —— SIGTERM 是 JVM 能真正响应的信号，Spring Boot 的优雅停机就建立在其上
+        //    Windows —— 没有 SIGTERM，HTTP 是唯一通道
+        #[cfg(not(windows))]
+        let term_sent = {
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+            tracing::info!(app_id, pid, "已发送 SIGTERM");
+            true
+        };
+        #[cfg(windows)]
+        let term_sent = false;
 
-        // ② 等它自己退。clamp 防呆：0 会让「等」失去意义，过大则 UI 停在停止中太久
-        let timeout_secs = app.stop_timeout_secs.clamp(1, 600);
+        let shutdown_accepted =
+            match resolve_actuator_url(app.actuator_shutdown_url.as_deref(), app.port) {
+                Some(url) => match request_shutdown(&url).await {
+                    Ok(()) => {
+                        tracing::info!(app_id, pid, %url, "已请求 Actuator 优雅停止");
+                        true
+                    }
+                    // 多数应用没开这个端点，属预期情况
+                    Err(why) => {
+                        tracing::info!(app_id, pid, %url, why = %why, "Actuator 优雅停止不可用");
+                        false
+                    }
+                },
+                None => {
+                    tracing::info!(app_id, pid, "未配置端口与 Actuator 地址，跳过 HTTP 优雅停止");
+                    false
+                }
+            };
+
+        // ② 等它自己退——**只在确实发出过它能响应的请求时才等**。
+        //    没有任何通道时进程不可能自行退出，等满超时纯属空耗
+        //    （Windows 上没暴露端点的应用就是这种情况，干等只会让停止显得变慢）。
+        let has_channel = term_sent || shutdown_accepted;
+        let timeout_secs = if has_channel {
+            app.stop_timeout_secs.clamp(1, 600)
+        } else {
+            0
+        };
         let mut exited = false;
         for _ in 0..timeout_secs {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -232,10 +260,16 @@ pub async fn stop_app(
             tracing::info!(app_id, pid, "应用已自行退出");
         } else {
             force_kill(pid);
-            force_msg = Some(format!(
-                "应用 PID {pid} 在 {timeout_secs}s 内未退出，已强制终止（本次未执行 shutdown hook）"
-            ));
-            tracing::warn!(app_id, pid, timeout_secs, "应用未自行退出，已强制终止");
+            force_msg = Some(if has_channel {
+                format!(
+                    "应用 PID {pid} 在 {timeout_secs}s 内未退出，已强制终止（本次未执行 shutdown hook）"
+                )
+            } else {
+                format!(
+                    "应用 PID {pid} 未提供优雅停止通道，已直接强制终止（未执行 shutdown hook）"
+                )
+            });
+            tracing::warn!(app_id, pid, timeout_secs, has_channel, "应用未自行退出，已强制终止");
         }
     }
 
