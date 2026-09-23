@@ -3,12 +3,12 @@
     <!-- 顶部导航栏 — 简洁 -->
     <header
       @mousedown="onTitlebarMouseDown"
-      class="h-12 flex-shrink-0 flex items-center justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40"
+      class="h-12 flex-shrink-0 flex items-center justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40 pr-2"
     >
       <div class="flex items-center h-full">
-        <!-- 品牌区：宽度随侧边栏同步 -->
+        <!-- 品牌区：宽度随侧边栏同步，左对齐与下方菜单图标光学对齐（字形中心 28px） -->
         <div
-          class="flex items-center justify-center flex-shrink-0 h-full transition-all duration-300"
+          class="flex items-center justify-start pl-3.5 flex-shrink-0 h-full transition-all duration-300"
           :class="sidebarPinned ? 'w-52' : 'w-14'"
         >
           <div class="flex items-center gap-2">
