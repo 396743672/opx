@@ -23,6 +23,10 @@
               </div>
               <div class="text-xs text-right mt-0.5" style="color:var(--color-muted-foreground)">{{ heapPct.toFixed(1) }}%</div>
             </div>
+            <div class="flex justify-between text-sm mb-4">
+              <span>{{ $t('nonHeapMemory') }}</span>
+              <span class="font-mono">{{ formatSize(metrics.non_heap_used) }}</span>
+            </div>
             <div class="flex justify-between text-sm mb-2">
               <span>{{ $t('threadCount') }}</span>
               <span class="font-mono">{{ metrics.thread_count }}</span>
@@ -50,12 +54,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { JvmInfo } from '@/models/springboot'
 import { useSpringBootStore } from '../stores/springboot'
 
 const props = defineProps<{ appId: string; appName: string }>()
 defineEmits<{ close: [] }>()
 
+const { t } = useI18n()
 const store = useSpringBootStore()
 const metrics = ref<JvmInfo | null>(null)
 const errMsg = ref('')
@@ -80,8 +86,8 @@ async function refresh() {
   try {
     const m = await store.fetchJvmMetrics(props.appId)
     if (m) { metrics.value = m; errMsg.value = ''; attempt = 0 }
-    else { attempt++; if (attempt > 3) errMsg.value = 'JVM 监控需要完整 JDK（不含 jcmd，JRE 不可用）' }
-  } catch (e: any) { errMsg.value = typeof e === 'string' ? e : '采集失败' }
+    else { attempt++; if (attempt > 3) errMsg.value = t('jvmMonitorNeedsJdk') }
+  } catch (e: any) { errMsg.value = typeof e === 'string' ? e : t('jvmMonitorFailed') }
 }
 
 onMounted(async () => { await refresh(); timer = setInterval(refresh, 5000) })

@@ -342,6 +342,7 @@ export default {
   logPathNotConfigured: 'Log path not configured',
   cannotReadLog: 'Cannot read log',
   jvmMonitorNeedsJdk: 'JVM monitoring requires full JDK (jcmd not available in JRE)',
+  jvmMonitorFailed: 'Failed to collect JVM metrics',
 
   // ===== Website Management =====
   websiteList: 'Sites',

@@ -342,6 +342,7 @@ export default {
   logPathNotConfigured: '日志路径未配置',
   cannotReadLog: '无法读取日志',
   jvmMonitorNeedsJdk: 'JVM 监控需要完整 JDK（不含 jcmd，JRE 不可用）',
+  jvmMonitorFailed: 'JVM 指标采集失败',
 
   // ===== 网站管理 =====
   websiteList: '站点列表',
