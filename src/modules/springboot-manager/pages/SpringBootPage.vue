@@ -306,17 +306,25 @@ async function startGroup() {
 async function stopGroup() {
   if (stoppingGroup.value) return
   stoppingGroup.value = true
+  const warnings: string[] = []
   try {
     // 逆序停止：先停 order 大的
     const sorted = [...groupApps.value].sort((a, b) => b.startup_order - a.startup_order)
     for (const app of sorted) {
       if (app.status !== AppStatus.Running) continue
-      await store.stopApp(app.id)
+      // 单个应用失败不能中断整组：记下后继续停剩下的
+      try {
+        const outcome = await store.stopApp(app.id)
+        if (outcome.message) warnings.push(outcome.message)
+      } catch (e) {
+        warnings.push(`${app.name}: ${String(e)}`)
+      }
     }
   } finally {
     stoppingGroup.value = false
     store.fetchApps()
   }
+  if (warnings.length) toast(warnings.join('\n'), 'info')
 }
 
 // Delete confirm
@@ -372,9 +380,13 @@ function closeGroupManager() {
 
 async function handleAction(action: 'start' | 'stop' | 'restart', id: string) {
   try {
-    if (action === 'start') await store.startApp(id)
-    else if (action === 'stop') await store.stopApp(id)
-    else await store.restartApp(id)
+    if (action === 'start') {
+      await store.startApp(id)
+    } else {
+      // 停止/重启：强制终止不算失败，应用确实停了，只是没执行 shutdown hook
+      const outcome = action === 'stop' ? await store.stopApp(id) : await store.restartApp(id)
+      if (outcome.message) toast(outcome.message, 'info')
+    }
   } catch (e) {
     // 启动/停止失败（如前置依赖未运行）必须提示，否则用户以为点了没反应
     toast(String(e), 'err')

@@ -107,6 +107,10 @@ impl SpringBootManager {
         let version = read_jar_version(
             &paths::data_dir().join(&jar_path).to_string_lossy().to_string()
         ).unwrap_or_else(|| "unknown".to_string());
+        // 构建该 JAR 的 Spring Boot 版本：由 repackage 写入 MANIFEST，三版都在
+        let spring_boot_version = read_spring_boot_version(
+            &paths::data_dir().join(&jar_path).to_string_lossy().to_string()
+        );
         // ponytail: 日志在 JAR 同级的 logs/ 目录下
         let log_path = if params.log_path.is_empty() {
             format!("springboot/{}/logs/console.log", params.name)
@@ -122,6 +126,7 @@ impl SpringBootManager {
             name: params.name,
             jar_path,
             version,
+            spring_boot_version,
             jdk_installed_id: params.jdk_installed_id,
             jvm_opts: params.jvm_opts,
             program_args: params.program_args,
@@ -226,6 +231,10 @@ impl SpringBootManager {
         let app = store.applications.iter_mut().find(|a| a.id == id)
             .ok_or_else(|| anyhow::anyhow!("未找到应用: {}", id))?;
         app.version = version;
+        // 换 jar 后重新识别 Spring Boot 版本；读不到就置空，避免残留上一个 jar 的值
+        app.spring_boot_version = read_spring_boot_version(
+            &paths::data_dir().join(&app.jar_path).to_string_lossy(),
+        );
         Self::save_store(&store)?;
         Ok(())
     }
@@ -290,19 +299,78 @@ impl Default for SpringBootManager {
 }
 
 /// 从 JAR 文件的 MANIFEST.MF 中读取版本号
-pub fn read_jar_version(jar_path: &str) -> Option<String> {
+/// 读取 JAR 内 `META-INF/MANIFEST.MF` 中某个主属性的值。
+///
+/// 按 JAR 规范处理折行：单行超过 72 字节会在下一行继续，续行以**一个空格开头**，
+/// 该空格是折行标记、不属于值内容。只有紧跟在目标属性后面的续行才会被拼接，
+/// 避免把别的属性的续行误加到值上。
+pub fn read_jar_manifest_field(jar_path: &str, key: &str) -> Option<String> {
     use std::io::Read;
     let file = std::fs::File::open(jar_path).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;
     let mut entry = archive.by_name("META-INF/MANIFEST.MF").ok()?;
     let mut content = String::new();
     entry.read_to_string(&mut content).ok()?;
+
+    let prefix = format!("{key}:");
+    let mut value: Option<String> = None;
+    let mut collecting = false;
     for line in content.lines() {
-        if let Some(val) = line.strip_prefix("Implementation-Version:") {
-            return Some(val.trim().to_string());
+        if let Some(rest) = line.strip_prefix(' ') {
+            if collecting {
+                if let Some(v) = value.as_mut() {
+                    v.push_str(rest);
+                }
+            }
+        } else {
+            collecting = false;
+            if let Some(rest) = line.strip_prefix(&prefix) {
+                value = Some(rest.trim().to_string());
+                collecting = true;
+            }
         }
     }
-    None
+    value
+}
+
+/// 读取 JAR 的应用版本（MANIFEST 的 `Implementation-Version`）。
+///
+/// ⚠️ 该字段**并非必然存在**：它由 Maven jar plugin 的 `addDefaultImplementationEntries`
+/// 控制，而该开关默认为 `false`。实测 Spring Boot 2.3.3 / 3.5.11 打出的可执行 jar
+/// 都没有这个字段（只有显式配置过的项目才有，如 SimImage 的 `1.0.0-SNAPSHOT`）。
+/// 判断「这个 jar 用什么 Spring Boot 构建」应改用 [`read_spring_boot_version`]。
+pub fn read_jar_version(jar_path: &str) -> Option<String> {
+    read_jar_manifest_field(jar_path, "Implementation-Version")
+}
+
+/// 读取 JAR 是由哪个 Spring Boot 版本构建的（MANIFEST 的 `Spring-Boot-Version`）。
+///
+/// 该字段由 `spring-boot-maven-plugin` 的 repackage 自动写入，**2.x/3.x/4.x 都有**
+/// （实测 `2.3.3.RELEASE` / `3.5.11` / `4.0.8`），比 `Implementation-Version` 可靠得多，
+/// 也是判断「该 jar 需要什么 JDK」的唯一依据。
+pub fn read_spring_boot_version(jar_path: &str) -> Option<String> {
+    read_jar_manifest_field(jar_path, "Spring-Boot-Version")
+}
+
+/// 解析 Spring Boot 大版本号：`2.3.3.RELEASE` → 2、`3.5.11` → 3、`4.0.8` → 4。
+///
+/// 2.x 的版本串带 `.RELEASE` 后缀（Maven 老式命名），故只取第一个数字段。
+pub fn parse_spring_boot_major(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.trim().parse::<u32>().ok()
+}
+
+/// 该 Spring Boot 大版本要求的最低 JDK 主版本；未知大版本返回 `None`（不做判断）。
+///
+/// - 2.x：Java 8 是基线（2.6/2.7 向上兼容到 17/21）
+/// - 3.x / 4.x：**Java 17**（Spring Framework 6/7 的基线）
+///
+/// 用错 JDK 的失败是启动级的（`UnsupportedClassVersionError`），故在表单里提前提示。
+pub fn min_jdk_for_spring_boot(major: u32) -> Option<u32> {
+    match major {
+        2 => Some(8),
+        3 | 4 => Some(17),
+        _ => None,
+    }
 }
 
 /// ponytail: 从 JAR 内部配置文件读取 server.port

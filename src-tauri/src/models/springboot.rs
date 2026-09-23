@@ -22,6 +22,13 @@ pub struct SpringBootApp {
     pub name: String,
     pub jar_path: String,
     pub version: String,
+    /// 构建该 JAR 的 Spring Boot 版本（MANIFEST 的 `Spring-Boot-Version`）。
+    ///
+    /// 由 repackage 自动写入，2.x/3.x/4.x 都有（如 `3.5.11`、`4.0.8`、`2.3.3.RELEASE`）；
+    /// 非 Spring Boot 打包的 jar 或旧数据为 None（`serde(default)` 兼容旧 apps.json）。
+    /// 用途：显示真实框架版本，并据此提示该 jar 需要的最低 JDK。
+    #[serde(default)]
+    pub spring_boot_version: Option<String>,
     pub jdk_installed_id: String,
     /// 自动生成的优化 JVM 参数 + 用户手动修改后的合并结果
     pub jvm_opts: Vec<String>,
@@ -53,6 +60,20 @@ pub struct SpringBootApp {
     /// 这是 Windows 上唯一能让 JVM 执行 shutdown hook 的通道（详见 `lifecycle::stop_app` 注释）。
     #[serde(default)]
     pub actuator_shutdown_url: Option<String>,
+}
+
+/// 从 JAR 读出的元信息（供表单展示，不落库）。
+///
+/// 与 [`SpringBootApp::spring_boot_version`] 的关系：这里只是一次「探测结果」，
+/// 用于在选择 jar 的当下就给出「需要什么 JDK」的提示；落库用的是同一读取逻辑。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JarInfo {
+    /// 应用自身版本（MANIFEST 的 `Implementation-Version`）——多数项目缺失
+    pub version: Option<String>,
+    /// 构建该 JAR 的 Spring Boot 版本（MANIFEST 的 `Spring-Boot-Version`）
+    pub spring_boot_version: Option<String>,
+    /// 该 Spring Boot 大版本要求的最低 JDK 主版本；无法判断时为 None
+    pub min_jdk: Option<u32>,
 }
 
 /// 停止等待默认值（秒）

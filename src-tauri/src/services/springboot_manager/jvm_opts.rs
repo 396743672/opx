@@ -72,18 +72,21 @@ pub fn generate_opts(jdk_version: u32) -> JvmOptsTemplate {
 
     let (gc_type, mut extra_flags) = match jdk_version {
         8 => ("G1GC".to_string(), vec![]),
-        11 | 12 | 13 | 14 | 15 | 16 => {
+        11..=16 => {
             ("G1GC".to_string(), vec!["-XX:+UseStringDeduplication".to_string()])
         }
-        v if v >= 21 => {
-            ("ZGC".to_string(), vec![
-                "-XX:+UseZGC".to_string(),
-                "-XX:+ZGenerational".to_string(),
-            ])
-        }
-        _ => {
-            ("ZGC".to_string(), vec!["-XX:+UseZGC".to_string()])
-        }
+        // 分代 ZGC：JDK 21 引入（需显式开 `ZGenerational`），JDK 23 起成为默认，
+        // **JDK 24 移除了该开关**（JEP 490）。24+ 再传只会打印
+        // `Ignoring option ZGenerational; support was removed in 24.0`，
+        // 且该选项已被标记为将来会过期——届时 JVM 会直接拒绝启动。
+        21..=23 => ("ZGC".to_string(), vec![
+            "-XX:+UseZGC".to_string(),
+            "-XX:+ZGenerational".to_string(),
+        ]),
+        // ZGC 自 JDK 11 引入（15 起转正），无需额外开关
+        v if v >= 17 => ("ZGC".to_string(), vec!["-XX:+UseZGC".to_string()]),
+        // 其余（理论上的 9/10）：ZGC 尚不存在，回落 G1
+        _ => ("G1GC".to_string(), vec![]),
     };
 
     extra_flags.push("-XX:+ExitOnOutOfMemoryError".to_string());
@@ -96,6 +99,53 @@ pub fn generate_opts(jdk_version: u32) -> JvmOptsTemplate {
         metaspace_mb,
         gc_type,
         extra_flags,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_opts;
+
+    /// 分代 ZGC 的开关只该给 JDK 21–23：JDK 23 起分代成为默认，**JDK 24 移除了该开关**
+    /// （JEP 490）。实测 JDK 25.0.3 传它只打印 `Ignoring option ZGenerational;
+    /// support was removed in 24.0`（进程仍起），但该选项已被标记为将来过期——
+    /// 届时 HotSpot 将不再识别它并**拒绝启动**。
+    #[test]
+    fn zgc_generational_flag_only_for_jdk_21_to_23() {
+        for v in [21, 22, 23] {
+            let t = generate_opts(v);
+            assert_eq!(t.gc_type, "ZGC", "JDK {v}");
+            assert!(
+                t.extra_flags.contains(&"-XX:+ZGenerational".to_string()),
+                "JDK {v} 需要分代开关，否则 ZGC 走非分代模式"
+            );
+        }
+        for v in [17, 20, 24, 25, 26] {
+            let t = generate_opts(v);
+            assert_eq!(t.gc_type, "ZGC", "JDK {v}");
+            assert!(
+                !t.extra_flags.contains(&"-XX:+ZGenerational".to_string()),
+                "JDK {v} 已无此开关，传了只会告警（且将来会导致 JVM 拒绝启动）"
+            );
+            assert!(
+                t.extra_flags.contains(&"-XX:+UseZGC".to_string()),
+                "JDK {v} 仍需 UseZGC"
+            );
+        }
+    }
+
+    /// JDK 9/10 尚不存在 ZGC（JDK 11 才引入）→ 必须回落 G1，
+    /// 否则 JVM 直接以 `Unrecognized VM option 'UseZGC'` 拒绝启动。
+    #[test]
+    fn no_zgc_option_before_jdk_11() {
+        for v in [8, 9, 10] {
+            let t = generate_opts(v);
+            assert_eq!(t.gc_type, "G1GC", "JDK {v}");
+            assert!(
+                t.extra_flags.iter().all(|f| !f.contains("ZGC")),
+                "JDK {v} 不应出现任何 ZGC 相关参数"
+            );
+        }
     }
 }
 

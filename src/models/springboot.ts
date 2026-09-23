@@ -11,6 +11,9 @@ export interface SpringBootApp {
   name: string
   jar_path: string
   version: string
+  /** 构建该 JAR 的 Spring Boot 版本（MANIFEST 的 Spring-Boot-Version）；
+   *  非 Spring Boot 打包或旧数据为 null */
+  spring_boot_version: string | null
   jdk_installed_id: string
   jvm_opts: string[]
   program_args: string[]
@@ -70,6 +73,29 @@ export interface ReplaceResult {
   backup_path: string
   old_version: string
   new_version: string
+}
+
+/**
+ * 停止/重启的结果。
+ *
+ * 强制终止**也是停止成功**，只是没走应用的 shutdown hook —— 那是 `message` 里的提示，
+ * 不是错误。所以 `invoke` 不会 reject，界面据此提示而不是报错。
+ */
+export interface StopOutcome {
+  /** 是否走完了应用的优雅停机（false = 强制终止） */
+  graceful: boolean
+  /** 需要告知用户的提示，仅在 graceful 为 false 时存在 */
+  message: string | null
+}
+
+/** 从 JAR 读出的元信息（选择 jar 时的探测结果，用于提示该 jar 需要什么 JDK） */
+export interface JarInfo {
+  /** 应用自身版本（MANIFEST 的 Implementation-Version），多数项目缺失 */
+  version: string | null
+  /** 构建该 JAR 的 Spring Boot 版本（repackage 自动写入，2.x/3.x/4.x 都有） */
+  spring_boot_version: string | null
+  /** 该 Spring Boot 大版本要求的最低 JDK 主版本；无法判断时为 null */
+  min_jdk: number | null
 }
 
 export interface CreateAppParams {

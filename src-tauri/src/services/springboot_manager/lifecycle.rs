@@ -171,6 +171,46 @@ pub async fn start_app(
     Err("应用启动超时（5min），PID 仍存活但未就绪，请检查日志和端口配置".to_string())
 }
 
+/// 停止结果：把「操作是否成功」与「是否走了优雅路径」分开。
+///
+/// 应用被强制终止**同样是停止成功**，只是没能执行 shutdown hook —— 这属于要告知
+/// 用户的提示，不是失败。早先把强杀当 `Err` 返回，而 Windows 上「应用没开端点」
+/// 恰恰是默认情况，于是 `restart_app` / 换包重启里的 `?` 在主路径上短路
+/// （重启退化成「只停不起」），分组停止也会在第一个被强杀的应用处中断。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StopOutcome {
+    /// 是否走完了应用的优雅停机（`false` = 强制终止，未执行 shutdown hook）
+    pub graceful: bool,
+    /// 需要告知用户的提示，仅在 `graceful = false` 时存在
+    pub message: Option<String>,
+}
+
+impl StopOutcome {
+    fn graceful() -> Self {
+        Self { graceful: true, message: None }
+    }
+
+    fn forced(message: String) -> Self {
+        Self { graceful: false, message: Some(message) }
+    }
+}
+
+/// 停止判定：把「有没有通道 / 有没有自行退出」到结果的决策抽成纯函数，便于覆盖测试。
+fn stop_outcome(pid: u32, has_channel: bool, exited: bool, timeout_secs: u64) -> StopOutcome {
+    if exited {
+        return StopOutcome::graceful();
+    }
+    if has_channel {
+        StopOutcome::forced(format!(
+            "应用 PID {pid} 在 {timeout_secs}s 内未退出，已强制终止（本次未执行 shutdown hook）"
+        ))
+    } else {
+        StopOutcome::forced(format!(
+            "应用 PID {pid} 未提供优雅停止通道，已直接强制终止（未执行 shutdown hook）"
+        ))
+    }
+}
+
 /// 停止 Spring Boot 应用。
 ///
 /// Windows 上没有 SIGTERM，**HTTP 是唯一能让 JVM 走完 shutdown hook 的通道**：
@@ -187,7 +227,7 @@ pub async fn stop_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
     app_handle: &AppHandle,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     let app = springboot_mgr.find_app(app_id).map_err(|e| e.to_string())?;
 
     if !matches!(app.status, AppStatus::Running | AppStatus::Error) {
@@ -202,7 +242,7 @@ pub async fn stop_app(
         (app_id.to_string(), "Stopping", None::<u32>, None::<String>),
     );
 
-    let mut force_msg = None;
+    let mut outcome = StopOutcome::graceful();
     if let Some(pid) = app.pid {
         // ① 发出优雅停止请求。两条通道按平台分工：
         //    Unix —— SIGTERM 是 JVM 能真正响应的信号，Spring Boot 的优雅停机就建立在其上
@@ -260,17 +300,9 @@ pub async fn stop_app(
             tracing::info!(app_id, pid, "应用已自行退出");
         } else {
             force_kill(pid);
-            force_msg = Some(if has_channel {
-                format!(
-                    "应用 PID {pid} 在 {timeout_secs}s 内未退出，已强制终止（本次未执行 shutdown hook）"
-                )
-            } else {
-                format!(
-                    "应用 PID {pid} 未提供优雅停止通道，已直接强制终止（未执行 shutdown hook）"
-                )
-            });
             tracing::warn!(app_id, pid, timeout_secs, has_channel, "应用未自行退出，已强制终止");
         }
+        outcome = stop_outcome(pid, has_channel, exited, timeout_secs);
     }
 
     // 从进程注册表中注销
@@ -285,11 +317,7 @@ pub async fn stop_app(
         (app_id.to_string(), "Stopped", None::<u32>, None::<String>),
     );
 
-    if let Some(msg) = force_msg {
-        Err(msg)
-    } else {
-        Ok(())
-    }
+    Ok(outcome)
 }
 
 /// 推导优雅停止地址：显式配置优先，否则按应用端口拼 Actuator 默认路径。
@@ -352,21 +380,26 @@ fn force_kill(pid: u32) {
     }
 }
 
-/// 重启 Spring Boot 应用
+/// 重启 Spring Boot 应用。
+///
+/// 返回停止阶段的结论：重启本身成功即 `Ok`，若停止时走的是强杀，
+/// 提示会挂在本结果的 `message` 上，供 UI 一并告知用户。
 pub async fn restart_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
     software_mgr: &SoftwareManager,
     app_handle: &AppHandle,
-) -> Result<(), String> {
-    stop_app(app_id, springboot_mgr, app_handle).await?;
+) -> Result<StopOutcome, String> {
+    let outcome = stop_app(app_id, springboot_mgr, app_handle).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    start_app(app_id, springboot_mgr, software_mgr, app_handle).await
+    start_app(app_id, springboot_mgr, software_mgr, app_handle).await?;
+    Ok(outcome)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{request_shutdown, resolve_actuator_url};
+    use super::{request_shutdown, resolve_actuator_url, stop_outcome, StopOutcome};
+    use std::time::Duration;
 
     /// 未显式配置时，按应用端口拼 Actuator 的默认停止路径
     #[test]
@@ -450,5 +483,82 @@ mod tests {
 
         let url = format!("http://{addr}/actuator/shutdown");
         assert!(request_shutdown(&url).await.is_ok());
+    }
+
+    /// 应用自行退出＝真正的优雅停止，不应带任何警告
+    #[test]
+    fn stop_outcome_graceful_when_app_exited() {
+        assert_eq!(stop_outcome(4242, true, true, 30), StopOutcome::graceful());
+        // 即使没有任何通道，只要进程退了就是优雅退出
+        assert_eq!(stop_outcome(4242, false, true, 0), StopOutcome::graceful());
+    }
+
+    /// 强杀**不是失败**：必须返回可序列化的结果而不是 Err，
+    /// 否则 `restart_app` / 换包重启里的 `?` 会在主路径上短路（重启变「只停不起」）。
+    #[test]
+    fn stop_outcome_forced_is_not_an_error() {
+        let waited = stop_outcome(4242, true, false, 30);
+        assert!(!waited.graceful);
+        let msg = waited.message.expect("强杀应带提示");
+        assert!(msg.contains("4242") && msg.contains("30s"), "实际: {msg}");
+
+        let no_channel = stop_outcome(4242, false, false, 0);
+        assert!(!no_channel.graceful);
+        let msg = no_channel.message.expect("无通道强杀应带提示");
+        assert!(msg.contains("未提供优雅停止通道"), "实际: {msg}");
+    }
+
+    /// 返回前端的字段名必须与 snake_case 约定一致，前端按 `graceful` / `message` 读取
+    #[test]
+    fn stop_outcome_serializes_with_expected_fields() {
+        let json = serde_json::to_value(stop_outcome(1, false, false, 0)).expect("序列化");
+        assert_eq!(json["graceful"], serde_json::json!(false));
+        assert!(json["message"].is_string());
+        let ok = serde_json::to_value(StopOutcome::graceful()).expect("序列化");
+        assert_eq!(ok["graceful"], serde_json::json!(true));
+        assert!(ok["message"].is_null());
+    }
+
+    /// 真实进程验证：强杀确实让进程消失。
+    ///
+    /// 这是「强杀算停止成功、返回 Ok」的前提 —— 若进程没死却返回 Ok，调用方会带着
+    /// 一个还活着的进程继续往下走（重启时端口占用、新旧进程并存），比返回 Err 更糟。
+    #[tokio::test]
+    async fn force_kill_ends_real_process() {
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = super::hidden("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = std::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        let mut child = cmd.spawn().expect("启动测试进程");
+        let pid = child.id();
+        assert!(super::is_pid_alive(pid), "测试进程应已启动");
+
+        super::force_kill(pid);
+
+        let mut dead = false;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if !super::is_pid_alive(pid) {
+                dead = true;
+                break;
+            }
+        }
+        let _ = child.wait();
+        assert!(dead, "force_kill 后 PID {pid} 仍存活");
+
+        // 进程确实没了 → 结论必须是「成功但未优雅」，而不是 Err
+        assert!(!stop_outcome(pid, false, false, 0).graceful);
     }
 }

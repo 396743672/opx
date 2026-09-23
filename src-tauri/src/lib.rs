@@ -396,7 +396,7 @@ pub fn run() {
             commands::springboot::set_springboot_global_env_vars,
             commands::springboot::get_recommended_jvm_opts,
             commands::springboot::list_springboot_dependency_candidates,
-            commands::springboot::read_jar_version_info,
+            commands::springboot::read_jar_info,
             commands::springboot::read_jar_port,
             commands::springboot::list_springboot_log_sources,
             commands::springboot::read_springboot_log,

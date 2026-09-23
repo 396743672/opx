@@ -21,6 +21,7 @@
         <span v-if="app.port">{{ $t('port') }}: {{ app.port }}</span>
         <span>{{ $t('version') }}: {{ app.version }}</span>
       </div>
+      <div v-if="app.spring_boot_version">Spring Boot: {{ app.spring_boot_version }}</div>
       <div v-if="app.pid">PID: {{ app.pid }}</div>
       <div v-if="app.start_time">{{ $t('startedAt') }}: {{ app.start_time }}</div>
       <div v-if="app.last_error" class="text-red-500">{{ translateError(app.last_error, t, te) }}</div>

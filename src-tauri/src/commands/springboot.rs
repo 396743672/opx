@@ -6,11 +6,12 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{LogChunk, LogSource};
 use crate::models::springboot::{
-    AppGroup, CreateAppParams, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
+    AppGroup, CreateAppParams, JarInfo, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
     UpdateAppParams,
 };
 use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::jvm_opts;
+use crate::services::springboot_manager::lifecycle::StopOutcome;
 use crate::services::springboot_manager::SpringBootManager;
 use crate::{audited_async, oplog_result};
 
@@ -89,7 +90,7 @@ pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     app_handle: AppHandle,
     id: String,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
     let r = crate::services::springboot_manager::lifecycle::stop_app(&id, &manager, &app_handle)
@@ -104,7 +105,7 @@ pub async fn restart_springboot_app(
     software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
     let r = crate::services::springboot_manager::lifecycle::restart_app(
@@ -158,10 +159,18 @@ pub async fn replace_springboot_jar_and_restart(
     audited_async!("springboot_replace_restart", target, "", {
         use crate::models::springboot::AppStatus;
 
-        // 运行中/错误态先停（优雅），停止态直接换包
+        // 运行中/错误态先停（优雅），停止态直接换包。
+        // 停止成功但走了强杀时只记日志：换包流程必须继续往下走。
         if matches!(app.status, AppStatus::Running | AppStatus::Error) {
-            crate::services::springboot_manager::lifecycle::stop_app(&id, &manager, &app_handle)
-                .await?;
+            let stop = crate::services::springboot_manager::lifecycle::stop_app(
+                &id,
+                &manager,
+                &app_handle,
+            )
+            .await?;
+            if let Some(w) = stop.message {
+                tracing::warn!(app_id = %id, warning = %w, "换包前停止未走优雅路径");
+            }
         }
 
         let old_jar = std::path::PathBuf::from(&app.jar_path);
@@ -310,12 +319,28 @@ pub async fn list_springboot_dependency_candidates(
         .collect())
 }
 
+/// 读取 JAR 元信息：应用版本 + 构建该 JAR 的 Spring Boot 版本 + 所需最低 JDK。
+///
+/// 前端在选择 jar 之后调用，用于显示「Spring Boot 3.5.11 · 需 JDK 17+」这类提示。
+/// Spring Boot 3.x/4.x 要求 Java 17，选错 JDK 会直接 `UnsupportedClassVersionError`，
+/// 在表单里提前提示比事后排查日志省事得多。
+///
+/// 注意框架版本取自 MANIFEST 的 `Spring-Boot-Version`（repackage 自动写入，三版都有），
+/// 而不是 `Implementation-Version`——后者受 Maven `addDefaultImplementationEntries`
+/// 控制、默认为 false，多数可执行 jar 里根本没有。
 #[tauri::command]
-pub async fn read_jar_version_info(jar_path: String) -> Result<String, String> {
-    Ok(
-        crate::services::springboot_manager::read_jar_version(&jar_path)
-            .unwrap_or_else(|| "unknown".to_string()),
-    )
+pub async fn read_jar_info(jar_path: String) -> Result<JarInfo, String> {
+    use crate::services::springboot_manager as sb;
+    let spring_boot_version = sb::read_spring_boot_version(&jar_path);
+    let min_jdk = spring_boot_version
+        .as_deref()
+        .and_then(sb::parse_spring_boot_major)
+        .and_then(sb::min_jdk_for_spring_boot);
+    Ok(JarInfo {
+        version: sb::read_jar_version(&jar_path),
+        spring_boot_version,
+        min_jdk,
+    })
 }
 
 #[tauri::command]
@@ -874,5 +899,93 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
         let _ = std::fs::remove_dir_all(crate::utils::paths::data_dir().join("backups").join("t"));
+    }
+
+    /// MANIFEST 的 `Spring-Boot-Version` 由 repackage 自动写入，2.x/3.x/4.x 都有，
+    /// 是判断「该 jar 需要什么 JDK」的唯一可靠依据。样本取自本机真实 jar：
+    /// online-sunlike-barcode(2.3.3.RELEASE) / pigx-boot(3.5.11) / SimImage(4.0.8)。
+    #[test]
+    fn reads_spring_boot_version_and_jdk_floor() {
+        use crate::services::springboot_manager::{
+            min_jdk_for_spring_boot, parse_spring_boot_major, read_spring_boot_version,
+        };
+        let dir = std::env::temp_dir().join(format!("opx_sbv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (ver, major, floor) in
+            [("2.3.3.RELEASE", 2_u32, 8_u32), ("3.5.11", 3, 17), ("4.0.8", 4, 17)]
+        {
+            let p = dir.join(format!("sb{major}.jar"));
+            fake_jar(
+                &p,
+                &format!("Manifest-Version: 1.0\r\nStart-Class: com.example.App\r\nSpring-Boot-Version: {ver}\r\nMain-Class: org.springframework.boot.loader.launch.JarLauncher\r\n\r\n"),
+            );
+            assert_eq!(
+                read_spring_boot_version(p.to_str().unwrap()).as_deref(),
+                Some(ver),
+                "读出的框架版本"
+            );
+            assert_eq!(parse_spring_boot_major(ver), Some(major));
+            assert_eq!(min_jdk_for_spring_boot(major), Some(floor), "Spring Boot {major}.x 的 JDK 门槛");
+        }
+
+        // 非 Spring Boot 打包的 jar 没有该字段 → None：不猜版本、不误报门槛
+        let plain = dir.join("plain.jar");
+        fake_jar(&plain, "Manifest-Version: 1.0\r\nImplementation-Version: 1.0\r\n\r\n");
+        assert_eq!(read_spring_boot_version(plain.to_str().unwrap()), None);
+        assert_eq!(parse_spring_boot_major(""), None);
+        assert_eq!(min_jdk_for_spring_boot(5), None);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 折行的 MANIFEST 值必须拼回完整值（JAR 规范：续行以**单个空格**开头，该空格不属值）；
+    /// 且拼完一个属性后，后面属性的续行不得被误拼进来。
+    #[test]
+    fn manifest_folded_value_is_rejoined() {
+        use crate::services::springboot_manager::read_jar_manifest_field;
+        let dir = std::env::temp_dir().join(format!("opx_mfold_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("folded.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nImplementation-Version: 1.0.0-SNAPSHOT\r\n continued-part\r\nSpring-Boot-Version: 4.0.8\r\n\r\n",
+        );
+        assert_eq!(
+            read_jar_manifest_field(p.to_str().unwrap(), "Implementation-Version").as_deref(),
+            Some("1.0.0-SNAPSHOTcontinued-part")
+        );
+        // 紧跟在下一属性后的折行不应被算进上一个属性
+        assert_eq!(
+            read_jar_manifest_field(p.to_str().unwrap(), "Spring-Boot-Version").as_deref(),
+            Some("4.0.8")
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 整合：`read_jar_info` 一次给出应用版本、框架版本与最低 JDK，三者互不串位
+    #[tokio::test]
+    async fn read_jar_info_combines_version_and_jdk_floor() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("app.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nImplementation-Version: 2.1.0\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
+        );
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.version.as_deref(), Some("2.1.0"));
+        assert_eq!(info.spring_boot_version.as_deref(), Some("3.5.11"));
+        assert_eq!(info.min_jdk, Some(17));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

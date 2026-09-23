@@ -39,6 +39,14 @@
                 {{ j.name }} ({{ j.version }}) {{ j.key === 'jdk' ? '[JDK]' : '[JRE]' }}
               </option>
             </select>
+            <!-- Spring Boot 3.x/4.x 要求 Java 17，选错 JDK 会在启动时直接 UnsupportedClassVersionError -->
+            <div v-if="jarInfo" class="text-xs mt-1" :class="jdkTooOld ? 'text-destructive' : 'hint'">
+              <template v-if="jarInfo.spring_boot_version">
+                Spring Boot {{ jarInfo.spring_boot_version }}<template v-if="jarInfo.min_jdk"> · {{ $t('jarNeedsJdk', { n: jarInfo.min_jdk }) }}</template>
+              </template>
+              <template v-else>{{ $t('jarNoSpringBootInfo') }}</template>
+              <template v-if="jdkTooOld"> — {{ $t('jdkTooOldForJar') }}</template>
+            </div>
           </div>
 
           <!-- Resource planning -->
@@ -238,7 +246,7 @@ import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
-import type { SpringBootApp, JvmOptsTemplate } from '@/models/springboot'
+import type { SpringBootApp, JvmOptsTemplate, JarInfo } from '@/models/springboot'
 
 const { t } = useI18n()
 
@@ -407,6 +415,27 @@ const actuatorPlaceholder = computed(() =>
   form.port ? `http://127.0.0.1:${form.port}/actuator/shutdown` : t('gracefulStopUrlNoPort')
 )
 
+/** 选 jar 时探测到的元信息（Spring Boot 版本 / 所需 JDK），仅用于提示，不参与提交 */
+const jarInfo = ref<JarInfo | null>(null)
+
+/** 从 JDK 版本串取主版本：`21.0.11` → 21；旧命名 `1.8.0_x` → 8。取不到返回 null。 */
+function jdkMajor(version: string): number | null {
+  const m = /^(\d+)(?:\.(\d+))?/.exec(version.trim())
+  if (!m) return null
+  const first = Number(m[1])
+  // 1.x 是 JDK 8 及更早的旧命名（1.8.0 → 8）
+  return first === 1 && m[2] !== undefined ? Number(m[2]) : first
+}
+
+/** 所选 JDK 是否低于该 jar 的要求（Spring Boot 3.x/4.x 需 JDK 17+） */
+const jdkTooOld = computed(() => {
+  const floor = jarInfo.value?.min_jdk
+  if (!floor) return false
+  const jdk = store.jdkList.find(j => j.id === form.jdk_installed_id)
+  const major = jdk ? jdkMajor(jdk.version) : null
+  return major !== null && major < floor
+})
+
 const valid = computed(() => {
   if (nameError.value) return false
   if (props.app) return form.name.trim() !== '' && form.jdk_installed_id !== ''
@@ -418,7 +447,7 @@ function isNameDuplicate(name: string, excludeId?: string): boolean {
   return store.apps.some(a => a.name === name.trim() && a.id !== excludeId)
 }
 
-onMounted(() => {
+onMounted(async () => {
   store.fetchJdkList()
   store.fetchDependencyCandidates()
   store.fetchGroups()
@@ -452,6 +481,15 @@ onMounted(() => {
     extraFlagsText.value = parsed.extra_flags.join(' ')
     utf8Encoding.value = props.app.jvm_opts.includes('-Dfile.encoding=UTF-8')
     recommendedClicked.value = true
+
+    // 编辑模式下 jar 已在位：直接读它的元信息，显示框架版本与所需 JDK
+    if (props.app.jar_path) {
+      try {
+        jarInfo.value = await store.readJarInfo(props.app.jar_path)
+      } catch (e) {
+        console.error('读取 JAR 信息失败:', e)
+      }
+    }
   }
 })
 
@@ -473,6 +511,14 @@ async function selectJar() {
       if (port !== null && port > 0) form.port = port
     } catch (e) {
       console.error('读取 JAR 端口失败:', e)
+    }
+    // 识别构建该 JAR 的 Spring Boot 版本 → 提示所需 JDK
+    // （3.x/4.x 需 17+，选错会在启动时直接 UnsupportedClassVersionError）
+    try {
+      jarInfo.value = await store.readJarInfo(selected)
+    } catch (e) {
+      console.error('读取 JAR 信息失败:', e)
+      jarInfo.value = null
     }
   }
 }
