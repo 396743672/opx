@@ -650,6 +650,8 @@ export default {
     nacosFunctionModeDesc: 'Start only specific modules (all = everything)',
     nacosContextPath: 'Context Path',
     nacosContextPathDesc: 'HTTP context path',
+    nacosAuthEnabled: 'Enable Auth',
+    nacosAuthEnabledDesc: 'When enabled, console requires login and provides user/role/permission management; disabled = no-login dev mode',
     nacosServerPortDesc: 'Nacos server API port',
     nacosConsolePort: 'Console Port',
     nacosConsolePortDesc: 'Separate console port in Nacos 3.x',

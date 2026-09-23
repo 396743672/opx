@@ -650,6 +650,8 @@ export default {
     nacosFunctionModeDesc: '仅启动指定模块（all 为全部）',
     nacosContextPath: '上下文路径',
     nacosContextPathDesc: 'HTTP 上下文路径',
+    nacosAuthEnabled: '开启鉴权',
+    nacosAuthEnabledDesc: '开启后控制台需登录并提供用户/角色/权限管理；关闭为免登录开发模式',
     nacosServerPortDesc: 'Nacos 服务 API 端口',
     nacosConsolePort: '控制台端口',
     nacosConsolePortDesc: 'Nacos 3.x 控制台独立端口',

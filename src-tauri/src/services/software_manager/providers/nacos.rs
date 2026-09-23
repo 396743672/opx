@@ -26,6 +26,9 @@ fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
+fn config_bool(c: &serde_json::Value, key: &str, default: bool) -> bool {
+    c.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
 
 /// 解析集群节点列表：按行/逗号切分，trim 后滤空行；每项须为 `host:port`
 /// （host 非空、port 1-65535）。返回规范化的 `host:port` 列表。
@@ -252,6 +255,15 @@ impl SoftwareProvider for NacosProvider {
         args.insert(0, "-Dnacos.core.auth.server.identity.key=serverIdentity".to_string());
         args.insert(0, "-Dnacos.core.auth.server.identity.value=security".to_string());
         args.insert(0, "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=".to_string());
+        // 鉴权开关（配置项 auth_enabled，默认开启）：开启时除 enabled=true 外必须同时
+        // 设 system.type=nacos，否则 Nacos 降级为无认证模式（AuthFilter 被跳过，日志报
+        // "auth system type is null, skip auth init"），控制台仍免登录。
+        if config_bool(&ctx.config, "auth_enabled", true) {
+            args.insert(0, "-Dnacos.core.auth.system.type=nacos".to_string());
+            args.insert(0, "-Dnacos.core.auth.enabled=true".to_string());
+        } else {
+            args.insert(0, "-Dnacos.core.auth.enabled=false".to_string());
+        }
 
         // 数据库模式：embedded（Derby 默认）/ mysql
         let storage = config_str(&ctx.config, "storage", "embedded");
@@ -522,6 +534,14 @@ impl SoftwareProvider for NacosProvider {
                     section: None,
                     description_i18n: Some("configField.nacosContextPathDesc".to_string()),
                 },
+                ConfigField {
+                    key: "auth_enabled".to_string(),
+                    label_i18n: "configField.nacosAuthEnabled".to_string(),
+                    field_type: ConfigFieldType::Boolean,
+                    default_value: serde_json::json!(true),
+                    section: None,
+                    description_i18n: Some("configField.nacosAuthEnabledDesc".to_string()),
+                },
             ],
             ephemeral_keys: vec![],
             field_rules: vec![
@@ -642,32 +662,85 @@ mod tests {
     }
 
     #[test]
-    fn start_command_always_pins_server_port() {
-        // 回归：主端口必须无条件用 JVM 系统属性显式传入（系统属性优先级高于环境变量）。
-        // 曾因「仅非默认端口才传」且用的是 2.x 不认的 nacos.server.main.port，
-        // 导致宿主注入的 SERVER__PORT 经 Spring Boot 宽松绑定覆盖 server.port，Nacos 启动失败。
-        let make = |port: u64| StartContext {
+    fn start_command_ports_and_auth_by_version() {
+        // 回归（两部分，均经真实 jar 受控实验验证）：
+        // 1) 2.x 只认 -Dserver.port（nacos.server.main.port 在 2.x 实测无效）；必须
+        //    无条件传入钉死端口，防宿主注入 SERVER_PORT / SERVER__PORT 经宽松绑定劫持。
+        // 2) 3.x 双 context 都读 server.port，传 -Dserver.port 会让 Console 与 API
+        //    自撞（3.2.3 实测复现）；必须改传 nacos.server.main.port + nacos.console.port，
+        //    并通过 remove_envs 清除污染环境变量（专属参数会被 env server.port 打穿）。
+        let make = |version: &str, port: u64, console: u64| StartContext {
             installed_id: "t".to_string(),
-            install_path: "C:\\nacos\\2.5.4".to_string(),
-            version: "2.5.4".to_string(),
-            config: serde_json::json!({ "port": port }),
+            install_path: "C:\\nacos".to_string(),
+            version: version.to_string(),
+            config: serde_json::json!({ "port": port, "console_port": console }),
             custom_start_command: None,
             init_password: None,
             jdk_install_path: Some("C:\\jdk-17".to_string()),
             mysql_install_path: None,
         };
-        for port in [8848u64, 9999] {
+
+        // 2.x：-Dserver.port 存在，3.x 专属参数不出现
+        let cmd = NacosProvider
+            .start_command(&make("2.5.4", 8848, 8080))
+            .expect("2.x start_command 应成功");
+        assert!(cmd.args.iter().any(|a| a == "-Dserver.port=8848"));
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("-Dnacos.server.main.port=")),
+            "2.x 不认 nacos.server.main.port，不应出现"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"));
+
+        // 鉴权开关关闭：不注入 system.type 与 enabled=true，改为 enabled=false；
+        // identity / secret.key 仍无条件注入（避免 Nacos 2.2.1+ Empty identity 启动失败）。
+        let make_auth = |version: &str, port: u64, console: u64, auth: bool| StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\nacos".to_string(),
+            version: version.to_string(),
+            config: serde_json::json!({ "port": port, "console_port": console, "auth_enabled": auth }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+        let cmd = NacosProvider
+            .start_command(&make_auth("2.5.4", 8848, 8080, false))
+            .expect("关闭鉴权 start_command 应成功");
+        assert!(
+            !cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"),
+            "关闭鉴权时不应注入 system.type（否则仍会启用认证插件）"
+        );
+        assert!(
+            !cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"),
+            "关闭鉴权时不应注入 enabled=true"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=false"));
+        assert!(cmd.args.iter().any(|a| a.starts_with("-Dnacos.core.auth.server.identity.key=")));
+        assert!(cmd.args.iter().any(|a| a.starts_with("-Dnacos.core.auth.plugin.nacos.token.secret.key=")));
+
+        // 3.x：专属参数存在（console_port 显式传入），-Dserver.port 必须缺席
+        let cmd = NacosProvider
+            .start_command(&make("3.2.3", 9999, 9090))
+            .expect("3.x start_command 应成功");
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.server.main.port=9999"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.console.port=9090"));
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("-Dserver.port=")),
+            "3.x 传 -Dserver.port 会导致 Console 与 API 自撞，不应出现"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"));
+
+        // 两版本都必须从继承环境移除 Spring 端口污染变量
+        for v in ["2.5.4", "3.2.3"] {
             let cmd = NacosProvider
-                .start_command(&make(port))
+                .start_command(&make(v, 8848, 8080))
                 .expect("start_command 应成功");
-            for flag in [
-                format!("-Dserver.port={port}"),
-                format!("-Dnacos.server.main.port={port}"),
-            ] {
+            for name in ["SERVER_PORT", "SERVER__PORT"] {
                 assert!(
-                    cmd.args.iter().any(|a| *a == flag),
-                    "端口 {port} 缺参数 {flag}；实际 args={:?}",
-                    cmd.args
+                    cmd.remove_envs.iter().any(|r| r == name),
+                    "{v} 缺 remove_envs={name}"
                 );
             }
         }
