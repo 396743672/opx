@@ -53,12 +53,31 @@
 
             <!-- 趋势：瞬时快照看不出堆是否在持续爬升，而持续爬升才是泄漏信号 -->
             <section class="trend">
-              <div class="trend-hd">{{ $t('jvmHeapTrend', { n: (HISTORY * REFRESH_MS) / 1000 }) }}</div>
-              <svg class="spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+              <div class="trend-hd">
+                <span>{{ $t('jvmHeapTrend', { n: TREND_MIN }) }}</span>
+                <span class="trend-range">{{ trendLabel }}</span>
+              </div>
+              <svg
+                class="spark"
+                :viewBox="SPARK_VIEWBOX"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <!-- 网格线给曲线一个量度参照：单线悬空时看不出波动幅度算大还是小 -->
+                <g class="spark-grid">
+                  <line x1="0" x2="100" :y1="SPARK_PAD" :y2="SPARK_PAD" />
+                  <line x1="0" x2="100" :y1="SPARK_H / 2" :y2="SPARK_H / 2" />
+                  <line x1="0" x2="100" :y1="SPARK_H - SPARK_PAD" :y2="SPARK_H - SPARK_PAD" />
+                  <line class="v" :x1="GRID_X1" :x2="GRID_X1" y1="0" :y2="SPARK_H" />
+                  <line class="v" :x1="GRID_X2" :x2="GRID_X2" y1="0" :y2="SPARK_H" />
+                </g>
                 <path v-if="sparkArea" :d="sparkArea" class="spark-area" :class="barColor" />
                 <path v-if="sparkPath" :d="sparkPath" class="spark-line" :class="barColor" />
               </svg>
-              <div class="trend-ft">{{ trendLabel }}</div>
+              <div class="trend-ft">
+                <span>{{ $t('jvmTrendAgo', { n: TREND_MIN }) }}</span>
+                <span>{{ $t('jvmTrendNow') }}</span>
+              </div>
             </section>
 
             <div class="grid">
@@ -159,8 +178,16 @@ const status = computed<{ level: 'ok' | 'warn' | 'danger'; text: string }>(() =>
  */
 const MIN_SPAN_RATIO = 0.05
 const MIN_SPAN_BYTES = 32 * 1024 * 1024
-const SPARK_H = 40
-const SPARK_PAD = 4
+/** 趋势窗口时长（分钟）：底部时间刻度与标题共用，避免两处各算一遍 */
+const TREND_MIN = (HISTORY * REFRESH_MS) / 60000
+/** 绘图区尺寸，与 .spark 的 CSS 高度保持一致；网格线横纵位置都由此推导 */
+const SPARK_H = 48
+const SPARK_PAD = 6
+/** 纵向网格线的横坐标（viewBox 单位），三等分窗口时长 */
+const GRID_X1 = 100 / 3
+const GRID_X2 = 200 / 3
+/** 由 SPARK_H 推导，避免 viewBox 与 CSS 高度两处各写一个数字而对不上 */
+const SPARK_VIEWBOX = `0 0 100 ${SPARK_H}`
 
 const trendAxis = computed(() => {
   const h = heapHistory.value
@@ -300,8 +327,20 @@ onBeforeUnmount(() => {
 }
 
 .trend { margin: 16px 0; }
-.trend-hd { font-size: 11px; color: var(--color-muted-foreground); margin-bottom: 6px; }
-.spark { display: block; width: 100%; height: 40px; }
+.trend-hd {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+  font-size: 11px; color: var(--color-muted-foreground);
+}
+.trend-range { font-variant-numeric: tabular-nums; }
+.spark { display: block; width: 100%; height: 48px; }
+/* 网格线给曲线一个量度参照。preserveAspectRatio="none" 会把纵向线横向拉粗，
+   用 non-scaling-stroke 保持 1px；纵向线再淡一档，避免抢过曲线本身 */
+.spark-grid line {
+  stroke: var(--color-border); stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.spark-grid line.v { opacity: 0.6; }
 /* preserveAspectRatio="none" 会拉伸描边，用 non-scaling-stroke 保持线宽 */
 .spark-line {
   fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round;
@@ -316,7 +355,8 @@ onBeforeUnmount(() => {
 .spark-area.warn { fill: var(--color-warning); fill-opacity: 0.1; }
 .spark-area.danger { fill: var(--color-destructive); fill-opacity: 0.1; }
 .trend-ft {
-  margin-top: 4px; text-align: right; font-size: 11px;
+  display: flex; justify-content: space-between;
+  margin-top: 4px; font-size: 11px;
   color: var(--color-muted-foreground);
 }
 
