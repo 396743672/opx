@@ -215,6 +215,18 @@
               <span class="text-xs text-muted-foreground">{{ $t('daysUnit') }}</span>
             </div>
           </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('snapshotKeep') }}</span>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="snapshotKeepValue"
+                type="number"
+                min="1"
+                max="50"
+                class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+              />
+            </div>
+          </div>
         </div>
 
         <!-- 告警通知 -->
@@ -470,6 +482,7 @@ const alertSystemMemValue = ref(90)
 const alertProcessCpuValue = ref(90)
 const alertProcessMemValue = ref(90)
 const metricsRetainDaysValue = ref(7)
+const snapshotKeepValue = ref(5)
 const webhookUrlValue = ref('')
 const webhookFormatValue = ref('json')
 const webhookSecretValue = ref('')
@@ -539,6 +552,7 @@ watch(
       alertProcessCpuValue.value = s.alert_process_cpu ?? 90
       alertProcessMemValue.value = s.alert_process_mem ?? 90
       metricsRetainDaysValue.value = s.metrics_retain_days ?? 7
+      snapshotKeepValue.value = s.snapshot_keep ?? 5
       webhookUrlValue.value = s.alert_webhook_url || ''
       webhookFormatValue.value = s.alert_webhook_format || 'json'
       webhookSecretValue.value = s.alert_webhook_secret || ''
@@ -575,7 +589,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -607,6 +621,12 @@ async function save() {
       ? Number(metricsRetainDaysValue.value)
       : 7
   settingsStore.settings.metrics_retain_days = metricsRetainDaysValue.value
+  // 快照保留数量归一 [1,50]，非法值回落 5（防止 '' 写坏 settings.json）
+  snapshotKeepValue.value =
+    Number(snapshotKeepValue.value) >= 1 && Number(snapshotKeepValue.value) <= 50
+      ? Number(snapshotKeepValue.value)
+      : 5
+  settingsStore.settings.snapshot_keep = snapshotKeepValue.value
   // 端口输入清空时 v-model.number 给 ''，归一回落 465（同告警阈值的 pct 兜底逻辑）
   smtpPortValue.value = Number(smtpPortValue.value) >= 1 && Number(smtpPortValue.value) <= 65535 ? Number(smtpPortValue.value) : 465
   settingsStore.settings.alert_webhook_url = webhookUrlValue.value

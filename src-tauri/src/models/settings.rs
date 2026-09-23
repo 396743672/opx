@@ -48,6 +48,9 @@ pub struct AppSettings {
     /// 指标历史保留天数（监控趋势曲线）。默认 7。
     #[serde(default = "default_metrics_retain_days")]
     pub metrics_retain_days: u32,
+    /// 每实例快照滚动保留数量（备份）。默认 5。
+    #[serde(default = "default_snapshot_keep")]
+    pub snapshot_keep: u32,
     // --- 告警通知（webhook + SMTP）---
     /// 告警 webhook URL，空 = 不发送
     #[serde(default)]
@@ -109,6 +112,10 @@ fn default_metrics_retain_days() -> u32 {
     7
 }
 
+fn default_snapshot_keep() -> u32 {
+    5
+}
+
 fn default_ddns_provider() -> String {
     "cloudflare".to_string()
 }
@@ -142,6 +149,7 @@ impl Default for AppSettings {
             alert_process_cpu: default_ninety(),
             alert_process_mem: default_ninety(),
             metrics_retain_days: default_metrics_retain_days(),
+            snapshot_keep: default_snapshot_keep(),
             alert_webhook_url: String::new(),
             alert_webhook_format: default_webhook_format(),
             alert_webhook_secret: String::new(),
@@ -200,6 +208,18 @@ mod tests {
             s.metrics_retain_days, 7,
             "旧 settings.json 缺字段时回落默认 7 天"
         );
+    }
+
+    #[test]
+    fn snapshot_keep_defaults_to_5_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.snapshot_keep, 5, "旧 settings.json 缺字段时回落默认 5");
     }
 
     #[test]

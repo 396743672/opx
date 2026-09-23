@@ -474,6 +474,7 @@ export default {
   alertProcessCpu: 'Instance CPU above',
   alertProcessMem: 'Instance memory above',
   metricsRetainDays: 'Metrics retention',
+  snapshotKeep: 'Snapshot retention count',
   daysUnit: 'days',
   resourceAlert: '"{name}" {metric} {value}% (threshold {threshold}%)',
 

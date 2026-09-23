@@ -2360,8 +2360,16 @@ pub async fn create_snapshot(
     name: Option<String>,
     note: Option<String>,
 ) -> Result<SnapshotMeta, String> {
-    backup::create_snapshot(&manager, &app, &installed_id, mode, name, note)
-        .map_err(|e| e.to_string())
+    backup::create_snapshot(
+        &manager,
+        &app,
+        &installed_id,
+        mode,
+        name,
+        note,
+        super::config::read_settings().unwrap_or_default().snapshot_keep.max(1) as usize,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 列出某实例的全部快照
@@ -2385,7 +2393,12 @@ pub async fn restore_snapshot(
 /// 删除快照（删 zip + 更新 manifest）
 #[tauri::command]
 pub async fn delete_snapshot(installed_id: String, snapshot_id: String) -> Result<(), String> {
-    backup::delete_snapshot(&installed_id, &snapshot_id).map_err(|e| e.to_string())
+    backup::delete_snapshot(
+        &installed_id,
+        &snapshot_id,
+        super::config::read_settings().unwrap_or_default().snapshot_keep.max(1) as usize,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 设置某实例的定时备份间隔（分钟；0 关闭）。返回全部配置。

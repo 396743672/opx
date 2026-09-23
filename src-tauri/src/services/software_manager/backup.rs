@@ -57,23 +57,37 @@ fn read_manifest(installed_id: &str) -> Vec<SnapshotMeta> {
     serde_json::from_str(&content).unwrap_or_default()
 }
 
-/// 每个实例最多保留的快照数（决策：滚动保留 5 个）
-const MAX_SNAPSHOTS_PER_INSTANCE: usize = 5;
+/// 每实例快照滚动保留数量的默认值（可配置，见 AppSettings.snapshot_keep）
+const DEFAULT_MAX_SNAPSHOTS: usize = 5;
 
-fn write_manifest(installed_id: &str, metas: &[SnapshotMeta]) -> anyhow::Result<()> {
+fn write_manifest(installed_id: &str, metas: &[SnapshotMeta], max_keep: usize) -> anyhow::Result<()> {
     let p = manifest_path(installed_id);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // 滚动保留最近 MAX_SNAPSHOTS_PER_INSTANCE 个快照（按传入顺序保留末尾最近）
-    let kept: &[SnapshotMeta] = if metas.len() > MAX_SNAPSHOTS_PER_INSTANCE {
-        &metas[metas.len() - MAX_SNAPSHOTS_PER_INSTANCE..]
+    // 滚动保留最近 max_keep 个快照（按传入顺序保留末尾最近）
+    let kept: &[SnapshotMeta] = if metas.len() > max_keep {
+        &metas[metas.len() - max_keep..]
     } else {
         metas
     };
     let content = serde_json::to_string_pretty(kept)?;
     std::fs::write(&p, content)?;
     Ok(())
+}
+
+/// 解析快照 id 与 zip 路径：同一秒内重复创建时 zip 会重名（`File::create` 会覆盖旧文件），
+/// 故已存在时追加序号 `-1`、`-2`…，保证快照 id（= zip 文件名 stem）唯一。
+fn resolve_snapshot_id(root: &Path, ts: &str) -> (String, PathBuf) {
+    let mut id = ts.to_string();
+    let mut zip_path = root.join(format!("{}.zip", id));
+    let mut seq = 1u32;
+    while zip_path.exists() {
+        id = format!("{}-{}", ts, seq);
+        zip_path = root.join(format!("{}.zip", id));
+        seq += 1;
+    }
+    (id, zip_path)
 }
 
 /// 把目录递归加入 zip。entry 以 `rel_root` 为相对根（恢复时映射回原目录）；
@@ -177,6 +191,7 @@ pub fn create_snapshot(
     mode: BackupMode,
     name: Option<String>,
     note: Option<String>,
+    max_keep: usize,
 ) -> anyhow::Result<SnapshotMeta> {
     let sw = manager
         .find_installed(installed_id)
@@ -216,7 +231,7 @@ pub fn create_snapshot(
     let root = backups_root(installed_id);
     std::fs::create_dir_all(&root)?;
     let ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let zip_path = root.join(format!("{}.zip", ts));
+    let (snap_id, zip_path) = resolve_snapshot_id(&root, &ts);
 
     let f = std::fs::File::create(&zip_path)?;
     let mut zip = zip::ZipWriter::new(f);
@@ -236,7 +251,7 @@ pub fn create_snapshot(
 
     let size_bytes = std::fs::metadata(&zip_path)?.len();
     let meta = SnapshotMeta {
-        id: ts,
+        id: snap_id,
         created_at: Local::now().to_rfc3339(),
         source_key: sw.key.clone(),
         source_version: sw.version.clone(),
@@ -248,17 +263,18 @@ pub fn create_snapshot(
     };
     let mut manifest = read_manifest(installed_id);
     // 预先计算将被滚动淘汰的最旧快照（写 manifest 前先删其 zip，避免孤立文件）
-    let dropped: Vec<String> = if manifest.len() >= MAX_SNAPSHOTS_PER_INSTANCE {
+    let max_keep = max_keep.max(1);
+    let dropped: Vec<String> = if manifest.len() >= max_keep {
         manifest
             .iter()
-            .take(manifest.len() - MAX_SNAPSHOTS_PER_INSTANCE + 1)
+            .take(manifest.len() - max_keep + 1)
             .map(|m| m.id.clone())
             .collect()
     } else {
         Vec::new()
     };
     manifest.push(meta.clone());
-    write_manifest(installed_id, &manifest)?;
+    write_manifest(installed_id, &manifest, max_keep)?;
     // 清理被淘汰快照的 zip 文件（manifest 已由 write_manifest 裁剪保留最近 5 个）
     for id in dropped {
         let old_zip = backups_root(installed_id).join(format!("{}.zip", id));
@@ -349,10 +365,10 @@ pub fn restore_snapshot(
 }
 
 /// 删除快照：删 zip + 更新 manifest
-pub fn delete_snapshot(installed_id: &str, snapshot_id: &str) -> anyhow::Result<()> {
+pub fn delete_snapshot(installed_id: &str, snapshot_id: &str, max_keep: usize) -> anyhow::Result<()> {
     let mut manifest = read_manifest(installed_id);
     manifest.retain(|m| m.id != snapshot_id);
-    write_manifest(installed_id, &manifest)?;
+    write_manifest(installed_id, &manifest, max_keep)?;
     let zip_path = backups_root(installed_id).join(format!("{}.zip", snapshot_id));
     if zip_path.exists() {
         std::fs::remove_file(&zip_path)?;
@@ -419,20 +435,49 @@ mod tests {
         assert_eq!(parse_major_version(""), None);
     }
 
-    /// 预期：每实例最多保留 5 个快照（write_manifest 按 MAX_SNAPSHOTS_PER_INSTANCE 滚动保留末尾最近的）。
+    /// 预期：默认保留 5 个快照（write_manifest 按 max_keep 滚动保留末尾最近的）。
     #[test]
     fn test_snapshot_retention_keeps_five() {
         let id = format!("__qa_retention_{}", unique_suffix());
         let metas: Vec<SnapshotMeta> = (0..6).map(|i| meta(&format!("s{}", i))).collect();
-        write_manifest(&id, &metas).unwrap();
+        write_manifest(&id, &metas, DEFAULT_MAX_SNAPSHOTS).unwrap();
         let got = read_manifest(&id);
         // 清理：避免污染 target 目录下的数据目录
         let _ = fs::remove_dir_all(data_dir().join("backups").join(&id));
         assert!(
             got.len() <= 5,
-            "应保留最多 5 个快照（设计：每实例保留 5 个滚动删除），实际 {} 个",
+            "应保留最多 5 个快照（默认滚动保留），实际 {} 个",
             got.len()
         );
+    }
+
+    /// 预期：max_keep 可配置——传 10 时 6 条全保留，不被裁剪。
+    #[test]
+    fn test_snapshot_retention_respects_configured_max() {
+        let id = format!("__qa_retention_cfg_{}", unique_suffix());
+        let metas: Vec<SnapshotMeta> = (0..6).map(|i| meta(&format!("s{}", i))).collect();
+        write_manifest(&id, &metas, 10).unwrap();
+        let got = read_manifest(&id);
+        let _ = fs::remove_dir_all(data_dir().join("backups").join(&id));
+        assert_eq!(got.len(), 6, "max_keep=10 时 6 条应全部保留");
+    }
+
+    /// 预期：同一秒重复创建（zip 已存在）时 id 追加序号，不覆盖已有文件。
+    #[test]
+    fn test_resolve_snapshot_id_avoids_collision() {
+        let base = std::env::temp_dir().join(format!("opx_qa_resolve_{}", unique_suffix()));
+        let _ = fs::create_dir_all(&base);
+        let ts = "20260923_140816";
+        let (id1, p1) = resolve_snapshot_id(&base, ts);
+        assert_eq!(id1, ts, "首次解析直接用时间戳");
+        fs::File::create(&p1).unwrap(); // 模拟快照文件已落盘
+        let (id2, p2) = resolve_snapshot_id(&base, ts);
+        assert_eq!(id2, format!("{}-1", ts), "冲突时追加 -1");
+        assert_ne!(p1, p2);
+        fs::File::create(&p2).unwrap();
+        let (id3, p3) = resolve_snapshot_id(&base, ts);
+        assert_eq!(id3, format!("{}-2", ts), "再次冲突追加 -2");
+        let _ = fs::remove_dir_all(&base);
     }
 
     /// 预期：restore 解压应对含 ../ 的 entry 做 zip-slip 防护（拒绝或归一化到目标目录内）。

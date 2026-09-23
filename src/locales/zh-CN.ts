@@ -474,6 +474,7 @@ export default {
   alertProcessCpu: '单实例 CPU 超过',
   alertProcessMem: '单实例内存超过',
   metricsRetainDays: '指标保留天数',
+  snapshotKeep: '备份快照保留数量',
   daysUnit: '天',
   resourceAlert: '「{name}」{metric} {value}%（阈值 {threshold}%）',
 
