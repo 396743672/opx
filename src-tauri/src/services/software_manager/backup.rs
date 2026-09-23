@@ -58,6 +58,7 @@ fn read_manifest(installed_id: &str) -> Vec<SnapshotMeta> {
 }
 
 /// 每实例快照滚动保留数量的默认值（可配置，见 AppSettings.snapshot_keep）
+#[cfg(test)]
 const DEFAULT_MAX_SNAPSHOTS: usize = 5;
 
 fn write_manifest(installed_id: &str, metas: &[SnapshotMeta], max_keep: usize) -> anyhow::Result<()> {
