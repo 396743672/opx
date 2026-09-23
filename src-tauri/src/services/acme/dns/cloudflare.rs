@@ -211,8 +211,6 @@ impl DnsProvider for Cloudflare {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// DNS-01 的 TXT 名前缀必须是 `_acme-challenge.`：
     /// get/set/delete 三处都靠 trim_start_matches 反推 zone，
     /// 前缀写错会让 find_zone 拿整个 challenge 名去匹配 zone 而失败。

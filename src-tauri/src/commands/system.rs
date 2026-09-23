@@ -32,6 +32,5 @@ pub fn get_last_startup_report() -> Option<crate::models::startup::StartupReport
 /// 当前应用版本（读 tauri.conf.json 的 version，供「关于」页展示）
 #[tauri::command]
 pub fn app_version(app: tauri::AppHandle) -> String {
-    use tauri::Manager;
     app.package_info().version.to_string()
 }

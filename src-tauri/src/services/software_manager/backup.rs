@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(id2, format!("{}-1", ts), "冲突时追加 -1");
         assert_ne!(p1, p2);
         fs::File::create(&p2).unwrap();
-        let (id3, p3) = resolve_snapshot_id(&base, ts);
+        let (id3, _p3) = resolve_snapshot_id(&base, ts);
         assert_eq!(id3, format!("{}-2", ts), "再次冲突追加 -2");
         let _ = fs::remove_dir_all(&base);
     }
