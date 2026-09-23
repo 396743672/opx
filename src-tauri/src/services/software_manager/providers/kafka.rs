@@ -320,6 +320,7 @@ impl SoftwareProvider for KafkaProvider {
                     ],
                     env_vars: env_vars.clone(),
                     working_dir: home.clone(),
+                    remove_envs: Vec::new(),
                     creation_flags: CREATE_NO_WINDOW,
                     first_run_init: None,
                 },
@@ -334,6 +335,7 @@ impl SoftwareProvider for KafkaProvider {
             args: vec!["config/server.properties".to_string()],
             env_vars,
             working_dir: home,
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             first_run_init,
         })

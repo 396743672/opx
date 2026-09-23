@@ -150,6 +150,10 @@ pub fn spawn_process(cmd: StartCommand, installed_id: &str) -> anyhow::Result<Ch
     for (k, v) in &cmd.env_vars {
         command.env(k, v);
     }
+    // 从继承环境移除宿主注入的危险变量（如 SERVER_PORT 会污染 Spring Boot 端口）
+    for name in &cmd.remove_envs {
+        command.env_remove(name);
+    }
 
     #[cfg(windows)]
     command.creation_flags(cmd.creation_flags);
@@ -191,6 +195,9 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
 
     for (k, v) in &init.env_vars {
         command.env(k, v);
+    }
+    for name in &init.remove_envs {
+        command.env_remove(name);
     }
 
     #[cfg(windows)]
@@ -392,6 +399,7 @@ pub fn build_custom_command(
         args: custom.args.clone(),
         env_vars: custom.env_vars.clone(),
         working_dir,
+        remove_envs: Vec::new(),
         creation_flags: 0x08000000, // CREATE_NO_WINDOW
         first_run_init: None,
     })

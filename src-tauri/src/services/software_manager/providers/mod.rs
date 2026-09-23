@@ -242,6 +242,12 @@ pub struct StartCommand {
     pub program: String,
     pub args: Vec<String>,
     pub env_vars: std::collections::BTreeMap<String, String>,
+    /// spawn 前从继承环境中移除的变量名。
+    ///
+    /// 用途：宿主进程注入的环境变量可能改变子软件行为。典型：`SERVER_PORT` /
+    /// `SERVER__PORT` 会被 Spring Boot 宽松绑定解析为 `server.port`，覆盖被管软件
+    /// （Nacos 等）自带的端口配置，导致绑到宿主端口启动失败。按需声明，勿滥用。
+    pub remove_envs: Vec<String>,
     pub working_dir: PathBuf,
     pub creation_flags: u32,
     pub first_run_init: Option<Box<FirstRunInit>>,

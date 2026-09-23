@@ -149,6 +149,7 @@ impl SoftwareProvider for RustfsProvider {
             ],
             env_vars,
             working_dir: PathBuf::from(&ctx.install_path),
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: None,
         })

@@ -222,6 +222,7 @@ impl SoftwareProvider for InfluxdbProvider {
             args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             // InfluxDB 2 的 /api/v2 端点总是需要 token（auth-enabled 仅影响 1.x 兼容 API）。
             // 认证/初始化由 post_start_http_init 在健康检查通过后自动 onboarding 完成，

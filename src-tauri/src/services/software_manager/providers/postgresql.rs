@@ -96,6 +96,7 @@ impl SoftwareProvider for PostgreSqlProvider {
             args: init_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: None,
         };
@@ -105,6 +106,7 @@ impl SoftwareProvider for PostgreSqlProvider {
             args: vec!["-D".to_string(), data_dir.to_string_lossy().to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: Some(Box::new(FirstRunInit {
                 init_command,

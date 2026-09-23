@@ -317,6 +317,7 @@ impl SoftwareProvider for NacosProvider {
                 ],
                 env_vars: env,
                 working_dir: working_dir.clone(),
+                remove_envs: Vec::new(),
                 creation_flags: CREATE_NO_WINDOW,
                 first_run_init: None,
             };
@@ -347,6 +348,9 @@ impl SoftwareProvider for NacosProvider {
             program: java.to_string_lossy().to_string(),
             args,
             env_vars: std::collections::BTreeMap::new(),
+            // Spring Boot 宽松绑定会把它们解析为 server.port，覆盖 Nacos 的端口
+            // 配置（专属参数 -Dnacos.*.port 与 conf 均会被打穿），必须从继承环境中移除。
+            remove_envs: vec!["SERVER_PORT".to_string(), "SERVER__PORT".to_string()],
             working_dir,
             creation_flags: CREATE_NO_WINDOW,
             first_run_init,

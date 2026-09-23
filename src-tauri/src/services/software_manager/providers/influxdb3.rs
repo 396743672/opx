@@ -147,6 +147,7 @@ impl SoftwareProvider for Influxdb3Provider {
             args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             // InfluxDB 3 Core 首次启动无需额外初始化（本地 file 存储即开即用）
             first_run_init: None,
