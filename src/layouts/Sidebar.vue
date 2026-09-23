@@ -71,6 +71,22 @@
           {{ $t('settings') }}
         </span>
       </div>
+      <div
+        @click="navigate('/about')"
+        :class="[
+          'relative flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150',
+          'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+          currentPath === '/about' && 'text-primary bg-primary/8 font-medium',
+        ]"
+      >
+        <Icon icon="mdi:information-outline" class="text-xl flex-shrink-0" />
+        <span
+          class="text-sm whitespace-nowrap transition-opacity duration-200"
+          :class="props.pinned ? 'opacity-100' : 'opacity-0'"
+        >
+          {{ $t('about') }}
+        </span>
+      </div>
       <!-- Pin 按钮 -->
       <button
         @click="emit('update:pinned', !props.pinned)"

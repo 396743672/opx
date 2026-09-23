@@ -66,6 +66,12 @@ const routes = [
     meta: { title: 'settings' },
   },
   {
+    path: '/about',
+    name: 'about',
+    component: () => import('@/modules/settings/pages/AboutPage.vue'),
+    meta: { title: 'about' },
+  },
+  {
     path: '/stacks',
     name: 'stacks',
     component: () => import('@/modules/stack/StackList.vue'),

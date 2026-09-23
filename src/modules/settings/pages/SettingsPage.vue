@@ -121,36 +121,8 @@
             </div>
             <SwitchBtn v-model="autoCheckUpdateValue" />
           </div>
-          <div class="flex items-center justify-between gap-4 py-3">
-            <div class="flex flex-col gap-1 min-w-0">
-              <button
-                class="btn text-xs h-7 px-2 self-start"
-                :disabled="checking || installing"
-                @click="onCheckUpdate"
-              >{{ checking ? $t('checkingUpdate') : $t('checkUpdate') }}</button>
-              <span v-if="updateInfo" class="text-xs text-success">
-                {{ $t('updateAvailable', { version: updateInfo.version }) }}
-              </span>
-              <span
-                v-if="error"
-                class="text-xs text-destructive"
-                style="overflow-wrap: anywhere; word-break: break-word"
-              >{{ error }}</span>
-            </div>
-            <div v-if="updateInfo" class="flex flex-col gap-1 items-end min-w-0">
-              <button
-                class="btn text-xs h-7 px-2 bg-primary text-primary-foreground hover:bg-primary/90"
-                :disabled="installing"
-                @click="onInstallUpdate"
-              >{{ installing ? $t('installingUpdate') : $t('installUpdate') }}</button>
-              <div v-if="installing" class="w-40 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div class="h-full bg-primary transition-all" :style="{ width: progress + '%' }"></div>
-              </div>
-              <span v-if="installing" class="text-xs text-muted-foreground">{{ progress }}%</span>
-            </div>
-          </div>
-          <div v-if="updateInfo && updateInfo.notes" class="py-3">
-            <span class="text-xs text-muted-foreground whitespace-pre-line">{{ updateInfo.notes }}</span>
+          <div class="py-3">
+            <span class="text-xs text-muted-foreground">{{ $t('updateCheckInAbout') }}</span>
           </div>
         </div>
       </div>
@@ -437,7 +409,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from '@/stores/settings'
-import { useUpdater } from '@/composables/useUpdater'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
 import SwitchBtn from '@/components/SwitchBtn.vue'
@@ -447,8 +418,6 @@ const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const route = useRoute()
 const router = useRouter()
-const { checking, installing, updateInfo, progress, error, check: runCheck, install: runInstall } =
-  useUpdater()
 
 // Tab 分区：选中状态存 URL query —— 刷新保持、可从别处直达；非法值回落首 Tab
 const TAB_KEYS = ['general', 'monitor', 'dns'] as const
@@ -527,13 +496,6 @@ async function onToggleAutostart(v: boolean) {
   }
 }
 
-async function onCheckUpdate() {
-  await runCheck()
-}
-
-async function onInstallUpdate() {
-  await runInstall()
-}
 
 watch(
   () => settingsStore.settings,
