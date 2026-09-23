@@ -243,14 +243,19 @@ pub async fn get_springboot_jvm_metrics(
 ) -> Result<Option<JvmInfo>, String> {
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     if let Some(pid) = app.pid {
+        // 进程已退出（弹窗开着时应用被停止是正常操作）→ None，前端静默等待；
+        // 进程还在但采集失败 → Err 带真实原因，前端直接展示，不再猜「缺 JDK」
+        if !crate::services::software_manager::health_check::is_process_alive(pid) {
+            return Ok(None);
+        }
         // ponytail: 从 JDK 目录找 jcmd，不用 PATH
         let jdk_path = software_mgr
             .find_installed(&app.jdk_installed_id)
             .map(|j| j.install_path.clone());
-        Ok(crate::services::springboot_manager::monitor::collect_jvm_metrics(pid, jdk_path))
-    } else {
-        Ok(None)
+        return crate::services::springboot_manager::monitor::collect_jvm_metrics(pid, jdk_path)
+            .map(Some);
     }
+    Ok(None)
 }
 
 #[tauri::command]

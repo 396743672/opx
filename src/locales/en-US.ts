@@ -341,7 +341,7 @@ export default {
   fetchJarPortFailed: 'Failed to read JAR port',
   logPathNotConfigured: 'Log path not configured',
   cannotReadLog: 'Cannot read log',
-  jvmMonitorNeedsJdk: 'JVM monitoring requires a full JDK (jcmd / jstat are not in a JRE)',
+  jvmAppNotRunning: 'App is not running; JVM metrics unavailable',
   jvmMonitorFailed: 'Failed to collect JVM metrics',
   jvmStatusOk: 'Running normally',
   jvmStatusHeapHigh: 'Heap usage high',

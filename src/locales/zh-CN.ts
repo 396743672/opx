@@ -341,7 +341,7 @@ export default {
   fetchJarPortFailed: '读取 JAR 端口失败',
   logPathNotConfigured: '日志路径未配置',
   cannotReadLog: '无法读取日志',
-  jvmMonitorNeedsJdk: 'JVM 监控需要完整 JDK（JRE 不含 jcmd / jstat）',
+  jvmAppNotRunning: '应用未在运行，无法采集 JVM 指标',
   jvmMonitorFailed: 'JVM 指标采集失败',
   jvmStatusOk: '运行正常',
   jvmStatusHeapHigh: '堆内存偏高',

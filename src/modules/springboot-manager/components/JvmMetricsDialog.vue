@@ -194,8 +194,10 @@ async function refresh() {
   try {
     const m = await store.fetchJvmMetrics(props.appId)
     if (!m) {
+      // 后端返回 null 仅表示 pid 不存在（应用未运行/已停止）；
+      // 采集失败会走 catch 分支并展示后端给出的真实原因
       attempt++
-      if (attempt > 3) errMsg.value = t('jvmMonitorNeedsJdk')
+      if (attempt > 3) errMsg.value = t('jvmAppNotRunning')
       return
     }
     metrics.value = m

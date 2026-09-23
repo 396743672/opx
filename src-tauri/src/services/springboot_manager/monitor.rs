@@ -38,12 +38,14 @@ use std::path::{Path, PathBuf};
 /// 采集指定 JVM 进程的指标快照。
 ///
 /// `jdk_path` 为 `Some` 时从该 JDK 的 `bin/` 取诊断工具，否则回退到 PATH。
-/// 返回 `None` 表示主数据源不可用（缺少 jstat、进程已退出、attach 被拒等）。
-pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Option<JvmInfo> {
+/// 失败时返回带原因的 `Err`（工具缺失、非零退出、输出无法解析），
+/// 原因会透传到前端展示——不要在此层吞错误，否则前端只能瞎猜。
+pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Result<JvmInfo, String> {
     let jdk = jdk_path.as_deref();
 
     // 主数据源：堆、Metaspace、分代 GC。拿不到即视为采集失败。
-    let gc = parse_jstat_gc(&run_jdk_tool(pid, "jstat", &["-gc"], jdk)?)?;
+    let gc = parse_jstat_gc(&run_jdk_tool(pid, "jstat", &["-gc"], jdk)?)
+        .ok_or_else(|| "jstat 输出无法解析（表头缺失、列数不符或堆容量为 0）".to_string())?;
 
     // 线程与类加载：辅助信息，缺失时保留 0 而不阻断整次采集
     let perf = parse_perf_counters(
@@ -55,7 +57,7 @@ pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Option<JvmInfo
         parse_max_heap_size(&run_jdk_tool(pid, "jcmd", &["VM.flags"], jdk).unwrap_or_default())
             .unwrap_or(gc.heap_committed);
 
-    Some(JvmInfo {
+    Ok(JvmInfo {
         heap_used: gc.heap_used,
         heap_max,
         heap_committed: gc.heap_committed,
@@ -77,8 +79,10 @@ pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Option<JvmInfo
 /// 调用 JDK 自带的诊断工具（jstat / jcmd）。
 ///
 /// `jdk_path` 存在时从其 `bin/` 取可执行文件（PATH 上没有也能用），否则回退 PATH。
-/// 非零退出视为失败（进程已退出、权限不足、非 HotSpot JVM 等）。
-fn run_jdk_tool(pid: u32, tool: &str, args: &[&str], jdk_path: Option<&str>) -> Option<String> {
+/// 失败返回 `Err`，错误信息包含 exe 路径、退出码与子进程 stderr 摘要，
+/// 供前端直接展示与日志排查——此前失败被静默吞掉，用户只能看到
+/// 「需要完整 JDK」这种猜测性文案（2026-09-23 排查 online-srm-biz 误报时确定）。
+fn run_jdk_tool(pid: u32, tool: &str, args: &[&str], jdk_path: Option<&str>) -> Result<String, String> {
     let exe_name = if cfg!(windows) {
         format!("{tool}.exe")
     } else {
@@ -89,11 +93,36 @@ fn run_jdk_tool(pid: u32, tool: &str, args: &[&str], jdk_path: Option<&str>) -> 
         .filter(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from(&exe_name));
 
-    let output = hidden(&exe).arg(pid.to_string()).args(args).output().ok()?;
+    let mut cmd = hidden(&exe);
+    cmd.arg(pid.to_string()).args(args);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("{} 启动失败: {e}", exe.display()))?;
     if !output.status.success() {
-        return None;
+        let detail = summarize_tool_error(&output.stdout, &output.stderr);
+        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        let msg = format!("{} {} 退出码 {code}：{detail}", exe.display(), args.join(" "));
+        tracing::warn!("JVM 诊断工具调用失败: {msg}");
+        return Err(msg);
     }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// 汇总子进程的错误输出：优先 stderr，为空则回退 stdout。
+/// 压成单行并截断到 200 字符（会进前端错误提示与日志）。
+fn summarize_tool_error(stdout: &[u8], stderr: &[u8]) -> String {
+    let flat = |raw: &[u8]| String::from_utf8_lossy(raw).split_whitespace().collect::<Vec<_>>().join(" ");
+    let msg = {
+        let e = flat(stderr);
+        if e.is_empty() { flat(stdout) } else { e }
+    };
+    if msg.is_empty() {
+        "(无输出)".to_string()
+    } else if msg.chars().count() > 200 {
+        format!("{}…", msg.chars().take(200).collect::<String>())
+    } else {
+        msg
+    }
 }
 
 /// `jstat -gc` 一次快照的解析结果（内存已换算为字节，时间已换算为毫秒）。
@@ -267,6 +296,23 @@ mod tests {
     #[test]
     fn perf_counters_tolerate_empty_output() {
         assert_eq!(parse_perf_counters(""), PerfCounters::default());
+    }
+
+    /// 错误摘要：单行化、优先 stderr、200 字符截断——会直达前端与日志，
+    /// 不能是多行原文或超长堆栈。
+    #[test]
+    fn tool_error_summary_is_single_line_and_truncated() {
+        assert_eq!(summarize_tool_error(b"", b"35364 not found\n"), "35364 not found");
+        // stderr 为空时回退 stdout
+        assert_eq!(summarize_tool_error(b"Error attaching\n", b""), "Error attaching");
+        // 两者皆空
+        assert_eq!(summarize_tool_error(b"", b""), "(无输出)");
+        // 多行压成单行 + 截断到 200
+        let long = "x".repeat(500);
+        let s = summarize_tool_error(b"", format!("{long}\nsecond line\n").as_bytes());
+        assert_eq!(s.chars().count(), 201, "200 字符 + 省略号");
+        assert!(!s.contains('\n'));
+        assert!(s.ends_with('…'));
     }
 
     #[test]
