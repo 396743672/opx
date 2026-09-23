@@ -28,6 +28,10 @@ export interface SpringBootApp {
   auto_restart: boolean
   group: string | null
   jdk_type: string
+  /** 停止等待时长（秒）：发出优雅停止请求后等应用自行退出的上限，默认 30 */
+  stop_timeout_secs: number
+  /** 优雅停止地址；留空则按端口推导 http://127.0.0.1:{port}/actuator/shutdown */
+  actuator_shutdown_url: string | null
 }
 
 export interface AppGroup {
@@ -84,6 +88,8 @@ export interface CreateAppParams {
   auto_restart: boolean
   group: string | null
   jdk_type: string
+  stop_timeout_secs?: number
+  actuator_shutdown_url?: string | null
 }
 
 export interface UpdateAppParams {
@@ -101,6 +107,9 @@ export interface UpdateAppParams {
   auto_restart?: boolean
   group?: string | null
   jdk_type?: string
+  stop_timeout_secs?: number
+  /** 传空串表示清空（停止时回退为按端口推导） */
+  actuator_shutdown_url?: string
 }
 
 export interface JvmOptsTemplate {

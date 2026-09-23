@@ -6,10 +6,13 @@
         {{ app.name }}
       </div>
       <span
-        class="text-xs px-2 py-0.5 rounded-full font-medium"
+        class="text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
         :class="statusClass"
       >
         {{ $t(statusLabel) }}
+        <template v-if="app.status === AppStatus.Stopping && stoppingElapsed > 0">
+          · {{ $t('stoppingElapsed', { n: stoppingElapsed }) }}
+        </template>
       </span>
     </div>
 
@@ -89,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { AppStatus, type SpringBootApp } from '@/models/springboot'
@@ -134,6 +137,42 @@ const statusLabel = computed(() => {
     default: return 'unknown'
   }
 })
+
+/**
+ * 停止已等待秒数。
+ *
+ * 停止不是瞬时的：后端会先请应用自行关闭，再等它退出（上限由应用的「停止等待时长」决定）。
+ * 这段时间界面上若只有「停止中」三个字，用户分不清是在等应用清理还是界面卡住了，
+ * 于是把已等待时长直接显示出来。
+ */
+const stoppingElapsed = ref(0)
+let stopTimer: ReturnType<typeof setInterval> | null = null
+
+function clearStopTimer() {
+  if (stopTimer) {
+    clearInterval(stopTimer)
+    stopTimer = null
+  }
+}
+
+watch(
+  () => props.app.status,
+  (status) => {
+    clearStopTimer()
+    if (status !== AppStatus.Stopping) {
+      stoppingElapsed.value = 0
+      return
+    }
+    const startedAt = Date.now()
+    stoppingElapsed.value = 0
+    stopTimer = setInterval(() => {
+      stoppingElapsed.value = Math.floor((Date.now() - startedAt) / 1000)
+    }, 1000)
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(clearStopTimer)
 </script>
 
 <style scoped>

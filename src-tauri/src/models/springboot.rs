@@ -41,6 +41,23 @@ pub struct SpringBootApp {
     pub auto_restart: bool,
     pub group: Option<String>,
     pub jdk_type: String,
+    /// 停止等待时长（秒）：发出优雅停止请求后，等待进程自行退出的上限。
+    ///
+    /// 默认 30，对齐 Spring Boot 的 `spring.lifecycle.timeout-per-shutdown-phase` 默认值——
+    /// 那个阶段超时本身就是「应用清理最多可能花 30 秒」的意思，等得比它短只会误杀。
+    #[serde(default = "default_stop_timeout_secs")]
+    pub stop_timeout_secs: u64,
+    /// 优雅停止地址：POST 该地址触发应用自行关闭（Spring Boot Actuator 的 `/actuator/shutdown`）。
+    ///
+    /// 留空则按 `http://127.0.0.1:{port}/actuator/shutdown` 推导；无端口时跳过 HTTP 优雅停止。
+    /// 这是 Windows 上唯一能让 JVM 执行 shutdown hook 的通道（详见 `lifecycle::stop_app` 注释）。
+    #[serde(default)]
+    pub actuator_shutdown_url: Option<String>,
+}
+
+/// 停止等待默认值（秒）
+pub fn default_stop_timeout_secs() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +149,10 @@ pub struct CreateAppParams {
     pub auto_restart: bool,
     pub group: Option<String>,
     pub jdk_type: String,
+    #[serde(default = "default_stop_timeout_secs")]
+    pub stop_timeout_secs: u64,
+    #[serde(default)]
+    pub actuator_shutdown_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +171,9 @@ pub struct UpdateAppParams {
     pub auto_restart: Option<bool>,
     pub group: Option<Option<String>>,
     pub jdk_type: Option<String>,
+    pub stop_timeout_secs: Option<u64>,
+    /// 传空串表示清空配置（停止时回退为按端口推导默认地址）
+    pub actuator_shutdown_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -185,6 +185,27 @@
                   </option>
                 </select>
               </div>
+              <div class="field">
+                <div class="field-label">{{ $t('stopTimeout') }}</div>
+                <input
+                  class="input"
+                  type="number"
+                  v-model.number="form.stop_timeout_secs"
+                  min="1"
+                  max="600"
+                />
+                <div class="text-muted text-sm">{{ $t('stopTimeoutHint') }}</div>
+              </div>
+              <div class="field">
+                <div class="field-label">{{ $t('gracefulStopUrl') }}</div>
+                <input
+                  class="input"
+                  type="text"
+                  v-model="form.actuator_shutdown_url"
+                  :placeholder="actuatorPlaceholder"
+                />
+                <div class="text-muted text-sm">{{ $t('gracefulStopUrlHint') }}</div>
+              </div>
             </div>
           </details>
         </div>
@@ -375,9 +396,16 @@ const form = reactive({
   auto_restart: false,
   group: null as string | null,
   jdk_type: '',
+  stop_timeout_secs: 30,
+  actuator_shutdown_url: '',
 })
 
 const programArgsText = ref('')
+
+/** 留空时的实际请求地址：占位符直接把默认值显示出来，用户不必猜 */
+const actuatorPlaceholder = computed(() =>
+  form.port ? `http://127.0.0.1:${form.port}/actuator/shutdown` : t('gracefulStopUrlNoPort')
+)
 
 const valid = computed(() => {
   if (nameError.value) return false
@@ -409,6 +437,8 @@ onMounted(() => {
     form.auto_restart = props.app.auto_restart
     form.group = props.app.group
     form.jdk_type = props.app.jdk_type
+    form.stop_timeout_secs = props.app.stop_timeout_secs
+    form.actuator_shutdown_url = props.app.actuator_shutdown_url || ''
     programArgsText.value = props.app.program_args.join('\n')
 
     const parsed = parseJvmOpts(props.app.jvm_opts)
@@ -509,6 +539,8 @@ async function save() {
         auto_restart: form.auto_restart,
         jdk_type: form.jdk_type,
         group: form.group,
+        stop_timeout_secs: form.stop_timeout_secs,
+        actuator_shutdown_url: form.actuator_shutdown_url,
       })
       emit('saved', updated)
     } else {
@@ -528,6 +560,8 @@ async function save() {
         auto_restart: form.auto_restart,
         jdk_type: form.jdk_type,
         group: form.group,
+        stop_timeout_secs: form.stop_timeout_secs,
+        actuator_shutdown_url: form.actuator_shutdown_url,
       })
       emit('saved', created)
     }

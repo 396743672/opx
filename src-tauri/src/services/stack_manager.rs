@@ -990,13 +990,8 @@ impl StackManager {
                 );
             }
             StackItemRefType::Springboot => {
-                let _ = sb_lifecycle::stop_app(
-                    &item.ref_id,
-                    &self.springboot_mgr,
-                    &self.software_mgr,
-                    app,
-                )
-                .await;
+                let _ =
+                    sb_lifecycle::stop_app(&item.ref_id, &self.springboot_mgr, app).await;
             }
         }
     }

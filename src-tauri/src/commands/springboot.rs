@@ -87,19 +87,13 @@ pub async fn start_springboot_app(
 #[tauri::command]
 pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
-    software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
-    let r = crate::services::springboot_manager::lifecycle::stop_app(
-        &id,
-        &manager,
-        &software_mgr,
-        &app_handle,
-    )
-    .await;
+    let r = crate::services::springboot_manager::lifecycle::stop_app(&id, &manager, &app_handle)
+        .await;
     oplog_result!("springboot_stop", target, "", r);
     r
 }
@@ -166,13 +160,8 @@ pub async fn replace_springboot_jar_and_restart(
 
         // 运行中/错误态先停（优雅），停止态直接换包
         if matches!(app.status, AppStatus::Running | AppStatus::Error) {
-            crate::services::springboot_manager::lifecycle::stop_app(
-                &id,
-                &manager,
-                &software_mgr,
-                &app_handle,
-            )
-            .await?;
+            crate::services::springboot_manager::lifecycle::stop_app(&id, &manager, &app_handle)
+                .await?;
         }
 
         let old_jar = std::path::PathBuf::from(&app.jar_path);
@@ -648,6 +637,10 @@ pub async fn import_springboot_config(
                             auto_restart: Some(imported.auto_restart),
                             group: Some(imported.group.clone()),
                             jdk_type: Some(imported.jdk_type.clone()),
+                            stop_timeout_secs: Some(imported.stop_timeout_secs),
+                            actuator_shutdown_url: Some(
+                                imported.actuator_shutdown_url.clone().unwrap_or_default(),
+                            ),
                         },
                     )
                     .map_err(|e| e.to_string())
@@ -676,6 +669,8 @@ pub async fn import_springboot_config(
                         auto_restart: imported.auto_restart,
                         group: imported.group.clone(),
                         jdk_type: imported.jdk_type.clone(),
+                        stop_timeout_secs: imported.stop_timeout_secs,
+                        actuator_shutdown_url: imported.actuator_shutdown_url.clone(),
                     })
                     .map_err(|e| e.to_string())
             };

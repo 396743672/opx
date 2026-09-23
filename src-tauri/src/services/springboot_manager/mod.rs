@@ -139,6 +139,8 @@ impl SpringBootManager {
             auto_restart: params.auto_restart,
             group: params.group,
             jdk_type: params.jdk_type,
+            stop_timeout_secs: params.stop_timeout_secs,
+            actuator_shutdown_url: params.actuator_shutdown_url,
         };
         let app_clone = app.clone();
         {
@@ -174,6 +176,11 @@ impl SpringBootManager {
         if let Some(v) = params.auto_restart { app.auto_restart = v; }
         if let Some(v) = params.group { app.group = v; }
 		if let Some(v) = params.jdk_type { app.jdk_type = v; }
+        if let Some(v) = params.stop_timeout_secs { app.stop_timeout_secs = v.clamp(1, 600); }
+        // 空串表示清空配置（停止时回退为按端口推导默认地址）
+        if let Some(v) = params.actuator_shutdown_url {
+            app.actuator_shutdown_url = Some(v).filter(|s| !s.trim().is_empty());
+        }
         let cloned = app.clone();
         Self::save_store(&store)?;
         Ok(cloned)
