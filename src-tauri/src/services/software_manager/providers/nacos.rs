@@ -212,17 +212,27 @@ impl SoftwareProvider for NacosProvider {
         args.push("-jar".to_string());
         args.push(jar.to_string_lossy().to_string());
 
-        // 主服务端口（默认 8848）。必须无条件用 JVM 系统属性显式传入：系统属性优先级高于
-        // 环境变量，否则宿主注入的 SERVER_PORT / SERVER__PORT 会被 Spring Boot 的宽松绑定
-        // 解析成 server.port，覆盖 conf 配置（Nacos 会绑到宿主端口上，启动即失败）。
-        // 2.x 只认 server.port，3.x 另认 nacos.server.main.port，两者都传以兼容。
+        // 端口传递按大版本区分（均经真实 jar 受控实验验证）：
+        // - 2.x 单 Spring context，Tomcat 读 server.port → 用 JVM 系统属性 -Dserver.port
+        //   显式钉死（优先级高于环境变量）。2.x 不认 nacos.server.main.port（实测无效）。
+        // - 3.x 双 Spring context（API + Console），两者都读 server.port：若传
+        //   -Dserver.port，Console 会被钉到主端口与 API 自撞（3.2.3 实测复现，banner
+        //   显示的 Port 不可信）。必须用各自专属参数，并配合 remove_envs 清除污染
+        //   环境变量——专属参数会被 OS 环境变量的 server.port 宽松绑定打穿（实测）。
         let server_port = config_u64(&ctx.config, "port", 8848);
-        args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
-        args.insert(0, format!("-Dserver.port={}", server_port));
-        // 控制台端口：3.x 独立（默认 8080）；2.x 与主端口共用，此参数被忽略（无害）
-        let console_port = config_u64(&ctx.config, "console_port", 8080);
-        if console_port != 8080 {
+        let is_v3 = ctx
+            .version
+            .split('.')
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0)
+            >= 3;
+        if is_v3 {
+            args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
+            let console_port = config_u64(&ctx.config, "console_port", 8080);
             args.insert(0, format!("-Dnacos.console.port={}", console_port));
+        } else {
+            args.insert(0, format!("-Dserver.port={}", server_port));
         }
 
         // JDK 9+ 强封装：Nacos 的 JRaft 用反射访问 JDK 内部字段，必须 --add-opens
