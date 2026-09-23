@@ -38,13 +38,28 @@ export interface AppGroup {
   env_vars: [string, string][]
 }
 
+/** JVM 指标快照。内存字段单位字节，GC 耗时为毫秒。 */
 export interface JvmInfo {
   heap_used: number
+  /** 堆上限（-XX:MaxHeapSize），取不到时为当前提交容量 */
   heap_max: number
+  /** 堆当前提交容量，随堆增长动态变化，通常小于 heap_max */
+  heap_committed: number
   non_heap_used: number
+  /** Metaspace 提交容量，作为非堆的对比基准 */
+  non_heap_committed: number
   thread_count: number
-  gc_count: number
-  gc_time: number
+  thread_daemon: number
+  /** 启动至今的峰值存活线程数 */
+  thread_peak: number
+  thread_started: number
+  classes_loaded: number
+  classes_unloaded: number
+  gc_young_count: number
+  gc_young_time_ms: number
+  /** Full GC 次数，大于 0 是值得关注的信号 */
+  gc_full_count: number
+  gc_full_time_ms: number
 }
 
 export interface ReplaceResult {
