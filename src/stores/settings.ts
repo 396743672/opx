@@ -84,6 +84,12 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.language = lang
     applyLanguage()
     await saveSettings()
+    // 托盘菜单文案跟随语言，通知后端重建（托盘未初始化时忽略）
+    try {
+      await invoke('refresh_tray_menu')
+    } catch {
+      /* 非桌面包或无托盘环境 */
+    }
   }
 
   return {
