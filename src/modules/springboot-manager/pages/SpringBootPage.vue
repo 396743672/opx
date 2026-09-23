@@ -241,31 +241,43 @@ async function onExport() {
   await doExport()
 }
 
+interface ExportSummary { apps: number; files: number; warnings: string[] }
+interface ImportSummary { apps: number; warnings: string[] }
+
 async function doExport() {
   showExportDialog.value = false
-  progress.value = '准备导出…'
   try {
     const filePath = await save({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], defaultPath: 'opx-springboot-export.zip' })
-    if (!filePath) { progress.value = ''; return }
-    await invoke('export_springboot_config', { filePath, groupNames: exportGroups.value.length > 0 ? exportGroups.value : null })
+    if (!filePath) return
+    progress.value = t('exportProgressPreparing')
+    const r = await invoke<ExportSummary>('export_springboot_config', {
+      filePath,
+      groupNames: exportGroups.value.length > 0 ? exportGroups.value : null,
+    })
+    toast(t('exportSuccess'), 'ok')
+    if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
   } catch (e) {
-    console.error('export failed:', e)
+    toast(t('exportFailed', { msg: String(e) }), 'err')
+  } finally {
+    progress.value = ''
   }
-  progress.value = ''
 }
 
 async function onImport() {
   if (!confirm(t('importConfigConfirm'))) return
-  progress.value = '正在导入…'
   try {
     const filePath = await open({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], multiple: false })
-    if (!filePath) { progress.value = ''; return }
-    await invoke('import_springboot_config', { filePath })
-    await refreshAll()
+    if (!filePath) return
+    progress.value = t('importProgressPreparing')
+    const r = await invoke<ImportSummary>('import_springboot_config', { filePath })
+    toast(t('importSuccess'), 'ok')
+    if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
+    await refreshAll().catch(() => {})
   } catch (e) {
-    console.error('import failed:', e)
+    toast(t('importFailed', { msg: String(e) }), 'err')
+  } finally {
+    progress.value = ''
   }
-  progress.value = ''
 }
 
 // 一键启动分组
@@ -312,6 +324,8 @@ const deleteTarget = ref<SpringBootApp | null>(null)
 
 // Event listener cleanup
 let unlisten: UnlistenFn | null = null
+let unlistenExport: UnlistenFn | null = null
+let unlistenImport: UnlistenFn | null = null
 
 const filteredApps = computed(() => {
   if (activeGroup.value === null) return store.apps
@@ -446,10 +460,28 @@ onMounted(async () => {
   unlisten = await listen('springboot-status-changed', () => {
     store.fetchApps()
   })
+
+  // 导出/导入进度：后端逐应用推送 export-progress，导入推送 import-progress
+  unlistenExport = await listen<{ current?: number; total?: number; name?: string; done?: boolean }>(
+    'export-progress',
+    (e) => {
+      const p = e.payload
+      if (p.done || !p.total) return
+      progress.value = t('exportProgress', { cur: p.current ?? 0, total: p.total, name: p.name ?? '' })
+    },
+  )
+  unlistenImport = await listen<{ phase?: string; done?: boolean }>('import-progress', (e) => {
+    const p = e.payload
+    if (p.done) return
+    if (p.phase === 'extracting') progress.value = t('importExtracting')
+    else if (p.phase === 'config') progress.value = t('importApplying')
+  })
 })
 
 onBeforeUnmount(() => {
-  if (unlisten) unlisten()
+  unlisten?.()
+  unlistenExport?.()
+  unlistenImport?.()
 })
 </script>
 

@@ -81,7 +81,7 @@ impl SpringBootManager {
     }
 
     /// 若路径在 data_dir 下则转为相对路径，否则保持原样
-    fn relativize_data_path(abs_or_rel: &str) -> String {
+    pub fn relativize_data_path(abs_or_rel: &str) -> String {
         let data = paths::data_dir();
         let p = std::path::Path::new(abs_or_rel);
         if let Ok(rel) = p.strip_prefix(&data) {

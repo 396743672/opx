@@ -414,14 +414,26 @@ pub async fn download_springboot_log(
     Ok(())
 }
 
-/// 导出应用（按分组过滤）到 zip 文件，不含日志目录
+/// 导出结果摘要（供前端提示成功/警告）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportSummary {
+    /// 实际导出（含 JAR 与应用目录）的应用数
+    pub apps: usize,
+    /// 打包进 zip 的文件数（不含 manifest.json）
+    pub files: usize,
+    /// 跳过或异常的应用说明（如 JAR 缺失）
+    pub warnings: Vec<String>,
+}
+
+/// 导出整个应用目录（含 JAR、配置等，**排除日志目录**）到 zip 文件。
+/// `group_names` 为 None 时导出全部应用。
 #[tauri::command]
 pub async fn export_springboot_config(
     app_handle: AppHandle,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
     group_names: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<ExportSummary, String> {
     let all_apps = manager.export_apps();
     let groups = manager.list_groups();
     let env_vars = manager.get_global_env_vars();
@@ -459,28 +471,44 @@ pub async fn export_springboot_config(
         .map_err(|e| format!("ERR_ZIP:{}", e))?;
 
     let total = apps.len();
+    let mut exported = 0usize;
+    let mut files = 0usize;
+    let mut warnings: Vec<String> = Vec::new();
+
     for (i, app) in apps.iter().enumerate() {
         let _ = app_handle.emit(
             "export-progress",
             serde_json::json!({ "current": i + 1, "total": total, "name": app.name }),
         );
 
-        // ponytail: jar_path 是相对 data_dir 的相对路径，需转绝对路径
-        let jar = std::path::PathBuf::from(crate::utils::paths::data_dir()).join(&app.jar_path);
+        // jar_path 兼容相对（springboot/<name>/app.jar）与绝对两种历史写法
+        let jar = crate::utils::paths::resolve_data_path(&app.jar_path);
         if !jar.exists() {
+            // 不静默跳过：JAR 缺失时明确告知，否则用户解压后只看到一份 manifest.json
+            warnings.push(format!("{}: JAR 文件缺失，已跳过", app.name));
             continue;
         }
         let app_home = jar.parent().unwrap_or(&jar);
         let app_dir_name = format!("apps/{}", sanitize_name(&app.name));
+
+        // 排除日志目录：log_path 是相对 data_dir 的路径，必须先 resolve 再 canonicalize，
+        // 否则按进程 CWD 判断必然不存在 → 排除失效、日志被打包。
+        // 取 log_path 的父目录（logs/）以排除整个日志目录；并加护栏避免把应用根目录整个排除。
         let log_canonical = {
-            let lp = Path::new(&app.log_path);
-            if lp.exists() {
-                lp.canonicalize().ok()
+            let lp = crate::utils::paths::resolve_data_path(&app.log_path);
+            let dir = if lp.is_dir() {
+                Some(lp)
             } else {
-                None
+                lp.parent().map(|p| p.to_path_buf())
+            };
+            let candidate = dir.filter(|d| d.exists()).and_then(|d| d.canonicalize().ok());
+            match (candidate, app_home.canonicalize()) {
+                (Some(ex), Ok(root)) if ex == root || root.starts_with(&ex) => None,
+                (c, _) => c,
             }
         };
-        add_dir_to_zip(
+
+        files += add_dir_to_zip(
             &mut zip,
             app_home,
             &app_dir_name,
@@ -488,21 +516,35 @@ pub async fn export_springboot_config(
             opts,
         )
         .map_err(|e| format!("ERR_ZIP:{}({}):{}", app.name, app.id, e))?;
+        exported += 1;
     }
 
     let f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
     f.sync_all().map_err(|e| format!("ERR_ZIP:{}", e))?;
     let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
-    Ok(())
+    Ok(ExportSummary {
+        apps: exported,
+        files,
+        warnings,
+    })
 }
 
-/// 从 zip 文件导入应用配置和数据
+/// 导入结果摘要（供前端提示成功/警告）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportSummary {
+    /// 实际导入或更新的应用数
+    pub apps: usize,
+    /// 跳过或异常的应用说明
+    pub warnings: Vec<String>,
+}
+
+/// 从 zip 文件导入应用（含 JAR 与应用目录）与全局配置
 #[tauri::command]
 pub async fn import_springboot_config(
     app_handle: AppHandle,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
-) -> Result<(), String> {
+) -> Result<ImportSummary, String> {
     let _ = app_handle.emit(
         "import-progress",
         serde_json::json!({ "phase": "extracting" }),
@@ -542,66 +584,99 @@ pub async fn import_springboot_config(
         .map_err(|e| format!("ERR_IMPORT:manifest.json 格式错误: {}", e))?;
 
     use serde_json::Value;
+    let mut imported_count = 0usize;
+    let mut warnings: Vec<String> = Vec::new();
     if let Some(apps) = data.get("apps").and_then(|v| v.as_array()) {
         let existing = manager.list_apps();
         for app_val in apps {
             let imported: SpringBootApp = serde_json::from_value(app_val.clone())
                 .map_err(|e| format!("ERR_IMPORT:应用数据错误: {}", e))?;
 
-            // 复制应用数据
+            // 恢复到本机数据目录 <data_dir>/springboot/<name>/。
+            // 不信任 manifest 里导出机的绝对路径（跨机器必然失效，会把文件写到错误位置）。
             let app_data_dir = tmp_dir.join("apps").join(sanitize_name(&imported.name));
+            let local_dir = crate::utils::paths::data_dir()
+                .join("springboot")
+                .join(&imported.name);
+            let has_jar = app_data_dir.join("app.jar").exists();
+            if !has_jar {
+                warnings.push(format!(
+                    "{}: 导出包内未包含 JAR，仅导入了配置",
+                    imported.name
+                ));
+            }
             if app_data_dir.exists() {
-                let jar = Path::new(&imported.jar_path);
-                if let Some(target) = jar.parent() {
-                    copy_dir_all(&app_data_dir, target)
-                        .map_err(|e| format!("ERR_COPY:复制应用数据失败: {}", e))?;
+                if let Err(e) = copy_dir_all(&app_data_dir, &local_dir) {
+                    warnings.push(format!("{}: 应用数据复制失败（{}）", imported.name, e));
+                    continue;
                 }
             }
 
+            // log_path 归一化为本机相对路径（导出机的外部绝对路径在本机无意义）
+            let log_path = {
+                let rel = SpringBootManager::relativize_data_path(&imported.log_path);
+                if Path::new(&rel).is_absolute() {
+                    format!("springboot/{}/logs/console.log", imported.name)
+                } else {
+                    rel
+                }
+            };
+
             // ponytail: 按名称匹配（应用名称唯一），id 随机器不同
             let existing_app = existing.iter().find(|a| a.name == imported.name);
-            if let Some(existing) = existing_app {
+            let outcome = if let Some(existing) = existing_app {
                 manager
                     .update_app(
                         &existing.id,
                         UpdateAppParams {
-                            name: Some(imported.name),
-                            jdk_installed_id: Some(imported.jdk_installed_id),
-                            jvm_opts: Some(imported.jvm_opts),
-                            program_args: Some(imported.program_args),
-                            profile: Some(imported.profile),
-                            env_vars: Some(imported.env_vars),
+                            name: Some(imported.name.clone()),
+                            jdk_installed_id: Some(imported.jdk_installed_id.clone()),
+                            jvm_opts: Some(imported.jvm_opts.clone()),
+                            program_args: Some(imported.program_args.clone()),
+                            profile: Some(imported.profile.clone()),
+                            env_vars: Some(imported.env_vars.clone()),
                             port: imported.port,
-                            log_path: Some(imported.log_path),
-                            dependencies: Some(imported.dependencies),
+                            log_path: Some(log_path),
+                            dependencies: Some(imported.dependencies.clone()),
                             auto_start: Some(imported.auto_start),
                             startup_order: Some(imported.startup_order),
                             auto_restart: Some(imported.auto_restart),
-                            group: Some(imported.group),
-                            jdk_type: Some(imported.jdk_type),
+                            group: Some(imported.group.clone()),
+                            jdk_type: Some(imported.jdk_type.clone()),
                         },
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())
             } else {
+                // create_app 会把 src 的 jar 复制到 <data_dir>/springboot/<name>/app.jar；
+                // 用解压出的 jar 作 src，避免「源 = 目标」同路径复制。
+                let src_jar = if has_jar {
+                    app_data_dir.join("app.jar")
+                } else {
+                    local_dir.join("app.jar")
+                };
                 manager
                     .create_app(CreateAppParams {
-                        name: imported.name,
-                        jar_path: imported.jar_path,
-                        jdk_installed_id: imported.jdk_installed_id,
-                        jvm_opts: imported.jvm_opts,
-                        program_args: imported.program_args,
-                        profile: imported.profile,
-                        env_vars: imported.env_vars,
+                        name: imported.name.clone(),
+                        jar_path: src_jar.to_string_lossy().to_string(),
+                        jdk_installed_id: imported.jdk_installed_id.clone(),
+                        jvm_opts: imported.jvm_opts.clone(),
+                        program_args: imported.program_args.clone(),
+                        profile: imported.profile.clone(),
+                        env_vars: imported.env_vars.clone(),
                         port: imported.port,
-                        log_path: imported.log_path,
-                        dependencies: imported.dependencies,
+                        log_path,
+                        dependencies: imported.dependencies.clone(),
                         auto_start: imported.auto_start,
                         startup_order: imported.startup_order,
                         auto_restart: imported.auto_restart,
-                        group: imported.group,
-                        jdk_type: imported.jdk_type,
+                        group: imported.group.clone(),
+                        jdk_type: imported.jdk_type.clone(),
                     })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())
+            };
+            match outcome {
+                Ok(_) => imported_count += 1,
+                Err(e) => warnings.push(format!("{}: 导入失败（{}）", imported.name, e)),
             }
         }
     }
@@ -620,17 +695,20 @@ pub async fn import_springboot_config(
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
     let _ = app_handle.emit("import-progress", serde_json::json!({ "done": true }));
-    Ok(())
+    Ok(ImportSummary {
+        apps: imported_count,
+        warnings,
+    })
 }
 
-/// 将目录递归添加到 zip，跳过 excluded_dir
+/// 将目录递归添加到 zip，跳过 excluded_dir。返回打包的文件数。
 fn add_dir_to_zip(
     zip: &mut zip::ZipWriter<std::fs::File>,
     src: &Path,
     prefix: &str,
     exclude: Option<&Path>,
     opts: zip::write::FileOptions,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     if !src.is_dir() {
         if exclude.map_or(true, |e| !is_parent_or_self(e, src)) {
             let name = format!(
@@ -645,10 +723,12 @@ fn add_dir_to_zip(
                 .read_to_end(&mut buf)
                 .map_err(|e| e.to_string())?;
             zip.write_all(&buf).map_err(|e| e.to_string())?;
+            return Ok(1);
         }
-        return Ok(());
+        return Ok(0);
     }
 
+    let mut count = 0usize;
     for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
@@ -663,7 +743,7 @@ fn add_dir_to_zip(
         if path.is_dir() {
             zip.add_directory(&format!("{}/", &zip_name), opts)
                 .map_err(|e| e.to_string())?;
-            add_dir_to_zip(zip, &path, &zip_name, exclude, opts)?;
+            count += add_dir_to_zip(zip, &path, &zip_name, exclude, opts)?;
         } else {
             zip.start_file(&zip_name, opts).map_err(|e| e.to_string())?;
             let mut buf = Vec::new();
@@ -672,9 +752,10 @@ fn add_dir_to_zip(
                 .read_to_end(&mut buf)
                 .map_err(|e| e.to_string())?;
             zip.write_all(&buf).map_err(|e| e.to_string())?;
+            count += 1;
         }
     }
-    Ok(())
+    Ok(count)
 }
 
 /// 判断 parent 是否是 path 的父目录或自身
