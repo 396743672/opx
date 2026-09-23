@@ -422,7 +422,13 @@ pub fn stop_one(pid: u32) -> (bool, String) {
         return (true, "stopped".to_string());
     }
 
-    // 优雅停止
+    // 优雅停止。Windows 侧要认清它的能力边界：
+    // `taskkill` 不带 `/F` 发的是 WM_CLOSE，**只对进程自己拥有窗口的程序有效**；
+    // 被管软件（mysql / redis / nginx 等）都是控制台程序，窗口属于 conhost.exe，
+    // 实测会被直接拒绝（「只能强行终止这个进程(带 /F 选项)」）。
+    // 故只给它一次很短的机会（GUI 程序响应 WM_CLOSE 通常只要几百毫秒），不再空等 5 秒。
+    // 真要按软件语义优雅停止，得用各自的关闭命令
+    // （mysqladmin shutdown / redis-cli shutdown / nginx -s quit），属后续项。
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("taskkill");
@@ -437,9 +443,15 @@ pub fn stop_one(pid: u32) -> (bool, String) {
             .output();
     }
 
-    // 轮询等待最多 5s
+    // 等待自行退出：Unix 的 SIGTERM 是应用能真正响应的信号，给足清理时间；
+    // Windows 上面已说明几乎没有生效可能，故只留一个短窗口
+    let grace = if cfg!(windows) {
+        Duration::from_millis(1500)
+    } else {
+        Duration::from_secs(5)
+    };
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < grace {
         if !is_process_alive(pid) {
             return (true, "stopped".to_string());
         }
