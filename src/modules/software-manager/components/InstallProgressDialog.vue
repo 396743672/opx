@@ -30,7 +30,7 @@
         <span class="tnum">{{ percentDisplay }}%</span>
       </div>
     </div>
-    <button v-if="task.phase === 'failed' || task.phase === 'completed'" class="toast-close" @click="close">
+    <button v-if="task.phase === 'failed' || task.phase === 'completed'" class="dialog-close toast-close" @click="close">
       <Icon icon="mdi:close" />
     </button>
   </div>
@@ -194,24 +194,13 @@ function formatSize(bytes: number): string {
   font-size: 11px;
   color: var(--color-muted-foreground);
 }
+/* 定位与尺寸覆盖全局 .dialog-close（scoped 带 [data-v-*]，特异性更高） */
 .toast-close {
   position: absolute;
   top: 8px;
   right: 8px;
   width: 22px;
   height: 22px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.toast-close:hover {
-  background: var(--color-destructive);
-  color: var(--color-destructive-foreground);
 }
 .toast-close svg {
   width: 14px;

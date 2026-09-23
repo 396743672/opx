@@ -171,22 +171,7 @@ async function onSave() {
 .dialog-title svg {
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-destructive);
-  color: var(--color-destructive-foreground);
-}
+
 .software-name {
   font-size: 13px;
   margin-bottom: 10px;
@@ -232,6 +217,7 @@ async function onSave() {
   color: inherit;
   cursor: pointer;
   display: inline-flex;
+  align-items: center;
   padding: 0 2px;
 }
 .sel-x svg {

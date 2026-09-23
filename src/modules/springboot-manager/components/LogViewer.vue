@@ -374,12 +374,7 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 8px;
   font-size: 15px; font-weight: 600;
 }
-.dialog-close {
-  width: 28px; height: 28px;
-  border: none; background: transparent;
-  color: var(--color-muted-foreground); border-radius: 4px; cursor: pointer;
-}
-.dialog-close:hover { background: var(--color-destructive); color: var(--color-destructive-foreground); }
+
 .source-tabs {
   display: flex; gap: 4px; padding: 8px 12px 0;
   border-bottom: 1px solid var(--color-border);

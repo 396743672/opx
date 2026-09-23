@@ -425,22 +425,7 @@ function onClose() {
 .dialog-title svg {
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-destructive);
-  color: var(--color-destructive-foreground);
-}
+
 .error-banner {
   background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);
   border: 1px solid var(--color-danger, red);
@@ -556,6 +541,7 @@ function onClose() {
   width: 22px;
   height: 22px;
   padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--color-border);
   background: var(--color-muted);
   color: var(--color-foreground);

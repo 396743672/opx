@@ -578,22 +578,7 @@ async function save() {
   align-items: center;
   gap: 10px;
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-destructive);
-  color: var(--color-destructive-foreground);
-}
+
 .dialog-body {
   overflow-y: auto;
   padding: 16px 20px 0;

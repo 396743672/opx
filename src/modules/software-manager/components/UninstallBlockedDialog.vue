@@ -131,22 +131,7 @@ async function onConfirm() {
 .dialog-title .warn {
   color: var(--color-destructive);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-destructive);
-  color: var(--color-destructive-foreground);
-}
+
 .software-info {
   font-size: 13px;
   margin-bottom: 12px;

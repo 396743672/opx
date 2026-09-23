@@ -98,12 +98,7 @@ async function save() {
   padding: 16px 20px; border-bottom: 1px solid var(--color-border);
 }
 .dialog-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.dialog-close {
-  width: 28px; height: 28px; border: none; background: transparent;
-  color: var(--color-muted-foreground); border-radius: 4px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.dialog-close:hover { background: var(--color-destructive); color: var(--color-destructive-foreground); }
+
 .dialog-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
 .dialog-footer {
   display: flex; justify-content: flex-end; gap: 8px;

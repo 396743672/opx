@@ -384,6 +384,27 @@ body {
 .confirm-msg { font-size: 13px; color: var(--color-muted-foreground); margin-bottom: 20px; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* 弹窗 / 浮层关闭按钮 — 全局唯一定义
+   历史上这套样式在 ~18 个组件里各复制一份，已多次漂移（hover 底色弱到不可见、
+   两个漏 hover 规则、三个漏 flex 居中导致 X 偏左上）。现统一在此维护：
+   组件不得再自带 .dialog-close / .close / .x 副本（scoped 规则带 [data-v-*]，
+   特异性更高，会覆盖此处并使全局定义失效）。 */
+.dialog-close {
+  width: 28px; height: 28px;
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  border: none; background: transparent;
+  color: var(--color-muted-foreground);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.dialog-close:hover {
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
