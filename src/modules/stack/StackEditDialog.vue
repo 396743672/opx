@@ -438,8 +438,8 @@ function onClose() {
   justify-content: center;
 }
 .dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 .error-banner {
   background: color-mix(in oklch, var(--color-danger, red) 15%, transparent);

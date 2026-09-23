@@ -528,7 +528,8 @@ watch(tab, async (t) => {
 .head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); flex: none; }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
-.x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
+.x { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--color-muted-foreground); border-radius: 6px; cursor: pointer; }
+.x:hover { background: var(--color-destructive); color: var(--color-destructive-foreground); }
 .body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); flex: none; }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }

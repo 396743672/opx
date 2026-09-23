@@ -133,8 +133,8 @@ function openInstance(h: LogHit) {
   cursor: pointer;
 }
 .close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 .search-row {
   display: flex;

@@ -406,8 +406,8 @@ async function onSaveAndRestart() {
   justify-content: center;
 }
 .dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 .tab-bar {
   display: flex;

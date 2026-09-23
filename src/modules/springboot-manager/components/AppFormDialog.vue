@@ -591,8 +591,8 @@ async function save() {
   justify-content: center;
 }
 .dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 .dialog-body {
   overflow-y: auto;

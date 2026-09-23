@@ -158,7 +158,8 @@ async function save() {
 }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
-.x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
+.x { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--color-muted-foreground); border-radius: 6px; cursor: pointer; }
+.x:hover { background: var(--color-destructive); color: var(--color-destructive-foreground); }
 .body { padding: 16px 18px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .foot {
   display: flex; justify-content: flex-end; gap: 8px;

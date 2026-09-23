@@ -210,8 +210,8 @@ function formatSize(bytes: number): string {
   justify-content: center;
 }
 .toast-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 .toast-close svg {
   width: 14px;

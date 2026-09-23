@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
 .log-dialog { width: 720px; }
 .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex: none; }
 .close { width: 28px; height: 28px; border: none; background: transparent; color: var(--color-muted-foreground); border-radius: 4px; cursor: pointer; }
-.close:hover { background: var(--color-muted); }
+.close:hover { background: var(--color-destructive); color: var(--color-destructive-foreground); }
 .field { margin-bottom: 10px; }
 .dialog-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .field label, .fld span { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
