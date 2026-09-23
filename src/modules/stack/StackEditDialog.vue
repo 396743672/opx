@@ -12,6 +12,7 @@
           </button>
         </div>
 
+        <div class="dialog-body">
         <div v-if="error" class="error-banner">{{ error }}</div>
 
         <div class="field">
@@ -179,6 +180,8 @@
               </div>
             </div>
           </div>
+        </div>
+
         </div>
 
         <div class="dialog-footer">
@@ -396,18 +399,21 @@ function onClose() {
   width: 760px;
   max-width: 94vw;
   max-height: 90vh;
-  overflow-y: auto;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
   box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .dialog-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 14px;
+  flex: none;
 }
 .dialog-title {
   display: flex;
@@ -659,7 +665,13 @@ function onClose() {
   font-size: 12px;
   padding: 14px 0;
 }
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .dialog-footer {
+  flex: none;
   display: flex;
   justify-content: flex-end;
   gap: 8px;

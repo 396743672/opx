@@ -78,6 +78,7 @@
           <b>{{ editTarget.id ? $t('editNodeApp') : $t('addNodeApp') }}</b>
           <button class="close" @click="editTarget = null"><Icon icon="mdi:close" /></button>
         </div>
+        <div class="dialog-body">
         <div class="field">
           <label>{{ $t('nodeAppName') }}</label>
           <input v-model="form.name" class="input" :placeholder="$t('nodeAppName')" :title="$t('nodeAppNameHint')" />
@@ -116,6 +117,7 @@
           <label class="chk"><input type="checkbox" v-model="form.auto_start" /> {{ $t('autoStartOnAppStart') }}</label>
           <label class="chk"><input type="checkbox" v-model="form.auto_restart" /> {{ $t('autoRestart') }}</label>
           <label class="fld"><span>{{ $t('startupOrder') }}</span><input v-model.number="form.startup_order" class="input num" type="number" /></label>
+        </div>
         </div>
         <div class="foot">
           <button class="btn" @click="editTarget = null">{{ $t('cancel') }}</button>
@@ -355,12 +357,13 @@ onBeforeUnmount(() => {
 .empty-icon { font-size: 40px; opacity: 0.5; }
 .empty p { margin: 8px 0 16px; }
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: oklch(0 0 0 / 0.4); }
-.dialog { width: 460px; max-width: 92vw; max-height: 85vh; overflow-y: auto; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); padding: 16px; }
+.dialog { width: 460px; max-width: 92vw; max-height: 85vh; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-card); padding: 16px; display: flex; flex-direction: column; overflow: hidden; }
 .log-dialog { width: 720px; }
-.head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex: none; }
 .close { width: 28px; height: 28px; border: none; background: transparent; color: var(--color-muted-foreground); border-radius: 4px; cursor: pointer; }
 .close:hover { background: var(--color-muted); }
 .field { margin-bottom: 10px; }
+.dialog-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .field label, .fld span { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
 .row { display: flex; gap: 6px; }
 .preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -372,7 +375,7 @@ onBeforeUnmount(() => {
 .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--color-muted-foreground); cursor: pointer; }
 .fld { display: inline-flex; align-items: center; gap: 6px; }
 .fld span { margin: 0; }
-.foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); flex: none; }
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); white-space: nowrap; }
 .btn:hover { background: var(--color-muted); }
 .btn.primary { background: var(--color-primary); color: var(--color-primary-foreground); border-color: var(--color-primary); }

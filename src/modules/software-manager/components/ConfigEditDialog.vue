@@ -51,6 +51,7 @@
         </button>
       </div>
 
+      <div class="dialog-body">
       <ConfigFormTab
         v-if="tab === 'form'"
         ref="formTabRef"
@@ -83,6 +84,7 @@
             </button>
           </div>
         </div>
+      </div>
       </div>
 
       <div class="hint-bar">
@@ -362,6 +364,13 @@ async function onSaveAndRestart() {
 .dialog.wide {
   width: 680px;
   max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 .dialog-head {

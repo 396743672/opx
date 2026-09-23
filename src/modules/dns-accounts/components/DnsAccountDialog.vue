@@ -146,21 +146,24 @@ async function save() {
   background: oklch(0 0 0 / 0.5); backdrop-filter: blur(4px);
 }
 .dialog {
-  width: 560px; max-height: 90vh; overflow-y: auto; border-radius: 10px;
+  width: 560px; max-height: 90vh; border-radius: 10px;
   border: 1px solid var(--color-border); background: var(--color-card);
   box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
+  display: flex; flex-direction: column; overflow: hidden;
 }
 .head {
   display: flex; justify-content: space-between; align-items: center;
   padding: 14px 18px; border-bottom: 1px solid var(--color-border);
+  flex: none;
 }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
 .x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
-.body { padding: 16px 18px; }
+.body { padding: 16px 18px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .foot {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 18px; border-top: 1px solid var(--color-border);
+  flex: none;
 }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
 .hint { font-size: 11px; color: var(--color-muted-foreground); display: flex; align-items: center; gap: 5px; overflow-wrap: anywhere; }

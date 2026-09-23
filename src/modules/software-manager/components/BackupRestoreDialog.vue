@@ -358,7 +358,7 @@ onMounted(() => {
   width: 640px;
   max-width: 96vw;
   max-height: 90vh;
-  overflow-y: auto;
+  overflow: hidden;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
@@ -375,6 +375,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 14px;
+  flex: none;
 }
 .dialog-title {
   display: flex;
@@ -412,6 +413,7 @@ onMounted(() => {
   align-items: flex-end;
   gap: 12px;
   margin-bottom: 12px;
+  flex: none;
 }
 .field {
   display: flex;
@@ -442,6 +444,7 @@ onMounted(() => {
   background: var(--color-muted);
   border-radius: 6px;
   margin-bottom: 16px;
+  flex: none;
 }
 .tab {
   flex: 1;
@@ -460,7 +463,9 @@ onMounted(() => {
   font-weight: 500;
 }
 .tab-pane {
+  flex: 1 1 auto;
   min-height: 180px;
+  overflow-y: auto;
 }
 .create-box {
   display: flex;
