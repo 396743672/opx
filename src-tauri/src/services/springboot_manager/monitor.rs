@@ -44,18 +44,19 @@ pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Result<JvmInfo
     let jdk = jdk_path.as_deref();
 
     // 主数据源：堆、Metaspace、分代 GC。拿不到即视为采集失败。
-    let gc = parse_jstat_gc(&run_jdk_tool(pid, "jstat", &["-gc"], jdk)?)
+    let gc = parse_jstat_gc(&run_jdk_tool(pid, "jstat", &["-gc"], PidPos::Last, jdk)?)
         .ok_or_else(|| "jstat 输出无法解析（表头缺失、列数不符或堆容量为 0）".to_string())?;
 
     // 线程与类加载：辅助信息，缺失时保留 0 而不阻断整次采集
     let perf = parse_perf_counters(
-        &run_jdk_tool(pid, "jcmd", &["PerfCounter.print"], jdk).unwrap_or_default(),
+        &run_jdk_tool(pid, "jcmd", &["PerfCounter.print"], PidPos::First, jdk).unwrap_or_default(),
     );
 
     // 堆上限：VM.flags 未给出 MaxHeapSize 时回退为当前提交容量
-    let heap_max =
-        parse_max_heap_size(&run_jdk_tool(pid, "jcmd", &["VM.flags"], jdk).unwrap_or_default())
-            .unwrap_or(gc.heap_committed);
+    let heap_max = parse_max_heap_size(
+        &run_jdk_tool(pid, "jcmd", &["VM.flags"], PidPos::First, jdk).unwrap_or_default(),
+    )
+    .unwrap_or(gc.heap_committed);
 
     Ok(JvmInfo {
         heap_used: gc.heap_used,
@@ -76,13 +77,50 @@ pub fn collect_jvm_metrics(pid: u32, jdk_path: Option<String>) -> Result<JvmInfo
     })
 }
 
+/// vmid（pid）在诊断工具命令行中的位置。
+///
+/// 两个工具的语法不同，写错顺序不会报「参数错」，而是 jstat 把 pid 当成选项名、
+/// 输出 `-<option> required` 并退出码 1（2026-09-23 实测踩中：`jstat 35364 -gc`
+/// 使整个采集链失败，前端误报「需要完整 JDK」）。
+///
+/// - `jcmd <pid> <command>` → `First`
+/// - `jstat -<option> <pid>` → `Last`
+#[derive(Clone, Copy)]
+enum PidPos {
+    First,
+    Last,
+}
+
+/// 按工具语法拼装参数序列（不含可执行文件本身）。
+///
+/// 独立成纯函数以便单测锁住顺序——这是唯一「错了也不报语法错、只静默换含义」的位置。
+fn build_tool_args(pid: u32, args: &[&str], pos: PidPos) -> Vec<String> {
+    let pid = pid.to_string();
+    match pos {
+        PidPos::First => std::iter::once(pid)
+            .chain(args.iter().map(|a| a.to_string()))
+            .collect(),
+        PidPos::Last => args
+            .iter()
+            .map(|a| a.to_string())
+            .chain(std::iter::once(pid))
+            .collect(),
+    }
+}
+
 /// 调用 JDK 自带的诊断工具（jstat / jcmd）。
 ///
 /// `jdk_path` 存在时从其 `bin/` 取可执行文件（PATH 上没有也能用），否则回退 PATH。
-/// 失败返回 `Err`，错误信息包含 exe 路径、退出码与子进程 stderr 摘要，
+/// 失败返回 `Err`，错误信息包含完整命令行（含 pid）、退出码与子进程 stderr 摘要，
 /// 供前端直接展示与日志排查——此前失败被静默吞掉，用户只能看到
 /// 「需要完整 JDK」这种猜测性文案（2026-09-23 排查 online-srm-biz 误报时确定）。
-fn run_jdk_tool(pid: u32, tool: &str, args: &[&str], jdk_path: Option<&str>) -> Result<String, String> {
+fn run_jdk_tool(
+    pid: u32,
+    tool: &str,
+    args: &[&str],
+    pos: PidPos,
+    jdk_path: Option<&str>,
+) -> Result<String, String> {
     let exe_name = if cfg!(windows) {
         format!("{tool}.exe")
     } else {
@@ -93,15 +131,15 @@ fn run_jdk_tool(pid: u32, tool: &str, args: &[&str], jdk_path: Option<&str>) -> 
         .filter(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from(&exe_name));
 
-    let mut cmd = hidden(&exe);
-    cmd.arg(pid.to_string()).args(args);
-    let output = cmd
+    let argv = build_tool_args(pid, args, pos);
+    let output = hidden(&exe)
+        .args(&argv)
         .output()
         .map_err(|e| format!("{} 启动失败: {e}", exe.display()))?;
     if !output.status.success() {
         let detail = summarize_tool_error(&output.stdout, &output.stderr);
         let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-        let msg = format!("{} {} 退出码 {code}：{detail}", exe.display(), args.join(" "));
+        let msg = format!("{} {} 退出码 {code}：{detail}", exe.display(), argv.join(" "));
         tracing::warn!("JVM 诊断工具调用失败: {msg}");
         return Err(msg);
     }
@@ -296,6 +334,28 @@ mod tests {
     #[test]
     fn perf_counters_tolerate_empty_output() {
         assert_eq!(parse_perf_counters(""), PerfCounters::default());
+    }
+
+    /// 回归：vmid 位置必须随工具而异。
+    ///
+    /// 2026-09-23 踩中——jstat 收到 `35364 -gc` 会把 pid 当成选项名，
+    /// 报 `-<option> required` 退出码 1，主数据源整体失败。
+    #[test]
+    fn pid_position_follows_each_tool_syntax() {
+        assert_eq!(
+            build_tool_args(35364, &["-gc"], PidPos::Last),
+            vec!["-gc", "35364"],
+            "jstat 的 vmid 在选项之后"
+        );
+        assert_eq!(
+            build_tool_args(35364, &["PerfCounter.print"], PidPos::First),
+            vec!["35364", "PerfCounter.print"],
+            "jcmd 的 vmid 在命令之前"
+        );
+        assert_eq!(
+            build_tool_args(1, &["VM.flags"], PidPos::First),
+            vec!["1", "VM.flags"]
+        );
     }
 
     /// 错误摘要：单行化、优先 stderr、200 字符截断——会直达前端与日志，
