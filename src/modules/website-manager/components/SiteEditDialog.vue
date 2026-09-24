@@ -94,7 +94,7 @@
                     <Icon icon="mdi:certificate-outline" />
                     {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
                   </button>
-                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ acmeStatus }}</span>
+                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ translateError(acmeStatus, t, te) }}</span>
                 </div>
                 <div v-if="form.ssl.cert_expires_at" class="hint">
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
@@ -161,7 +161,7 @@
     <div v-if="saveError" class="overlay" style="z-index:70" @click.self="saveError = ''">
       <div class="confirm-box">
         <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
-        <p class="confirm-msg">{{ saveError }}</p>
+        <p class="confirm-msg">{{ translateError(saveError, t, te) }}</p>
         <div class="confirm-actions">
           <button class="btn primary" @click="saveError = ''">{{ $t('confirm') }}</button>
         </div>
@@ -177,11 +177,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
+import { translateError } from '@/utils/i18nError'
 import LocationEditor from './LocationEditor.vue'
 import type { Site, SiteLocation } from '@/models/website'
 import type { DnsAccount } from '@/models/dns-account'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const settingsStore = useSettingsStore()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()

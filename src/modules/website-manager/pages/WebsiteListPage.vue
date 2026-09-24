@@ -12,7 +12,7 @@
       <div v-if="pageError" class="overlay" @click.self="pageError = ''">
         <div class="confirm-box">
           <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
-          <p class="confirm-msg">{{ pageError }}</p>
+          <p class="confirm-msg">{{ translateError(pageError, t, te) }}</p>
           <div class="confirm-actions">
             <button class="btn primary" @click="pageError = ''">{{ $t('confirm') }}</button>
           </div>
@@ -104,8 +104,9 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SiteEditDialog from '../components/SiteEditDialog.vue'
 import { emptySite, type Site } from '@/models/website'
+import { translateError } from '@/utils/i18nError'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const sites = ref<Site[]>([])
 const loading = ref(false)
 const editing = ref<Site | null>(null)

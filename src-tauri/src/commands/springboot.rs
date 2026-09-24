@@ -492,16 +492,22 @@ pub async fn export_springboot_config(
     });
     let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
 
-    let f =
-        std::fs::File::create(&file_path).map_err(|e| format!("ERR_WRITE:创建文件失败: {}", e))?;
+    let f = std::fs::File::create(&file_path).map_err(|e| {
+        tracing::warn!(error = %e, path = %file_path, "导出：创建导出文件失败");
+        "i18n:exportCreateFileFailed".to_string()
+    })?;
     let mut zip = zip::ZipWriter::new(f);
     let opts =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    zip.start_file("manifest.json", opts)
-        .map_err(|e| format!("ERR_ZIP:{}", e))?;
-    zip.write_all(manifest_json.as_bytes())
-        .map_err(|e| format!("ERR_ZIP:{}", e))?;
+    zip.start_file("manifest.json", opts).map_err(|e| {
+        tracing::warn!(error = %e, "导出：写入 manifest 条目失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
+    zip.write_all(manifest_json.as_bytes()).map_err(|e| {
+        tracing::warn!(error = %e, "导出：写入 manifest 内容失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
 
     let total = apps.len();
     let mut exported = 0usize;
@@ -548,12 +554,21 @@ pub async fn export_springboot_config(
             log_canonical.as_deref(),
             opts,
         )
-        .map_err(|e| format!("ERR_ZIP:{}({}):{}", app.name, app.id, e))?;
+        .map_err(|e| {
+            tracing::warn!(error = %e, app = %app.name, app_id = %app.id, "导出：打包应用目录失败");
+            "i18n:exportAppFailed".to_string()
+        })?;
         exported += 1;
     }
 
-    let f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
-    f.sync_all().map_err(|e| format!("ERR_ZIP:{}", e))?;
+    let f = zip.finish().map_err(|e| {
+        tracing::warn!(error = %e, "导出：收尾写入 zip 失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
+    f.sync_all().map_err(|e| {
+        tracing::warn!(error = %e, "导出：导出包落盘失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
     let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
     Ok(ExportSummary {
         apps: exported,
@@ -589,32 +604,58 @@ pub async fn import_springboot_config(
             .unwrap_or_default()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("ERR_TMP:{}", e))?;
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| {
+        tracing::warn!(error = %e, dir = %tmp_dir.display(), "导入：创建临时目录失败");
+        "i18n:importTmpDirFailed".to_string()
+    })?;
 
-    let f = std::fs::File::open(&file_path).map_err(|e| format!("ERR_READ:读取文件失败: {}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(f).map_err(|e| format!("ERR_ZIP_PARSE:文件格式错误: {}", e))?;
+    let f = std::fs::File::open(&file_path).map_err(|e| {
+        tracing::warn!(error = %e, path = %file_path, "导入：打开所选文件失败");
+        "i18n:importReadFailed".to_string()
+    })?;
+    let mut archive = zip::ZipArchive::new(f).map_err(|e| {
+        tracing::warn!(error = %e, "导入：zip 结构解析失败");
+        "i18n:importZipInvalid".to_string()
+    })?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("ERR_ZIP:{}", e))?;
+        let mut entry = archive.by_index(i).map_err(|e| {
+            tracing::warn!(error = %e, index = i, "导入：读取 zip 条目失败");
+            "i18n:importZipInvalid".to_string()
+        })?;
         let out_path = tmp_dir.join(sanitize_zip_path(entry.name()));
         if entry.name().ends_with('/') {
-            std::fs::create_dir_all(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            std::fs::create_dir_all(&out_path).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压建目录失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
         } else {
             if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    tracing::warn!(error = %e, path = %parent.display(), "导入：解压建父目录失败");
+                    "i18n:importExtractFailed".to_string()
+                })?;
             }
-            let mut outfile =
-                std::fs::File::create(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
-            std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压创建文件失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压写入内容失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
         }
     }
 
     let _ = app_handle.emit("import-progress", serde_json::json!({ "phase": "config" }));
-    let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json"))
-        .map_err(|e| format!("ERR_IMPORT:manifest.json 不存在或无法读取: {}", e))?;
-    let data: serde_json::Value = serde_json::from_str(&manifest_content)
-        .map_err(|e| format!("ERR_IMPORT:manifest.json 格式错误: {}", e))?;
+    let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json")).map_err(|e| {
+        tracing::warn!(error = %e, "导入：读取 manifest.json 失败");
+        "i18n:importManifestMissing".to_string()
+    })?;
+    let data: serde_json::Value = serde_json::from_str(&manifest_content).map_err(|e| {
+        tracing::warn!(error = %e, "导入：manifest.json 解析失败");
+        "i18n:importManifestInvalid".to_string()
+    })?;
 
     use serde_json::Value;
     let mut imported_count = 0usize;
@@ -622,8 +663,10 @@ pub async fn import_springboot_config(
     if let Some(apps) = data.get("apps").and_then(|v| v.as_array()) {
         let existing = manager.list_apps();
         for app_val in apps {
-            let imported: SpringBootApp = serde_json::from_value(app_val.clone())
-                .map_err(|e| format!("ERR_IMPORT:应用数据错误: {}", e))?;
+            let imported: SpringBootApp = serde_json::from_value(app_val.clone()).map_err(|e| {
+                tracing::warn!(error = %e, "导入：应用数据解析失败");
+                "i18n:importAppDataFailed".to_string()
+            })?;
 
             // 恢复到本机数据目录 <data_dir>/springboot/<name>/。
             // 不信任 manifest 里导出机的绝对路径（跨机器必然失效，会把文件写到错误位置）。
@@ -717,12 +760,18 @@ pub async fn import_springboot_config(
     }
     if let Some(groups) = data.get("groups").and_then(|v| v.as_array()) {
         let parsed: Vec<AppGroup> = serde_json::from_value(Value::Array(groups.clone()))
-            .map_err(|e| format!("ERR_IMPORT:分组错误: {}", e))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "导入：分组数据解析失败");
+                "i18n:importGroupFailed".to_string()
+            })?;
         manager.save_groups(parsed).map_err(|e| e.to_string())?;
     }
     if let Some(env_vars) = data.get("global_env_vars") {
         let parsed: Vec<(String, String)> = serde_json::from_value(env_vars.clone())
-            .map_err(|e| format!("ERR_IMPORT:环境变量错误: {}", e))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "导入：环境变量解析失败");
+                "i18n:importEnvFailed".to_string()
+            })?;
         manager
             .set_global_env_vars(parsed)
             .map_err(|e| e.to_string())?;

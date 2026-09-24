@@ -67,17 +67,13 @@ pub fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Re
     if reload && nginx.status == SoftwareStatus::Running {
         let test = run_nginx(&base, &["-t"]).map_err(|e| e.to_string())?;
         if !test.status.success() {
-            return Err(format!(
-                "ERR_NGINX_CONF_FAILED:nginx 配置校验失败：{}",
-                String::from_utf8_lossy(&test.stderr)
-            ));
+            tracing::warn!(stderr = %String::from_utf8_lossy(&test.stderr), "nginx 配置校验失败");
+            return Err("i18n:nginxConfInvalid".to_string());
         }
         let rl = run_nginx(&base, &["-s", "reload"]).map_err(|e| e.to_string())?;
         if !rl.status.success() {
-            return Err(format!(
-                "ERR_NGINX_RELOAD_FAILED:nginx reload 失败：{}",
-                String::from_utf8_lossy(&rl.stderr)
-            ));
+            tracing::warn!(stderr = %String::from_utf8_lossy(&rl.stderr), "nginx reload 失败");
+            return Err("i18n:nginxReloadFailed".to_string());
         }
     }
     Ok(())
@@ -221,7 +217,7 @@ pub fn delete_website(
     audited!("website_delete", target, "", {
         if let Some(ref s) = site {
             if s.enabled {
-                return Err("ERR_SITE_RUNNING_DELETE:请先停用站点后再删除".to_string());
+                return Err("i18n:deleteRunningHint".to_string());
             }
         }
         // 记录名称用于清理上传文件（必须在 wm.remove 之前获取）
@@ -467,7 +463,8 @@ pub fn generate_self_signed_cert(
 ) -> Result<(String, String), String> {
     let d = domain.trim().to_string();
     if d.is_empty() || d.contains('/') || d.contains('\\') || d.contains(char::is_whitespace) {
-        return Err("ERR_CERT_DOMAIN:域名不合法".to_string());
+        tracing::warn!(domain = %domain, "自签证书：域名不合法");
+        return Err("i18n:certDomainInvalid".to_string());
     }
 
     let nginx = resolve_nginx(&sm)?;

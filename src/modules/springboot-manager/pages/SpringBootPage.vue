@@ -189,6 +189,7 @@ import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '@/composables/useToast'
+import { translateError } from '@/utils/i18nError'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AppCard from '../components/AppCard.vue'
@@ -201,7 +202,7 @@ import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const store = useSpringBootStore()
 const activeGroup = ref<string | null>(null)
@@ -257,7 +258,7 @@ async function doExport() {
     toast(t('exportSuccess'), 'ok')
     if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
   } catch (e) {
-    toast(t('exportFailed', { msg: String(e) }), 'err')
+    toast(t('exportFailed', { msg: translateError(String(e), t, te) }), 'err')
   } finally {
     progress.value = ''
   }
@@ -274,7 +275,7 @@ async function onImport() {
     if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
     await refreshAll().catch(() => {})
   } catch (e) {
-    toast(t('importFailed', { msg: String(e) }), 'err')
+    toast(t('importFailed', { msg: translateError(String(e), t, te) }), 'err')
   } finally {
     progress.value = ''
   }
