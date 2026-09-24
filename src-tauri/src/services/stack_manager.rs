@@ -732,25 +732,10 @@ impl StackManager {
                 true
             }
             StackItemRefType::Springboot => {
-                let app_model = match self.springboot_mgr.find_app(&item.ref_id) {
-                    Ok(a) => a,
-                    Err(_) => return false,
-                };
-                let pid_alive = match app_model.pid {
-                    Some(pid) => {
-                        crate::services::software_manager::health_check::is_process_alive(pid)
-                    }
-                    None => return false,
-                };
-                if !pid_alive {
-                    return false;
-                }
-                if let Some(port) = app_model.port {
-                    if crate::services::software_manager::health_check::is_port_free(port) {
-                        return false;
-                    }
-                }
-                true
+                // 复用 sb_lifecycle 的权威就绪结论（start_app 已用日志 Started + 端口双判），
+                // 避免与独立启动路径判据不一致；不再仅依赖 pid + 端口
+                // （端口早期 bind 会让依赖方误判就绪而提前放行）。
+                self.is_member_running(item)
             }
         }
     }

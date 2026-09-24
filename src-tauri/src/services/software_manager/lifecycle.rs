@@ -518,7 +518,9 @@ use crate::services::software_manager::SoftwareManager;
 /// 应用启动时按 startup_order 拉起 auto_start=true 的实例
 ///
 /// 同 startup_order 的实例会被分组并发拉起（不等单个完成，仅 sleep 500ms 间隔）；
-/// 不同 startup_order 的批次之间也只 sleep 500ms。
+/// 不同 startup_order 的批次之间会等待上一批「真正就绪」（status==Running，由后台
+/// 健康检查任务在就绪后设置）再拉起下一批，使依赖拓扑在自启场景生效——
+/// 旧实现仅 sleep 500ms，不保证依赖方已就绪（下游可能连不上）。
 /// 应在 Tauri setup hook 中通过 `tauri::async_runtime::spawn` 调用。
 pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHandle) {
     let auto_list = manager.list_auto_start();
@@ -533,17 +535,56 @@ pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHand
 
     for sw in auto_list {
         if !pending.is_empty() && sw.startup_order != last_order {
+            let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
             for s in pending.drain(..) {
                 spawn_start(manager.clone(), app.clone(), s.id).await;
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
+            // 等待上一批全部就绪（或失败/超时）后再进入下一批，依赖拓扑生效
+            await_batch_ready(manager, &ids, 60_000).await;
         }
         last_order = sw.startup_order;
         pending.push(sw);
     }
-    // 处理剩余
+    // 处理剩余批次
+    let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
     for s in pending {
         spawn_start(manager.clone(), app.clone(), s.id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    await_batch_ready(manager, &ids, 60_000).await;
+}
+
+/// 等待一批自启实例真正就绪：轮询各自 status，直到全部 Running（依赖拓扑生效）、
+/// 或任一进入 Error、或超时。status==Running 仅在健康检查通过后由后台任务设置，
+/// 故轮询它等价于等待就绪，无需改动 do_start_software 的「提前返回」契约。
+async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeout_ms: u64) {
+    let start = std::time::Instant::now();
+    let deadline = std::time::Duration::from_millis(timeout_ms);
+    loop {
+        let all_ready = ids.iter().all(|id| {
+            manager
+                .find_installed(id)
+                .map(|s| s.status == SoftwareStatus::Running)
+                .unwrap_or(false)
+        });
+        if all_ready {
+            return;
+        }
+        let any_err = ids.iter().any(|id| {
+            manager
+                .find_installed(id)
+                .map(|s| s.status == SoftwareStatus::Error)
+                .unwrap_or(false)
+        });
+        if any_err {
+            tracing::warn!(ids = ?ids, "auto_start 依赖实例进入 Error，跳过等待继续");
+            return;
+        }
+        if start.elapsed() >= deadline {
+            tracing::warn!(ids = ?ids, "auto_start 等待批量就绪超时");
+            return;
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
