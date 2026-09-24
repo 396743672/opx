@@ -36,25 +36,6 @@ pub fn detect_format(file_path: &Path) -> ConfigFormat {
     }
 }
 
-/// 从配置文件读出表单数据
-pub fn read_config_as_form(file_path: &Path, schema: &ConfigSchema) -> Result<FormData> {
-    let content = std::fs::read_to_string(file_path)?;
-    let format = detect_format(file_path);
-    let mut form = FormData::new();
-
-    for field in &schema.fields {
-        let value = match format {
-            ConfigFormat::Ini => ini_lookup(&content, field.section.as_deref(), &field.key),
-            ConfigFormat::KeyValue => kv_lookup(&content, &field.key),
-            ConfigFormat::NginxConf => nginx_lookup(&content, &field.key),
-            ConfigFormat::Json => json_lookup(&content, &field.key),
-            ConfigFormat::Plaintext => serde_json::Value::Null,
-        };
-        form.insert(field.key.clone(), value);
-    }
-    Ok(form)
-}
-
 /// 把表单数据写回配置文件（保留未涉及的字段）
 pub fn write_form_to_config(
     file_path: &Path,
@@ -159,34 +140,6 @@ fn normalize_section(s: &str) -> &str {
     }
 }
 
-fn ini_lookup(content: &str, section: Option<&str>, key: &str) -> serde_json::Value {
-    let target_section = section.map(normalize_section);
-    let mut current_section: Option<String> = None;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            current_section = Some(trimmed[1..trimmed.len() - 1].to_string());
-            continue;
-        }
-        if trimmed.starts_with('#') || trimmed.starts_with(';') || trimmed.is_empty() {
-            continue;
-        }
-        if let Some(eq) = trimmed.find('=') {
-            let k = trimmed[..eq].trim();
-            let v = trimmed[eq + 1..].trim();
-            let section_match = match (&target_section, &current_section) {
-                (Some(s), Some(cs)) => s == cs,
-                (None, None) => true,
-                _ => false,
-            };
-            if section_match && k == key {
-                return parse_value(v);
-            }
-        }
-    }
-    serde_json::Value::Null
-}
-
 fn ini_upsert(
     content: &str,
     section: Option<&str>,
@@ -248,22 +201,6 @@ fn ini_upsert(
 
 // —— KeyValue 解析（key value 空格分隔，无 section） ——
 
-fn kv_lookup(content: &str, key: &str) -> serde_json::Value {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
-            if k == key {
-                return parse_value(v.trim());
-            }
-        }
-    }
-    serde_json::Value::Null
-}
-
 fn kv_upsert(
     content: &str,
     key: &str,
@@ -299,23 +236,6 @@ fn kv_upsert(
 
 // —— NginxConf 解析（行级匹配 + upsert） ——
 
-fn nginx_lookup(content: &str, key: &str) -> serde_json::Value {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        if let (Some(k), Some(rest)) = (parts.next(), parts.next()) {
-            if k == key {
-                let v = rest.trim_end_matches(';').trim();
-                return parse_value(v);
-            }
-        }
-    }
-    serde_json::Value::Null
-}
-
 fn nginx_upsert(
     content: &str,
     key: &str,
@@ -350,15 +270,6 @@ fn nginx_upsert(
 
 // —— JSON 解析 ——
 
-fn json_lookup(content: &str, key: &str) -> serde_json::Value {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
-        if let Some(val) = v.get(key) {
-            return val.clone();
-        }
-    }
-    serde_json::Value::Null
-}
-
 fn json_upsert(
     content: &str,
     key: &str,
@@ -377,22 +288,6 @@ fn json_upsert(
 }
 
 // —— 辅助 ——
-
-fn parse_value(s: &str) -> serde_json::Value {
-    if let Ok(n) = s.parse::<i64>() {
-        return serde_json::json!(n);
-    }
-    if let Ok(f) = s.parse::<f64>() {
-        return serde_json::json!(f);
-    }
-    if s == "true" {
-        return serde_json::json!(true);
-    }
-    if s == "false" {
-        return serde_json::json!(false);
-    }
-    serde_json::json!(s)
-}
 
 fn value_to_string(v: &serde_json::Value) -> String {
     match v {

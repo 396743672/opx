@@ -654,7 +654,6 @@ export default {
   configDirtyConfirm: 'Unsaved changes will be lost when switching tabs. Continue?',
   saveWithoutRestart: 'Save',
   configSaved: 'Configuration saved',
-  configSaveFailed: 'Configuration save failed',
   expectedStatus: 'Expected Status',
   confirmRestoreBackup: 'Restore this backup? The current config will be auto-backed up first.',
 

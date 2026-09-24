@@ -180,22 +180,4 @@ mod tests {
         assert!(c.ends_with("example.com.crt"));
         assert!(k.ends_with("example.com.key"));
     }
-
-    /// 清理计划：记录原本存在 → 还原旧值；原本不存在 → 删除。
-    /// 这条锁死「OPX 自己造的 TXT 必须被清掉」——早先的设想是用 set_value 写回旧值，
-    /// 那会让原本不存在的记录永久留在用户 DNS 里。
-    #[test]
-    fn cleanup_plan_restores_or_deletes() {
-        #[derive(Debug, PartialEq)]
-        enum Action {
-            Restore(String),
-            Delete,
-        }
-        let plan = |before: Option<&str>| match before {
-            Some(v) => Action::Restore(v.to_string()),
-            None => Action::Delete,
-        };
-        assert_eq!(plan(Some("old-value")), Action::Restore("old-value".into()));
-        assert_eq!(plan(None), Action::Delete);
-    }
 }

@@ -1,8 +1,5 @@
 /** 应用启动编排报告（扩展 4：统一启动编排 + 报告） */
 
-/** 启动项类型（与后端 models/startup.rs 的 KIND_* 常量一致） */
-export type StartupItemKind = 'software' | 'node' | 'stack'
-
 /** 单项结果状态 */
 export type StartupItemStatus = 'ok' | 'failed' | 'skipped'
 

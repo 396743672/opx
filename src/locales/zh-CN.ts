@@ -654,7 +654,6 @@ export default {
   configDirtyConfirm: '当前改动未保存，切换 tab 会丢失，确定吗？',
   saveWithoutRestart: '仅保存',
   configSaved: '配置已保存',
-  configSaveFailed: '配置保存失败',
   expectedStatus: '期望状态码',
   confirmRestoreBackup: '确认还原此备份？当前配置将自动备份。',
 

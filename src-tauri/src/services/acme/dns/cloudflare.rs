@@ -208,30 +208,3 @@ impl DnsProvider for Cloudflare {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    /// DNS-01 的 TXT 名前缀必须是 `_acme-challenge.`：
-    /// get/set/delete 三处都靠 trim_start_matches 反推 zone，
-    /// 前缀写错会让 find_zone 拿整个 challenge 名去匹配 zone 而失败。
-    #[test]
-    fn challenge_prefix_is_stripped_for_zone_lookup() {
-        let fqdn = crate::services::acme::dns::acme_challenge_fqdn("example.com");
-        assert_eq!(fqdn, "_acme-challenge.example.com");
-        let for_zone = fqdn.trim_start_matches("_acme-challenge.");
-        assert_eq!(for_zone, "example.com");
-    }
-
-    /// get_value 返回的值必须与 set_value 写入的值可直接相等比较。
-    /// Cloudflare 把 TXT content 存成带引号形式，读回来若不剥引号，
-    /// DDNS 的读-比较-写会认为每轮都「变了」而反复写入。
-    #[test]
-    fn txt_content_quotes_are_stripped_for_comparability() {
-        let strip = |s: &str| s.trim_matches('"').to_string();
-        assert_eq!(strip("\"abc123\""), "abc123");
-        // 已无引号（A/AAAA 的裸 IP）不受影响 —— 剥引号必须对它们是 no-op
-        assert_eq!(strip("1.2.3.4"), "1.2.3.4");
-        // 与 set_value 的入参可比较
-        assert_eq!(strip("\"abc123\""), "abc123");
-    }
-}

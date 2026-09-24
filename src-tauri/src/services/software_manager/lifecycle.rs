@@ -50,10 +50,6 @@ impl ProcessRegistry {
         self.processes.get(installed_id)
     }
 
-    pub fn list(&self) -> Vec<RegisteredProcess> {
-        self.processes.values().cloned().collect()
-    }
-
     pub fn drain(&mut self) -> Vec<RegisteredProcess> {
         let v: Vec<_> = self.processes.values().cloned().collect();
         self.processes.clear();
@@ -74,10 +70,6 @@ pub fn unregister(installed_id: &str) {
 
 pub fn get(installed_id: &str) -> Option<RegisteredProcess> {
     REGISTRY.lock().unwrap().get(installed_id).cloned()
-}
-
-pub fn list() -> Vec<RegisteredProcess> {
-    REGISTRY.lock().unwrap().list()
 }
 
 pub fn drain() -> Vec<RegisteredProcess> {

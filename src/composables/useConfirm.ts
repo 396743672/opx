@@ -49,6 +49,3 @@ export function useConfirm() {
   }
   return { state, resolve, confirm: confirmAsync }
 }
-
-/** 给 ConfirmDialog 组件使用的响应式状态 */
-export const confirmState = state

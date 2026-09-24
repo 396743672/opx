@@ -268,57 +268,6 @@ pub enum TempSecretSpec {
     FromLogFile { path: PathBuf, regex: String },
 }
 
-use std::collections::HashMap;
-use std::sync::OnceLock;
-
-/// 内置 zip 清单条目
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ManifestEntry {
-    pub sha256: String,
-    pub size: u64,
-}
-
-/// 内置 zip 清单：{key: {version: ManifestEntry}}
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct BuiltinManifest {
-    #[serde(flatten)]
-    entries: HashMap<String, HashMap<String, ManifestEntry>>,
-}
-
-impl BuiltinManifest {
-    /// 从指定路径加载 manifest.json，文件不存在或解析失败返回空 manifest
-    pub fn load_from_path(path: &std::path::Path) -> Self {
-        if !path.exists() {
-            return Self::default();
-        }
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => return Self::default(),
-        };
-        serde_json::from_str(&content).unwrap_or_default()
-    }
-
-    /// 查询 {key}/{version} 对应的 manifest 条目
-    pub fn get_builtin(&self, key: &str, version: &str) -> Option<&ManifestEntry> {
-        self.entries
-            .get(key)
-            .and_then(|versions| versions.get(version))
-    }
-}
-
-static MANIFEST: OnceLock<BuiltinManifest> = OnceLock::new();
-
-/// 获取全局 manifest 单例。首次调用时返回默认空 manifest（真正的初始化在 init_builtin_manifest）。
-pub fn builtin_manifest() -> &'static BuiltinManifest {
-    MANIFEST.get_or_init(|| BuiltinManifest::default())
-}
-
-/// 用指定 manifest 路径初始化全局单例（应用启动时调用）
-pub fn init_builtin_manifest(path: &std::path::Path) {
-    let manifest = BuiltinManifest::load_from_path(path);
-    let _ = MANIFEST.set(manifest);
-}
-
 pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
     vec![
         Box::new(mysql::MySqlProvider::new()),
