@@ -322,7 +322,7 @@ mod tests {
             "log_path": "springboot/app/logs/console.log",
             "start_time": null, "last_error": null, "dependencies": [],
             "auto_start": false, "startup_order": 0, "auto_restart": false,
-            "group": null, "jdk_type": "jdk",
+            "group": null, "jdk_type": "jdk", "local_ip": "",
         }))
         .expect("测试应用应可解析")
     }

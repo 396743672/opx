@@ -720,6 +720,7 @@ pub async fn import_springboot_config(
                             group: Some(imported.group.clone()),
                             jdk_type: Some(imported.jdk_type.clone()),
                             stop_timeout_secs: Some(imported.stop_timeout_secs),
+                            local_ip: None,
                         },
                     )
                     .map_err(|e| e.to_string())
@@ -749,6 +750,7 @@ pub async fn import_springboot_config(
                         group: imported.group.clone(),
                         jdk_type: imported.jdk_type.clone(),
                         stop_timeout_secs: imported.stop_timeout_secs,
+                        local_ip: String::new(),
                     })
                     .map_err(|e| e.to_string())
             };

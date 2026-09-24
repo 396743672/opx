@@ -54,6 +54,10 @@ pub struct SpringBootApp {
     /// 那个阶段超时本身就是「应用清理最多可能花 30 秒」的意思，等得比它短只会误杀。
     #[serde(default = "default_stop_timeout_secs")]
     pub stop_timeout_secs: u64,
+    /// 本机 IP：为空时启动自动注入真实物理网卡地址（剔除虚拟网卡）；
+    /// 显式填写则强制该应用使用此 IP（经 Spring Cloud InetUtils 参数）。
+    #[serde(default)]
+    pub local_ip: String,
 }
 
 /// 从 JAR 读出的元信息（供表单展示，不落库）。
@@ -176,6 +180,9 @@ pub struct CreateAppParams {
     pub jdk_type: String,
     #[serde(default = "default_stop_timeout_secs")]
     pub stop_timeout_secs: u64,
+    /// 本机 IP（留空则启动自动探测真实网卡，剔除虚拟网卡）
+    #[serde(default)]
+    pub local_ip: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +202,8 @@ pub struct UpdateAppParams {
     pub group: Option<Option<String>>,
     pub jdk_type: Option<String>,
     pub stop_timeout_secs: Option<u64>,
+    /// 本机 IP（留空则启动自动探测真实网卡，剔除虚拟网卡）
+    pub local_ip: Option<String>,
 }
 
 /// 某个 GC 在本机运行时上不可用的原因。

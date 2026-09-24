@@ -33,6 +33,8 @@ export interface SpringBootApp {
   jdk_type: string
   /** 停止等待时长（秒）：发出优雅停止请求后等应用自行退出的上限，默认 30 */
   stop_timeout_secs: number
+  /** 本机 IP：留空则启动自动探测真实网卡（剔除虚拟网卡）；填写则强制该应用使用此 IP */
+  local_ip?: string
 }
 
 export interface AppGroup {
@@ -135,6 +137,8 @@ export interface CreateAppParams {
   group: string | null
   jdk_type: string
   stop_timeout_secs?: number
+  /** 本机 IP：留空则启动自动探测真实网卡（剔除虚拟网卡） */
+  local_ip?: string
 }
 
 export interface UpdateAppParams {
@@ -153,6 +157,8 @@ export interface UpdateAppParams {
   group?: string | null
   jdk_type?: string
   stop_timeout_secs?: number
+  /** 本机 IP：留空则启动自动探测真实网卡（剔除虚拟网卡） */
+  local_ip?: string
 }
 
 export interface JvmOptsTemplate {

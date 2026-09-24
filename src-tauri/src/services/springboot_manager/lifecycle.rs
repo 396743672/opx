@@ -82,6 +82,22 @@ pub async fn start_app(
     for opt in &app.jvm_opts {
         cmd.arg(opt);
     }
+    // 本机 IP：Spring Boot 用 Spring Cloud InetUtils 自探测 IP，会误取 VMware/VirtualBox
+    // 等虚拟网卡 IP。默认注入 ignored-interfaces 剔除虚拟网卡；若配置了 local_ip 或能
+    // 自动探测到真实物理网卡 IP，则通过 default-ip-address 钉死该 IP（避免服务发现错址）。
+    cmd.arg(format!(
+        "-Dspring.cloud.inetutils.ignored-interfaces={}",
+        crate::utils::local_ip::IGNORED_INTERFACES
+    ));
+    let sb_local_ip = app.local_ip.trim();
+    let ip = if !sb_local_ip.is_empty() {
+        Some(sb_local_ip.to_string())
+    } else {
+        crate::utils::local_ip::preferred_local_ip()
+    };
+    if let Some(ip) = ip {
+        cmd.arg(format!("-Dspring.cloud.inetutils.default-ip-address={}", ip));
+    }
     // ponytail: 设工作目录 = JAR 所在目录，Spring Boot 相对路径日志写到正确位置
     if let Some(parent) = std::path::Path::new(&app.jar_path).parent() {
         cmd.current_dir(parent);
