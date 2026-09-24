@@ -88,13 +88,19 @@ pub async fn start_springboot_app(
 #[tauri::command]
 pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
+    software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
 ) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
-    let r = crate::services::springboot_manager::lifecycle::stop_app(&id, &manager, &app_handle)
-        .await;
+    let r = crate::services::springboot_manager::lifecycle::stop_app(
+        &id,
+        &manager,
+        &software_mgr,
+        &app_handle,
+    )
+    .await;
     oplog_result!("springboot_stop", target, "", r);
     r
 }
@@ -165,6 +171,7 @@ pub async fn replace_springboot_jar_and_restart(
             let stop = crate::services::springboot_manager::lifecycle::stop_app(
                 &id,
                 &manager,
+                &software_mgr,
                 &app_handle,
             )
             .await?;
@@ -332,14 +339,18 @@ pub async fn list_springboot_dependency_candidates(
 pub async fn read_jar_info(jar_path: String) -> Result<JarInfo, String> {
     use crate::services::springboot_manager as sb;
     let spring_boot_version = sb::read_spring_boot_version(&jar_path);
-    let min_jdk = spring_boot_version
-        .as_deref()
-        .and_then(sb::parse_spring_boot_major)
-        .and_then(sb::min_jdk_for_spring_boot);
+    // 官方兼容区间：下限按大版本、上限按小版本（2.3 只到 15，2.7 到 21）
+    let range = spring_boot_version.as_deref().and_then(|v| {
+        let major = sb::parse_spring_boot_major(v)?;
+        let minor = sb::parse_spring_boot_minor(v).unwrap_or(0);
+        sb::jdk_range_for_spring_boot(major, minor)
+    });
     Ok(JarInfo {
         version: sb::read_jar_version(&jar_path),
         spring_boot_version,
-        min_jdk,
+        min_jdk: range.map(|(min, _)| min),
+        max_jdk: range.and_then(|(_, max)| max),
+        build_jdk: sb::read_build_jdk(&jar_path),
     })
 }
 
@@ -663,9 +674,6 @@ pub async fn import_springboot_config(
                             group: Some(imported.group.clone()),
                             jdk_type: Some(imported.jdk_type.clone()),
                             stop_timeout_secs: Some(imported.stop_timeout_secs),
-                            actuator_shutdown_url: Some(
-                                imported.actuator_shutdown_url.clone().unwrap_or_default(),
-                            ),
                         },
                     )
                     .map_err(|e| e.to_string())
@@ -695,7 +703,6 @@ pub async fn import_springboot_config(
                         group: imported.group.clone(),
                         jdk_type: imported.jdk_type.clone(),
                         stop_timeout_secs: imported.stop_timeout_secs,
-                        actuator_shutdown_url: imported.actuator_shutdown_url.clone(),
                     })
                     .map_err(|e| e.to_string())
             };
@@ -967,7 +974,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 整合：`read_jar_info` 一次给出应用版本、框架版本与最低 JDK，三者互不串位
+    /// 整合：`read_jar_info` 一次给出应用版本、框架版本、官方兼容区间与构建 JDK，
+    /// 四者互不串位
     #[tokio::test]
     async fn read_jar_info_combines_version_and_jdk_floor() {
         let dir = std::env::temp_dir().join(format!("opx_jinfo_{}", std::process::id()));
@@ -977,14 +985,101 @@ mod tests {
         let p = dir.join("app.jar");
         fake_jar(
             &p,
-            "Manifest-Version: 1.0\r\nImplementation-Version: 2.1.0\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
+            "Manifest-Version: 1.0\r\nImplementation-Version: 2.1.0\r\nBuild-Jdk-Spec: 21\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
         );
         let info = super::read_jar_info(p.to_str().unwrap().to_string())
             .await
             .unwrap();
         assert_eq!(info.version.as_deref(), Some("2.1.0"));
         assert_eq!(info.spring_boot_version.as_deref(), Some("3.5.11"));
+        // 3.5 的官方区间是 Java 17–25（不是只按大版本给的 17+）
         assert_eq!(info.min_jdk, Some(17));
+        assert_eq!(info.max_jdk, Some(25));
+        // ⚠️ 真实 jar 写的是 `Build-Jdk-Spec`（实测 3/3），读 `Build-Jdk` 会恒为 None
+        assert_eq!(info.build_jdk, Some(21));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 老版 maven-jar-plugin 只写 `Build-Jdk`（带完整版本号）→ 也要能兜底读出来，
+    /// 且 `Build-Jdk-Spec` 的匹配不能被 `Build-Jdk` 抢走（前缀是 `Build-Jdk-` 不是 `Build-Jdk:`）
+    #[tokio::test]
+    async fn read_jar_info_falls_back_to_legacy_build_jdk() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_legacy_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 只有老字段
+        let p = dir.join("legacy.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nBuild-Jdk: 1.8.0_302\r\nSpring-Boot-Version: 2.7.18\r\n\r\n",
+        );
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.build_jdk, Some(8), "1.8.0_302 应归一化成 8");
+
+        // 两个字段同时存在时，`Build-Jdk-Spec` 优先
+        let p2 = dir.join("both.jar");
+        fake_jar(
+            &p2,
+            "Manifest-Version: 1.0\r\nBuild-Jdk: 21.0.5\r\nBuild-Jdk-Spec: 17\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
+        );
+        let info2 = super::read_jar_info(p2.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info2.build_jdk, Some(17), "应优先取 Build-Jdk-Spec");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 上限必须按**小版本**区分：2.3 只到 15，2.7 到 21。若按大版本一刀切，
+    /// 「Spring Boot 2.3 配 JDK 21」这种真会崩的组合就会被放过。
+    #[tokio::test]
+    async fn read_jar_info_upper_bound_depends_on_minor_version() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_minor_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (sb, min, max) in [
+            ("2.3.12.RELEASE", 8, 15),
+            ("2.7.18", 8, 21),
+            ("3.0.13", 17, 21),
+            ("3.3.13", 17, 23),
+            ("4.0.8", 17, 25),
+        ] {
+            let p = dir.join(format!("{sb}.jar"));
+            fake_jar(
+                &p,
+                &format!("Manifest-Version: 1.0\r\nSpring-Boot-Version: {sb}\r\n\r\n"),
+            );
+            let info = super::read_jar_info(p.to_str().unwrap().to_string())
+                .await
+                .unwrap();
+            assert_eq!(info.min_jdk, Some(min), "Spring Boot {sb} 下限");
+            assert_eq!(info.max_jdk, Some(max), "Spring Boot {sb} 上限");
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// jar 里没有 `Build-Jdk` 时不能瞎猜（该字段并非必然存在），
+    /// 也不能因此把 max_jdk 一起丢掉
+    #[tokio::test]
+    async fn read_jar_info_tolerates_missing_build_jdk() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_nobuild_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("app.jar");
+        fake_jar(&p, "Manifest-Version: 1.0\r\nSpring-Boot-Version: 2.7.18\r\n\r\n");
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.build_jdk, None);
+        assert_eq!(info.min_jdk, Some(8));
+        assert_eq!(info.max_jdk, Some(21));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

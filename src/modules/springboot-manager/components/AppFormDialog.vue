@@ -39,14 +39,25 @@
                 {{ j.name }} ({{ j.version }}) {{ j.key === 'jdk' ? '[JDK]' : '[JRE]' }}
               </option>
             </select>
-            <!-- Spring Boot 3.x/4.x 要求 Java 17，选错 JDK 会在启动时直接 UnsupportedClassVersionError -->
+            <!-- Spring Boot 3.x/4.x 要求 Java 17+，选错运行时会在启动时直接 UnsupportedClassVersionError。
+                 门槛是运行时版本要求，JDK 与 JRE 一视同仁。 -->
             <div v-if="jarInfo" class="text-xs mt-1" :class="jdkTooOld ? 'text-destructive' : 'hint'">
               <template v-if="jarInfo.spring_boot_version">
-                Spring Boot {{ jarInfo.spring_boot_version }}<template v-if="jarInfo.min_jdk"> · {{ $t('jarNeedsJdk', { n: jarInfo.min_jdk }) }}</template>
+                Spring Boot {{ jarInfo.spring_boot_version }}<template v-if="compatRangeText"> · {{ compatRangeText }}</template>
               </template>
               <template v-else>{{ $t('jarNoSpringBootInfo') }}</template>
               <template v-if="jdkTooOld"> — {{ $t('jdkTooOldForJar') }}</template>
             </div>
+            <!-- 官方上限的含义是「测试到哪」而非硬约束，超出多半仍能跑 → 只警告、不拦截 -->
+            <div v-if="jdkAboveRange" class="text-xs text-warning mt-1">
+              {{ $t('jdkAboveRangeForJar', { cur: selectedJdkMajor, max: jarInfo?.max_jdk }) }}
+            </div>
+            <!-- jar 的构建 JDK 只作「最佳搭配」参考：它不等于运行门槛（可用 --release 降级编译） -->
+            <div v-if="buildJdkHint" class="text-xs mt-1" :class="buildJdkHint.level === 'warn' ? 'text-warning' : 'hint'">
+              {{ buildJdkHint.text }}
+            </div>
+            <!-- 选 JRE 不影响启动，但 opx 的 JVM 监控走 jstat/jcmd，只有 JDK 提供 -->
+            <div v-if="isJre" class="text-xs hint mt-1">{{ $t('jreNoJvmMonitor') }}</div>
           </div>
 
           <!-- Resource planning -->
@@ -85,14 +96,21 @@
           </div>
           <div class="field">
             <div class="field-label">{{ $t('gcType') }}</div>
+            <!-- 选项与可用性由后端目录下发：JDK 8 上 ZGC / Shenandoah 选中会让 JVM
+                 直接以 Unrecognized VM option 拒绝启动，所以这里禁用而不只是提示 -->
             <select class="input" v-model="jvm.gc_type">
               <option value="" disabled>{{ $t('selectGcType') }}</option>
-              <option value="G1GC">G1GC</option>
-              <option value="ParallelGC">ParallelGC</option>
-              <option value="ZGC">ZGC</option>
-              <option value="ShenandoahGC">ShenandoahGC</option>
-              <option value="SerialGC">SerialGC</option>
+              <option
+                v-for="gc in gcOptions"
+                :key="gc.name"
+                :value="gc.name"
+                :disabled="!gc.supported"
+              >{{ gc.name }}{{ gc.recommended ? $t('gcRecommended') : (gc.supported ? '' : $t('gcUnsupported')) }}</option>
             </select>
+            <div v-if="gcHint" class="text-xs hint mt-1">{{ gcHint }}</div>
+            <div v-if="gcUnsupportedSelected" class="text-xs text-destructive mt-1">
+              {{ $t('gcUnsupportedSelected', { gc: jvm.gc_type, n: selectedJdkMajor ?? '' }) }}
+            </div>
           </div>
           <!-- Port + Profile -->
           <div class="grid-2">
@@ -204,16 +222,6 @@
                 />
                 <div class="text-muted text-sm">{{ $t('stopTimeoutHint') }}</div>
               </div>
-              <div class="field">
-                <div class="field-label">{{ $t('gracefulStopUrl') }}</div>
-                <input
-                  class="input"
-                  type="text"
-                  v-model="form.actuator_shutdown_url"
-                  :placeholder="actuatorPlaceholder"
-                />
-                <div class="text-muted text-sm">{{ $t('gracefulStopUrlHint') }}</div>
-              </div>
             </div>
           </details>
         </div>
@@ -246,9 +254,17 @@ import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
-import type { SpringBootApp, JvmOptsTemplate, JarInfo } from '@/models/springboot'
+import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption } from '@/models/springboot'
 
 const { t } = useI18n()
+
+/**
+ * 可选的 GC 名单（顺序与后端 `jvm_opts::GC_CHOICES` 一致）。
+ *
+ * 仅用于两处**拿不到后端目录**的场合：解析已存的 jvm_opts 数组、以及还没选运行时之前的
+ * 兜底渲染。一旦选好运行时，可用性与「推荐」一律以后端下发的 `gc_options` 为准。
+ */
+const GC_CHOICES = ['G1GC', 'ParallelGC', 'ZGC', 'ShenandoahGC', 'SerialGC']
 
 const props = withDefaults(defineProps<{
   app?: SpringBootApp | null
@@ -294,6 +310,16 @@ const jvm = reactive<JvmOptsTemplate>({
 const extraFlagsText = ref('')
 const utf8Encoding = ref(true)
 
+/**
+ * GC 下拉框的可选项：由后端按所选 JDK 下发（含 supported / recommended）。
+ *
+ * 初值放「全部可用、无推荐」而不是空数组——用户可能先选 jar 再选运行时，
+ * 中间这段时间下拉框不该是空的；选好运行时后会被 `onJdkChange` 拿到的新目录覆盖。
+ */
+const gcOptions = ref<GcOption[]>(
+  GC_CHOICES.map(name => ({ name, supported: true, recommended: false }))
+)
+
 /** apps.json 中存的是相对 data_dir 的路径（如 springboot/{name}/app.jar），
  *  jar_path 已解析为绝对路径，需要剥离 data_dir 前缀显示相对路径 */
 function displayRelPath(p: string): string {
@@ -310,7 +336,6 @@ function displayRelPath(p: string): string {
 
 function parseJvmOpts(opts: string[]): JvmOptsTemplate {
   const result: JvmOptsTemplate = { xms_mb: 512, xmx_mb: 512, metaspace_mb: 128, gc_type: 'G1GC', extra_flags: [] }
-  const knownGc = ['G1GC', 'ZGC', 'ParallelGC', 'ShenandoahGC', 'SerialGC']
   for (const opt of opts) {
     if (opt.startsWith('-Xms')) {
       result.xms_mb = parseInt(opt.slice(4).replace(/[gm]/g, '')) || 256
@@ -318,7 +343,7 @@ function parseJvmOpts(opts: string[]): JvmOptsTemplate {
       result.xmx_mb = parseInt(opt.slice(4).replace(/[gm]/g, '')) || 1024
     } else if (opt.startsWith('-XX:MetaspaceSize=')) {
       result.metaspace_mb = parseInt(opt.slice(18).replace('m', '')) || 128
-    } else if (knownGc.some(gc => opt === `-XX:+Use${gc}`)) {
+    } else if (GC_CHOICES.some(gc => opt === `-XX:+Use${gc}`)) {
       result.gc_type = opt.slice(8) // -XX:+Use 为 8 字符，slice(8) 取出 GC 名
     } else {
       result.extra_flags.push(opt)
@@ -405,18 +430,15 @@ const form = reactive({
   group: null as string | null,
   jdk_type: '',
   stop_timeout_secs: 30,
-  actuator_shutdown_url: '',
 })
 
 const programArgsText = ref('')
 
-/** 留空时的实际请求地址：占位符直接把默认值显示出来，用户不必猜 */
-const actuatorPlaceholder = computed(() =>
-  form.port ? `http://127.0.0.1:${form.port}/actuator/shutdown` : t('gracefulStopUrlNoPort')
-)
-
 /** 选 jar 时探测到的元信息（Spring Boot 版本 / 所需 JDK），仅用于提示，不参与提交 */
 const jarInfo = ref<JarInfo | null>(null)
+
+/** jar 元信息读取中：此刻版本门槛还未知，放行保存等于给拦截留了个绕过窗口 */
+const jarInfoLoading = ref(false)
 
 /** 从 JDK 版本串取主版本：`21.0.11` → 21；旧命名 `1.8.0_x` → 8。取不到返回 null。 */
 function jdkMajor(version: string): number | null {
@@ -427,16 +449,93 @@ function jdkMajor(version: string): number | null {
   return first === 1 && m[2] !== undefined ? Number(m[2]) : first
 }
 
-/** 所选 JDK 是否低于该 jar 的要求（Spring Boot 3.x/4.x 需 JDK 17+） */
+/** 当前选中的运行时（可能是 JDK 也可能是 JRE） */
+const selectedRuntime = computed(() =>
+  store.jdkList.find(j => j.id === form.jdk_installed_id) ?? null
+)
+
+const isJre = computed(() => selectedRuntime.value?.key === 'jre')
+
+/** 所选运行时的 Java 主版本；未选或取不到时为 null */
+const selectedJdkMajor = computed(() =>
+  selectedRuntime.value ? jdkMajor(selectedRuntime.value.version) : null
+)
+
+/** 官方兼容区间的展示文案：有上限显示 `官方兼容 Java 17–25`，没上限退回 `需 Java 17+` */
+const compatRangeText = computed(() => {
+  const min = jarInfo.value?.min_jdk
+  if (!min) return ''
+  const max = jarInfo.value?.max_jdk
+  return max
+    ? t('jarCompatRange', { min: String(min), max: String(max) })
+    : t('jarNeedsJdk', { n: String(min) })
+})
+
+/**
+ * 所选运行时是否低于该 jar 的要求（Spring Boot 3.x/4.x 需 Java 17+）。
+ *
+ * ⚠️ 门槛是**运行时版本**要求，与 JDK/JRE 类型无关：JRE 17 足以跑 Boot 3.x，
+ * 而 JRE 8 跑 Boot 4.x 同样 UnsupportedClassVersionError。所以这里**只比版本、
+ * 不看类型**——对 JRE 做豁免会放进一个启动即崩的配置。
+ */
 const jdkTooOld = computed(() => {
   const floor = jarInfo.value?.min_jdk
   if (!floor) return false
-  const jdk = store.jdkList.find(j => j.id === form.jdk_installed_id)
-  const major = jdk ? jdkMajor(jdk.version) : null
+  const major = selectedJdkMajor.value
   return major !== null && major < floor
 })
 
+/**
+ * 所选运行时是否**高于**官方兼容上限（如 Spring Boot 3.0 配 JDK 25）。
+ *
+ * 上限只是「官方测试到哪」，超出不代表跑不起来（顶多是第三方库不认新字节码），
+ * 所以这里只驱动一条黄色提示，**不参与 `save()` 的拦截**。
+ */
+const jdkAboveRange = computed(() => {
+  const max = jarInfo.value?.max_jdk
+  const major = selectedJdkMajor.value
+  if (!max || major === null) return false
+  return major > max
+})
+
+/**
+ * jar 的构建 JDK（MANIFEST `Build-Jdk`）与所选运行时不一致时的「最佳搭配」提示。
+ *
+ * ⚠️ 构建 JDK ≠ 运行门槛（同一份源码能用 `--release 17` 在 JDK 21 上编出 v61 字节码），
+ * 所以只是建议：选得比它低时给黄色警告（有真实风险），选得比它高时给中性说明。
+ */
+const buildJdkHint = computed<{ level: 'warn' | 'hint'; text: string } | null>(() => {
+  const built = jarInfo.value?.build_jdk
+  const major = selectedJdkMajor.value
+  if (!built || major === null || major === built) return null
+  const params = { b: String(built), cur: String(major) }
+  return major < built
+    ? { level: 'warn', text: t('jarBuiltWithJdkLower', params) }
+    : { level: 'hint', text: t('jarBuiltWithJdkHigher', params) }
+})
+
+/** 所选 JDK 主版本 → 该版本的 GC 推荐说明（未选运行时则不显示） */
+const gcHint = computed(() => {
+  const v = selectedJdkMajor.value
+  if (v === null) return ''
+  if (v <= 10) return t('gcHintJdk8')
+  if (v <= 16) return t('gcHintJdk11')
+  if (v <= 20) return t('gcHintJdk17')
+  if (v <= 23) return t('gcHintJdk21')
+  return t('gcHintJdk24')
+})
+
+/**
+ * 当前选中的 GC 在该 JDK 上不受支持——只在「编辑旧应用」时可能出现（新建走下拉框
+ * 已经禁用了不可用项）。此时启动会直接失败，所以给红色提示。
+ */
+const gcUnsupportedSelected = computed(() => {
+  const opt = gcOptions.value.find(o => o.name === jvm.gc_type)
+  return !!opt && !opt.supported
+})
+
 const valid = computed(() => {
+  if (jarInfoLoading.value) return false
   if (nameError.value) return false
   if (props.app) return form.name.trim() !== '' && form.jdk_installed_id !== ''
   return form.jar_path.trim() !== '' && form.name.trim() !== '' && form.jdk_installed_id !== '' && recommendedClicked.value
@@ -467,7 +566,6 @@ onMounted(async () => {
     form.group = props.app.group
     form.jdk_type = props.app.jdk_type
     form.stop_timeout_secs = props.app.stop_timeout_secs
-    form.actuator_shutdown_url = props.app.actuator_shutdown_url || ''
     programArgsText.value = props.app.program_args.join('\n')
 
     const parsed = parseJvmOpts(props.app.jvm_opts)
@@ -484,11 +582,23 @@ onMounted(async () => {
 
     // 编辑模式下 jar 已在位：直接读它的元信息，显示框架版本与所需 JDK
     if (props.app.jar_path) {
+      jarInfoLoading.value = true
       try {
         jarInfo.value = await store.readJarInfo(props.app.jar_path)
       } catch (e) {
         console.error('读取 JAR 信息失败:', e)
+      } finally {
+        jarInfoLoading.value = false
       }
+    }
+
+    // 编辑模式不会触发 onJdkChange，这里单独取一次 GC 目录用于置灰与「推荐」标注。
+    // 只补目录、**不覆盖已保存的参数**——否则一打开就把用户的堆大小/参数重置了。
+    try {
+      const rec = await store.getRecommendedOpts(form.jdk_installed_id)
+      gcOptions.value = rec.gc_options
+    } catch (e) {
+      console.error('读取 GC 目录失败:', e)
     }
   }
 })
@@ -512,13 +622,16 @@ async function selectJar() {
     } catch (e) {
       console.error('读取 JAR 端口失败:', e)
     }
-    // 识别构建该 JAR 的 Spring Boot 版本 → 提示所需 JDK
+    // 识别构建该 JAR 的 Spring Boot 版本 → 提示所需运行时
     // （3.x/4.x 需 17+，选错会在启动时直接 UnsupportedClassVersionError）
+    jarInfoLoading.value = true
     try {
       jarInfo.value = await store.readJarInfo(selected)
     } catch (e) {
       console.error('读取 JAR 信息失败:', e)
       jarInfo.value = null
+    } finally {
+      jarInfoLoading.value = false
     }
   }
 }
@@ -533,6 +646,8 @@ async function onJdkChange() {
     tuning.xmxMb = recommended.xmx_mb
     jvm.metaspace_mb = recommended.metaspace_mb
     jvm.gc_type = recommended.gc_type
+    // 目录随推荐值一起换：换了 JDK 之后能选的 GC 也变了（如 JDK 8 下 ZGC 不可用）
+    gcOptions.value = recommended.gc_options
     extraFlagsText.value = recommended.extra_flags.join(' ')
     const selected = store.jdkList.find(j => j.id === form.jdk_installed_id)
     form.jdk_type = selected?.key === 'jdk' ? 'jdk' : 'jre'
@@ -551,6 +666,17 @@ function removeEnv(index: number) {
 
 async function save() {
   if (!valid.value || saving.value) return
+
+  // 阻挡低于门槛的运行时保存。门槛来自 jar 的 Spring Boot 版本（3.x/4.x 需 17+），
+  // 是**运行时**要求——JRE 与 JDK 一视同仁，所以这里不按类型豁免。
+  if (jdkTooOld.value) {
+    saveError.value = t('jdkTooOldBlockedSave', {
+      cur: selectedRuntime.value?.version ?? '',
+      n: jarInfo.value?.min_jdk ?? '',
+    })
+    return
+  }
+
   // 名称重复校验
   const dupId = props.app ? props.app.id : undefined
   if (isNameDuplicate(form.name, dupId)) {
@@ -586,7 +712,6 @@ async function save() {
         jdk_type: form.jdk_type,
         group: form.group,
         stop_timeout_secs: form.stop_timeout_secs,
-        actuator_shutdown_url: form.actuator_shutdown_url,
       })
       emit('saved', updated)
     } else {
@@ -607,7 +732,6 @@ async function save() {
         jdk_type: form.jdk_type,
         group: form.group,
         stop_timeout_secs: form.stop_timeout_secs,
-        actuator_shutdown_url: form.actuator_shutdown_url,
       })
       emit('saved', created)
     }
@@ -868,6 +992,8 @@ select.input {
 .mt-1 { margin-top: 4px; }
 .text-xs { font-size: 12px; }
 .text-destructive { color: #b91c1c; }
+/* 提示级（非错误）：官方兼容上限之外、构建 JDK 不一致这类「能跑但要注意」的信息 */
+.text-warning { color: #b45309; }
 .border-destructive { border-color: #b91c1c !important; }
 .hint { font-size: 11px; color: var(--color-muted-foreground); }
 </style>

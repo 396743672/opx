@@ -33,8 +33,6 @@ export interface SpringBootApp {
   jdk_type: string
   /** 停止等待时长（秒）：发出优雅停止请求后等应用自行退出的上限，默认 30 */
   stop_timeout_secs: number
-  /** 优雅停止地址；留空则按端口推导 http://127.0.0.1:{port}/actuator/shutdown */
-  actuator_shutdown_url: string | null
 }
 
 export interface AppGroup {
@@ -94,8 +92,21 @@ export interface JarInfo {
   version: string | null
   /** 构建该 JAR 的 Spring Boot 版本（repackage 自动写入，2.x/3.x/4.x 都有） */
   spring_boot_version: string | null
-  /** 该 Spring Boot 大版本要求的最低 JDK 主版本；无法判断时为 null */
+  /** 该 Spring Boot 版本官方兼容的**最低** Java 主版本；无法判断时为 null */
   min_jdk: number | null
+  /** 官方兼容的**最高** Java 主版本；null = 未知（不提示上限） */
+  max_jdk: number | null
+  /** 构建该 jar 的 JDK 主版本（MANIFEST Build-Jdk-Spec），仅作「最佳搭配」参考 */
+  build_jdk: number | null
+}
+
+/** 单个 GC 选项在「所选 JDK」上的可用性，由后端下发（与推荐逻辑同源） */
+export interface GcOption {
+  name: string
+  /** 该 JDK 是否支持；false 时下拉框应禁用该选项 */
+  supported: boolean
+  /** 是否是该 JDK 版本的推荐值 */
+  recommended: boolean
 }
 
 export interface CreateAppParams {
@@ -115,7 +126,6 @@ export interface CreateAppParams {
   group: string | null
   jdk_type: string
   stop_timeout_secs?: number
-  actuator_shutdown_url?: string | null
 }
 
 export interface UpdateAppParams {
@@ -134,8 +144,6 @@ export interface UpdateAppParams {
   group?: string | null
   jdk_type?: string
   stop_timeout_secs?: number
-  /** 传空串表示清空（停止时回退为按端口推导） */
-  actuator_shutdown_url?: string
 }
 
 export interface JvmOptsTemplate {
@@ -144,4 +152,14 @@ export interface JvmOptsTemplate {
   metaspace_mb: number
   gc_type: string
   extra_flags: string[]
+}
+
+/**
+ * `get_recommended_jvm_opts` 的返回：推荐参数 + 该 JDK 的 GC 目录。
+ *
+ * 目录单独放在这里而不是塞进 `JvmOptsTemplate`——后者既是表单 `jvm` 的响应式形状，
+ * 又是 `parseJvmOpts`（从已存的 jvm_opts 数组反推）的产物，那两处根本拿不到目录。
+ */
+export interface JvmOptsRecommendation extends JvmOptsTemplate {
+  gc_options: GcOption[]
 }

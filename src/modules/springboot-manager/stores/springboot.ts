@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { ref } from 'vue'
-import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsTemplate, ReplaceResult, StopOutcome, CreateAppParams, UpdateAppParams, JarInfo } from '@/models/springboot'
+import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsRecommendation, ReplaceResult, StopOutcome, CreateAppParams, UpdateAppParams, JarInfo } from '@/models/springboot'
 import type { InstalledSoftware } from '@/models/software'
 
 export const useSpringBootStore = defineStore('springboot', () => {
@@ -74,8 +74,8 @@ export const useSpringBootStore = defineStore('springboot', () => {
     dependencyCandidates.value = await invoke<InstalledSoftware[]>('list_springboot_dependency_candidates')
   }
 
-  async function getRecommendedOpts(jdkInstalledId: string): Promise<JvmOptsTemplate> {
-    return await invoke<JvmOptsTemplate>('get_recommended_jvm_opts', { jdkInstalledId })
+  async function getRecommendedOpts(jdkInstalledId: string): Promise<JvmOptsRecommendation> {
+    return await invoke<JvmOptsRecommendation>('get_recommended_jvm_opts', { jdkInstalledId })
   }
 
   async function readJarPort(jarPath: string): Promise<number | null> {

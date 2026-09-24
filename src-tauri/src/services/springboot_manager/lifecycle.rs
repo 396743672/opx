@@ -9,6 +9,10 @@ use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
 use crate::utils::process::hidden;
 
+// 注入通道只在 Windows 需要（Unix 的 SIGTERM 本身就是 JVM 能响应的信号）
+#[cfg(windows)]
+use super::agent;
+
 // 进程判活委托给 health_check 的单 PID 刷新版本：停止流程按秒轮询，
 // 全量 `refresh_processes(All)` 会把整个等待期变成反复枚举全系统进程。
 pub(crate) fn is_pid_alive(pid: u32) -> bool {
@@ -213,19 +217,26 @@ fn stop_outcome(pid: u32, has_channel: bool, exited: bool, timeout_secs: u64) ->
 
 /// 停止 Spring Boot 应用。
 ///
-/// Windows 上没有 SIGTERM，**HTTP 是唯一能让 JVM 走完 shutdown hook 的通道**：
-/// - `jcmd <pid> Shutdown` 这个命令**不存在**（JDK 8 与 21 实测均报
-///   `java.lang.IllegalArgumentException: Unknown diagnostic command`，进程照旧存活）
-/// - `taskkill /PID`（不带 `/F`）发的是 WM_CLOSE，**只对进程自己拥有的窗口有效**；
-///   控制台程序的窗口属于 conhost.exe，实测被直接拒绝（「只能强行终止这个进程(带 /F 选项)」）
-/// - Ctrl+C / CTRL_BREAK 全走控制台通道，而 opx 用 `CREATE_NO_WINDOW` 启动子进程（防闪黑窗）
-///   → 子进程没有控制台，收不到
+/// Windows 上没有 SIGTERM，让 JVM 走完 shutdown hook 的唯一通道是
+/// **attach + agent 注入** —— 应用零配置：用 JDK 的 attach API 把一小段代码注入
+/// 目标 JVM，让它自己 `System.exit(0)`（详见 [`agent`](super::agent)）；
+/// 仍未退出则强制终止。
 ///
-/// 故顺序为：POST 应用的 Actuator 停止端点 → 等它自行退出（上限 `stop_timeout_secs`）
-/// → 仍未退出才强制终止，并如实说明是「自行退出」还是「强制终止」。
+/// 已实测无效、故未采用的手段：`jcmd <pid> Shutdown`（该命令不存在，JDK 8/21 均报
+/// `Unknown diagnostic command`）、`taskkill /PID` 不带 `/F`（WM_CLOSE 只对进程
+/// 自己拥有的窗口有效）、`AttachConsole` + `CTRL_BREAK`（API 返回成功但信号不送达）。
+///
+/// 已移除的手段：`POST <Actuator 停止端点>`。它依赖应用侧配置（默认关闭、属性名还随
+/// 大版本变），在「端点被禁用 / 站点关闭」的应用上每次停止都会先白等一次连接超时；
+/// 而注入对 JRE 与 JDK 目标一律有效，覆盖了它原本的唯一价值场景。
+///
+/// Unix 上 `kill -TERM` 本身就是 JVM 能响应的信号，无需再注入。
+///
+/// 返回的 [`StopOutcome`] 只描述「是否走完了优雅流程」；应用真的没停掉才算 `Err`。
 pub async fn stop_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
+    software_mgr: &SoftwareManager,
     app_handle: &AppHandle,
 ) -> Result<StopOutcome, String> {
     let app = springboot_mgr.find_app(app_id).map_err(|e| e.to_string())?;
@@ -246,7 +257,7 @@ pub async fn stop_app(
     if let Some(pid) = app.pid {
         // ① 发出优雅停止请求。两条通道按平台分工：
         //    Unix —— SIGTERM 是 JVM 能真正响应的信号，Spring Boot 的优雅停机就建立在其上
-        //    Windows —— 没有 SIGTERM，HTTP 是唯一通道
+        //    Windows —— 没有 SIGTERM，用 attach + agent 注入让 JVM 自己 System.exit(0)
         #[cfg(not(windows))]
         let term_sent = {
             let _ = std::process::Command::new("kill")
@@ -258,29 +269,39 @@ pub async fn stop_app(
         #[cfg(windows)]
         let term_sent = false;
 
-        let shutdown_accepted =
-            match resolve_actuator_url(app.actuator_shutdown_url.as_deref(), app.port) {
-                Some(url) => match request_shutdown(&url).await {
-                    Ok(()) => {
-                        tracing::info!(app_id, pid, %url, "已请求 Actuator 优雅停止");
-                        true
-                    }
-                    // 多数应用没开这个端点，属预期情况
-                    Err(why) => {
-                        tracing::info!(app_id, pid, %url, why = %why, "Actuator 优雅停止不可用");
-                        false
-                    }
-                },
-                None => {
-                    tracing::info!(app_id, pid, "未配置端口与 Actuator 地址，跳过 HTTP 优雅停止");
+        // agent 让 JVM **自己** System.exit(0)，走完整关闭流程 —— 这是 Windows 上
+        // 唯一「应用不用改任何配置」的优雅停止通道，也是本平台唯一的通道。
+        #[cfg(windows)]
+        let agent_requested = match agent::resolve_launcher(&app, software_mgr) {
+            Ok(launcher) => match agent::request_graceful_exit(pid, launcher).await {
+                Ok(agent::InjectOutcome::Accepted) => {
+                    tracing::info!(app_id, pid, "已注入停止 agent，JVM 将自行退出");
+                    true
+                }
+                // 启动器跑起来了但报错：命令可能已经送达——attach 是客户端先发命令
+                // 再读响应，跨版本时客户端解析响应失败而目标已执行（实测）。
+                // 所以仍算「发出过停止请求」，值得等待。
+                Ok(agent::InjectOutcome::Failed(why)) => {
+                    tracing::info!(app_id, pid, why = %why, "停止 agent 注入报错，仍等待应用退出");
+                    true
+                }
+                Err(why) => {
+                    tracing::info!(app_id, pid, why = %why, "停止 agent 注入不可用");
                     false
                 }
-            };
+            },
+            Err(why) => {
+                tracing::info!(app_id, pid, why = %why, "停止 agent 不可用");
+                false
+            }
+        };
+        #[cfg(not(windows))]
+        let agent_requested = false;
 
         // ② 等它自己退——**只在确实发出过它能响应的请求时才等**。
         //    没有任何通道时进程不可能自行退出，等满超时纯属空耗
-        //    （Windows 上没暴露端点的应用就是这种情况，干等只会让停止显得变慢）。
-        let has_channel = term_sent || shutdown_accepted;
+        //    （Windows 上本机没装 JDK 而应用又不是 JDK 启动时就是这种情况，干等只会让停止显得变慢）。
+        let has_channel = term_sent || agent_requested;
         let timeout_secs = if has_channel {
             app.stop_timeout_secs.clamp(1, 600)
         } else {
@@ -320,50 +341,6 @@ pub async fn stop_app(
     Ok(outcome)
 }
 
-/// 推导优雅停止地址：显式配置优先，否则按应用端口拼 Actuator 默认路径。
-///
-/// 返回 `None` 表示无从请求（既没配地址也没填端口），此时只能等待 + 强杀。
-fn resolve_actuator_url(configured: Option<&str>, port: Option<u16>) -> Option<String> {
-    let cfg = configured.map(str::trim).filter(|s| !s.is_empty());
-    match cfg {
-        Some(url) => Some(url.to_string()),
-        None => port.map(|p| format!("http://127.0.0.1:{p}/actuator/shutdown")),
-    }
-}
-
-/// POST 应用的 Actuator 停止端点。
-///
-/// 这里是小请求，用总超时是合适的（那种会掐断大文件下载的语义问题只存在于流式下载）。
-/// 失败原因原样回传，便于区分「没开端点」「端口不通」「认证被拒」。
-///
-/// 应用侧需要**同时**满足「暴露」与「允许访问」，且属性名随大版本不同
-/// （默认都是关闭的，所以 404 是最常见的失败）：
-/// - 2.x / 3.x：`management.endpoint.shutdown.enabled=true`
-/// - 4.x：改用 `management.endpoint.shutdown.access=unrestricted`（`enabled` 已废）
-/// - 两版都要把端点加入 `management.endpoints.web.exposure.include`（默认只暴露 health）
-async fn request_shutdown(url: &str) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("HTTP 客户端创建失败: {e}"))?;
-    let resp = client
-        .post(url)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {e}"))?;
-    let status = resp.status();
-    if status.is_success() {
-        Ok(())
-    } else if status.as_u16() == 404 {
-        Err("端点不存在（应用未暴露 shutdown 端点，该项默认关闭）".to_string())
-    } else if status.as_u16() == 401 || status.as_u16() == 403 {
-        Err(format!("认证被拒（HTTP {status}），Actuator 开启了鉴权"))
-    } else {
-        Err(format!("返回 HTTP {status}"))
-    }
-}
-
 /// 强制终止进程（Windows `taskkill /F`；Unix `kill -9`）。
 fn force_kill(pid: u32) {
     #[cfg(windows)]
@@ -390,7 +367,7 @@ pub async fn restart_app(
     software_mgr: &SoftwareManager,
     app_handle: &AppHandle,
 ) -> Result<StopOutcome, String> {
-    let outcome = stop_app(app_id, springboot_mgr, app_handle).await?;
+    let outcome = stop_app(app_id, springboot_mgr, software_mgr, app_handle).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
     start_app(app_id, springboot_mgr, software_mgr, app_handle).await?;
     Ok(outcome)
@@ -398,92 +375,8 @@ pub async fn restart_app(
 
 #[cfg(test)]
 mod tests {
-    use super::{request_shutdown, resolve_actuator_url, stop_outcome, StopOutcome};
+    use super::{stop_outcome, StopOutcome};
     use std::time::Duration;
-
-    /// 未显式配置时，按应用端口拼 Actuator 的默认停止路径
-    #[test]
-    fn actuator_url_falls_back_to_port() {
-        assert_eq!(
-            resolve_actuator_url(None, Some(8080)).as_deref(),
-            Some("http://127.0.0.1:8080/actuator/shutdown")
-        );
-    }
-
-    /// 显式配置优先于端口推导（context-path 或 management 独立端口的情形）
-    #[test]
-    fn actuator_url_prefers_explicit_config() {
-        assert_eq!(
-            resolve_actuator_url(Some("http://127.0.0.1:9000/base/actuator/shutdown"), Some(8080))
-                .as_deref(),
-            Some("http://127.0.0.1:9000/base/actuator/shutdown")
-        );
-    }
-
-    /// 空白配置视同未配置；无端口则无从请求（调用方会跳过 HTTP 优雅停止）
-    #[test]
-    fn actuator_url_handles_blank_and_missing_port() {
-        assert_eq!(
-            resolve_actuator_url(Some("   "), Some(8080)).as_deref(),
-            Some("http://127.0.0.1:8080/actuator/shutdown")
-        );
-        assert_eq!(resolve_actuator_url(None, None), None);
-        assert_eq!(resolve_actuator_url(Some(""), None), None);
-    }
-
-    /// 停止请求必须是 POST（Actuator 的 shutdown 端点只接受 POST），
-    /// 且「端点没开」要能被识别出来——否则用户只会看到「强制终止」而不知原因。
-    #[tokio::test]
-    async fn request_shutdown_posts_and_reports_missing_endpoint() {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("绑定回环端口");
-        let addr = listener.local_addr().expect("取本地地址");
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("接受连接");
-            let mut buf = [0u8; 512];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
-            let request_line = req.lines().next().unwrap_or_default().to_string();
-            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n");
-            let _ = stream.flush();
-            request_line
-        });
-
-        let url = format!("http://{addr}/actuator/shutdown");
-        let err = request_shutdown(&url).await.expect_err("404 应视为失败");
-        let request_line = server.join().expect("服务端线程");
-
-        assert!(
-            request_line.starts_with("POST /actuator/shutdown"),
-            "实际请求行: {request_line}"
-        );
-        assert!(
-            err.contains("端点不存在"),
-            "错误信息应指出端点未开启，实际: {err}"
-        );
-    }
-
-    /// 2xx 视为已受理：这条分支判错会让「优雅停止」永远失效、每次都退化成强杀
-    #[tokio::test]
-    async fn request_shutdown_accepts_2xx() {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("绑定回环端口");
-        let addr = listener.local_addr().expect("取本地地址");
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("接受连接");
-            let mut buf = [0u8; 512];
-            let _ = stream.read(&mut buf);
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
-            let _ = stream.flush();
-        });
-
-        let url = format!("http://{addr}/actuator/shutdown");
-        assert!(request_shutdown(&url).await.is_ok());
-    }
 
     /// 应用自行退出＝真正的优雅停止，不应带任何警告
     #[test]

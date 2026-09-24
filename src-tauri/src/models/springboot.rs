@@ -54,12 +54,6 @@ pub struct SpringBootApp {
     /// 那个阶段超时本身就是「应用清理最多可能花 30 秒」的意思，等得比它短只会误杀。
     #[serde(default = "default_stop_timeout_secs")]
     pub stop_timeout_secs: u64,
-    /// 优雅停止地址：POST 该地址触发应用自行关闭（Spring Boot Actuator 的 `/actuator/shutdown`）。
-    ///
-    /// 留空则按 `http://127.0.0.1:{port}/actuator/shutdown` 推导；无端口时跳过 HTTP 优雅停止。
-    /// 这是 Windows 上唯一能让 JVM 执行 shutdown hook 的通道（详见 `lifecycle::stop_app` 注释）。
-    #[serde(default)]
-    pub actuator_shutdown_url: Option<String>,
 }
 
 /// 从 JAR 读出的元信息（供表单展示，不落库）。
@@ -72,8 +66,18 @@ pub struct JarInfo {
     pub version: Option<String>,
     /// 构建该 JAR 的 Spring Boot 版本（MANIFEST 的 `Spring-Boot-Version`）
     pub spring_boot_version: Option<String>,
-    /// 该 Spring Boot 大版本要求的最低 JDK 主版本；无法判断时为 None
+    /// 该 Spring Boot 版本官方兼容的**最低** Java 主版本；无法判断时为 None
     pub min_jdk: Option<u32>,
+    /// 官方兼容的**最高** Java 主版本；`None` = 未知（不提示上限）。
+    ///
+    /// 这是「官方测试到哪」而非硬约束（且随补丁号上抬），所以只用于**警告**、不拦截保存。
+    #[serde(default)]
+    pub max_jdk: Option<u32>,
+    /// 构建该 JAR 的 JDK 主版本（MANIFEST 的 `Build-Jdk-Spec`），仅作「最佳搭配」参考。
+    ///
+    /// 它不等于运行门槛：同一份源码可以用 `--release 17` 在 JDK 21 上编出 v61 字节码。
+    #[serde(default)]
+    pub build_jdk: Option<u32>,
 }
 
 /// 停止等待默认值（秒）
@@ -172,8 +176,6 @@ pub struct CreateAppParams {
     pub jdk_type: String,
     #[serde(default = "default_stop_timeout_secs")]
     pub stop_timeout_secs: u64,
-    #[serde(default)]
-    pub actuator_shutdown_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,8 +195,20 @@ pub struct UpdateAppParams {
     pub group: Option<Option<String>>,
     pub jdk_type: Option<String>,
     pub stop_timeout_secs: Option<u64>,
-    /// 传空串表示清空配置（停止时回退为按端口推导默认地址）
-    pub actuator_shutdown_url: Option<String>,
+}
+
+/// 单个 GC 选项在「所选 JDK」上的可用性（供表单渲染下拉框）。
+///
+/// 之所以要后端下发而不是前端自己判断：JDK 8 上选 ZGC / Shenandoah 会让 JVM 直接
+/// 拒绝启动（`Unrecognized VM option`），可用性规则必须与 `generate_opts` 同源，
+/// 否则又会出现「推荐的」和「能选的」两套说法。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcOption {
+    pub name: String,
+    /// 该 JDK 是否支持；false 时表单应禁用该选项
+    pub supported: bool,
+    /// 是否是该 JDK 版本的推荐值
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,4 +218,7 @@ pub struct JvmOptsTemplate {
     pub metaspace_mb: u64,
     pub gc_type: String,
     pub extra_flags: Vec<String>,
+    /// 该 JDK 可选的 GC 目录（不支持的已标记），供前端置灰与标注「推荐」
+    #[serde(default)]
+    pub gc_options: Vec<GcOption>,
 }
