@@ -197,11 +197,25 @@ pub struct UpdateAppParams {
     pub stop_timeout_secs: Option<u64>,
 }
 
+/// 某个 GC 在本机运行时上不可用的原因。
+///
+/// 分成两类而不是只给一句「不支持」：**处置方式不同**——版本不够是「换个高版本 JDK」，
+/// 厂商不带则是「这个发行版换版本也没用，要么换 GC 要么换发行版」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GcUnsupportedReason {
+    /// 该 JDK 版本还没引入这个 GC（如 JDK 8 的 ZGC）
+    Version,
+    /// 版本够，但该**发行版**没把它编进去（Oracle 全版本不含 Shenandoah）
+    Vendor,
+}
+
 /// 单个 GC 选项在「所选 JDK」上的可用性（供表单渲染下拉框）。
 ///
 /// 之所以要后端下发而不是前端自己判断：JDK 8 上选 ZGC / Shenandoah 会让 JVM 直接
 /// 拒绝启动（`Unrecognized VM option`），可用性规则必须与 `generate_opts` 同源，
-/// 否则又会出现「推荐的」和「能选的」两套说法。
+/// 否则又会出现「推荐的」和「能选的」两套说法。厂商差异同理——同一份 JDK 21，
+/// Corretto/Zulu/Temurin 能选 Shenandoah，Oracle 选了必定启动失败。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcOption {
     pub name: String,
@@ -209,6 +223,9 @@ pub struct GcOption {
     pub supported: bool,
     /// 是否是该 JDK 版本的推荐值
     pub recommended: bool,
+    /// 不支持的原因；支持的选项为 `None`
+    #[serde(default)]
+    pub unsupported_reason: Option<GcUnsupportedReason>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -145,7 +145,7 @@ fn resolve_from(app: &SpringBootApp, installed: &[InstalledSoftware]) -> Result<
     let own = installed
         .iter()
         .find(|s| s.id == app.jdk_installed_id)
-        .ok_or("所选运行时未找到")?;
+        .ok_or("应用所选运行时已不存在，请在表单里重新选择")?;
     let own_home = paths::resolve_install_path(&own.install_path);
     if is_jdk_home(&own_home) {
         return Ok(build_launcher(&own_home));
@@ -170,7 +170,7 @@ fn resolve_from(app: &SpringBootApp, installed: &[InstalledSoftware]) -> Result<
 
     match candidates.first() {
         Some((home, _)) => Ok(build_launcher(home)),
-        None => Err("本机未安装 JDK，无法通过 attach 注入停止（装任意一个 JDK 即可）".to_string()),
+        None => Err("本机未安装 JDK，装任意一个 JDK 即可通过 attach 注入优雅停止".to_string()),
     }
 }
 
@@ -417,9 +417,13 @@ mod tests {
     }
 
     /// 绑定的运行时记录本身不存在（如运行时已被卸载）也要给出可读原因，不能 panic。
+    /// 文案要指向**下一步动作**（回表单重选），光说「未找到」用户不知道去哪儿找。
     #[test]
     fn reports_missing_runtime() {
         let err = resolve_from(&app_on("不存在的-id"), &[]).expect_err("应报错");
-        assert!(err.contains("未找到"), "错误信息: {err}");
+        assert!(
+            err.contains("已不存在") && err.contains("重新选择"),
+            "错误信息: {err}"
+        );
     }
 }

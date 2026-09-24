@@ -200,7 +200,17 @@ impl StopOutcome {
 }
 
 /// 停止判定：把「有没有通道 / 有没有自行退出」到结果的决策抽成纯函数，便于覆盖测试。
-fn stop_outcome(pid: u32, has_channel: bool, exited: bool, timeout_secs: u64) -> StopOutcome {
+///
+/// `no_channel_reason` 是没有通道时的**具体原因**（如「本机未安装 JDK」），由
+/// [`stop_app`] 从注入失败的返回值里透传上来。光说「没有通道」用户无从下手——同一句
+/// 提示背后可能是「没装 JDK」「所选运行时被删了」「启动器起不来」三种完全不同的处置。
+fn stop_outcome(
+    pid: u32,
+    has_channel: bool,
+    exited: bool,
+    timeout_secs: u64,
+    no_channel_reason: Option<&str>,
+) -> StopOutcome {
     if exited {
         return StopOutcome::graceful();
     }
@@ -209,8 +219,12 @@ fn stop_outcome(pid: u32, has_channel: bool, exited: bool, timeout_secs: u64) ->
             "应用 PID {pid} 在 {timeout_secs}s 内未退出，已强制终止（本次未执行 shutdown hook）"
         ))
     } else {
+        let why = match no_channel_reason {
+            Some(r) if !r.trim().is_empty() => format!("（{r}）"),
+            _ => String::new(),
+        };
         StopOutcome::forced(format!(
-            "应用 PID {pid} 未提供优雅停止通道，已直接强制终止（未执行 shutdown hook）"
+            "应用 PID {pid} 没有可用的优雅停止通道{why}，已直接强制终止（未执行 shutdown hook）"
         ))
     }
 }
@@ -271,32 +285,34 @@ pub async fn stop_app(
 
         // agent 让 JVM **自己** System.exit(0)，走完整关闭流程 —— 这是 Windows 上
         // 唯一「应用不用改任何配置」的优雅停止通道，也是本平台唯一的通道。
+        // 没通道时把原因带出来，最终拼进给用户的提示里。
         #[cfg(windows)]
-        let agent_requested = match agent::resolve_launcher(&app, software_mgr) {
-            Ok(launcher) => match agent::request_graceful_exit(pid, launcher).await {
-                Ok(agent::InjectOutcome::Accepted) => {
-                    tracing::info!(app_id, pid, "已注入停止 agent，JVM 将自行退出");
-                    true
-                }
-                // 启动器跑起来了但报错：命令可能已经送达——attach 是客户端先发命令
-                // 再读响应，跨版本时客户端解析响应失败而目标已执行（实测）。
-                // 所以仍算「发出过停止请求」，值得等待。
-                Ok(agent::InjectOutcome::Failed(why)) => {
-                    tracing::info!(app_id, pid, why = %why, "停止 agent 注入报错，仍等待应用退出");
-                    true
-                }
+        let (agent_requested, no_channel_reason) =
+            match agent::resolve_launcher(&app, software_mgr) {
+                Ok(launcher) => match agent::request_graceful_exit(pid, launcher).await {
+                    Ok(agent::InjectOutcome::Accepted) => {
+                        tracing::info!(app_id, pid, "已注入停止 agent，JVM 将自行退出");
+                        (true, None)
+                    }
+                    // 启动器跑起来了但报错：命令可能已经送达——attach 是客户端先发命令
+                    // 再读响应，跨版本时客户端解析响应失败而目标已执行（实测）。
+                    // 所以仍算「发出过停止请求」，值得等待。
+                    Ok(agent::InjectOutcome::Failed(why)) => {
+                        tracing::info!(app_id, pid, why = %why, "停止 agent 注入报错，仍等待应用退出");
+                        (true, None)
+                    }
+                    Err(why) => {
+                        tracing::info!(app_id, pid, why = %why, "停止 agent 注入不可用");
+                        (false, Some(why))
+                    }
+                },
                 Err(why) => {
-                    tracing::info!(app_id, pid, why = %why, "停止 agent 注入不可用");
-                    false
+                    tracing::info!(app_id, pid, why = %why, "停止 agent 不可用");
+                    (false, Some(why))
                 }
-            },
-            Err(why) => {
-                tracing::info!(app_id, pid, why = %why, "停止 agent 不可用");
-                false
-            }
-        };
+            };
         #[cfg(not(windows))]
-        let agent_requested = false;
+        let (agent_requested, no_channel_reason): (bool, Option<String>) = (false, None);
 
         // ② 等它自己退——**只在确实发出过它能响应的请求时才等**。
         //    没有任何通道时进程不可能自行退出，等满超时纯属空耗
@@ -321,9 +337,16 @@ pub async fn stop_app(
             tracing::info!(app_id, pid, "应用已自行退出");
         } else {
             force_kill(pid);
-            tracing::warn!(app_id, pid, timeout_secs, has_channel, "应用未自行退出，已强制终止");
+            tracing::warn!(
+                app_id,
+                pid,
+                timeout_secs,
+                has_channel,
+                reason = ?no_channel_reason,
+                "应用未自行退出，已强制终止"
+            );
         }
-        outcome = stop_outcome(pid, has_channel, exited, timeout_secs);
+        outcome = stop_outcome(pid, has_channel, exited, timeout_secs, no_channel_reason.as_deref());
     }
 
     // 从进程注册表中注销
@@ -381,30 +404,51 @@ mod tests {
     /// 应用自行退出＝真正的优雅停止，不应带任何警告
     #[test]
     fn stop_outcome_graceful_when_app_exited() {
-        assert_eq!(stop_outcome(4242, true, true, 30), StopOutcome::graceful());
+        assert_eq!(stop_outcome(4242, true, true, 30, None), StopOutcome::graceful());
         // 即使没有任何通道，只要进程退了就是优雅退出
-        assert_eq!(stop_outcome(4242, false, true, 0), StopOutcome::graceful());
+        assert_eq!(stop_outcome(4242, false, true, 0, None), StopOutcome::graceful());
     }
 
     /// 强杀**不是失败**：必须返回可序列化的结果而不是 Err，
     /// 否则 `restart_app` / 换包重启里的 `?` 会在主路径上短路（重启变「只停不起」）。
     #[test]
     fn stop_outcome_forced_is_not_an_error() {
-        let waited = stop_outcome(4242, true, false, 30);
+        let waited = stop_outcome(4242, true, false, 30, None);
         assert!(!waited.graceful);
         let msg = waited.message.expect("强杀应带提示");
         assert!(msg.contains("4242") && msg.contains("30s"), "实际: {msg}");
 
-        let no_channel = stop_outcome(4242, false, false, 0);
+        let no_channel = stop_outcome(4242, false, false, 0, None);
         assert!(!no_channel.graceful);
         let msg = no_channel.message.expect("无通道强杀应带提示");
-        assert!(msg.contains("未提供优雅停止通道"), "实际: {msg}");
+        assert!(msg.contains("没有可用的优雅停止通道"), "实际: {msg}");
+    }
+
+    /// 无通道时必须把**具体原因**带给用户，否则同一句「没有通道」背后可能是
+    /// 「没装 JDK」「运行时被删」「启动器起不来」三种完全不同的处置方式。
+    #[test]
+    fn stop_outcome_carries_the_no_channel_reason() {
+        let outcome = stop_outcome(
+            7720,
+            false,
+            false,
+            0,
+            Some("本机未安装 JDK，装任意一个 JDK 即可通过 attach 注入优雅停止"),
+        );
+        let msg = outcome.message.expect("应带提示");
+        assert!(msg.contains("本机未安装 JDK"), "原因应出现在提示里，实际: {msg}");
+        assert!(msg.contains("7720"), "实际: {msg}");
+
+        // 空白原因不该留下一对空括号
+        let blank = stop_outcome(7720, false, false, 0, Some("  "));
+        let msg = blank.message.expect("应带提示");
+        assert!(!msg.contains("（）"), "空原因不应渲染成空括号，实际: {msg}");
     }
 
     /// 返回前端的字段名必须与 snake_case 约定一致，前端按 `graceful` / `message` 读取
     #[test]
     fn stop_outcome_serializes_with_expected_fields() {
-        let json = serde_json::to_value(stop_outcome(1, false, false, 0)).expect("序列化");
+        let json = serde_json::to_value(stop_outcome(1, false, false, 0, None)).expect("序列化");
         assert_eq!(json["graceful"], serde_json::json!(false));
         assert!(json["message"].is_string());
         let ok = serde_json::to_value(StopOutcome::graceful()).expect("序列化");
@@ -452,6 +496,6 @@ mod tests {
         assert!(dead, "force_kill 后 PID {pid} 仍存活");
 
         // 进程确实没了 → 结论必须是「成功但未优雅」，而不是 Err
-        assert!(!stop_outcome(pid, false, false, 0).graceful);
+        assert!(!stop_outcome(pid, false, false, 0, None).graceful);
     }
 }

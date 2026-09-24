@@ -310,7 +310,10 @@ pub async fn get_recommended_jvm_opts(
         .find_installed(&jdk_installed_id)
         .ok_or("所选 JDK 未找到")?;
     let version = jvm_opts::detect_jdk_version(&jdk.install_path).ok_or("无法检测 JDK 版本")?;
-    Ok(jvm_opts::generate_opts(version))
+    // 厂商只影响 GC 目录里 Shenandoah 的可用性：Oracle 的任何版本都不含它，
+    // 选中会在启动时 `Unrecognized VM option` 直接失败（OpenJDK wiki 明文）。
+    let oracle = jvm_opts::is_oracle_runtime(std::path::Path::new(&jdk.install_path));
+    Ok(jvm_opts::generate_opts(version, oracle))
 }
 
 #[tauri::command]

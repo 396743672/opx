@@ -105,11 +105,13 @@
                 :key="gc.name"
                 :value="gc.name"
                 :disabled="!gc.supported"
-              >{{ gc.name }}{{ gc.recommended ? $t('gcRecommended') : (gc.supported ? '' : $t('gcUnsupported')) }}</option>
+              >{{ gc.name }}{{ gc.recommended ? $t('gcRecommended') : gcUnsupportedLabel(gc) }}</option>
             </select>
             <div v-if="gcHint" class="text-xs hint mt-1">{{ gcHint }}</div>
-            <div v-if="gcUnsupportedSelected" class="text-xs text-destructive mt-1">
-              {{ $t('gcUnsupportedSelected', { gc: jvm.gc_type, n: selectedJdkMajor ?? '' }) }}
+            <div v-if="gcUnsupportedReason" class="text-xs text-destructive mt-1">
+              {{ gcUnsupportedReason === 'vendor'
+                ? $t('gcUnsupportedSelectedVendor', { gc: jvm.gc_type })
+                : $t('gcUnsupportedSelectedVersion', { gc: jvm.gc_type, n: selectedJdkMajor ?? '' }) }}
             </div>
           </div>
           <!-- Port + Profile -->
@@ -254,7 +256,7 @@ import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
-import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption } from '@/models/springboot'
+import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption, GcUnsupportedReason } from '@/models/springboot'
 
 const { t } = useI18n()
 
@@ -526,13 +528,23 @@ const gcHint = computed(() => {
 })
 
 /**
- * 当前选中的 GC 在该 JDK 上不受支持——只在「编辑旧应用」时可能出现（新建走下拉框
- * 已经禁用了不可用项）。此时启动会直接失败，所以给红色提示。
+ * 当前选中的 GC 在该 JDK 上不可用时的**原因**——只在「编辑旧应用」时可能出现
+ * （新建走下拉框已经禁用了不可用项）。此时启动会直接失败，所以给红色提示。
+ *
+ * 原因必须区分开：版本不够是「换高版本 JDK」，厂商不带（Oracle 不含 Shenandoah）
+ * 则是「换版本也没用」——两种说法混成一句会让用户白折腾一轮。
  */
-const gcUnsupportedSelected = computed(() => {
+const gcUnsupportedReason = computed<GcUnsupportedReason | null>(() => {
   const opt = gcOptions.value.find(o => o.name === jvm.gc_type)
-  return !!opt && !opt.supported
+  if (!opt || opt.supported) return null
+  return opt.unsupported_reason ?? 'version'
 })
+
+/** 下拉框里禁用项的后缀文案（可用项返回空串） */
+function gcUnsupportedLabel(gc: GcOption): string {
+  if (gc.supported) return ''
+  return gc.unsupported_reason === 'vendor' ? t('gcUnsupportedVendor') : t('gcUnsupportedVersion')
+}
 
 const valid = computed(() => {
   if (jarInfoLoading.value) return false

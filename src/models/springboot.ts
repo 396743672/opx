@@ -100,6 +100,13 @@ export interface JarInfo {
   build_jdk: number | null
 }
 
+/** GC 不可用的两类原因——处置方式不同，所以分开告诉用户 */
+export type GcUnsupportedReason =
+  /** 该 JDK 版本还没引入这个 GC（如 JDK 8 的 ZGC）→ 换高版本 JDK */
+  | 'version'
+  /** 版本够但该发行版没编进去（Oracle 全版本不含 Shenandoah）→ 换 GC 或换发行版 */
+  | 'vendor'
+
 /** 单个 GC 选项在「所选 JDK」上的可用性，由后端下发（与推荐逻辑同源） */
 export interface GcOption {
   name: string
@@ -107,6 +114,8 @@ export interface GcOption {
   supported: boolean
   /** 是否是该 JDK 版本的推荐值 */
   recommended: boolean
+  /** 不可用的原因；可用时为 undefined */
+  unsupported_reason?: GcUnsupportedReason
 }
 
 export interface CreateAppParams {
