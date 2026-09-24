@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { AppSettings, ThemeMode, Language } from '@/models/settings'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { i18n } from '@/utils/i18n'
 
 export const useSettingsStore = defineStore('settings', () => {

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type {
   BackupMode,
   LogChunk,

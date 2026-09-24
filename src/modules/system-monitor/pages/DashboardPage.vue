@@ -267,7 +267,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSystemStore } from '@/stores/system'
 import { useRunningSoftware } from '@/composables/useRunningSoftware'

@@ -103,7 +103,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import DnsAccountDialog from '../components/DnsAccountDialog.vue'

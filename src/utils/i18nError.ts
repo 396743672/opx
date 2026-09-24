@@ -8,5 +8,8 @@ export function translateError(
 ): string {
   if (!raw) return ''
   const m = raw.match(/i18n:([A-Za-z0-9_.-]+)/)
-  return m && te(m[1]) ? t(m[1]) : raw
+  if (!m || !te(m[1])) return raw
+  // 只替换 "i18n:key" 片段，保留外层前缀（如「删除失败：」）；
+  // 用函数式替换，避免译文里的 $ 被当成替换模式。
+  return raw.replace(m[0], () => t(m[1]))
 }

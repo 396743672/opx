@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { save } from '@tauri-apps/plugin-dialog'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'

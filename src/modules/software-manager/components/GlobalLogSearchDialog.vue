@@ -51,7 +51,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { LogHit, InstalledSoftware } from '@/models/software'
 import LogViewerDialog from './LogViewerDialog.vue'
 

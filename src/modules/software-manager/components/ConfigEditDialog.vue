@@ -106,7 +106,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useI18n } from 'vue-i18n'
 import ConfigFormTab from './ConfigFormTab.vue'

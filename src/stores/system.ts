@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { SystemInfo } from '@/models/system'
 import type { ProcessSample } from '@/models/process'
 

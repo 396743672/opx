@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { ref } from 'vue'
 import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsRecommendation, ReplaceResult, StopOutcome, CreateAppParams, UpdateAppParams, JarInfo } from '@/models/springboot'
 import type { InstalledSoftware } from '@/models/software'

@@ -407,7 +407,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useSettingsStore } from '@/stores/settings'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'

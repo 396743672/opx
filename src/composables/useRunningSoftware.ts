@@ -1,5 +1,5 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'

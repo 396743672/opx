@@ -85,7 +85,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useI18n } from 'vue-i18n'
 import { PROVIDERS, CRED_FIELDS, type DnsAccount, type ProviderId } from '@/models/dns-account'
 

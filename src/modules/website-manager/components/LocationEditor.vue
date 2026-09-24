@@ -86,7 +86,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { SiteLocation } from '@/models/website'
 

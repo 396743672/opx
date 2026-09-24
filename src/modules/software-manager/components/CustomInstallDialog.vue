@@ -55,7 +55,7 @@
 import { ref, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useInstallStore } from '../stores/install'
 
 const emit = defineEmits<{

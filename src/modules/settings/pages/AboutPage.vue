@@ -83,7 +83,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUpdater } from '@/composables/useUpdater'
