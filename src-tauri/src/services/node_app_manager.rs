@@ -285,6 +285,23 @@ impl NodeAppManager {
         let child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
         let pid = child.id();
 
+        // 最小就绪探测：Node 应用无端口字段，无法做端口级探活；
+        // 这里在短暂等待后复核 pid 是否仍存活，捕获入口语法错/依赖缺失导致的秒退，
+        // 避免状态被虚高成 Running（此前 spawn 后立即置 Running）。
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        if !health_check::is_process_alive(pid) {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
+                a.pid = Some(pid);
+                a.status = NodeAppStatus::Error;
+                a.last_error = Some("进程启动后退出（检查入口文件与依赖）".to_string());
+                a.log_path = log_rel;
+            }
+            drop(inner);
+            let _ = self.save();
+            return Err("Node 应用启动后退出，请检查入口文件与依赖".to_string());
+        }
+
         let mut inner = self.inner.lock().unwrap();
         if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
             a.pid = Some(pid);

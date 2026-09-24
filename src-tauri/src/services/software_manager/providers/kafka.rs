@@ -330,6 +330,10 @@ impl SoftwareProvider for KafkaProvider {
             None
         };
 
+        // 前台运行不变量：kafka-server-start 脚本默认前台运行（脚本内 `exec java`，
+        // 不会 daemon 化），tracked pid 即 JVM 父进程，PID 跟踪有效。
+        // 切勿在此追加 `-daemon` 之类守护化参数，否则脚本退出会破坏 PID 管理
+        // （Nacos 即因此改为直连 java，见 nacos.rs）。
         Ok(StartCommand {
             program: bin.to_string(),
             args: vec!["config/server.properties".to_string()],

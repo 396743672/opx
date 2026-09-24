@@ -1424,7 +1424,7 @@ pub async fn do_start_software(
             return;
         }
         // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
-        let result = health_check::run_health_check(&spec, pid_alive, 60, 1000).await;
+        let result = health_check::run_health_check(&spec, Some(pid), 60, 1000).await;
         match result {
             health_check::HealthCheckResult::Healthy => {
                 let _ = manager_clone.update_runtime_fields(
