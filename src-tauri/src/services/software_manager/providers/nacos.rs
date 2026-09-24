@@ -23,6 +23,8 @@ const CREATE_NO_WINDOW: u32 = 0;
 fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
     c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
 }
+
+use crate::utils::local_ip::preferred_local_ip;
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
@@ -238,6 +240,19 @@ impl SoftwareProvider for NacosProvider {
             args.insert(0, format!("-Dserver.port={}", server_port));
         }
 
+        // 本机 IP：默认自动探测真实物理网卡（剔除 VMware/VirtualBox/Hyper-V 等虚拟网卡），
+        // 避免 Nacos 自探测到虚拟网卡 IP（如 192.168.200.x）导致 gRPC / 服务发现地址不可达；
+        // 用户在配置中显式填写 local_ip 时优先使用。
+        let local_ip = config_str(&ctx.config, "local_ip", "").trim().to_string();
+        let ip = if !local_ip.is_empty() {
+            local_ip
+        } else {
+            preferred_local_ip().unwrap_or_default()
+        };
+        if !ip.is_empty() {
+            args.insert(0, format!("-Dnacos.inetutils.ip-address={}", ip));
+        }
+
         // JDK 9+ 强封装：Nacos 的 JRaft 用反射访问 JDK 内部字段，必须 --add-opens
         // （与 startup.cmd 的 NACOS_JVM_OPTS 一致），否则 JDK 16+ 启动报 InaccessibleObjectException。
         let add_opens = [
@@ -407,6 +422,14 @@ impl SoftwareProvider for NacosProvider {
                     default_value: serde_json::json!(8848),
                     section: None,
                     description_i18n: Some("configField.nacosServerPortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "local_ip".to_string(),
+                    label_i18n: "configField.nacosLocalIp".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.nacosLocalIpDesc".to_string()),
                 },
                 ConfigField {
                     key: "console_port".to_string(),

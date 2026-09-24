@@ -146,6 +146,7 @@ impl SpringBootManager {
             group: params.group,
             jdk_type: params.jdk_type,
             stop_timeout_secs: params.stop_timeout_secs,
+            local_ip: params.local_ip,
         };
         let app_clone = app.clone();
         {
@@ -182,6 +183,7 @@ impl SpringBootManager {
         if let Some(v) = params.group { app.group = v; }
 		if let Some(v) = params.jdk_type { app.jdk_type = v; }
         if let Some(v) = params.stop_timeout_secs { app.stop_timeout_secs = v.clamp(1, 600); }
+        if let Some(v) = params.local_ip { app.local_ip = v; }
         let cloned = app.clone();
         Self::save_store(&store)?;
         Ok(cloned)

@@ -126,6 +126,13 @@
             </div>
           </div>
 
+          <!-- 本机 IP -->
+          <div class="field">
+            <div class="field-label">{{ $t('localIp') }}</div>
+            <input class="input" v-model="form.local_ip" placeholder="留空则自动探测真实网卡 IP" />
+            <div class="text-xs hint mt-1">{{ $t('localIpHint') }}</div>
+          </div>
+
           <!-- JVM extra flags -->
           <div class="field">
             <div class="field-label" style="display:flex;align-items:center;gap:8px;justify-content:space-between">
@@ -432,6 +439,7 @@ const form = reactive({
   group: null as string | null,
   jdk_type: '',
   stop_timeout_secs: 30,
+  local_ip: '',
 })
 
 const programArgsText = ref('')
@@ -578,6 +586,7 @@ onMounted(async () => {
     form.group = props.app.group
     form.jdk_type = props.app.jdk_type
     form.stop_timeout_secs = props.app.stop_timeout_secs
+    form.local_ip = props.app.local_ip ?? ''
     programArgsText.value = props.app.program_args.join('\n')
 
     const parsed = parseJvmOpts(props.app.jvm_opts)
@@ -724,6 +733,7 @@ async function save() {
         jdk_type: form.jdk_type,
         group: form.group,
         stop_timeout_secs: form.stop_timeout_secs,
+        local_ip: form.local_ip,
       })
       emit('saved', updated)
     } else {
@@ -744,6 +754,7 @@ async function save() {
         jdk_type: form.jdk_type,
         group: form.group,
         stop_timeout_secs: form.stop_timeout_secs,
+        local_ip: form.local_ip,
       })
       emit('saved', created)
     }
