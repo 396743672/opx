@@ -413,6 +413,10 @@ pub fn run() {
             commands::stack::import_stack,
             commands::update::check_app_update,
             commands::update::install_app_update,
+            commands::lock_screen::set_lock_password,
+            commands::lock_screen::verify_lock_password,
+            commands::lock_screen::has_lock_password,
+            commands::lock_screen::clear_lock_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
