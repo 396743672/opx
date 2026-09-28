@@ -2972,6 +2972,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "walkdir",
+ "windows-sys 0.52.0",
  "winreg 0.52.0",
  "zip 0.6.6",
 ]
