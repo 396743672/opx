@@ -95,7 +95,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useI18n } from 'vue-i18n'
 import { useInstallStore } from '../stores/install'
 import { useCatalogStore } from '../stores/catalog'
@@ -271,22 +271,7 @@ async function install() {
   align-items: center;
   gap: 10px;
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .field {
   margin-bottom: 14px;
 }

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { useLockStore } from '@/stores/lock'
 
 const routes = [
   {
@@ -66,16 +67,43 @@ const routes = [
     meta: { title: 'settings' },
   },
   {
+    path: '/about',
+    name: 'about',
+    component: () => import('@/modules/settings/pages/AboutPage.vue'),
+    meta: { title: 'about' },
+  },
+  {
     path: '/stacks',
     name: 'stacks',
     component: () => import('@/modules/stack/StackList.vue'),
     meta: { title: 'stacks' },
+  },
+  {
+    path: '/lock',
+    name: 'lock',
+    component: () => import('@/modules/settings/pages/LockScreen.vue'),
+    meta: { title: 'lockScreen' },
   },
 ]
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
+})
+
+// 锁屏守卫：仅「有锁」时才拦截。被拦截时记下目标路由，解锁后回跳；
+// 无锁访问 /lock 视为异常，重定向走，避免死锁在锁屏页。
+router.beforeEach((to) => {
+  const lock = useLockStore()
+  if (to.path === '/lock') {
+    if (!lock.hasPassword) return { path: '/' }
+    return true
+  }
+  if (lock.hasPassword && !lock.unlocked) {
+    lock.pendingRoute = to.fullPath
+    return { path: '/lock' }
+  }
+  return true
 })
 
 export default router

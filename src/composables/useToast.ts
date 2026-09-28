@@ -24,6 +24,3 @@ export function toast(message: string, kind: ToastKind = 'info') {
 export function useToast() {
   return { toasts, toast }
 }
-
-/** 给 ToastHost 组件使用的响应式状态 */
-export const toastState = toasts

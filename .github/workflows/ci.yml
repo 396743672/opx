@@ -3,6 +3,7 @@ name: CI
 # 触发策略（GitHub Actions 原生支持，无需 step 内兜底）：
 # - dev/master/main 的 push 触发验证；纯文档改动（*.md / docs / README / RELEASE_NOTES）通过 paths-ignore 跳过
 # - 对 master 的 PR 触发验证
+# - 支持 workflow_dispatch 手动触发（重跑失败验证 / 验证纯文档改动）
 # - 任意 commit message 含 [skip ci] 或 [ci skip] 原生跳过整条流水线
 on:
   push:
@@ -19,6 +20,9 @@ on:
       - 'docs/**'
       - 'README*'
       - 'RELEASE_NOTES*'
+  # 手动触发：用于重跑失败/被取消的验证，或验证被 paths-ignore 挡掉的纯文档改动。
+  # 不设 paths-ignore（手动触发本就表示「要跑」）。
+  workflow_dispatch:
 
 # 同一分支多次 push 时取消旧的运行，节省额度
 concurrency:

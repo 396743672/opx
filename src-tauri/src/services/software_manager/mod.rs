@@ -50,9 +50,17 @@ pub struct SoftwareManager {
 fn reconcile_stale_statuses(list: &mut InstalledSoftwareList) -> bool {
     let mut changed = false;
     for s in &mut list.software {
+        // 仅按 pid 判存活会漏掉「进程僵死但端口已 drop」的情形。
+        // 对声明了端口（port>0）的实例，额外交叉校验端口是否仍被监听：
+        // pid 存活却无监听 → 端口监听丢失 → 视为非健康（Error），避免状态虚高成 Running。
+        let alive = s
+            .pid
+            .map(|p| health_check::is_process_alive(p))
+            .unwrap_or(false);
         let reset = match s.status {
             SoftwareStatus::Running => {
-                s.pid.map(|p| health_check::is_process_alive(p)) != Some(true)
+                // pid 已死，或（声明端口却无监听）任一成立即视为失活
+                !alive || (s.port > 0 && health_check::is_port_free(s.port))
             }
             SoftwareStatus::Starting | SoftwareStatus::Stopping | SoftwareStatus::Initializing => {
                 true
@@ -60,7 +68,13 @@ fn reconcile_stale_statuses(list: &mut InstalledSoftwareList) -> bool {
             _ => false,
         };
         if reset {
-            s.status = SoftwareStatus::Stopped;
+            // 端口丢失但进程仍在 → Error（僵死）；其余瞬态/pid 死亡 → Stopped
+            if s.status == SoftwareStatus::Running && alive && s.port > 0 && health_check::is_port_free(s.port)
+            {
+                s.status = SoftwareStatus::Error;
+            } else {
+                s.status = SoftwareStatus::Stopped;
+            }
             s.pid = None;
             changed = true;
         }
@@ -459,5 +473,42 @@ mod tests {
         let mut l = list(vec![entry("Running", None)]);
         assert!(reconcile_stale_statuses(&mut l));
         assert_eq!(l.software[0].status, SoftwareStatus::Stopped);
+    }
+
+    /// 同 entry，但允许指定端口（测试端口交叉校验）
+    fn entry_port(status: &str, pid: Option<u32>, port: u16) -> InstalledSoftware {
+        let json = serde_json::json!({
+            "id": "t1", "key": "mysql", "version": "1.0", "name": "T",
+            "install_path": "apps/mysql/1.0",
+            "install_time": "2026-01-01T00:00:00",
+            "status": status, "port": port, "config": {},
+            "is_custom": false, "auto_start_on_app_start": false,
+            "startup_order": 0,
+            "source": {"Mirror": {"mirror_name": "m", "url": "https://x"}},
+            "pid": pid,
+        });
+        serde_json::from_value(json).expect("test entry parses")
+    }
+
+    #[test]
+    fn running_alive_pid_but_free_port_marks_error() {
+        // 端口监听丢失：进程存活但声明端口无人监听 → 非健康(Error)（修复 #8）
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let free_port = listener.local_addr().unwrap().port();
+        drop(listener); // 释放，端口空闲
+        let mut l = list(vec![entry_port("Running", Some(std::process::id()), free_port)]);
+        assert!(reconcile_stale_statuses(&mut l), "端口丢失应触发修改");
+        assert_eq!(l.software[0].status, SoftwareStatus::Error);
+    }
+
+    #[test]
+    fn running_alive_pid_with_listener_stays_running() {
+        // 正向：进程存活且端口确有监听 → 不重置（避免误判 Error）
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut l = list(vec![entry_port("Running", Some(std::process::id()), port)]);
+        assert!(!reconcile_stale_statuses(&mut l), "监听正常不应触发修改");
+        assert_eq!(l.software[0].status, SoftwareStatus::Running);
+        drop(listener);
     }
 }

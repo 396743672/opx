@@ -3,12 +3,12 @@
     <!-- 顶部导航栏 — 简洁 -->
     <header
       @mousedown="onTitlebarMouseDown"
-      class="h-12 flex-shrink-0 flex items-center justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40"
+      class="h-12 flex-shrink-0 flex items-center justify-between z-30 bg-background/70 backdrop-blur-xl border-b border-border/40 pr-2"
     >
       <div class="flex items-center h-full">
-        <!-- 品牌区：宽度随侧边栏同步 -->
+        <!-- 品牌区：宽度随侧边栏同步，左对齐与下方菜单图标光学对齐（字形中心 28px） -->
         <div
-          class="flex items-center justify-center flex-shrink-0 h-full transition-all duration-300"
+          class="flex items-center justify-start pl-3.5 flex-shrink-0 h-full transition-all duration-300"
           :class="sidebarPinned ? 'w-52' : 'w-14'"
         >
           <div class="flex items-center gap-2">
@@ -51,6 +51,15 @@
         >
           <Icon icon="mdi:cog" class="text-lg" />
         </button>
+        <button
+          v-if="lockStore.hasPassword"
+          @click="onLock"
+          class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 cursor-pointer"
+          :title="$t('lockManualLock')"
+          :aria-label="$t('lockManualLock')"
+        >
+          <Icon icon="mdi:lock-outline" class="text-lg" />
+        </button>
 
         <!-- 窗口控制 -->
         <div class="flex items-center ml-2 gap-0.5">
@@ -84,6 +93,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
+import { useLockStore } from '@/stores/lock'
 import type { ThemeMode } from '@/models/settings'
 import Sidebar from './Sidebar.vue'
 import { Icon } from '@iconify/vue'
@@ -96,6 +106,7 @@ const router = useRouter()
 const route = useRoute()
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
+const lockStore = useLockStore()
 const sidebarPinned = computed(() => !settingsStore.sidebarCollapsed)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
@@ -115,6 +126,10 @@ function cycleTheme() {
 }
 
 const goToSettings = () => router.push('/settings')
+
+function onLock() {
+  if (lockStore.hasPassword) lockStore.lock()
+}
 
 const maximized = ref(false)
 
@@ -177,7 +192,7 @@ onUnmounted(() => {
   color: var(--color-foreground);
 }
 .win-btn-close:hover {
-  background: oklch(0.55 0.2 25);
-  color: white;
+  background: var(--color-destructive);
+  color: var(--color-destructive-foreground);
 }
 </style>

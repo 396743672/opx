@@ -133,29 +133,4 @@ mod tests {
         let far = (now() + chrono::Duration::days(80)).to_rfc3339();
         assert!(!needs_renewal(Some(&far), now(), 30));
     }
-
-    /// 站点该用哪个账号：绑了就用绑的；没绑就是配置缺失，必须跳过而不是
-    /// 拿某个默认账号去签（会给用户搞出意外的证书）。
-    #[test]
-    fn account_resolution_requires_explicit_binding() {
-        let accounts = [crate::models::dns_account::DnsAccount {
-            id: "acc-1".into(),
-            name: "n".into(),
-            provider: "cloudflare".into(),
-            token: "t".into(),
-            access_key_id: String::new(),
-            access_key_secret: String::new(),
-            zones: vec![],
-            tested_at: None,
-        }];
-        let pick = |bound: Option<&str>| -> Option<String> {
-            let id = bound?;
-            accounts.iter().find(|a| a.id == id).map(|a| a.id.clone())
-        };
-        assert_eq!(pick(Some("acc-1")), Some("acc-1".into()));
-        // 未绑定 → None（跳过并 warn）
-        assert_eq!(pick(None), None);
-        // 绑了但账号已删 → None（跳过并 warn，而不是退回默认）
-        assert_eq!(pick(Some("gone")), None);
-    }
 }

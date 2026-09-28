@@ -9,7 +9,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { InstalledSoftware } from '@/models/software'
 // ponytail: monaco-editor ~3MB, 动态 import 避免打包进主 chunk
 

@@ -31,8 +31,10 @@ const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
 
 for (const [key, versions] of Object.entries(manifest)) {
   for (const [version, info] of Object.entries(versions)) {
-    // 文件扩展名：统一用 .zip（minio 内置是 zip，rustfs/jre/mysql/redis/nginx 也是 zip）
-    const ext = '.zip'
+    // 文件扩展名取自 manifest 的 ext（fetch-builtin.mjs 写入）：
+    // minio 主版本是 .tar.gz（SILO）、兜底版本是 .exe，硬编码 .zip 会误报缺失。
+    // 旧版 manifest 无 ext 字段时回退 .zip，保持向后兼容。
+    const ext = info.ext || '.zip'
     const zipPath = join(RESOURCES_DIR, key, `${version}${ext}`)
     if (!existsSync(zipPath)) {
       console.error(`✗ 缺失: ${key}/${version}${ext}`)

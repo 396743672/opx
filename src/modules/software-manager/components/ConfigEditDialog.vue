@@ -51,6 +51,7 @@
         </button>
       </div>
 
+      <div class="dialog-body">
       <ConfigFormTab
         v-if="tab === 'form'"
         ref="formTabRef"
@@ -84,6 +85,7 @@
           </div>
         </div>
       </div>
+      </div>
 
       <div class="hint-bar">
         <Icon icon="mdi:information-outline" /> {{ $t('configEditRestartHint') }}
@@ -104,7 +106,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useI18n } from 'vue-i18n'
 import ConfigFormTab from './ConfigFormTab.vue'
@@ -128,6 +130,7 @@ const DOC_URLS: Record<string, string> = {
   rustfs: 'https://github.com/influxdata/rustfs',
   postgresql: 'https://www.postgresql.org/docs/current/',
   mongodb: 'https://www.mongodb.com/docs/manual/',
+  consul: 'https://developer.hashicorp.com/consul/docs',
   nacos: 'https://nacos.io/docs/',
   kafka: 'https://kafka.apache.org/documentation/',
   elasticsearch: 'https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html',
@@ -361,6 +364,13 @@ async function onSaveAndRestart() {
 .dialog.wide {
   width: 680px;
   max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 .dialog-head {
@@ -383,22 +393,7 @@ async function onSaveAndRestart() {
   margin-left: 8px;
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .tab-bar {
   display: flex;
   gap: 4px;

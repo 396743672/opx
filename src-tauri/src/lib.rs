@@ -31,15 +31,6 @@ pub fn run() {
 
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
-                // 初始化内置 zip manifest（resource_dir/software/manifest.json）
-                // Windows 上 resource_dir() 返回 exe 目录，资源实际在 resources/ 子目录下
-                let manifest_path = app.path().resource_dir().ok().and_then(|d| {
-                    crate::utils::paths::resolve_builtin_resource(&d, "software/manifest.json")
-                });
-                if let Some(mp) = manifest_path {
-                    crate::services::software_manager::providers::init_builtin_manifest(&mp);
-                }
-
                 let _ = crate::utils::paths::apps_dir();
                 let _ = crate::utils::paths::config_dir();
                 let _ = crate::utils::paths::data_dir();
@@ -240,7 +231,8 @@ pub fn run() {
                 let (menu, tooltip) = build_tray_menu(app.handle(), &tray_manager)?;
 
                 let icon = app.default_window_icon().cloned();
-                let mut builder = TrayIconBuilder::new()
+                // 固定 id：语言切换后可用 tray_by_id 取回托盘以重建菜单文案
+                let mut builder = TrayIconBuilder::with_id("main")
                     .menu(&menu)
                     .show_menu_on_left_click(false);
                 if let Some(img) = icon {
@@ -304,10 +296,13 @@ pub fn run() {
             commands::system::system_info,
             commands::system::system_history,
             commands::system::process_metrics_history,
+            commands::system::get_last_startup_report,
+            commands::system::app_version,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::get_autostart,
             commands::config::set_autostart,
+            refresh_tray_menu,
             commands::config::test_alert_webhook,
             commands::config::sync_ddns_now,
             commands::app::quit_app,
@@ -392,7 +387,7 @@ pub fn run() {
             commands::springboot::set_springboot_global_env_vars,
             commands::springboot::get_recommended_jvm_opts,
             commands::springboot::list_springboot_dependency_candidates,
-            commands::springboot::read_jar_version_info,
+            commands::springboot::read_jar_info,
             commands::springboot::read_jar_port,
             commands::springboot::list_springboot_log_sources,
             commands::springboot::read_springboot_log,
@@ -418,6 +413,10 @@ pub fn run() {
             commands::stack::import_stack,
             commands::update::check_app_update,
             commands::update::install_app_update,
+            commands::lock_screen::set_lock_password,
+            commands::lock_screen::verify_lock_password,
+            commands::lock_screen::has_lock_password,
+            commands::lock_screen::clear_lock_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
@@ -444,13 +443,34 @@ fn show_main_window(app: &tauri::AppHandle) {
 /// 构建含运行中软件列表的托盘菜单，并返回 tooltip 文本。
 /// 菜单项：显示窗口 / (分隔) / 运行中软件(点击停止) / (分隔) / 退出。
 #[cfg(desktop)]
+/// 界面语言是否为英文（托盘文案跟随 AppSettings.language）
+fn tray_is_english() -> bool {
+    crate::commands::config::read_settings()
+        .map(|s| s.language.starts_with("en"))
+        .unwrap_or(false)
+}
+
 fn build_tray_menu(
     app: &AppHandle,
     manager: &std::sync::Arc<crate::services::software_manager::SoftwareManager>,
 ) -> tauri::Result<(Menu<tauri::Wry>, String)> {
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let en = tray_is_english();
+    let quit_item = MenuItem::with_id(
+        app,
+        "quit",
+        if en { "Quit" } else { "退出" },
+        true,
+        None::<&str>,
+    )?;
 
-    let (running, tooltip) = running_softwares(&manager.get_installed());
+    let (running, count) = running_softwares(&manager.get_installed());
+    let tooltip = if count == 0 {
+        String::new()
+    } else if en {
+        format!("{} app(s) running", count)
+    } else {
+        format!("运行中：{} 个软件", count)
+    };
 
     // 用 owned Box 持有全部菜单项，再取引用构造成异构图项数组（解决异构生命周期借用）
     let mut owned: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = Vec::new();
@@ -477,23 +497,46 @@ fn build_tray_menu(
     Ok((menu, tooltip))
 }
 
+/// 重建托盘菜单与 tooltip（语言切换后调用，使托盘文案跟随界面语言）
+#[tauri::command]
+fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let manager = app
+            .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+            .inner()
+            .clone();
+        let tray = app
+            .tray_by_id("main")
+            .ok_or_else(|| "托盘尚未初始化".to_string())?;
+        let (menu, tooltip) = build_tray_menu(&app, &manager).map_err(|e| e.to_string())?;
+        tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+        tray.set_tooltip(if tooltip.is_empty() {
+            None
+        } else {
+            Some(tooltip)
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(desktop))]
+    let _ = app;
+    Ok(())
+}
+
 /// 从已安装列表筛出运行中软件，返回 (id, name) 列表与 tooltip 文本。
 /// 分离为纯函数以便单测验证筛选与 tooltip 逻辑。
+/// 返回运行中的软件 (id, name) 列表与数量；tooltip 文案由调用方按语言生成
 fn running_softwares(
     installed: &[crate::models::software::InstalledSoftware],
-) -> (Vec<(String, String)>, String) {
+) -> (Vec<(String, String)>, usize) {
     use crate::models::software::SoftwareStatus;
     let running: Vec<_> = installed
         .iter()
         .filter(|s| s.status == SoftwareStatus::Running)
         .map(|s| (s.id.clone(), s.name.clone()))
         .collect();
-    let tooltip = if running.is_empty() {
-        String::new()
-    } else {
-        format!("运行中：{} 个软件", running.len())
-    };
-    (running, tooltip)
+    let count = running.len();
+    (running, count)
 }
 
 #[cfg(test)]
@@ -530,23 +573,23 @@ mod tests {
     }
 
     #[test]
-    fn running_softwares_filters_and_tooltip() {
+    fn running_softwares_filters_and_counts() {
         let list = vec![
             sample(SoftwareStatus::Running),
             sample(SoftwareStatus::Stopped),
             sample(SoftwareStatus::Error),
         ];
-        let (running, tooltip) = super::running_softwares(&list);
+        let (running, count) = super::running_softwares(&list);
         assert_eq!(running.len(), 1);
         assert_eq!(running[0].1, "测试软件");
-        assert_eq!(tooltip, "运行中：1 个软件");
+        assert_eq!(count, 1);
     }
 
     #[test]
-    fn running_softwares_empty_tooltip() {
+    fn running_softwares_empty_count() {
         let list = vec![sample(SoftwareStatus::Stopped)];
-        let (running, tooltip) = super::running_softwares(&list);
+        let (running, count) = super::running_softwares(&list);
         assert!(running.is_empty());
-        assert!(tooltip.is_empty());
+        assert_eq!(count, 0);
     }
 }

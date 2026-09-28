@@ -1,7 +1,7 @@
 // 应用更新 composable：封装「检查更新 / 下载安装」并暴露进度状态。
 // 端点与代理解析全在 Rust 端（utils/update.rs）完成，这里只触发命令并接收进度事件。
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { toast } from './useToast'

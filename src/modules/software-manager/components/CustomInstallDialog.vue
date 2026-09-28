@@ -55,7 +55,7 @@
 import { ref, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useInstallStore } from '../stores/install'
 
 const emit = defineEmits<{
@@ -142,22 +142,7 @@ async function install() {
   align-items: center;
   gap: 10px;
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .field {
   margin-bottom: 14px;
 }

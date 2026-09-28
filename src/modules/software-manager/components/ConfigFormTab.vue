@@ -81,7 +81,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
 
 const props = defineProps<{ software: InstalledSoftware; schema: ConfigSchema | null }>()

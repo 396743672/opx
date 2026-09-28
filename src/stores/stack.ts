@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   Stack,

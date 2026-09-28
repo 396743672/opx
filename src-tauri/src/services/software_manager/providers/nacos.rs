@@ -23,8 +23,13 @@ const CREATE_NO_WINDOW: u32 = 0;
 fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
     c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
 }
+
+use crate::utils::local_ip::preferred_local_ip;
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+fn config_bool(c: &serde_json::Value, key: &str, default: bool) -> bool {
+    c.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
 /// 解析集群节点列表：按行/逗号切分，trim 后滤空行；每项须为 `host:port`
@@ -212,15 +217,40 @@ impl SoftwareProvider for NacosProvider {
         args.push("-jar".to_string());
         args.push(jar.to_string_lossy().to_string());
 
-        // 服务端口：3.x 主 API 端口（默认 8848）
+        // 端口传递按大版本区分（均经真实 jar 受控实验验证）：
+        // - 2.x 单 Spring context，Tomcat 读 server.port → 用 JVM 系统属性 -Dserver.port
+        //   显式钉死（优先级高于环境变量）。2.x 不认 nacos.server.main.port（实测无效）。
+        // - 3.x 双 Spring context（API + Console），两者都读 server.port：若传
+        //   -Dserver.port，Console 会被钉到主端口与 API 自撞（3.2.3 实测复现，banner
+        //   显示的 Port 不可信）。必须用各自专属参数，并配合 remove_envs 清除污染
+        //   环境变量——专属参数会被 OS 环境变量的 server.port 宽松绑定打穿（实测）。
         let server_port = config_u64(&ctx.config, "port", 8848);
-        if server_port != 8848 {
+        let is_v3 = ctx
+            .version
+            .split('.')
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0)
+            >= 3;
+        if is_v3 {
             args.insert(0, format!("-Dnacos.server.main.port={}", server_port));
-        }
-        // 控制台端口：3.x 独立（默认 8080）；2.x 与主端口共用，此参数被忽略（无害）
-        let console_port = config_u64(&ctx.config, "console_port", 8080);
-        if console_port != 8080 {
+            let console_port = config_u64(&ctx.config, "console_port", 8080);
             args.insert(0, format!("-Dnacos.console.port={}", console_port));
+        } else {
+            args.insert(0, format!("-Dserver.port={}", server_port));
+        }
+
+        // 本机 IP：默认自动探测真实物理网卡（剔除 VMware/VirtualBox/Hyper-V 等虚拟网卡），
+        // 避免 Nacos 自探测到虚拟网卡 IP（如 192.168.200.x）导致 gRPC / 服务发现地址不可达；
+        // 用户在配置中显式填写 local_ip 时优先使用。
+        let local_ip = config_str(&ctx.config, "local_ip", "").trim().to_string();
+        let ip = if !local_ip.is_empty() {
+            local_ip
+        } else {
+            preferred_local_ip().unwrap_or_default()
+        };
+        if !ip.is_empty() {
+            args.insert(0, format!("-Dnacos.inetutils.ip-address={}", ip));
         }
 
         // JDK 9+ 强封装：Nacos 的 JRaft 用反射访问 JDK 内部字段，必须 --add-opens
@@ -240,6 +270,15 @@ impl SoftwareProvider for NacosProvider {
         args.insert(0, "-Dnacos.core.auth.server.identity.key=serverIdentity".to_string());
         args.insert(0, "-Dnacos.core.auth.server.identity.value=security".to_string());
         args.insert(0, "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=".to_string());
+        // 鉴权开关（配置项 auth_enabled，默认开启）：开启时除 enabled=true 外必须同时
+        // 设 system.type=nacos，否则 Nacos 降级为无认证模式（AuthFilter 被跳过，日志报
+        // "auth system type is null, skip auth init"），控制台仍免登录。
+        if config_bool(&ctx.config, "auth_enabled", true) {
+            args.insert(0, "-Dnacos.core.auth.system.type=nacos".to_string());
+            args.insert(0, "-Dnacos.core.auth.enabled=true".to_string());
+        } else {
+            args.insert(0, "-Dnacos.core.auth.enabled=false".to_string());
+        }
 
         // 数据库模式：embedded（Derby 默认）/ mysql
         let storage = config_str(&ctx.config, "storage", "embedded");
@@ -315,6 +354,7 @@ impl SoftwareProvider for NacosProvider {
                 ],
                 env_vars: env,
                 working_dir: working_dir.clone(),
+                remove_envs: Vec::new(),
                 creation_flags: CREATE_NO_WINDOW,
                 first_run_init: None,
             };
@@ -345,6 +385,9 @@ impl SoftwareProvider for NacosProvider {
             program: java.to_string_lossy().to_string(),
             args,
             env_vars: std::collections::BTreeMap::new(),
+            // Spring Boot 宽松绑定会把它们解析为 server.port，覆盖 Nacos 的端口
+            // 配置（专属参数 -Dnacos.*.port 与 conf 均会被打穿），必须从继承环境中移除。
+            remove_envs: vec!["SERVER_PORT".to_string(), "SERVER__PORT".to_string()],
             working_dir,
             creation_flags: CREATE_NO_WINDOW,
             first_run_init,
@@ -379,6 +422,14 @@ impl SoftwareProvider for NacosProvider {
                     default_value: serde_json::json!(8848),
                     section: None,
                     description_i18n: Some("configField.nacosServerPortDesc".to_string()),
+                },
+                ConfigField {
+                    key: "local_ip".to_string(),
+                    label_i18n: "configField.nacosLocalIp".to_string(),
+                    field_type: ConfigFieldType::Text,
+                    default_value: serde_json::json!(""),
+                    section: None,
+                    description_i18n: Some("configField.nacosLocalIpDesc".to_string()),
                 },
                 ConfigField {
                     key: "console_port".to_string(),
@@ -506,6 +557,14 @@ impl SoftwareProvider for NacosProvider {
                     section: None,
                     description_i18n: Some("configField.nacosContextPathDesc".to_string()),
                 },
+                ConfigField {
+                    key: "auth_enabled".to_string(),
+                    label_i18n: "configField.nacosAuthEnabled".to_string(),
+                    field_type: ConfigFieldType::Boolean,
+                    default_value: serde_json::json!(true),
+                    section: None,
+                    description_i18n: Some("configField.nacosAuthEnabledDesc".to_string()),
+                },
             ],
             ephemeral_keys: vec![],
             field_rules: vec![
@@ -623,6 +682,91 @@ mod tests {
         let cond = cluster.visible_when.as_ref().expect("has condition");
         assert_eq!(cond.key, "mode");
         assert_eq!(cond.equals, serde_json::json!("cluster"));
+    }
+
+    #[test]
+    fn start_command_ports_and_auth_by_version() {
+        // 回归（两部分，均经真实 jar 受控实验验证）：
+        // 1) 2.x 只认 -Dserver.port（nacos.server.main.port 在 2.x 实测无效）；必须
+        //    无条件传入钉死端口，防宿主注入 SERVER_PORT / SERVER__PORT 经宽松绑定劫持。
+        // 2) 3.x 双 context 都读 server.port，传 -Dserver.port 会让 Console 与 API
+        //    自撞（3.2.3 实测复现）；必须改传 nacos.server.main.port + nacos.console.port，
+        //    并通过 remove_envs 清除污染环境变量（专属参数会被 env server.port 打穿）。
+        let make = |version: &str, port: u64, console: u64| StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\nacos".to_string(),
+            version: version.to_string(),
+            config: serde_json::json!({ "port": port, "console_port": console }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+
+        // 2.x：-Dserver.port 存在，3.x 专属参数不出现
+        let cmd = NacosProvider
+            .start_command(&make("2.5.4", 8848, 8080))
+            .expect("2.x start_command 应成功");
+        assert!(cmd.args.iter().any(|a| a == "-Dserver.port=8848"));
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("-Dnacos.server.main.port=")),
+            "2.x 不认 nacos.server.main.port，不应出现"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"));
+
+        // 鉴权开关关闭：不注入 system.type 与 enabled=true，改为 enabled=false；
+        // identity / secret.key 仍无条件注入（避免 Nacos 2.2.1+ Empty identity 启动失败）。
+        let make_auth = |version: &str, port: u64, console: u64, auth: bool| StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\nacos".to_string(),
+            version: version.to_string(),
+            config: serde_json::json!({ "port": port, "console_port": console, "auth_enabled": auth }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+        let cmd = NacosProvider
+            .start_command(&make_auth("2.5.4", 8848, 8080, false))
+            .expect("关闭鉴权 start_command 应成功");
+        assert!(
+            !cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"),
+            "关闭鉴权时不应注入 system.type（否则仍会启用认证插件）"
+        );
+        assert!(
+            !cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"),
+            "关闭鉴权时不应注入 enabled=true"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=false"));
+        assert!(cmd.args.iter().any(|a| a.starts_with("-Dnacos.core.auth.server.identity.key=")));
+        assert!(cmd.args.iter().any(|a| a.starts_with("-Dnacos.core.auth.plugin.nacos.token.secret.key=")));
+
+        // 3.x：专属参数存在（console_port 显式传入），-Dserver.port 必须缺席
+        let cmd = NacosProvider
+            .start_command(&make("3.2.3", 9999, 9090))
+            .expect("3.x start_command 应成功");
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.server.main.port=9999"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.console.port=9090"));
+        assert!(
+            !cmd.args.iter().any(|a| a.starts_with("-Dserver.port=")),
+            "3.x 传 -Dserver.port 会导致 Console 与 API 自撞，不应出现"
+        );
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.enabled=true"));
+        assert!(cmd.args.iter().any(|a| a == "-Dnacos.core.auth.system.type=nacos"));
+
+        // 两版本都必须从继承环境移除 Spring 端口污染变量
+        for v in ["2.5.4", "3.2.3"] {
+            let cmd = NacosProvider
+                .start_command(&make(v, 8848, 8080))
+                .expect("start_command 应成功");
+            for name in ["SERVER_PORT", "SERVER__PORT"] {
+                assert!(
+                    cmd.remove_envs.iter().any(|r| r == name),
+                    "{v} 缺 remove_envs={name}"
+                );
+            }
+        }
     }
 }
 

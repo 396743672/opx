@@ -51,4 +51,10 @@ hmac = "0.12"
 base64 = "0.23.1"
 lettre = { version = "0.11.23", features = ["aws-lc-rs", "builder", "hostname", "pool", "smtp-transport", "tokio1", "tokio1-rustls", "webpki-roots"], default-features = false }
 sha1 = "0.10"
+keyring = "3"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+# 仅 Windows：绕过 keyring 在「非域单机」上 CRED_PERSIST_ENTERPRISE 写后新实例读不回的问题，
+# 改用 CRED_PERSIST_LOCAL_MACHINE（见 lock_screen_win.rs）。版本与 keyring 依赖的 windows-sys 对齐。
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 

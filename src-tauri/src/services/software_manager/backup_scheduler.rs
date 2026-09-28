@@ -107,7 +107,11 @@ pub async fn run_scheduler(manager: std::sync::Arc<SoftwareManager>, app: tauri:
             if !due {
                 continue;
             }
-            match backup::create_snapshot(&manager, &app, &sw.id, BackupMode::Hot, None, None) {
+            let max_keep = crate::commands::config::read_settings()
+                .unwrap_or_default()
+                .snapshot_keep
+                .max(1) as usize;
+            match backup::create_snapshot(&manager, &app, &sw.id, BackupMode::Hot, None, None, max_keep) {
                 Ok(meta) => {
                     tracing::info!(installed_id = %sw.id, snapshot = %meta.id, "定时备份完成");
                 }

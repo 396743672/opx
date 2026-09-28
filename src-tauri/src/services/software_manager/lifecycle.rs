@@ -50,10 +50,6 @@ impl ProcessRegistry {
         self.processes.get(installed_id)
     }
 
-    pub fn list(&self) -> Vec<RegisteredProcess> {
-        self.processes.values().cloned().collect()
-    }
-
     pub fn drain(&mut self) -> Vec<RegisteredProcess> {
         let v: Vec<_> = self.processes.values().cloned().collect();
         self.processes.clear();
@@ -74,10 +70,6 @@ pub fn unregister(installed_id: &str) {
 
 pub fn get(installed_id: &str) -> Option<RegisteredProcess> {
     REGISTRY.lock().unwrap().get(installed_id).cloned()
-}
-
-pub fn list() -> Vec<RegisteredProcess> {
-    REGISTRY.lock().unwrap().list()
 }
 
 pub fn drain() -> Vec<RegisteredProcess> {
@@ -150,6 +142,10 @@ pub fn spawn_process(cmd: StartCommand, installed_id: &str) -> anyhow::Result<Ch
     for (k, v) in &cmd.env_vars {
         command.env(k, v);
     }
+    // 从继承环境移除宿主注入的危险变量（如 SERVER_PORT 会污染 Spring Boot 端口）
+    for name in &cmd.remove_envs {
+        command.env_remove(name);
+    }
 
     #[cfg(windows)]
     command.creation_flags(cmd.creation_flags);
@@ -191,6 +187,9 @@ pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Ou
 
     for (k, v) in &init.env_vars {
         command.env(k, v);
+    }
+    for name in &init.remove_envs {
+        command.env_remove(name);
     }
 
     #[cfg(windows)]
@@ -392,6 +391,7 @@ pub fn build_custom_command(
         args: custom.args.clone(),
         env_vars: custom.env_vars.clone(),
         working_dir,
+        remove_envs: Vec::new(),
         creation_flags: 0x08000000, // CREATE_NO_WINDOW
         first_run_init: None,
     })
@@ -414,7 +414,13 @@ pub fn stop_one(pid: u32) -> (bool, String) {
         return (true, "stopped".to_string());
     }
 
-    // 优雅停止
+    // 优雅停止。Windows 侧要认清它的能力边界：
+    // `taskkill` 不带 `/F` 发的是 WM_CLOSE，**只对进程自己拥有窗口的程序有效**；
+    // 被管软件（mysql / redis / nginx 等）都是控制台程序，窗口属于 conhost.exe，
+    // 实测会被直接拒绝（「只能强行终止这个进程(带 /F 选项)」）。
+    // 故只给它一次很短的机会（GUI 程序响应 WM_CLOSE 通常只要几百毫秒），不再空等 5 秒。
+    // 真要按软件语义优雅停止，得用各自的关闭命令
+    // （mysqladmin shutdown / redis-cli shutdown / nginx -s quit），属后续项。
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("taskkill");
@@ -429,9 +435,15 @@ pub fn stop_one(pid: u32) -> (bool, String) {
             .output();
     }
 
-    // 轮询等待最多 5s
+    // 等待自行退出：Unix 的 SIGTERM 是应用能真正响应的信号，给足清理时间；
+    // Windows 上面已说明几乎没有生效可能，故只留一个短窗口
+    let grace = if cfg!(windows) {
+        Duration::from_millis(1500)
+    } else {
+        Duration::from_secs(5)
+    };
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < grace {
         if !is_process_alive(pid) {
             return (true, "stopped".to_string());
         }
@@ -506,7 +518,9 @@ use crate::services::software_manager::SoftwareManager;
 /// 应用启动时按 startup_order 拉起 auto_start=true 的实例
 ///
 /// 同 startup_order 的实例会被分组并发拉起（不等单个完成，仅 sleep 500ms 间隔）；
-/// 不同 startup_order 的批次之间也只 sleep 500ms。
+/// 不同 startup_order 的批次之间会等待上一批「真正就绪」（status==Running，由后台
+/// 健康检查任务在就绪后设置）再拉起下一批，使依赖拓扑在自启场景生效——
+/// 旧实现仅 sleep 500ms，不保证依赖方已就绪（下游可能连不上）。
 /// 应在 Tauri setup hook 中通过 `tauri::async_runtime::spawn` 调用。
 pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHandle) {
     let auto_list = manager.list_auto_start();
@@ -521,17 +535,56 @@ pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHand
 
     for sw in auto_list {
         if !pending.is_empty() && sw.startup_order != last_order {
+            let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
             for s in pending.drain(..) {
                 spawn_start(manager.clone(), app.clone(), s.id).await;
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
+            // 等待上一批全部就绪（或失败/超时）后再进入下一批，依赖拓扑生效
+            await_batch_ready(manager, &ids, 60_000).await;
         }
         last_order = sw.startup_order;
         pending.push(sw);
     }
-    // 处理剩余
+    // 处理剩余批次
+    let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
     for s in pending {
         spawn_start(manager.clone(), app.clone(), s.id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    await_batch_ready(manager, &ids, 60_000).await;
+}
+
+/// 等待一批自启实例真正就绪：轮询各自 status，直到全部 Running（依赖拓扑生效）、
+/// 或任一进入 Error、或超时。status==Running 仅在健康检查通过后由后台任务设置，
+/// 故轮询它等价于等待就绪，无需改动 do_start_software 的「提前返回」契约。
+async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeout_ms: u64) {
+    let start = std::time::Instant::now();
+    let deadline = std::time::Duration::from_millis(timeout_ms);
+    loop {
+        let all_ready = ids.iter().all(|id| {
+            manager
+                .find_installed(id)
+                .map(|s| s.status == SoftwareStatus::Running)
+                .unwrap_or(false)
+        });
+        if all_ready {
+            return;
+        }
+        let any_err = ids.iter().any(|id| {
+            manager
+                .find_installed(id)
+                .map(|s| s.status == SoftwareStatus::Error)
+                .unwrap_or(false)
+        });
+        if any_err {
+            tracing::warn!(ids = ?ids, "auto_start 依赖实例进入 Error，跳过等待继续");
+            return;
+        }
+        if start.elapsed() >= deadline {
+            tracing::warn!(ids = ?ids, "auto_start 等待批量就绪超时");
+            return;
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }

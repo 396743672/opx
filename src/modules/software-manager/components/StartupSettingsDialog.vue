@@ -76,7 +76,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { InstalledSoftware } from '@/models/software'
 
 const props = defineProps<{ software: InstalledSoftware }>()
@@ -146,22 +146,7 @@ async function onSave() {
 .dialog-title svg {
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .software-name {
   font-size: 13px;
   margin-bottom: 14px;

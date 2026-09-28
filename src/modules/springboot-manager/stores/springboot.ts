@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { ref } from 'vue'
-import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsTemplate, ReplaceResult, CreateAppParams, UpdateAppParams } from '@/models/springboot'
+import type { SpringBootApp, AppGroup, JvmInfo, JvmOptsRecommendation, ReplaceResult, StopOutcome, CreateAppParams, UpdateAppParams, JarInfo } from '@/models/springboot'
 import type { InstalledSoftware } from '@/models/software'
 
 export const useSpringBootStore = defineStore('springboot', () => {
@@ -46,12 +46,12 @@ export const useSpringBootStore = defineStore('springboot', () => {
     await invoke('start_springboot_app', { id })
   }
 
-  async function stopApp(id: string) {
-    await invoke('stop_springboot_app', { id })
+  async function stopApp(id: string): Promise<StopOutcome> {
+    return await invoke<StopOutcome>('stop_springboot_app', { id })
   }
 
-  async function restartApp(id: string) {
-    await invoke('restart_springboot_app', { id })
+  async function restartApp(id: string): Promise<StopOutcome> {
+    return await invoke<StopOutcome>('restart_springboot_app', { id })
   }
 
   async function replaceJar(id: string, newJarPath: string): Promise<ReplaceResult> {
@@ -74,12 +74,17 @@ export const useSpringBootStore = defineStore('springboot', () => {
     dependencyCandidates.value = await invoke<InstalledSoftware[]>('list_springboot_dependency_candidates')
   }
 
-  async function getRecommendedOpts(jdkInstalledId: string): Promise<JvmOptsTemplate> {
-    return await invoke<JvmOptsTemplate>('get_recommended_jvm_opts', { jdkInstalledId })
+  async function getRecommendedOpts(jdkInstalledId: string): Promise<JvmOptsRecommendation> {
+    return await invoke<JvmOptsRecommendation>('get_recommended_jvm_opts', { jdkInstalledId })
   }
 
   async function readJarPort(jarPath: string): Promise<number | null> {
     return await invoke<number | null>('read_jar_port', { jarPath })
+  }
+
+  /** 读取 JAR 元信息：应用版本 / Spring Boot 版本 / 所需最低 JDK */
+  async function readJarInfo(jarPath: string): Promise<JarInfo> {
+    return await invoke<JarInfo>('read_jar_info', { jarPath })
   }
 
   async function saveGroups(newGroups: AppGroup[]) {
@@ -100,7 +105,7 @@ export const useSpringBootStore = defineStore('springboot', () => {
     fetchApps, fetchGroups, createApp, updateApp, deleteApp,
     startApp, stopApp, restartApp, replaceJar, replaceJarAndRestart,
     fetchJvmMetrics, fetchJdkList, fetchDependencyCandidates,
-    getRecommendedOpts, readJarPort, saveGroups,
+    getRecommendedOpts, readJarPort, readJarInfo, saveGroups,
     getGlobalEnvVars, setGlobalEnvVars,
   }
 })

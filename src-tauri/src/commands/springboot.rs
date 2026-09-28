@@ -6,11 +6,12 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::models::software::{LogChunk, LogSource};
 use crate::models::springboot::{
-    AppGroup, CreateAppParams, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
+    AppGroup, CreateAppParams, JarInfo, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
     UpdateAppParams,
 };
 use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::jvm_opts;
+use crate::services::springboot_manager::lifecycle::StopOutcome;
 use crate::services::springboot_manager::SpringBootManager;
 use crate::{audited_async, oplog_result};
 
@@ -90,7 +91,7 @@ pub async fn stop_springboot_app(
     software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
     let r = crate::services::springboot_manager::lifecycle::stop_app(
@@ -110,7 +111,7 @@ pub async fn restart_springboot_app(
     software_mgr: State<'_, Arc<SoftwareManager>>,
     app_handle: AppHandle,
     id: String,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
     let target = format!("{} ({})", name, id);
     let r = crate::services::springboot_manager::lifecycle::restart_app(
@@ -164,15 +165,19 @@ pub async fn replace_springboot_jar_and_restart(
     audited_async!("springboot_replace_restart", target, "", {
         use crate::models::springboot::AppStatus;
 
-        // 运行中/错误态先停（优雅），停止态直接换包
+        // 运行中/错误态先停（优雅），停止态直接换包。
+        // 停止成功但走了强杀时只记日志：换包流程必须继续往下走。
         if matches!(app.status, AppStatus::Running | AppStatus::Error) {
-            crate::services::springboot_manager::lifecycle::stop_app(
+            let stop = crate::services::springboot_manager::lifecycle::stop_app(
                 &id,
                 &manager,
                 &software_mgr,
                 &app_handle,
             )
             .await?;
+            if let Some(w) = stop.message {
+                tracing::warn!(app_id = %id, warning = %w, "换包前停止未走优雅路径");
+            }
         }
 
         let old_jar = std::path::PathBuf::from(&app.jar_path);
@@ -243,14 +248,19 @@ pub async fn get_springboot_jvm_metrics(
 ) -> Result<Option<JvmInfo>, String> {
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     if let Some(pid) = app.pid {
+        // 进程已退出（弹窗开着时应用被停止是正常操作）→ None，前端静默等待；
+        // 进程还在但采集失败 → Err 带真实原因，前端直接展示，不再猜「缺 JDK」
+        if !crate::services::software_manager::health_check::is_process_alive(pid) {
+            return Ok(None);
+        }
         // ponytail: 从 JDK 目录找 jcmd，不用 PATH
         let jdk_path = software_mgr
             .find_installed(&app.jdk_installed_id)
             .map(|j| j.install_path.clone());
-        Ok(crate::services::springboot_manager::monitor::collect_jvm_metrics(pid, jdk_path))
-    } else {
-        Ok(None)
+        return crate::services::springboot_manager::monitor::collect_jvm_metrics(pid, jdk_path)
+            .map(Some);
     }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -300,7 +310,10 @@ pub async fn get_recommended_jvm_opts(
         .find_installed(&jdk_installed_id)
         .ok_or("所选 JDK 未找到")?;
     let version = jvm_opts::detect_jdk_version(&jdk.install_path).ok_or("无法检测 JDK 版本")?;
-    Ok(jvm_opts::generate_opts(version))
+    // 厂商只影响 GC 目录里 Shenandoah 的可用性：Oracle 的任何版本都不含它，
+    // 选中会在启动时 `Unrecognized VM option` 直接失败（OpenJDK wiki 明文）。
+    let oracle = jvm_opts::is_oracle_runtime(std::path::Path::new(&jdk.install_path));
+    Ok(jvm_opts::generate_opts(version, oracle))
 }
 
 #[tauri::command]
@@ -316,12 +329,32 @@ pub async fn list_springboot_dependency_candidates(
         .collect())
 }
 
+/// 读取 JAR 元信息：应用版本 + 构建该 JAR 的 Spring Boot 版本 + 所需最低 JDK。
+///
+/// 前端在选择 jar 之后调用，用于显示「Spring Boot 3.5.11 · 需 JDK 17+」这类提示。
+/// Spring Boot 3.x/4.x 要求 Java 17，选错 JDK 会直接 `UnsupportedClassVersionError`，
+/// 在表单里提前提示比事后排查日志省事得多。
+///
+/// 注意框架版本取自 MANIFEST 的 `Spring-Boot-Version`（repackage 自动写入，三版都有），
+/// 而不是 `Implementation-Version`——后者受 Maven `addDefaultImplementationEntries`
+/// 控制、默认为 false，多数可执行 jar 里根本没有。
 #[tauri::command]
-pub async fn read_jar_version_info(jar_path: String) -> Result<String, String> {
-    Ok(
-        crate::services::springboot_manager::read_jar_version(&jar_path)
-            .unwrap_or_else(|| "unknown".to_string()),
-    )
+pub async fn read_jar_info(jar_path: String) -> Result<JarInfo, String> {
+    use crate::services::springboot_manager as sb;
+    let spring_boot_version = sb::read_spring_boot_version(&jar_path);
+    // 官方兼容区间：下限按大版本、上限按小版本（2.3 只到 15，2.7 到 21）
+    let range = spring_boot_version.as_deref().and_then(|v| {
+        let major = sb::parse_spring_boot_major(v)?;
+        let minor = sb::parse_spring_boot_minor(v).unwrap_or(0);
+        sb::jdk_range_for_spring_boot(major, minor)
+    });
+    Ok(JarInfo {
+        version: sb::read_jar_version(&jar_path),
+        spring_boot_version,
+        min_jdk: range.map(|(min, _)| min),
+        max_jdk: range.and_then(|(_, max)| max),
+        build_jdk: sb::read_build_jdk(&jar_path),
+    })
 }
 
 #[tauri::command]
@@ -414,14 +447,26 @@ pub async fn download_springboot_log(
     Ok(())
 }
 
-/// 导出应用（按分组过滤）到 zip 文件，不含日志目录
+/// 导出结果摘要（供前端提示成功/警告）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportSummary {
+    /// 实际导出（含 JAR 与应用目录）的应用数
+    pub apps: usize,
+    /// 打包进 zip 的文件数（不含 manifest.json）
+    pub files: usize,
+    /// 跳过或异常的应用说明（如 JAR 缺失）
+    pub warnings: Vec<String>,
+}
+
+/// 导出整个应用目录（含 JAR、配置等，**排除日志目录**）到 zip 文件。
+/// `group_names` 为 None 时导出全部应用。
 #[tauri::command]
 pub async fn export_springboot_config(
     app_handle: AppHandle,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
     group_names: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<ExportSummary, String> {
     let all_apps = manager.export_apps();
     let groups = manager.list_groups();
     let env_vars = manager.get_global_env_vars();
@@ -447,62 +492,107 @@ pub async fn export_springboot_config(
     });
     let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
 
-    let f =
-        std::fs::File::create(&file_path).map_err(|e| format!("ERR_WRITE:创建文件失败: {}", e))?;
+    let f = std::fs::File::create(&file_path).map_err(|e| {
+        tracing::warn!(error = %e, path = %file_path, "导出：创建导出文件失败");
+        "i18n:exportCreateFileFailed".to_string()
+    })?;
     let mut zip = zip::ZipWriter::new(f);
     let opts =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    zip.start_file("manifest.json", opts)
-        .map_err(|e| format!("ERR_ZIP:{}", e))?;
-    zip.write_all(manifest_json.as_bytes())
-        .map_err(|e| format!("ERR_ZIP:{}", e))?;
+    zip.start_file("manifest.json", opts).map_err(|e| {
+        tracing::warn!(error = %e, "导出：写入 manifest 条目失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
+    zip.write_all(manifest_json.as_bytes()).map_err(|e| {
+        tracing::warn!(error = %e, "导出：写入 manifest 内容失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
 
     let total = apps.len();
+    let mut exported = 0usize;
+    let mut files = 0usize;
+    let mut warnings: Vec<String> = Vec::new();
+
     for (i, app) in apps.iter().enumerate() {
         let _ = app_handle.emit(
             "export-progress",
             serde_json::json!({ "current": i + 1, "total": total, "name": app.name }),
         );
 
-        // ponytail: jar_path 是相对 data_dir 的相对路径，需转绝对路径
-        let jar = std::path::PathBuf::from(crate::utils::paths::data_dir()).join(&app.jar_path);
+        // jar_path 兼容相对（springboot/<name>/app.jar）与绝对两种历史写法
+        let jar = crate::utils::paths::resolve_data_path(&app.jar_path);
         if !jar.exists() {
+            // 不静默跳过：JAR 缺失时明确告知，否则用户解压后只看到一份 manifest.json
+            warnings.push(format!("{}: JAR 文件缺失，已跳过", app.name));
             continue;
         }
         let app_home = jar.parent().unwrap_or(&jar);
         let app_dir_name = format!("apps/{}", sanitize_name(&app.name));
+
+        // 排除日志目录：log_path 是相对 data_dir 的路径，必须先 resolve 再 canonicalize，
+        // 否则按进程 CWD 判断必然不存在 → 排除失效、日志被打包。
+        // 取 log_path 的父目录（logs/）以排除整个日志目录；并加护栏避免把应用根目录整个排除。
         let log_canonical = {
-            let lp = Path::new(&app.log_path);
-            if lp.exists() {
-                lp.canonicalize().ok()
+            let lp = crate::utils::paths::resolve_data_path(&app.log_path);
+            let dir = if lp.is_dir() {
+                Some(lp)
             } else {
-                None
+                lp.parent().map(|p| p.to_path_buf())
+            };
+            let candidate = dir.filter(|d| d.exists()).and_then(|d| d.canonicalize().ok());
+            match (candidate, app_home.canonicalize()) {
+                (Some(ex), Ok(root)) if ex == root || root.starts_with(&ex) => None,
+                (c, _) => c,
             }
         };
-        add_dir_to_zip(
+
+        files += add_dir_to_zip(
             &mut zip,
             app_home,
             &app_dir_name,
             log_canonical.as_deref(),
             opts,
         )
-        .map_err(|e| format!("ERR_ZIP:{}({}):{}", app.name, app.id, e))?;
+        .map_err(|e| {
+            tracing::warn!(error = %e, app = %app.name, app_id = %app.id, "导出：打包应用目录失败");
+            "i18n:exportAppFailed".to_string()
+        })?;
+        exported += 1;
     }
 
-    let f = zip.finish().map_err(|e| format!("ERR_ZIP:{}", e))?;
-    f.sync_all().map_err(|e| format!("ERR_ZIP:{}", e))?;
+    let f = zip.finish().map_err(|e| {
+        tracing::warn!(error = %e, "导出：收尾写入 zip 失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
+    f.sync_all().map_err(|e| {
+        tracing::warn!(error = %e, "导出：导出包落盘失败");
+        "i18n:exportWriteFailed".to_string()
+    })?;
     let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
-    Ok(())
+    Ok(ExportSummary {
+        apps: exported,
+        files,
+        warnings,
+    })
 }
 
-/// 从 zip 文件导入应用配置和数据
+/// 导入结果摘要（供前端提示成功/警告）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportSummary {
+    /// 实际导入或更新的应用数
+    pub apps: usize,
+    /// 跳过或异常的应用说明
+    pub warnings: Vec<String>,
+}
+
+/// 从 zip 文件导入应用（含 JAR 与应用目录）与全局配置
 #[tauri::command]
 pub async fn import_springboot_config(
     app_handle: AppHandle,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
-) -> Result<(), String> {
+) -> Result<ImportSummary, String> {
     let _ = app_handle.emit(
         "import-progress",
         serde_json::json!({ "phase": "extracting" }),
@@ -514,105 +604,176 @@ pub async fn import_springboot_config(
             .unwrap_or_default()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("ERR_TMP:{}", e))?;
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| {
+        tracing::warn!(error = %e, dir = %tmp_dir.display(), "导入：创建临时目录失败");
+        "i18n:importTmpDirFailed".to_string()
+    })?;
 
-    let f = std::fs::File::open(&file_path).map_err(|e| format!("ERR_READ:读取文件失败: {}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(f).map_err(|e| format!("ERR_ZIP_PARSE:文件格式错误: {}", e))?;
+    let f = std::fs::File::open(&file_path).map_err(|e| {
+        tracing::warn!(error = %e, path = %file_path, "导入：打开所选文件失败");
+        "i18n:importReadFailed".to_string()
+    })?;
+    let mut archive = zip::ZipArchive::new(f).map_err(|e| {
+        tracing::warn!(error = %e, "导入：zip 结构解析失败");
+        "i18n:importZipInvalid".to_string()
+    })?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("ERR_ZIP:{}", e))?;
+        let mut entry = archive.by_index(i).map_err(|e| {
+            tracing::warn!(error = %e, index = i, "导入：读取 zip 条目失败");
+            "i18n:importZipInvalid".to_string()
+        })?;
         let out_path = tmp_dir.join(sanitize_zip_path(entry.name()));
         if entry.name().ends_with('/') {
-            std::fs::create_dir_all(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            std::fs::create_dir_all(&out_path).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压建目录失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
         } else {
             if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    tracing::warn!(error = %e, path = %parent.display(), "导入：解压建父目录失败");
+                    "i18n:importExtractFailed".to_string()
+                })?;
             }
-            let mut outfile =
-                std::fs::File::create(&out_path).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
-            std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("ERR_EXTRACT:{}", e))?;
+            let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压创建文件失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| {
+                tracing::warn!(error = %e, path = %out_path.display(), "导入：解压写入内容失败");
+                "i18n:importExtractFailed".to_string()
+            })?;
         }
     }
 
     let _ = app_handle.emit("import-progress", serde_json::json!({ "phase": "config" }));
-    let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json"))
-        .map_err(|e| format!("ERR_IMPORT:manifest.json 不存在或无法读取: {}", e))?;
-    let data: serde_json::Value = serde_json::from_str(&manifest_content)
-        .map_err(|e| format!("ERR_IMPORT:manifest.json 格式错误: {}", e))?;
+    let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json")).map_err(|e| {
+        tracing::warn!(error = %e, "导入：读取 manifest.json 失败");
+        "i18n:importManifestMissing".to_string()
+    })?;
+    let data: serde_json::Value = serde_json::from_str(&manifest_content).map_err(|e| {
+        tracing::warn!(error = %e, "导入：manifest.json 解析失败");
+        "i18n:importManifestInvalid".to_string()
+    })?;
 
     use serde_json::Value;
+    let mut imported_count = 0usize;
+    let mut warnings: Vec<String> = Vec::new();
     if let Some(apps) = data.get("apps").and_then(|v| v.as_array()) {
         let existing = manager.list_apps();
         for app_val in apps {
-            let imported: SpringBootApp = serde_json::from_value(app_val.clone())
-                .map_err(|e| format!("ERR_IMPORT:应用数据错误: {}", e))?;
+            let imported: SpringBootApp = serde_json::from_value(app_val.clone()).map_err(|e| {
+                tracing::warn!(error = %e, "导入：应用数据解析失败");
+                "i18n:importAppDataFailed".to_string()
+            })?;
 
-            // 复制应用数据
+            // 恢复到本机数据目录 <data_dir>/springboot/<name>/。
+            // 不信任 manifest 里导出机的绝对路径（跨机器必然失效，会把文件写到错误位置）。
             let app_data_dir = tmp_dir.join("apps").join(sanitize_name(&imported.name));
+            let local_dir = crate::utils::paths::data_dir()
+                .join("springboot")
+                .join(&imported.name);
+            let has_jar = app_data_dir.join("app.jar").exists();
+            if !has_jar {
+                warnings.push(format!(
+                    "{}: 导出包内未包含 JAR，仅导入了配置",
+                    imported.name
+                ));
+            }
             if app_data_dir.exists() {
-                let jar = Path::new(&imported.jar_path);
-                if let Some(target) = jar.parent() {
-                    copy_dir_all(&app_data_dir, target)
-                        .map_err(|e| format!("ERR_COPY:复制应用数据失败: {}", e))?;
+                if let Err(e) = copy_dir_all(&app_data_dir, &local_dir) {
+                    warnings.push(format!("{}: 应用数据复制失败（{}）", imported.name, e));
+                    continue;
                 }
             }
 
+            // log_path 归一化为本机相对路径（导出机的外部绝对路径在本机无意义）
+            let log_path = {
+                let rel = SpringBootManager::relativize_data_path(&imported.log_path);
+                if Path::new(&rel).is_absolute() {
+                    format!("springboot/{}/logs/console.log", imported.name)
+                } else {
+                    rel
+                }
+            };
+
             // ponytail: 按名称匹配（应用名称唯一），id 随机器不同
             let existing_app = existing.iter().find(|a| a.name == imported.name);
-            if let Some(existing) = existing_app {
+            let outcome = if let Some(existing) = existing_app {
                 manager
                     .update_app(
                         &existing.id,
                         UpdateAppParams {
-                            name: Some(imported.name),
-                            jdk_installed_id: Some(imported.jdk_installed_id),
-                            jvm_opts: Some(imported.jvm_opts),
-                            program_args: Some(imported.program_args),
-                            profile: Some(imported.profile),
-                            env_vars: Some(imported.env_vars),
+                            name: Some(imported.name.clone()),
+                            jdk_installed_id: Some(imported.jdk_installed_id.clone()),
+                            jvm_opts: Some(imported.jvm_opts.clone()),
+                            program_args: Some(imported.program_args.clone()),
+                            profile: Some(imported.profile.clone()),
+                            env_vars: Some(imported.env_vars.clone()),
                             port: imported.port,
-                            log_path: Some(imported.log_path),
-                            dependencies: Some(imported.dependencies),
+                            log_path: Some(log_path),
+                            dependencies: Some(imported.dependencies.clone()),
                             auto_start: Some(imported.auto_start),
                             startup_order: Some(imported.startup_order),
                             auto_restart: Some(imported.auto_restart),
-                            group: Some(imported.group),
-                            jdk_type: Some(imported.jdk_type),
+                            group: Some(imported.group.clone()),
+                            jdk_type: Some(imported.jdk_type.clone()),
+                            stop_timeout_secs: Some(imported.stop_timeout_secs),
+                            local_ip: None,
                         },
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())
             } else {
+                // create_app 会把 src 的 jar 复制到 <data_dir>/springboot/<name>/app.jar；
+                // 用解压出的 jar 作 src，避免「源 = 目标」同路径复制。
+                let src_jar = if has_jar {
+                    app_data_dir.join("app.jar")
+                } else {
+                    local_dir.join("app.jar")
+                };
                 manager
                     .create_app(CreateAppParams {
-                        name: imported.name,
-                        jar_path: imported.jar_path,
-                        jdk_installed_id: imported.jdk_installed_id,
-                        jvm_opts: imported.jvm_opts,
-                        program_args: imported.program_args,
-                        profile: imported.profile,
-                        env_vars: imported.env_vars,
+                        name: imported.name.clone(),
+                        jar_path: src_jar.to_string_lossy().to_string(),
+                        jdk_installed_id: imported.jdk_installed_id.clone(),
+                        jvm_opts: imported.jvm_opts.clone(),
+                        program_args: imported.program_args.clone(),
+                        profile: imported.profile.clone(),
+                        env_vars: imported.env_vars.clone(),
                         port: imported.port,
-                        log_path: imported.log_path,
-                        dependencies: imported.dependencies,
+                        log_path,
+                        dependencies: imported.dependencies.clone(),
                         auto_start: imported.auto_start,
                         startup_order: imported.startup_order,
                         auto_restart: imported.auto_restart,
-                        group: imported.group,
-                        jdk_type: imported.jdk_type,
+                        group: imported.group.clone(),
+                        jdk_type: imported.jdk_type.clone(),
+                        stop_timeout_secs: imported.stop_timeout_secs,
+                        local_ip: String::new(),
                     })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())
+            };
+            match outcome {
+                Ok(_) => imported_count += 1,
+                Err(e) => warnings.push(format!("{}: 导入失败（{}）", imported.name, e)),
             }
         }
     }
     if let Some(groups) = data.get("groups").and_then(|v| v.as_array()) {
         let parsed: Vec<AppGroup> = serde_json::from_value(Value::Array(groups.clone()))
-            .map_err(|e| format!("ERR_IMPORT:分组错误: {}", e))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "导入：分组数据解析失败");
+                "i18n:importGroupFailed".to_string()
+            })?;
         manager.save_groups(parsed).map_err(|e| e.to_string())?;
     }
     if let Some(env_vars) = data.get("global_env_vars") {
         let parsed: Vec<(String, String)> = serde_json::from_value(env_vars.clone())
-            .map_err(|e| format!("ERR_IMPORT:环境变量错误: {}", e))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "导入：环境变量解析失败");
+                "i18n:importEnvFailed".to_string()
+            })?;
         manager
             .set_global_env_vars(parsed)
             .map_err(|e| e.to_string())?;
@@ -620,17 +781,20 @@ pub async fn import_springboot_config(
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
     let _ = app_handle.emit("import-progress", serde_json::json!({ "done": true }));
-    Ok(())
+    Ok(ImportSummary {
+        apps: imported_count,
+        warnings,
+    })
 }
 
-/// 将目录递归添加到 zip，跳过 excluded_dir
+/// 将目录递归添加到 zip，跳过 excluded_dir。返回打包的文件数。
 fn add_dir_to_zip(
     zip: &mut zip::ZipWriter<std::fs::File>,
     src: &Path,
     prefix: &str,
     exclude: Option<&Path>,
     opts: zip::write::FileOptions,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     if !src.is_dir() {
         if exclude.map_or(true, |e| !is_parent_or_self(e, src)) {
             let name = format!(
@@ -645,10 +809,12 @@ fn add_dir_to_zip(
                 .read_to_end(&mut buf)
                 .map_err(|e| e.to_string())?;
             zip.write_all(&buf).map_err(|e| e.to_string())?;
+            return Ok(1);
         }
-        return Ok(());
+        return Ok(0);
     }
 
+    let mut count = 0usize;
     for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
@@ -663,7 +829,7 @@ fn add_dir_to_zip(
         if path.is_dir() {
             zip.add_directory(&format!("{}/", &zip_name), opts)
                 .map_err(|e| e.to_string())?;
-            add_dir_to_zip(zip, &path, &zip_name, exclude, opts)?;
+            count += add_dir_to_zip(zip, &path, &zip_name, exclude, opts)?;
         } else {
             zip.start_file(&zip_name, opts).map_err(|e| e.to_string())?;
             let mut buf = Vec::new();
@@ -672,9 +838,10 @@ fn add_dir_to_zip(
                 .read_to_end(&mut buf)
                 .map_err(|e| e.to_string())?;
             zip.write_all(&buf).map_err(|e| e.to_string())?;
+            count += 1;
         }
     }
-    Ok(())
+    Ok(count)
 }
 
 /// 判断 parent 是否是 path 的父目录或自身
@@ -793,5 +960,181 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
         let _ = std::fs::remove_dir_all(crate::utils::paths::data_dir().join("backups").join("t"));
+    }
+
+    /// MANIFEST 的 `Spring-Boot-Version` 由 repackage 自动写入，2.x/3.x/4.x 都有，
+    /// 是判断「该 jar 需要什么 JDK」的唯一可靠依据。样本取自本机真实 jar：
+    /// online-sunlike-barcode(2.3.3.RELEASE) / pigx-boot(3.5.11) / SimImage(4.0.8)。
+    #[test]
+    fn reads_spring_boot_version_and_jdk_floor() {
+        use crate::services::springboot_manager::{
+            min_jdk_for_spring_boot, parse_spring_boot_major, read_spring_boot_version,
+        };
+        let dir = std::env::temp_dir().join(format!("opx_sbv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (ver, major, floor) in
+            [("2.3.3.RELEASE", 2_u32, 8_u32), ("3.5.11", 3, 17), ("4.0.8", 4, 17)]
+        {
+            let p = dir.join(format!("sb{major}.jar"));
+            fake_jar(
+                &p,
+                &format!("Manifest-Version: 1.0\r\nStart-Class: com.example.App\r\nSpring-Boot-Version: {ver}\r\nMain-Class: org.springframework.boot.loader.launch.JarLauncher\r\n\r\n"),
+            );
+            assert_eq!(
+                read_spring_boot_version(p.to_str().unwrap()).as_deref(),
+                Some(ver),
+                "读出的框架版本"
+            );
+            assert_eq!(parse_spring_boot_major(ver), Some(major));
+            assert_eq!(min_jdk_for_spring_boot(major), Some(floor), "Spring Boot {major}.x 的 JDK 门槛");
+        }
+
+        // 非 Spring Boot 打包的 jar 没有该字段 → None：不猜版本、不误报门槛
+        let plain = dir.join("plain.jar");
+        fake_jar(&plain, "Manifest-Version: 1.0\r\nImplementation-Version: 1.0\r\n\r\n");
+        assert_eq!(read_spring_boot_version(plain.to_str().unwrap()), None);
+        assert_eq!(parse_spring_boot_major(""), None);
+        assert_eq!(min_jdk_for_spring_boot(5), None);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 折行的 MANIFEST 值必须拼回完整值（JAR 规范：续行以**单个空格**开头，该空格不属值）；
+    /// 且拼完一个属性后，后面属性的续行不得被误拼进来。
+    #[test]
+    fn manifest_folded_value_is_rejoined() {
+        use crate::services::springboot_manager::read_jar_manifest_field;
+        let dir = std::env::temp_dir().join(format!("opx_mfold_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("folded.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nImplementation-Version: 1.0.0-SNAPSHOT\r\n continued-part\r\nSpring-Boot-Version: 4.0.8\r\n\r\n",
+        );
+        assert_eq!(
+            read_jar_manifest_field(p.to_str().unwrap(), "Implementation-Version").as_deref(),
+            Some("1.0.0-SNAPSHOTcontinued-part")
+        );
+        // 紧跟在下一属性后的折行不应被算进上一个属性
+        assert_eq!(
+            read_jar_manifest_field(p.to_str().unwrap(), "Spring-Boot-Version").as_deref(),
+            Some("4.0.8")
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 整合：`read_jar_info` 一次给出应用版本、框架版本、官方兼容区间与构建 JDK，
+    /// 四者互不串位
+    #[tokio::test]
+    async fn read_jar_info_combines_version_and_jdk_floor() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("app.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nImplementation-Version: 2.1.0\r\nBuild-Jdk-Spec: 21\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
+        );
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.version.as_deref(), Some("2.1.0"));
+        assert_eq!(info.spring_boot_version.as_deref(), Some("3.5.11"));
+        // 3.5 的官方区间是 Java 17–25（不是只按大版本给的 17+）
+        assert_eq!(info.min_jdk, Some(17));
+        assert_eq!(info.max_jdk, Some(25));
+        // ⚠️ 真实 jar 写的是 `Build-Jdk-Spec`（实测 3/3），读 `Build-Jdk` 会恒为 None
+        assert_eq!(info.build_jdk, Some(21));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 老版 maven-jar-plugin 只写 `Build-Jdk`（带完整版本号）→ 也要能兜底读出来，
+    /// 且 `Build-Jdk-Spec` 的匹配不能被 `Build-Jdk` 抢走（前缀是 `Build-Jdk-` 不是 `Build-Jdk:`）
+    #[tokio::test]
+    async fn read_jar_info_falls_back_to_legacy_build_jdk() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_legacy_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 只有老字段
+        let p = dir.join("legacy.jar");
+        fake_jar(
+            &p,
+            "Manifest-Version: 1.0\r\nBuild-Jdk: 1.8.0_302\r\nSpring-Boot-Version: 2.7.18\r\n\r\n",
+        );
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.build_jdk, Some(8), "1.8.0_302 应归一化成 8");
+
+        // 两个字段同时存在时，`Build-Jdk-Spec` 优先
+        let p2 = dir.join("both.jar");
+        fake_jar(
+            &p2,
+            "Manifest-Version: 1.0\r\nBuild-Jdk: 21.0.5\r\nBuild-Jdk-Spec: 17\r\nSpring-Boot-Version: 3.5.11\r\n\r\n",
+        );
+        let info2 = super::read_jar_info(p2.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info2.build_jdk, Some(17), "应优先取 Build-Jdk-Spec");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 上限必须按**小版本**区分：2.3 只到 15，2.7 到 21。若按大版本一刀切，
+    /// 「Spring Boot 2.3 配 JDK 21」这种真会崩的组合就会被放过。
+    #[tokio::test]
+    async fn read_jar_info_upper_bound_depends_on_minor_version() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_minor_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (sb, min, max) in [
+            ("2.3.12.RELEASE", 8, 15),
+            ("2.7.18", 8, 21),
+            ("3.0.13", 17, 21),
+            ("3.3.13", 17, 23),
+            ("4.0.8", 17, 25),
+        ] {
+            let p = dir.join(format!("{sb}.jar"));
+            fake_jar(
+                &p,
+                &format!("Manifest-Version: 1.0\r\nSpring-Boot-Version: {sb}\r\n\r\n"),
+            );
+            let info = super::read_jar_info(p.to_str().unwrap().to_string())
+                .await
+                .unwrap();
+            assert_eq!(info.min_jdk, Some(min), "Spring Boot {sb} 下限");
+            assert_eq!(info.max_jdk, Some(max), "Spring Boot {sb} 上限");
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// jar 里没有 `Build-Jdk` 时不能瞎猜（该字段并非必然存在），
+    /// 也不能因此把 max_jdk 一起丢掉
+    #[tokio::test]
+    async fn read_jar_info_tolerates_missing_build_jdk() {
+        let dir = std::env::temp_dir().join(format!("opx_jinfo_nobuild_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p = dir.join("app.jar");
+        fake_jar(&p, "Manifest-Version: 1.0\r\nSpring-Boot-Version: 2.7.18\r\n\r\n");
+        let info = super::read_jar_info(p.to_str().unwrap().to_string())
+            .await
+            .unwrap();
+        assert_eq!(info.build_jdk, None);
+        assert_eq!(info.min_jdk, Some(8));
+        assert_eq!(info.max_jdk, Some(21));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

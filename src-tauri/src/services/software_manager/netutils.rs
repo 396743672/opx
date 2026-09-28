@@ -2,7 +2,7 @@
 //!
 //! 仅采集监听态；命令失败/权限不足时降级为空集，不阻塞上层。
 
-use std::process::Command;
+use crate::utils::process::hidden;
 
 /// 一条监听记录。pid 缺失（权限不足等情况）记 None。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -14,7 +14,8 @@ pub struct ListenEntry {
 
 /// 运行 `netstat -ano` 并解析监听记录。失败返回空集（降级不崩）。
 pub fn listen_entries() -> Vec<ListenEntry> {
-    let Ok(out) = Command::new("netstat").arg("-ano").output() else {
+    // 隐藏控制台窗口：GUI 进程起 netstat 会闪黑窗（本函数在运行态被周期调用）
+    let Ok(out) = hidden("netstat").arg("-ano").output() else {
         return Vec::new();
     };
     if !out.status.success() {

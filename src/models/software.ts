@@ -51,11 +51,6 @@ export interface CatalogEntry {
   default_version: string
 }
 
-export interface Catalog {
-  entries: CatalogEntry[]
-  updated_at: string | null
-}
-
 export enum SoftwareStatus {
   Running = 'Running',
   Stopped = 'Stopped',
@@ -101,10 +96,6 @@ export interface InstalledSoftware {
   auto_restart: boolean
 }
 
-export interface InstalledSoftwareList {
-  software: InstalledSoftware[]
-}
-
 /// 可升级信息（check_upgrades 返回）
 /// 按「已装实例」而非软件 key 维度：同一 key 可并存多个实例，
 /// 旧实例的可升级状态不能标记到新实例上。
@@ -116,18 +107,6 @@ export interface UpgradeInfo {
   target_version?: string | null
   /// 同 key 存在 <ver>.bak 备份时的回滚目标版本
   rollback_to?: string | null
-}
-
-export interface InstallParams {
-  key: string
-  version: string
-  mirror_index: number
-  set_as_default_jre: boolean
-}
-
-export interface CustomInstallParams {
-  name: string
-  archive_path: string
 }
 
 // ===== 任务 12：软件管理模块扩展类型 =====
@@ -206,13 +185,6 @@ export interface UninstallSafetyReport {
 export interface UninstallBlocker {
   kind: string
   message_i18n: string
-  dependents: JreDependent[]
-}
-
-/// JRE 使用情况报告
-export interface JreUsageReport {
-  in_use: boolean
-  is_default: boolean
   dependents: JreDependent[]
 }
 

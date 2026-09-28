@@ -112,7 +112,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { Icon } from '@iconify/vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
@@ -509,22 +509,7 @@ onBeforeUnmount(() => {
 .dialog-title svg {
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .toolbar {
   display: flex;
   align-items: flex-end;

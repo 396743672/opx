@@ -121,36 +121,8 @@
             </div>
             <SwitchBtn v-model="autoCheckUpdateValue" />
           </div>
-          <div class="flex items-center justify-between gap-4 py-3">
-            <div class="flex flex-col gap-1 min-w-0">
-              <button
-                class="btn text-xs h-7 px-2 self-start"
-                :disabled="checking || installing"
-                @click="onCheckUpdate"
-              >{{ checking ? $t('checkingUpdate') : $t('checkUpdate') }}</button>
-              <span v-if="updateInfo" class="text-xs text-success">
-                {{ $t('updateAvailable', { version: updateInfo.version }) }}
-              </span>
-              <span
-                v-if="error"
-                class="text-xs text-destructive"
-                style="overflow-wrap: anywhere; word-break: break-word"
-              >{{ error }}</span>
-            </div>
-            <div v-if="updateInfo" class="flex flex-col gap-1 items-end min-w-0">
-              <button
-                class="btn text-xs h-7 px-2 bg-primary text-primary-foreground hover:bg-primary/90"
-                :disabled="installing"
-                @click="onInstallUpdate"
-              >{{ installing ? $t('installingUpdate') : $t('installUpdate') }}</button>
-              <div v-if="installing" class="w-40 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div class="h-full bg-primary transition-all" :style="{ width: progress + '%' }"></div>
-              </div>
-              <span v-if="installing" class="text-xs text-muted-foreground">{{ progress }}%</span>
-            </div>
-          </div>
-          <div v-if="updateInfo && updateInfo.notes" class="py-3">
-            <span class="text-xs text-muted-foreground whitespace-pre-line">{{ updateInfo.notes }}</span>
+          <div class="py-3">
+            <span class="text-xs text-muted-foreground">{{ $t('updateCheckInAbout') }}</span>
           </div>
         </div>
       </div>
@@ -213,6 +185,18 @@
                 class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
               />
               <span class="text-xs text-muted-foreground">{{ $t('daysUnit') }}</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('snapshotKeep') }}</span>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="snapshotKeepValue"
+                type="number"
+                min="1"
+                max="50"
+                class="h-8 px-2 w-20 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary"
+              />
             </div>
           </div>
         </div>
@@ -415,6 +399,58 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== 安全 ===== -->
+      <div v-show="activeTab === 'security'">
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('lockScreen') }}</h3>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('lockStatus') }}</span>
+            <span class="text-sm" :class="lockStore.hasPassword ? 'text-success' : 'text-muted-foreground'">
+              {{ lockStore.hasPassword ? $t('lockOn') : $t('lockOff') }}
+            </span>
+          </div>
+          <!-- 未设锁：设置密码即开启 -->
+          <div v-if="!lockStore.hasPassword" class="py-3 flex flex-col gap-3">
+            <span class="text-xs text-muted-foreground">{{ $t('lockSetPasswordHint') }}</span>
+            <input
+              v-model="lockPasswordInput"
+              type="password"
+              :placeholder="$t('lockNewPassword')"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            />
+            <div class="flex items-center gap-2">
+              <button class="btn text-xs h-7 px-2" :disabled="lockSetting || !lockPasswordInput" @click="enableLock">
+                {{ lockSetting ? $t('loading') : $t('lockSetPassword') }}
+              </button>
+              <span v-if="lockSetError" class="text-xs text-destructive">{{ lockSetError }}</span>
+            </div>
+          </div>
+          <!-- 已设锁：提示 + 立即锁定 + 清空（关闭） -->
+          <div v-else class="py-3 flex flex-col gap-3">
+            <span class="text-xs text-muted-foreground">{{ $t('lockIdleHint', { n: lockStore.IDLE_MINUTES }) }}</span>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button class="btn text-xs h-7 px-2" :disabled="!lockStore.unlocked" @click="lockStore.lock()">
+                {{ $t('lockLockNow') }}
+              </button>
+              <button v-if="!lockClearConfirming" class="btn text-xs h-7 px-2" @click="lockClearConfirming = true">
+                {{ $t('lockClearPassword') }}
+              </button>
+              <template v-else>
+                <span class="text-xs text-warning">{{ $t('lockClearConfirm') }}</span>
+                <button class="btn text-xs h-7 px-2" :disabled="lockClearing" @click="disableLock">
+                  {{ $t('lockClearConfirmYes') }}
+                </button>
+                <button class="btn text-xs h-7 px-2" @click="lockClearConfirming = false">
+                  {{ $t('lockCancel') }}
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -423,9 +459,9 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useSettingsStore } from '@/stores/settings'
-import { useUpdater } from '@/composables/useUpdater'
+import { useLockStore } from '@/stores/lock'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
 import SwitchBtn from '@/components/SwitchBtn.vue'
@@ -433,13 +469,12 @@ import CategoryTabs, { type CategoryTab } from '@/modules/software-manager/compo
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const lockStore = useLockStore()
 const route = useRoute()
 const router = useRouter()
-const { checking, installing, updateInfo, progress, error, check: runCheck, install: runInstall } =
-  useUpdater()
 
 // Tab 分区：选中状态存 URL query —— 刷新保持、可从别处直达；非法值回落首 Tab
-const TAB_KEYS = ['general', 'monitor', 'dns'] as const
+const TAB_KEYS = ['general', 'monitor', 'dns', 'security'] as const
 const activeTab = ref<string>(
   TAB_KEYS.includes(route.query.tab as (typeof TAB_KEYS)[number])
     ? (route.query.tab as string)
@@ -454,6 +489,7 @@ const settingsTabs = computed<CategoryTab[]>(() => [
   { key: 'general', label: t('settingsTabGeneral'), icon: 'mdi:tune' },
   { key: 'monitor', label: t('settingsTabMonitor'), icon: 'mdi:bell-outline' },
   { key: 'dns', label: t('settingsTabDdns'), icon: 'mdi:dns-outline' },
+  { key: 'security', label: t('settingsTabSecurity'), icon: 'mdi:shield-lock-outline' },
 ])
 
 const themeValue = ref<ThemeMode>('auto')
@@ -470,6 +506,7 @@ const alertSystemMemValue = ref(90)
 const alertProcessCpuValue = ref(90)
 const alertProcessMemValue = ref(90)
 const metricsRetainDaysValue = ref(7)
+const snapshotKeepValue = ref(5)
 const webhookUrlValue = ref('')
 const webhookFormatValue = ref('json')
 const webhookSecretValue = ref('')
@@ -514,13 +551,38 @@ async function onToggleAutostart(v: boolean) {
   }
 }
 
-async function onCheckUpdate() {
-  await runCheck()
+// 锁屏：设置 / 清空密码（锁即开关）
+const lockPasswordInput = ref('')
+const lockSetting = ref(false)
+const lockSetError = ref('')
+const lockClearConfirming = ref(false)
+const lockClearing = ref(false)
+
+async function enableLock() {
+  if (!lockPasswordInput.value) return
+  lockSetting.value = true
+  lockSetError.value = ''
+  try {
+    await lockStore.setPassword(lockPasswordInput.value)
+    lockPasswordInput.value = ''
+  } catch (e) {
+    lockSetError.value =
+      typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)
+  } finally {
+    lockSetting.value = false
+  }
 }
 
-async function onInstallUpdate() {
-  await runInstall()
+async function disableLock() {
+  lockClearing.value = true
+  try {
+    await lockStore.clearPassword()
+    lockClearConfirming.value = false
+  } finally {
+    lockClearing.value = false
+  }
 }
+
 
 watch(
   () => settingsStore.settings,
@@ -539,6 +601,7 @@ watch(
       alertProcessCpuValue.value = s.alert_process_cpu ?? 90
       alertProcessMemValue.value = s.alert_process_mem ?? 90
       metricsRetainDaysValue.value = s.metrics_retain_days ?? 7
+      snapshotKeepValue.value = s.snapshot_keep ?? 5
       webhookUrlValue.value = s.alert_webhook_url || ''
       webhookFormatValue.value = s.alert_webhook_format || 'json'
       webhookSecretValue.value = s.alert_webhook_secret || ''
@@ -575,7 +638,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -607,6 +670,12 @@ async function save() {
       ? Number(metricsRetainDaysValue.value)
       : 7
   settingsStore.settings.metrics_retain_days = metricsRetainDaysValue.value
+  // 快照保留数量归一 [1,50]，非法值回落 5（防止 '' 写坏 settings.json）
+  snapshotKeepValue.value =
+    Number(snapshotKeepValue.value) >= 1 && Number(snapshotKeepValue.value) <= 50
+      ? Number(snapshotKeepValue.value)
+      : 5
+  settingsStore.settings.snapshot_keep = snapshotKeepValue.value
   // 端口输入清空时 v-model.number 给 ''，归一回落 465（同告警阈值的 pct 兜底逻辑）
   smtpPortValue.value = Number(smtpPortValue.value) >= 1 && Number(smtpPortValue.value) <= 65535 ? Number(smtpPortValue.value) : 465
   settingsStore.settings.alert_webhook_url = webhookUrlValue.value

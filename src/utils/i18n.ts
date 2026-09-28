@@ -2,8 +2,6 @@ import { createI18n } from 'vue-i18n'
 import zhCN from '../locales/zh-CN'
 import enUS from '../locales/en-US'
 
-export type Messages = typeof zhCN
-
 export function loadMessages() {
   return {
     'zh-CN': zhCN,

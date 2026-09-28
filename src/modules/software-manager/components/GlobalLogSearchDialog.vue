@@ -6,7 +6,7 @@
           <div class="title">
             <Icon icon="mdi:magnify" /> {{ $t('globalLogSearch') }}
           </div>
-          <button class="close" @click="$emit('close')"><Icon icon="mdi:close" /></button>
+          <button class="dialog-close" @click="$emit('close')"><Icon icon="mdi:close" /></button>
         </div>
 
         <div class="search-row">
@@ -51,7 +51,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import type { LogHit, InstalledSoftware } from '@/models/software'
 import LogViewerDialog from './LogViewerDialog.vue'
 
@@ -123,19 +123,7 @@ function openInstance(h: LogHit) {
   font-size: 15px;
   font-weight: 600;
 }
-.close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-}
-.close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .search-row {
   display: flex;
   gap: 8px;

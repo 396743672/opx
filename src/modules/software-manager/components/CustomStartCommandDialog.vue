@@ -11,6 +11,7 @@
         </button>
       </div>
 
+      <div class="dialog-body">
       <div class="hint">{{ $t('customStartCommandHint') }}</div>
 
       <div class="field">
@@ -125,6 +126,7 @@
         </div>
       </div>
 
+      </div>
       <div class="dialog-footer">
         <button class="btn" @click="onClose">{{ $t('cancel') }}</button>
         <button
@@ -143,7 +145,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { open } from '@tauri-apps/plugin-dialog'
 import type {
   CustomHealthSpec,
@@ -294,18 +296,21 @@ function onClose() {
 .dialog {
   width: 680px;
   max-height: 90vh;
-  overflow-y: auto;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
   box-shadow: 0 8px 24px oklch(0 0 0 / 0.45);
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .dialog-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  flex: none;
 }
 .dialog-title {
   display: flex;
@@ -317,22 +322,7 @@ function onClose() {
 .dialog-title svg {
   color: var(--color-primary);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .hint {
   font-size: 12px;
   color: var(--color-muted-foreground);
@@ -458,7 +448,13 @@ function onClose() {
   font-size: 13px;
   cursor: pointer;
 }
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .dialog-footer {
+  flex: none;
   display: flex;
   justify-content: flex-end;
   gap: 8px;

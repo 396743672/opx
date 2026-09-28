@@ -38,15 +38,19 @@ import ToastHost from '@/components/ToastHost.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
-import { invoke } from '@tauri-apps/api/core'
+import { useLockStore } from '@/stores/lock'
+import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { toast } from '@/composables/useToast'
 import { CloseWindowAction } from '@/models/settings'
 
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
 const lifecycleStore = useLifecycleStore()
+const lockStore = useLockStore()
+const router = useRouter()
 const { t } = useI18n()
 
 const showCloseDialog = ref(false)
@@ -115,6 +119,13 @@ async function onChoose(choice: 'tray' | 'exit', remember: boolean) {
 onMounted(async () => {
   // 软件状态事件全局监听：不依赖具体页面挂载，避免切页期间事件丢失（状态刷新与错误弹窗）
   await lifecycleStore.initListener()
+
+  // 锁屏：先于路由守卫就绪。已锁定则立即展示锁屏（无需等系统数据，跳过启动遮罩）
+  await lockStore.init()
+  if (lockStore.hasPassword && !lockStore.unlocked) {
+    booting.value = false
+    router.replace('/lock')
+  }
   // 禁用右键菜单和 F12 等开发者工具快捷键
   document.addEventListener('contextmenu', (e) => e.preventDefault())
   document.addEventListener('keydown', (e) => {

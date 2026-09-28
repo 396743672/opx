@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { AppSettings, ThemeMode, Language } from '@/models/settings'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { i18n } from '@/utils/i18n'
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -84,6 +84,12 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.language = lang
     applyLanguage()
     await saveSettings()
+    // 托盘菜单文案跟随语言，通知后端重建（托盘未初始化时忽略）
+    try {
+      await invoke('refresh_tray_menu')
+    } catch {
+      /* 非桌面包或无托盘环境 */
+    }
   }
 
   return {

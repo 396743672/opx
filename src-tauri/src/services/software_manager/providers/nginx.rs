@@ -223,6 +223,7 @@ impl SoftwareProvider for NginxProvider {
             args: vec!["-g".to_string(), "daemon off;".to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
+            remove_envs: Vec::new(),
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: None,
         })

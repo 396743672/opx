@@ -187,7 +187,9 @@ const canReset = computed(
 async function loadSnapshots() {
   loadingSnaps.value = true
   try {
-    snapshots.value = await ops.loadSnapshots(selectedId.value)
+    const list = await ops.loadSnapshots(selectedId.value)
+    // 按创建时间降序：最新快照排在最上面（后端按 manifest 写入顺序返回，未排序）
+    snapshots.value = list.slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
   } catch (e) {
     console.error('load snapshots failed:', e)
     snapshots.value = []
@@ -358,7 +360,7 @@ onMounted(() => {
   width: 640px;
   max-width: 96vw;
   max-height: 90vh;
-  overflow-y: auto;
+  overflow: hidden;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: var(--color-card);
@@ -375,6 +377,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 14px;
+  flex: none;
 }
 .dialog-title {
   display: flex;
@@ -391,27 +394,13 @@ onMounted(() => {
   font-weight: 400;
   color: var(--color-muted-foreground);
 }
-.dialog-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-muted-foreground);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dialog-close:hover {
-  background: var(--color-muted);
-  color: var(--color-foreground);
-}
+
 .toolbar {
   display: flex;
   align-items: flex-end;
   gap: 12px;
   margin-bottom: 12px;
+  flex: none;
 }
 .field {
   display: flex;
@@ -442,6 +431,7 @@ onMounted(() => {
   background: var(--color-muted);
   border-radius: 6px;
   margin-bottom: 16px;
+  flex: none;
 }
 .tab {
   flex: 1;
@@ -460,7 +450,9 @@ onMounted(() => {
   font-weight: 500;
 }
 .tab-pane {
+  flex: 1 1 auto;
   min-height: 180px;
+  overflow-y: auto;
 }
 .create-box {
   display: flex;

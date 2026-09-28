@@ -184,11 +184,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { toast } from '@/composables/useToast'
+import { translateError } from '@/utils/i18nError'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AppCard from '../components/AppCard.vue'
@@ -201,7 +202,7 @@ import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp } from '@/models/springboot'
 import { AppStatus } from '@/models/springboot'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const store = useSpringBootStore()
 const activeGroup = ref<string | null>(null)
@@ -241,31 +242,43 @@ async function onExport() {
   await doExport()
 }
 
+interface ExportSummary { apps: number; files: number; warnings: string[] }
+interface ImportSummary { apps: number; warnings: string[] }
+
 async function doExport() {
   showExportDialog.value = false
-  progress.value = '准备导出…'
   try {
     const filePath = await save({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], defaultPath: 'opx-springboot-export.zip' })
-    if (!filePath) { progress.value = ''; return }
-    await invoke('export_springboot_config', { filePath, groupNames: exportGroups.value.length > 0 ? exportGroups.value : null })
+    if (!filePath) return
+    progress.value = t('exportProgressPreparing')
+    const r = await invoke<ExportSummary>('export_springboot_config', {
+      filePath,
+      groupNames: exportGroups.value.length > 0 ? exportGroups.value : null,
+    })
+    toast(t('exportSuccess'), 'ok')
+    if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
   } catch (e) {
-    console.error('export failed:', e)
+    toast(t('exportFailed', { msg: translateError(String(e), t, te) }), 'err')
+  } finally {
+    progress.value = ''
   }
-  progress.value = ''
 }
 
 async function onImport() {
   if (!confirm(t('importConfigConfirm'))) return
-  progress.value = '正在导入…'
   try {
     const filePath = await open({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], multiple: false })
-    if (!filePath) { progress.value = ''; return }
-    await invoke('import_springboot_config', { filePath })
-    await refreshAll()
+    if (!filePath) return
+    progress.value = t('importProgressPreparing')
+    const r = await invoke<ImportSummary>('import_springboot_config', { filePath })
+    toast(t('importSuccess'), 'ok')
+    if (r.warnings?.length) toast(r.warnings.join('\n'), 'info')
+    await refreshAll().catch(() => {})
   } catch (e) {
-    console.error('import failed:', e)
+    toast(t('importFailed', { msg: translateError(String(e), t, te) }), 'err')
+  } finally {
+    progress.value = ''
   }
-  progress.value = ''
 }
 
 // 一键启动分组
@@ -294,17 +307,25 @@ async function startGroup() {
 async function stopGroup() {
   if (stoppingGroup.value) return
   stoppingGroup.value = true
+  const warnings: string[] = []
   try {
     // 逆序停止：先停 order 大的
     const sorted = [...groupApps.value].sort((a, b) => b.startup_order - a.startup_order)
     for (const app of sorted) {
       if (app.status !== AppStatus.Running) continue
-      await store.stopApp(app.id)
+      // 单个应用失败不能中断整组：记下后继续停剩下的
+      try {
+        const outcome = await store.stopApp(app.id)
+        if (outcome.message) warnings.push(outcome.message)
+      } catch (e) {
+        warnings.push(`${app.name}: ${String(e)}`)
+      }
     }
   } finally {
     stoppingGroup.value = false
     store.fetchApps()
   }
+  if (warnings.length) toast(warnings.join('\n'), 'info')
 }
 
 // Delete confirm
@@ -312,6 +333,8 @@ const deleteTarget = ref<SpringBootApp | null>(null)
 
 // Event listener cleanup
 let unlisten: UnlistenFn | null = null
+let unlistenExport: UnlistenFn | null = null
+let unlistenImport: UnlistenFn | null = null
 
 const filteredApps = computed(() => {
   if (activeGroup.value === null) return store.apps
@@ -358,9 +381,13 @@ function closeGroupManager() {
 
 async function handleAction(action: 'start' | 'stop' | 'restart', id: string) {
   try {
-    if (action === 'start') await store.startApp(id)
-    else if (action === 'stop') await store.stopApp(id)
-    else await store.restartApp(id)
+    if (action === 'start') {
+      await store.startApp(id)
+    } else {
+      // 停止/重启：强制终止不算失败，应用确实停了，只是没执行 shutdown hook
+      const outcome = action === 'stop' ? await store.stopApp(id) : await store.restartApp(id)
+      if (outcome.message) toast(outcome.message, 'info')
+    }
   } catch (e) {
     // 启动/停止失败（如前置依赖未运行）必须提示，否则用户以为点了没反应
     toast(String(e), 'err')
@@ -446,10 +473,28 @@ onMounted(async () => {
   unlisten = await listen('springboot-status-changed', () => {
     store.fetchApps()
   })
+
+  // 导出/导入进度：后端逐应用推送 export-progress，导入推送 import-progress
+  unlistenExport = await listen<{ current?: number; total?: number; name?: string; done?: boolean }>(
+    'export-progress',
+    (e) => {
+      const p = e.payload
+      if (p.done || !p.total) return
+      progress.value = t('exportProgress', { cur: p.current ?? 0, total: p.total, name: p.name ?? '' })
+    },
+  )
+  unlistenImport = await listen<{ phase?: string; done?: boolean }>('import-progress', (e) => {
+    const p = e.payload
+    if (p.done) return
+    if (p.phase === 'extracting') progress.value = t('importExtracting')
+    else if (p.phase === 'config') progress.value = t('importApplying')
+  })
 })
 
 onBeforeUnmount(() => {
-  if (unlisten) unlisten()
+  unlisten?.()
+  unlistenExport?.()
+  unlistenImport?.()
 })
 </script>
 

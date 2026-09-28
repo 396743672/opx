@@ -4,7 +4,7 @@
       <div class="dialog">
         <div class="head">
           <div class="title"><Icon icon="mdi:web" /> {{ form.name || $t('newSite') }}</div>
-          <button class="x" @click="$emit('close')"><Icon icon="mdi:close" /></button>
+          <button class="dialog-close" @click="$emit('close')"><Icon icon="mdi:close" /></button>
         </div>
 
         <div class="tab-bar">
@@ -94,7 +94,7 @@
                     <Icon icon="mdi:certificate-outline" />
                     {{ form.ssl.cert_expires_at ? $t('reissueCert') : $t('issueCert') }}
                   </button>
-                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ acmeStatus }}</span>
+                  <span v-if="acmeStatus" class="hint" style="margin-top:0">{{ translateError(acmeStatus, t, te) }}</span>
                 </div>
                 <div v-if="form.ssl.cert_expires_at" class="hint">
                   {{ $t('certExpiresAt') }}: {{ form.ssl.cert_expires_at }}
@@ -161,7 +161,7 @@
     <div v-if="saveError" class="overlay" style="z-index:70" @click.self="saveError = ''">
       <div class="confirm-box">
         <div class="confirm-title"><Icon icon="mdi:alert-circle-outline" /></div>
-        <p class="confirm-msg">{{ saveError }}</p>
+        <p class="confirm-msg">{{ translateError(saveError, t, te) }}</p>
         <div class="confirm-actions">
           <button class="btn primary" @click="saveError = ''">{{ $t('confirm') }}</button>
         </div>
@@ -173,15 +173,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/utils/ipc'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
+import { translateError } from '@/utils/i18nError'
 import LocationEditor from './LocationEditor.vue'
 import type { Site, SiteLocation } from '@/models/website'
 import type { DnsAccount } from '@/models/dns-account'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const settingsStore = useSettingsStore()
 const props = withDefaults(defineProps<{ site: Site; isNew?: boolean }>(), { isNew: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -528,7 +529,7 @@ watch(tab, async (t) => {
 .head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--color-border); flex: none; }
 .title { font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .title svg { color: var(--color-primary); }
-.x { border: none; background: transparent; color: var(--color-muted-foreground); cursor: pointer; }
+
 .body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--color-border); flex: none; }
 .lbl { display: block; font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 4px; }
