@@ -399,6 +399,58 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== 安全 ===== -->
+      <div v-show="activeTab === 'security'">
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('lockScreen') }}</h3>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('lockStatus') }}</span>
+            <span class="text-sm" :class="lockStore.hasPassword ? 'text-success' : 'text-muted-foreground'">
+              {{ lockStore.hasPassword ? $t('lockOn') : $t('lockOff') }}
+            </span>
+          </div>
+          <!-- 未设锁：设置密码即开启 -->
+          <div v-if="!lockStore.hasPassword" class="py-3 flex flex-col gap-3">
+            <span class="text-xs text-muted-foreground">{{ $t('lockSetPasswordHint') }}</span>
+            <input
+              v-model="lockPasswordInput"
+              type="password"
+              :placeholder="$t('lockNewPassword')"
+              class="h-8 px-2 w-72 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            />
+            <div class="flex items-center gap-2">
+              <button class="btn text-xs h-7 px-2" :disabled="lockSetting || !lockPasswordInput" @click="enableLock">
+                {{ lockSetting ? $t('loading') : $t('lockSetPassword') }}
+              </button>
+              <span v-if="lockSetError" class="text-xs text-destructive">{{ lockSetError }}</span>
+            </div>
+          </div>
+          <!-- 已设锁：提示 + 立即锁定 + 清空（关闭） -->
+          <div v-else class="py-3 flex flex-col gap-3">
+            <span class="text-xs text-muted-foreground">{{ $t('lockIdleHint', { n: lockStore.IDLE_MINUTES }) }}</span>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button class="btn text-xs h-7 px-2" :disabled="!lockStore.unlocked" @click="lockStore.lock()">
+                {{ $t('lockLockNow') }}
+              </button>
+              <button v-if="!lockClearConfirming" class="btn text-xs h-7 px-2" @click="lockClearConfirming = true">
+                {{ $t('lockClearPassword') }}
+              </button>
+              <template v-else>
+                <span class="text-xs text-warning">{{ $t('lockClearConfirm') }}</span>
+                <button class="btn text-xs h-7 px-2" :disabled="lockClearing" @click="disableLock">
+                  {{ $t('lockClearConfirmYes') }}
+                </button>
+                <button class="btn text-xs h-7 px-2" @click="lockClearConfirming = false">
+                  {{ $t('lockCancel') }}
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -409,6 +461,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@/utils/ipc'
 import { useSettingsStore } from '@/stores/settings'
+import { useLockStore } from '@/stores/lock'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
 import PageHeader from '@/components/PageHeader.vue'
 import SwitchBtn from '@/components/SwitchBtn.vue'
@@ -416,11 +469,12 @@ import CategoryTabs, { type CategoryTab } from '@/modules/software-manager/compo
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const lockStore = useLockStore()
 const route = useRoute()
 const router = useRouter()
 
 // Tab 分区：选中状态存 URL query —— 刷新保持、可从别处直达；非法值回落首 Tab
-const TAB_KEYS = ['general', 'monitor', 'dns'] as const
+const TAB_KEYS = ['general', 'monitor', 'dns', 'security'] as const
 const activeTab = ref<string>(
   TAB_KEYS.includes(route.query.tab as (typeof TAB_KEYS)[number])
     ? (route.query.tab as string)
@@ -435,6 +489,7 @@ const settingsTabs = computed<CategoryTab[]>(() => [
   { key: 'general', label: t('settingsTabGeneral'), icon: 'mdi:tune' },
   { key: 'monitor', label: t('settingsTabMonitor'), icon: 'mdi:bell-outline' },
   { key: 'dns', label: t('settingsTabDdns'), icon: 'mdi:dns-outline' },
+  { key: 'security', label: t('settingsTabSecurity'), icon: 'mdi:shield-lock-outline' },
 ])
 
 const themeValue = ref<ThemeMode>('auto')
@@ -493,6 +548,38 @@ async function onToggleAutostart(v: boolean) {
   } catch (e) {
     console.error('set autostart failed:', e)
     autostartValue.value = !v
+  }
+}
+
+// 锁屏：设置 / 清空密码（锁即开关）
+const lockPasswordInput = ref('')
+const lockSetting = ref(false)
+const lockSetError = ref('')
+const lockClearConfirming = ref(false)
+const lockClearing = ref(false)
+
+async function enableLock() {
+  if (!lockPasswordInput.value) return
+  lockSetting.value = true
+  lockSetError.value = ''
+  try {
+    await lockStore.setPassword(lockPasswordInput.value)
+    lockPasswordInput.value = ''
+  } catch (e) {
+    lockSetError.value =
+      typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)
+  } finally {
+    lockSetting.value = false
+  }
+}
+
+async function disableLock() {
+  lockClearing.value = true
+  try {
+    await lockStore.clearPassword()
+    lockClearConfirming.value = false
+  } finally {
+    lockClearing.value = false
   }
 }
 

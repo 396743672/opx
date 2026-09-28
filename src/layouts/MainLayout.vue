@@ -51,6 +51,15 @@
         >
           <Icon icon="mdi:cog" class="text-lg" />
         </button>
+        <button
+          v-if="lockStore.hasPassword"
+          @click="onLock"
+          class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 cursor-pointer"
+          :title="$t('lockManualLock')"
+          :aria-label="$t('lockManualLock')"
+        >
+          <Icon icon="mdi:lock-outline" class="text-lg" />
+        </button>
 
         <!-- 窗口控制 -->
         <div class="flex items-center ml-2 gap-0.5">
@@ -84,6 +93,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
+import { useLockStore } from '@/stores/lock'
 import type { ThemeMode } from '@/models/settings'
 import Sidebar from './Sidebar.vue'
 import { Icon } from '@iconify/vue'
@@ -96,6 +106,7 @@ const router = useRouter()
 const route = useRoute()
 const settingsStore = useSettingsStore()
 const systemStore = useSystemStore()
+const lockStore = useLockStore()
 const sidebarPinned = computed(() => !settingsStore.sidebarCollapsed)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
@@ -115,6 +126,10 @@ function cycleTheme() {
 }
 
 const goToSettings = () => router.push('/settings')
+
+function onLock() {
+  if (lockStore.hasPassword) lockStore.lock()
+}
 
 const maximized = ref(false)
 

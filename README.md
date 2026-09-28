@@ -21,6 +21,7 @@ OPX is a Windows desktop application for managing infrastructure software and se
 | **System Monitoring & Alerting** | CPU/memory/disk/network usage, persisted history, threshold alerts, webhook/SMTP notification channels | ✅ |
 | **Crash Self-Heal (Watchdog)** | Auto-restart on unexpected exit (3-retry cap), no false restart on manual stop | ✅ |
 | **System Monitor** | CPU/memory/disk/network usage, real-time trend charts (Chart.js), system info | ✅ |
+| **Lock Screen** | OS-credential-store backed UI lock (Argon2id verifier, key never persisted); on/off switch — locks only when set; idle 5-min auto-lock + manual lock; clear to disable | ✅ |
 | **Custom Software** | Custom start command, config file path, health-check rule | ✅ |
 
 ## System Architecture
@@ -177,6 +178,13 @@ npm run tauri:build
 
 ### Settings Tabs
 - Three tabs: General / Monitor & Alert / Domain & DNS. The selected tab is recorded in the URL (`?tab=`, preserved on refresh and deep-link; illegal values fall back to General).
+
+### Lock Screen
+- On/off switch: setting a password enables the lock; clearing it disables it — an empty lock never auto-locks.
+- Backend stores only an Argon2id verifier in the OS credential store (Windows Credential Manager / macOS Keychain / Linux Secret Service). On macOS/Linux this goes through the `keyring` crate; on Windows it uses `windows-sys` directly with `CRED_PERSIST_LOCAL_MACHINE` (keyring's default `CRED_PERSIST_ENTERPRISE` is unreadable by a fresh process on non-domain machines, so it cannot re-verify after a restart). The derived key is computed at unlock time and **never written to disk**; nothing is stored in the app's plaintext `config_dir`.
+- Locks only when a password is set: idle (default 5 min) auto-lock and a manual lock button (header) take effect only with a lock; an empty lock never locks.
+- UI-only scope: locking guards the frontend; managed processes keep running. Forgetting the password = clear the entry and re-set, with no data loss.
+- Migration note: the verifier lives in the OS store, not in app data, so moving the app to another machine leaves the lock off (re-set there); copied data on a different machine is usable without the password (acceptable for a UI lock).
 - Config panels link to official docs.
 - The site dialog uses a fixed header with only the form area scrolling.
 
