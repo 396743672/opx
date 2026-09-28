@@ -193,7 +193,7 @@ npm run tauri:build
 
 ### 锁屏
 - **开关式**：设置密码即开启锁；清空即关闭——空锁永不自动锁定。
-- 后端仅把 Argon2id verifier 存入 **系统凭据库**（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service，经 `keyring` crate）。派生密钥在解锁时现场算出、**绝不落盘**；不写入应用明文 `config_dir`。
+- 后端仅把 Argon2id verifier 存入 **系统凭据库**（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。macOS/Linux 经 `keyring` crate；Windows 端改用 `windows-sys` 直连并以 `CRED_PERSIST_LOCAL_MACHINE` 持久化（keyring 默认的 `CRED_PERSIST_ENTERPRISE` 在非域单机上「写成功、新进程读不回」，重启后无法验证）。派生密钥在解锁时现场算出、**绝不落盘**；不写入应用明文 `config_dir`。
 - **仅在有锁时锁定**：闲置（默认 5 分钟）自动锁与标题栏手动锁按钮，仅在已设密码时生效；空锁不锁定。
 - **仅 UI 层面**：锁只守护前端界面，被管进程继续运行。忘记密码 = 清空凭据条目并重设，无数据损失。
 - **迁移说明**：verifier 存于系统凭据库而非应用数据，换电脑后锁为关闭态（需在新机重设）；被拷走的数据在别的机器上无需密码即可使用（对 UI 锁属可接受设计）。

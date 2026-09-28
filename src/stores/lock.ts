@@ -39,14 +39,19 @@ export const useLockStore = defineStore('lock', () => {
       const target = pendingRoute.value ?? '/dashboard'
       pendingRoute.value = null
       router.push(target)
+      // 解锁后重新挂上闲置计时器：之后任意 5 分钟无操作都会再次自动锁屏。
+      // （解锁点击发生时 unlocked 仍为 false，事件续期不会生效，必须显式续期。）
+      resetIdle()
     }
     return ok
   }
 
-  /** 手动 / 自动锁定。仅在有锁时生效。 */
+  /** 手动 / 自动锁定。仅在有锁时生效。置为锁定态并跳转到锁屏页（守卫据此渲染）。 */
   function lock() {
     if (hasPassword.value) {
       unlocked.value = false
+      pendingRoute.value = router.currentRoute.value.fullPath
+      router.push('/lock')
     }
   }
 
@@ -55,6 +60,8 @@ export const useLockStore = defineStore('lock', () => {
     await invoke('set_lock_password', { pw })
     hasPassword.value = true
     unlocked.value = true
+    // 启锁后立即开始闲置监控（否则要等下一次用户事件才挂上计时器）
+    resetIdle()
   }
 
   /** 清空锁屏密码（关闭锁） */

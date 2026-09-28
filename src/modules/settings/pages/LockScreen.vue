@@ -18,7 +18,7 @@
           :disabled="busy"
         />
         <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
-        <button type="submit" class="btn h-10" :disabled="busy || !password">
+        <button type="submit" class="btn primary h-10 w-full justify-center" :disabled="busy || !password">
           {{ busy ? $t('loading') : $t('lockUnlock') }}
         </button>
       </form>
