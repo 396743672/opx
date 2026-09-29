@@ -8,7 +8,7 @@ use crate::models::software::{
 
 use super::{
     ConfigContext, GracefulStopCommand, HealthContext, InstallContext, LogContext, SoftwareProvider,
-    StartCommand, StartContext, StopContext, default_log_sources,
+    StartCommand, StartContext, StopContext, default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -196,7 +196,7 @@ impl SoftwareProvider for RedisProvider {
         // 映射打乱为 /7.4.9/D:/path），但认相对路径 —— working_dir 已设为 install_path，
         // 直接传 "redis.conf" 即可。
         Ok(StartCommand {
-            program: "redis-server.exe".to_string(),
+            program: exe_name("redis-server"),
             args: vec!["redis.conf".to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
@@ -310,7 +310,7 @@ impl SoftwareProvider for RedisProvider {
         }
         Some(GracefulStopCommand {
             program: PathBuf::from(&ctx.install_path)
-                .join("redis-cli.exe")
+                .join(exe_name("redis-cli").as_str())
                 .to_string_lossy()
                 .to_string(),
             args,

@@ -354,20 +354,20 @@ mod tests {
             };
             match key.as_str() {
                 "redis" => {
-                    assert!(cmd.program.ends_with("redis-cli.exe"), "redis 停止程序应为 redis-cli.exe");
+                    assert!(cmd.program.ends_with(&exe_name("redis-cli")), "redis 停止程序应为 redis-cli");
                     assert!(cmd.args.contains(&"shutdown".to_string()), "redis 停止应带 shutdown");
                 }
                 "nginx" => {
-                    assert!(cmd.program.ends_with("nginx.exe"), "nginx 停止程序应为 nginx.exe");
+                    assert!(cmd.program.ends_with(&exe_name("nginx")), "nginx 停止程序应为 nginx");
                     assert_eq!(cmd.args, vec!["-s".to_string(), "quit".to_string()]);
                 }
                 "postgresql" => {
-                    assert!(cmd.program.ends_with("pg_ctl.exe"), "pg 停止程序应为 pg_ctl.exe");
+                    assert!(cmd.program.ends_with(&exe_name("pg_ctl")), "pg 停止程序应为 pg_ctl");
                     assert!(cmd.args.contains(&"-D".to_string()), "pg 停止应带 -D <data>");
                     assert!(cmd.args.contains(&"fast".to_string()), "pg 停止模式应为 fast");
                 }
                 "mongodb" => {
-                    assert!(cmd.program.ends_with("mongod.exe"), "mongo 停止程序应为 mongod.exe");
+                    assert!(cmd.program.ends_with(&exe_name("mongod")), "mongo 停止程序应为 mongod");
                     assert!(cmd.args.contains(&"--shutdown".to_string()), "mongo 停止应带 --shutdown");
                     assert!(cmd.args.contains(&"--dbpath".to_string()), "mongo 停止应带 --dbpath");
                 }
