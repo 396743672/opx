@@ -102,3 +102,142 @@ pub fn resolve_data_path(rel_or_abs: &str) -> PathBuf {
         data_dir().join(p)
     }
 }
+
+/// 落盘敏感文件后收紧权限，缓解「权限不当可被读」（P2-6 明文凭据持久化）。
+///
+/// - Unix/macOS：设为 `0600`（仅 owner 可读写，group/other 无任何权限）。
+/// - Windows：best-effort 设为只读位。NTFS 默认 ACL 已限制其他用户读取，
+///   真正的 owner-only ACL 需调用 Windows API，留待跨平台（P2-1）统一处理。
+///
+/// 失败不致命，仅静默忽略——权限收紧是加固项，不应阻断主流程。
+pub fn restrict_file_permissions(path: &Path) {
+    let _ = restrict_file_permissions_inner(path);
+}
+
+#[cfg(unix)]
+fn restrict_file_permissions_inner(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(path, perms)
+}
+
+#[cfg(windows)]
+fn restrict_file_permissions_inner(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_READONLY,
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // best-effort：保留其他属性位，仅置只读位（防误改）。
+    // 真正 owner-only ACL（防同用户读）需 windows-sys DACL，留待 P2-1 跨平台统一处理。
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    let target = if attrs == u32::MAX {
+        FILE_ATTRIBUTE_READONLY
+    } else {
+        attrs | FILE_ATTRIBUTE_READONLY
+    };
+    let _ = unsafe { SetFileAttributesW(wide.as_ptr(), target) };
+    Ok(())
+}
+
+/// 写敏感文件并「落盘即收紧权限」，且**支持重写**（修复 P2-6 只读位阻断覆盖写）。
+///
+/// 顺序（关键）：
+/// 1. 写前清除只读位（仅 Windows 需要；NTFS 只读属性会让 `std::fs::write` 覆盖既有文件失败）。
+/// 2. 写入内容。
+/// 3. 收紧权限（Unix 0600 / Windows 只读位）。
+///
+/// 这样首次写入与重启重写走同一落点，避免 P2-6 的只读位把 `installed.json`、
+/// influxdb3 `admin-token.json` 等**会被反复重写**的文件锁死为不可写。
+pub fn write_file_restricted<C: AsRef<[u8]>>(path: &Path, content: C) -> std::io::Result<()> {
+    clear_readonly_if_windows(path);
+    std::fs::write(path, content)?;
+    restrict_file_permissions(path);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_readonly_if_windows(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_READONLY,
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    // 仅当文件已存在且带只读位时才清除；文件不存在（首次创建）时 GetFileAttributesW 返回 MAX，跳过。
+    if attrs != u32::MAX && attrs & FILE_ATTRIBUTE_READONLY != 0 {
+        let _ = unsafe { SetFileAttributesW(wide.as_ptr(), attrs & !FILE_ATTRIBUTE_READONLY) };
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_readonly_if_windows(_path: &Path) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn restrict_file_permissions_tightens_access() {
+        let dir = std::env::temp_dir().join(format!("opx-perm-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = dir.join("secret.txt");
+        {
+            let mut f = fs::File::create(&p).unwrap();
+            f.write_all(b"secret").unwrap();
+        }
+        // 先放宽，确保测试前是宽松权限
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = fs::metadata(&p).unwrap().permissions();
+            perm.set_mode(0o644);
+            fs::set_permissions(&p, perm).unwrap();
+        }
+        restrict_file_permissions(&p);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&p).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "group/other 不应有任何权限");
+        }
+        #[cfg(windows)]
+        {
+            assert!(
+                fs::metadata(&p).unwrap().permissions().readonly(),
+                "Windows 上应设为只读"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_file_restricted_allows_rewrite() {
+        // 复现 P2-6 只读位阻断重写：首次写后收紧权限，第二次写（如 influxdb3 每次启动重写 token）应成功。
+        let dir = std::env::temp_dir().join(format!("opx-perm-rewrite-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = dir.join("secret.txt");
+        write_file_restricted(&p, b"first").unwrap();
+        // 第二次写入不应因只读位失败（Windows 上无 clear_readonly 会 ACCESS_DENIED）。
+        write_file_restricted(&p, b"second").unwrap();
+        let content = fs::read_to_string(&p).unwrap();
+        assert_eq!(content, "second");
+        // 权限仍被收紧
+        #[cfg(windows)]
+        assert!(
+            fs::metadata(&p).unwrap().permissions().readonly(),
+            "重写后应为只读"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

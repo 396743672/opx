@@ -88,7 +88,8 @@ fn load_or_create_token_key(install_path: &std::path::Path) -> String {
     if install_path.exists() {
         // 真实安装才落盘；写失败则退化为本次启动临时密钥（token 重启失效，可接受）
         if std::fs::create_dir_all(install_path.join("conf")).is_ok() {
-            let _ = std::fs::write(&key_file, &key);
+            // 写后即收紧权限；write_file_restricted 内部先清只读位，覆盖重生成也安全。
+            let _ = crate::utils::paths::write_file_restricted(&key_file, &key);
         }
     }
     key

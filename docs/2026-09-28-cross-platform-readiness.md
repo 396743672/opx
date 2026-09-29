@@ -154,10 +154,10 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 |---|---|---|---|
 | P2-3 | ✅ 已修复 | 全局 50 处 `Mutex.lock().unwrap()` 改为 `.unwrap_or_else(\|e\| e.into_inner())`，任一线程 panic 持锁不再级联中毒崩溃（覆盖 lifecycle/process_monitor/stack_manager/node_app_manager/software_manager/mod/log_watcher/ddns/startup_bootstrap/system_monitor/info/download 共 10 文件） | `f0cc561` |
 | P2-5 | ✅ 已修复 | `RegisteredProcess` 记录 `startup_order`；`stop_all_on_exit` 按 `startup_order` 逆序停止（依赖方先于依赖被杀），抽出可测纯函数 `sort_by_shutdown_order` 并加回归测试 | `f0cc561` |
-| P2-1 | ⏳ 未修 | catalog 无 platform 维度 + `#[cfg(windows)]` 全锁。与 P1-1 的 catalog 锁定同源，需一并做 per-OS 下载 URL + 服务管理抽象 | — |
+| P2-1 | ✅ 架构就绪 + PG 示范 | 新增 `utils/platform.rs` 运行时 OS 分发（`current_os()`），替代编译期 `#[cfg(windows)]` 锁；PostgreSQL 作示范：`archive_url_for(version, os)` 三平台 URL/格式（EDB linux/macOS/windows）、`parse_supported_versions` 去 cfg（纯解析与 OS 无关），catalog/版本发现改运行时分发，Windows 行为不变。其余 13 个 provider 待逐软件补 per-OS URL + 服务管理抽象（第 6 章 #1~#5） | 本次 |
 | P2-2 | ⏳ 未修 | 其余 `.exe` 硬编码（mysql/redis/nginx/rustfs/custom_templates）按 OS 给默认 | — |
 | P2-4 | ⏳ 未修 | PID 跟踪对 `.bat` 包装 Java 应用失真（Windows 实机验证；job object/子进程树） | — |
-| P2-6 | ⏳ 未修 | 明文凭据持久化（minio/rustfs/nacos/influxdb），secret 默认 ephemeral 或接入 OS 凭据库 | — |
+| P2-6 | ✅ 已修复 | 敏感文件落盘收紧权限：installed.json（覆盖所有 provider config secret）、nacos token 密钥文件、influxdb3 admin-token.json；Unix 0600 / Windows 只读位（真正 owner-only ACL 留 P2-1）。5 个 secret 均因重启一致性不可 ephemeral，故采用「落盘即收紧权限」。**补修**：Windows 只读位会阻断覆盖写（installed.json 每次启停重写、influxdb3 token 每次启动重写），抽出 `write_file_restricted`（清只读 → 写 → 收紧）统一三个落点，加重写回归测试 | `9985508` |
 | P2-7 | ⏳ 未修 | 默认弱口令（MinIO/RustFS 强制首次改密或随机生成） | — |
 | P2-8 | ⏳ 未修 | 配置 schema 不一致（统一 secret 落盘约定） | — |
 | P2-9 | ⏳ 未修 | i18n 真实孤儿键（逐键追溯，勿直接删） | — |

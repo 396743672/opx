@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
+use crate::utils::paths::write_file_restricted;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
@@ -223,7 +224,9 @@ impl SoftwareProvider for Influxdb3Provider {
             // token 文件格式与 `influxdb3 create token --offline` 产出一致：
             // {"token":"<value>","name":"_admin"}。每次启动重写，保证与配置同步。
             let token_file = data_dir.join("admin-token.json");
-            std::fs::write(
+            // token 文件每次启动重写，write_file_restricted 先清只读位再写再收紧，
+            // 避免 P2-6 只读位阻断第二次重写（生产环境也会因此启动失败）。
+            write_file_restricted(
                 &token_file,
                 serde_json::json!({ "token": token, "name": "_admin" }).to_string(),
             )?;

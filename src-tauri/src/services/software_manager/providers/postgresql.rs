@@ -20,23 +20,34 @@ const CREATE_NO_WINDOW: u32 = 0;
 /// PostgreSQL 官方 Git 镜像的标签列表（`postgres/postgres` 是 PostgreSQL 全球开发组维护的官方镜像）。
 /// 标签规范：stable 为 `REL_<major>_<minor>`（如 `REL_18_6`），预发布为 `REL_19_BETA3` / `REL_18_RC1`。
 /// 注意 9.x 及更早是 `REL9_6_24` 形式（无下划线），不匹配本规则即天然被跳过。
-#[cfg(windows)]
 const TAGS_URL: &str = "https://api.github.com/repos/postgres/postgres/tags?per_page=100";
 /// EDB 官方 Windows x64 二进制基址（PostgreSQL 官方 Windows 包由 EDB 构建并分发）。
 const EDB_BASE: &str = "https://get.enterprisedb.com/postgresql";
 /// 远程版本发现最多取几个 major（每个 major 只取当前最新 minor；EDB 只构建当前支持版本）。
-#[cfg(windows)]
 const REMOTE_MAX_VERSIONS: usize = 3;
 
-/// Windows x64 二进制包 URL（唯一拼装规则，内置 catalog 与远程发现共用）。
-/// 构建号 `-1` 为 EDB 的首个构建；实测不存在的版本会返回 403（可据此判断版本真伪）。
-fn archive_url(version: &str) -> String {
-    format!("{}/postgresql-{}-1-windows-x64-binaries.zip", EDB_BASE, version)
+/// 指定平台的官方二进制包 URL + 归档格式（EDB 构建，Windows/Linux/macOS 均提供）。
+/// 构建号 `-1` 为 EDB 首个构建；实测不存在的版本会返回 403（可据此判断版本真伪）。
+fn archive_url_for(version: &str, os: &str) -> (String, ArchiveFormat) {
+    match os {
+        "linux" => (
+            format!("{}/postgresql-{}-linux-x64-binaries.tar.gz", EDB_BASE, version),
+            ArchiveFormat::TarGz,
+        ),
+        "macos" => (
+            format!("{}/postgresql-{}-osx-x86_64-binaries.tar.gz", EDB_BASE, version),
+            ArchiveFormat::TarGz,
+        ),
+        _ => (
+            format!("{}/postgresql-{}-1-windows-x64-binaries.zip", EDB_BASE, version),
+            ArchiveFormat::Zip,
+        ),
+    }
 }
 
 /// 纯解析：从标签列表提取「当前支持的 major + 各 major 最新 minor」，按 major 降序取前 N 个。
 /// 例：`REL_18_6` → `18.6`；`REL_19_BETA3` / `REL_18_RC1` 因第二段非纯数字自动跳过。
-#[cfg(windows)]
+/// 与 OS 无关（纯标签解析），不可 cfg 锁——`fetch_remote_versions` 在非 Windows 也调用它。
 fn parse_supported_versions(tags: &[serde_json::Value]) -> Vec<String> {
     use std::collections::BTreeMap;
     let mut latest_minor: BTreeMap<u64, u64> = BTreeMap::new();
@@ -86,21 +97,19 @@ impl SoftwareProvider for PostgreSqlProvider {
     fn key(&self) -> &str { "postgresql" }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-        #[cfg(windows)]
-        {
-            // 执行时核实：PostgreSQL 官方 Windows binaries 由 EnterpriseDB 提供，
-            // URL 形如 https://get.enterprisedb.com/postgresql/postgresql-<ver>-windows-x64-binaries.zip
-            versions.push(CatalogVersion {
-                version: "16.4".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:postgresqlOfficial".to_string(),
-                    url: archive_url("16.4"),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-            });
-        }
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 构建不再空目录）。
+        // ⚠️ Linux/macOS 的 EDB 官方 URL 待跨平台环境验证（本会话仅 Windows 可验证）。
+        let version = "16.4".to_string();
+        let (url, format) = archive_url_for(&version, crate::utils::platform::current_os());
+        let versions = vec![CatalogVersion {
+            version: version.clone(),
+            mirrors: vec![MirrorSource {
+                name: "i18n:postgresqlOfficial".to_string(),
+                url,
+                builtin: None,
+            }],
+            archive: ArchiveInfo { format, size: None, sha256: None },
+        }];
         CatalogEntry {
             key: "postgresql".to_string(),
             name: "PostgreSQL".to_string(),
@@ -119,50 +128,51 @@ impl SoftwareProvider for PostgreSqlProvider {
     /// 而 `postgres/postgres` 标签是官方镜像、内容等价（RELEASE 与 git tag 一一对应），且 API 可达。
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁。
+        let os = crate::utils::platform::current_os();
+        let mut builder = reqwest::blocking::Client::builder()
+            // blocking builder 无 read_timeout，timeout 是「连接→读体完成」的总 deadline：
+            // 标签列表约 48 KB 虽小，但同一类失败（读体中途被掐断、报成 decoding 错误）
+            // 在本机已实测复现，故统一放宽到 60s，详见 rustfs.rs 同名注释。
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(60));
+        // Windows 上 GitHub 走系统代理不可达，强制直连；其他平台用默认代理。
         #[cfg(windows)]
         {
-            let client = reqwest::blocking::Client::builder()
-                .no_proxy()
-                // blocking builder 无 read_timeout，timeout 是「连接→读体完成」的总 deadline：
-                // 标签列表约 48 KB 虽小，但同一类失败（读体中途被掐断、报成 decoding 错误）
-                // 在本机已实测复现，故统一放宽到 60s，详见 rustfs.rs 同名注释。
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .ok()?;
-            let resp = client
-                .get(TAGS_URL)
-                .header("User-Agent", "OPX")
-                .header("Accept", "application/vnd.github+json")
-                .send()
-                .ok()?;
-            if !resp.status().is_success() {
-                eprintln!("[postgresql] GitHub 标签 API 返回 {}", resp.status());
-                return None;
-            }
-            let tags: Vec<serde_json::Value> = resp.json().ok()?;
-            let versions: Vec<CatalogVersion> = parse_supported_versions(&tags)
-                .into_iter()
-                .map(|v| CatalogVersion {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().ok()?;
+        let resp = client
+            .get(TAGS_URL)
+            .header("User-Agent", "OPX")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[postgresql] GitHub 标签 API 返回 {}", resp.status());
+            return None;
+        }
+        let tags: Vec<serde_json::Value> = resp.json().ok()?;
+        let versions: Vec<CatalogVersion> = parse_supported_versions(&tags)
+            .into_iter()
+            .map(|v| {
+                let (url, format) = archive_url_for(&v, os);
+                CatalogVersion {
                     mirrors: vec![MirrorSource {
                         name: "i18n:postgresqlOfficial".to_string(),
-                        url: archive_url(&v),
+                        url,
                         builtin: None,
                     }],
                     version: v,
                     // EDB 不发布校验和文件（.sha256 / .md5 均 403），故 size/sha256 留空
-                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-                })
-                .collect();
-            if versions.is_empty() {
-                None
-            } else {
-                Some(versions)
-            }
-        }
-        #[cfg(not(windows))]
-        {
+                    archive: ArchiveInfo { format, size: None, sha256: None },
+                }
+            })
+            .collect();
+        if versions.is_empty() {
             None
+        } else {
+            Some(versions)
         }
     }
 
@@ -325,7 +335,7 @@ impl SoftwareProvider for PostgreSqlProvider {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -366,15 +376,31 @@ mod tests {
     #[test]
     fn archive_url_uses_edb_build_one() {
         assert_eq!(
-            archive_url("18.6"),
+            archive_url_for("18.6", "windows").0,
             "https://get.enterprisedb.com/postgresql/postgresql-18.6-1-windows-x64-binaries.zip"
         );
     }
 
     #[test]
+    fn archive_url_for_selects_platform_format() {
+        let (w_url, w_fmt) = archive_url_for("16.4", "windows");
+        assert!(w_url.ends_with("-windows-x64-binaries.zip"));
+        assert_eq!(w_fmt, ArchiveFormat::Zip);
+        let (l_url, l_fmt) = archive_url_for("16.4", "linux");
+        assert!(l_url.ends_with("-linux-x64-binaries.tar.gz"));
+        assert_eq!(l_fmt, ArchiveFormat::TarGz);
+        let (m_url, m_fmt) = archive_url_for("16.4", "macos");
+        assert!(m_url.ends_with("-osx-x86_64-binaries.tar.gz"));
+        assert_eq!(m_fmt, ArchiveFormat::TarGz);
+    }
+
+    #[test]
     fn catalog_builtin_version_uses_same_url_rule() {
         let entry = PostgreSqlProvider::new().catalog_entry();
-        assert_eq!(entry.versions[0].mirrors[0].url, archive_url("16.4"));
+        assert_eq!(
+            entry.versions[0].mirrors[0].url,
+            archive_url_for("16.4", "windows").0
+        );
     }
 }
 
