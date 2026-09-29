@@ -217,6 +217,7 @@ impl SoftwareManager {
         let path = paths::config_dir().join("installed.json");
         let content = serde_json::to_string_pretty(list)?;
         std::fs::write(&path, content)?;
+        crate::utils::paths::restrict_file_permissions(&path);
         Ok(())
     }
 

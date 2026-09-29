@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
+use crate::utils::paths::restrict_file_permissions;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
@@ -227,6 +228,7 @@ impl SoftwareProvider for Influxdb3Provider {
                 &token_file,
                 serde_json::json!({ "token": token, "name": "_admin" }).to_string(),
             )?;
+            restrict_file_permissions(&token_file);
             args.push(format!("--admin-token-file={}", token_file.to_string_lossy()));
             args.push("--disable-authz=health,ping".to_string());
         } else {
