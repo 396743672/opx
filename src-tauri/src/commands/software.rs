@@ -1551,6 +1551,36 @@ pub async fn do_start_software(
     Ok(())
 }
 
+/// P1-3 语义化优雅停止：优先按 provider 返回的关闭命令停止（数据库/中间件避免被强杀损坏），
+/// 失败/超时回退 lifecycle::stop_one 强杀。返回 (是否成功, 状态串)。
+///
+/// 选择逻辑：按 installed_id 找到 provider → 构造 StopContext → 调
+/// `provider.graceful_stop_command`；返回 None（如 MySQL root 密码为一次性 ephemeral、
+/// 未持久化，mysqladmin shutdown 无法认证）或无对应 provider → 直接强杀。
+fn graceful_stop_software(software: &InstalledSoftware, pid: u32) -> (bool, String) {
+    let provider = providers::all_providers()
+        .into_iter()
+        .find(|p| p.key() == software.key);
+    let Some(provider) = provider else {
+        return lifecycle::stop_one(pid);
+    };
+    let ctx = providers::StopContext {
+        installed_id: software.id.clone(),
+        install_path: software.install_path.clone(),
+        version: software.version.clone(),
+        config: software.config.clone(),
+        port: software.port,
+    };
+    let Some(cmd) = provider.graceful_stop_command(&ctx) else {
+        return lifecycle::stop_one(pid);
+    };
+    if lifecycle::run_graceful_stop(&cmd, pid) {
+        (true, "stopped".to_string())
+    } else {
+        lifecycle::stop_one(pid)
+    }
+}
+
 /// 停止软件
 #[tauri::command]
 pub async fn stop_software(
@@ -1565,7 +1595,7 @@ pub async fn stop_software(
     let detail = format!("{} ({})", software.version, software.id);
 
     audited_async!("stop", target, detail, {
-        lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
+        lifecycle::validate_stop_transition(software.status.clone()).map_err(|e| e.to_string())?;
 
         // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
         let pid = match software.pid {
@@ -1607,10 +1637,12 @@ pub async fn stop_software(
         lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
 
         let pid_for_status = pid;
-        // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
+        // P1-3：优先语义化优雅停止（provider 关闭命令），失败/超时回退强杀；
+        // 外层 30s 超时给优雅停止命令（最长 15s）留足余量。
+        let stop_sw = software.clone();
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
-            tokio::task::spawn_blocking(move || lifecycle::stop_one(pid)),
+            Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || graceful_stop_software(&stop_sw, pid)),
         )
         .await;
 
@@ -1697,7 +1729,9 @@ pub async fn restart_software(
             || software.status == SoftwareStatus::Starting;
         if should_stop {
             let pid = software.pid.ok_or_else(|| "无 PID".to_string())?;
-            let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+            // P1-3：重启前的停止也走语义化优雅停止，避免强杀数据库
+            let restart_sw = software.clone();
+            let _ = tokio::task::spawn_blocking(move || graceful_stop_software(&restart_sw, pid))
                 .await
                 .map_err(|e| format!("停止失败: {}", e))?;
             manager

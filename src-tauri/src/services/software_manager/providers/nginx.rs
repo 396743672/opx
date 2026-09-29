@@ -8,8 +8,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, DataDirContext, HealthContext, InstallContext, LogContext, SoftwareProvider,
-    StartCommand, StartContext,
+    ConfigContext, DataDirContext, GracefulStopCommand, HealthContext, InstallContext, LogContext,
+    SoftwareProvider, StartCommand, StartContext, StopContext,
 };
 
 #[cfg(windows)]
@@ -338,5 +338,19 @@ impl SoftwareProvider for NginxProvider {
             PathBuf::from("sites-data"),
             PathBuf::from("conf/sites"),
         ]
+    }
+
+    /// P1-3：语义化优雅停止。`nginx -s quit` 让 master 等待 worker 处理完在途请求后退出，
+    /// 比 `taskkill /F` 干净（避免连接被硬断）。
+    fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
+        Some(GracefulStopCommand {
+            program: PathBuf::from(&ctx.install_path)
+                .join("nginx.exe")
+                .to_string_lossy()
+                .to_string(),
+            args: vec!["-s".to_string(), "quit".to_string()],
+            working_dir: PathBuf::from(&ctx.install_path),
+            timeout_secs: 10,
+        })
     }
 }

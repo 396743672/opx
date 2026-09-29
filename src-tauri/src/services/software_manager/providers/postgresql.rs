@@ -7,8 +7,9 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, FirstRunInit, HealthContext, InstallContext, LogContext, SoftwareProvider,
-    StartCommand, StartContext, WorkingDirContext, default_log_sources,
+    ConfigContext, FirstRunInit, GracefulStopCommand, HealthContext, InstallContext, LogContext,
+    SoftwareProvider, StartCommand, StartContext, StopContext, WorkingDirContext,
+    default_log_sources,
 };
 
 #[cfg(windows)]
@@ -297,6 +298,30 @@ impl SoftwareProvider for PostgreSqlProvider {
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
         PathBuf::from(&ctx.install_path)
+    }
+
+    /// P1-3：语义化优雅停止。`pg_ctl stop -D <data> -m fast -w` 向 postmaster 发停止信号并等待
+    /// 其自行退出（无需 DB 密码，pg_ctl 用 data 目录下的 pidfile 定位进程）。`-m fast` 回滚
+    /// 未提交事务后退出；`-w` 等待完成。避免 `taskkill /F` 强杀导致共享内存/数据文件损坏。
+    fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
+        let data_dir = PathBuf::from(&ctx.install_path).join("data");
+        Some(GracefulStopCommand {
+            program: PathBuf::from(&ctx.install_path)
+                .join("bin")
+                .join("pg_ctl.exe")
+                .to_string_lossy()
+                .to_string(),
+            args: vec![
+                "stop".to_string(),
+                "-D".to_string(),
+                data_dir.to_string_lossy().to_string(),
+                "-m".to_string(),
+                "fast".to_string(),
+                "-w".to_string(),
+            ],
+            working_dir: PathBuf::from(&ctx.install_path),
+            timeout_secs: 15,
+        })
     }
 }
 

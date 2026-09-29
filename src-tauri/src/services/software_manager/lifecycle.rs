@@ -81,7 +81,7 @@ pub fn drain() -> Vec<RegisteredProcess> {
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-use crate::services::software_manager::providers::{FirstRunInit, StartCommand};
+use crate::services::software_manager::providers::{FirstRunInit, GracefulStopCommand, StartCommand};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -492,6 +492,45 @@ pub fn stop_one(pid: u32) -> (bool, String) {
     } else {
         (true, "killed".to_string())
     }
+}
+
+/// 执行 provider 的语义化优雅停止命令（best-effort，P1-3）。
+///
+/// 在强杀前先按软件自身关闭命令（redis-cli shutdown / nginx -s quit / pg_ctl stop /
+/// mongod --shutdown）让其干净退出，避免对数据库/中间件强杀导致数据损坏。
+/// 返回 true 表示进程已退出（优雅停止成功）；false 表示命令执行失败或超时仍存活，
+/// 调用方应回退 `stop_one` 强杀。命令启动失败（如二进制缺失）静默回退 false。
+pub fn run_graceful_stop(cmd: &GracefulStopCommand, pid: u32) -> bool {
+    // 进程已死：无需任何操作
+    if pid == 0 || !is_process_alive(pid) {
+        return true;
+    }
+    let mut command = std::process::Command::new(&cmd.program);
+    command.args(&cmd.args).current_dir(&cmd.working_dir);
+    // 关闭命令自身不产生需要消费的输出，丢弃避免管道缓冲死锁
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    // 启动失败（二进制缺失/路径错误）→ 回退强杀
+    if command.spawn().is_err() {
+        return false;
+    }
+    // 等待进程自行退出（最多 timeout_secs）
+    let start = Instant::now();
+    let timeout = Duration::from_secs(cmd.timeout_secs);
+    while start.elapsed() < timeout {
+        if !is_process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
 }
 
 // —— 事件推送 ——

@@ -7,8 +7,8 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, HealthContext, InstallContext, LogContext, SoftwareProvider, StartCommand,
-    StartContext, default_log_sources,
+    ConfigContext, GracefulStopCommand, HealthContext, InstallContext, LogContext, SoftwareProvider,
+    StartCommand, StartContext, StopContext, default_log_sources,
 };
 
 #[cfg(windows)]
@@ -290,6 +290,33 @@ impl SoftwareProvider for RedisProvider {
         // 仅返回相对文件名，调用方（write_config_form / read_config_source）
         // 会自行拼接 install_path，避免双路径拼接 bug。
         Some(PathBuf::from("redis.conf"))
+    }
+
+    /// P1-3：语义化优雅停止。`redis-cli shutdown` 干净关闭（关闭连接、按配置刷 AOF/RDB），
+    /// 避免强杀导致未落盘数据丢失。requirepass 非空时带 `-a` 认证。
+    fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(if ctx.port > 0 { ctx.port } else { 6379 });
+        let mut args = vec!["-p".to_string(), port.to_string(), "shutdown".to_string()];
+        if let Some(pw) = ctx.config.get("requirepass").and_then(|v| v.as_str()) {
+            if !pw.is_empty() {
+                args.insert(1, "-a".to_string());
+                args.insert(2, pw.to_string());
+            }
+        }
+        Some(GracefulStopCommand {
+            program: PathBuf::from(&ctx.install_path)
+                .join("redis-cli.exe")
+                .to_string_lossy()
+                .to_string(),
+            args,
+            working_dir: PathBuf::from(&ctx.install_path),
+            timeout_secs: 10,
+        })
     }
 }
 
