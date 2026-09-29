@@ -31,6 +31,17 @@ pub mod custom_templates;
 /// `github_proxy_url`（默认 ghfast.top）前缀，国内无需额外配置即走加速。
 pub const RESOURCE_BASE: &str = "https://github.com/396743672/opx/releases/download/res-v1";
 
+/// 按当前 OS 拼装可执行文件名（P1-1 跨平台）。
+/// Windows 上追加 `.exe` 后缀；Unix/macOS 上返回原名（扩展名由包管理约定，无 `.exe`）。
+/// 用此助手替代硬编码的 `xxx.exe`，避免 Unix 上因 `.exe` 启动失败。
+pub(crate) fn exe_name(base: &str) -> String {
+    if cfg!(windows) {
+        format!("{}.exe", base)
+    } else {
+        base.to_string()
+    }
+}
+
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
     fn catalog_entry(&self) -> CatalogEntry;

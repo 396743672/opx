@@ -9,7 +9,7 @@ use crate::models::software::{
 use super::{
     ConfigContext, DataDirContext, GracefulStopCommand, HealthContext, InstallContext, LogContext,
     LogSource, LogSourceKind, SoftwareProvider, StartCommand, StartContext, StopContext,
-    default_log_sources,
+    default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -184,7 +184,7 @@ impl SoftwareProvider for MongoDbProvider {
         ];
 
         Ok(StartCommand {
-            program: "bin/mongod.exe".to_string(),
+            program: format!("bin/{}", exe_name("mongod")),
             args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
@@ -295,7 +295,7 @@ impl SoftwareProvider for MongoDbProvider {
         Some(GracefulStopCommand {
             program: PathBuf::from(&ctx.install_path)
                 .join("bin")
-                .join("mongod.exe")
+                .join(exe_name("mongod"))
                 .to_string_lossy()
                 .to_string(),
             args: vec!["--dbpath".to_string(), abs_dbpath, "--shutdown".to_string()],

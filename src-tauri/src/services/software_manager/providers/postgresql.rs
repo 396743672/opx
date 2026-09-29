@@ -9,7 +9,7 @@ use crate::models::software::{
 use super::{
     ConfigContext, FirstRunInit, GracefulStopCommand, HealthContext, InstallContext, LogContext,
     SoftwareProvider, StartCommand, StartContext, StopContext, WorkingDirContext,
-    default_log_sources,
+    default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -202,7 +202,7 @@ impl SoftwareProvider for PostgreSqlProvider {
         }
 
         let init_command = StartCommand {
-            program: "bin/initdb.exe".to_string(),
+            program: format!("bin/{}", exe_name("initdb")),
             args: init_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
@@ -212,7 +212,7 @@ impl SoftwareProvider for PostgreSqlProvider {
         };
 
         Ok(StartCommand {
-            program: "bin/postgres.exe".to_string(),
+            program: format!("bin/{}", exe_name("postgres")),
             args: vec!["-D".to_string(), data_dir.to_string_lossy().to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
@@ -308,7 +308,7 @@ impl SoftwareProvider for PostgreSqlProvider {
         Some(GracefulStopCommand {
             program: PathBuf::from(&ctx.install_path)
                 .join("bin")
-                .join("pg_ctl.exe")
+                .join(exe_name("pg_ctl"))
                 .to_string_lossy()
                 .to_string(),
             args: vec![

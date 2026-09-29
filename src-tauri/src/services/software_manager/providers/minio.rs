@@ -8,7 +8,7 @@ use crate::models::software::{
 
 use super::{
     ConfigContext, DataDirContext, HealthContext, InstallContext, SoftwareProvider, StartCommand,
-    StartContext, resolve_data_dir,
+    StartContext, resolve_data_dir, exe_name,
 };
 
 #[cfg(windows)]
@@ -279,11 +279,11 @@ impl SoftwareProvider for MinioProvider {
         };
         let _ = std::fs::create_dir_all(&abs_data_dir);
 
-        // 二进制名按版本区分：SILO 是 silo.exe，兜底的上游 MinIO 是 minio.exe
+        // 二进制名按版本区分：SILO 是 silo，兜底的上游 MinIO 是 minio（P1-1：按 OS 追加 .exe）
         let program = if ctx.version == MINIO_LEGACY_VERSION {
-            "minio.exe"
+            exe_name("minio")
         } else {
-            "silo.exe"
+            exe_name("silo")
         };
 
         // 控制台端口统一用 --console-address 指定：SILO 与上游 MinIO 的 server 均支持该参数
