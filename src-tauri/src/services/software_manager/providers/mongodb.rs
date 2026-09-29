@@ -7,8 +7,9 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, DataDirContext, HealthContext, InstallContext, LogContext, LogSource,
-    LogSourceKind, SoftwareProvider, StartCommand, StartContext, default_log_sources,
+    ConfigContext, DataDirContext, GracefulStopCommand, HealthContext, InstallContext, LogContext,
+    LogSource, LogSourceKind, SoftwareProvider, StartCommand, StartContext, StopContext,
+    default_log_sources,
 };
 
 #[cfg(windows)]
@@ -271,6 +272,36 @@ impl SoftwareProvider for MongoDbProvider {
                 .to_string()
         };
         vec![PathBuf::from(abs)]
+    }
+
+    /// P1-3：语义化优雅停止。`mongod --dbpath <path> --shutdown` 用 data 目录下的
+    /// 锁文件/pidfile 定位运行中的 mongod 并向其发停止信号，等待干净退出（刷盘、关连接），
+    /// 避免 `taskkill /F` 强杀导致 WiredTiger 数据文件损坏。需要配置 `--dbpath` 才能定位
+    /// 进程（本项目启动即带 --dbpath，故可定位）。
+    fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
+        let dbpath = config_str(&ctx.config, "dbpath", "./data");
+        let abs_dbpath = if Path::new(&dbpath).is_absolute() {
+            dbpath.clone()
+        } else {
+            let clean = dbpath
+                .strip_prefix("./")
+                .or_else(|| dbpath.strip_prefix(".\\"))
+                .unwrap_or(&dbpath);
+            PathBuf::from(&ctx.install_path)
+                .join(clean)
+                .to_string_lossy()
+                .to_string()
+        };
+        Some(GracefulStopCommand {
+            program: PathBuf::from(&ctx.install_path)
+                .join("bin")
+                .join("mongod.exe")
+                .to_string_lossy()
+                .to_string(),
+            args: vec!["--dbpath".to_string(), abs_dbpath, "--shutdown".to_string()],
+            working_dir: PathBuf::from(&ctx.install_path),
+            timeout_secs: 15,
+        })
     }
 }
 

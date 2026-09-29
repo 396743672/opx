@@ -99,6 +99,18 @@ pub trait SoftwareProvider: Send + Sync {
     fn post_start_http_init(&self, _ctx: &HealthContext) -> Option<PostStartHttpInit> {
         None
     }
+
+    /// 语义化优雅停止命令（可选；默认 None 表示无，回退强杀）。
+    ///
+    /// P1-3：避免对数据库/中间件直接 `taskkill /F` 强杀导致数据损坏（MySQL/PostgreSQL/
+    /// MongoDB/Redis 被强杀有未落盘/日志截断风险）。实现者返回各自的关闭命令
+    /// （如 redis-cli shutdown / nginx -s quit / pg_ctl stop / mongod --shutdown）。
+    /// 命令层在强杀前先执行它，等待进程自行退出；失败/超时再回退强杀。
+    /// 需要认证才能关闭的软件（如 MySQL root 密码为一次性 ephemeral、未持久化）应返回
+    /// None，交由命令层强杀——否则会陷入「认证失败 → 强杀」的假优雅。
+    fn graceful_stop_command(&self, _ctx: &StopContext) -> Option<GracefulStopCommand> {
+        None
+    }
 }
 
 /// post-start 初始化：HTTP 请求描述（服务已启动、健康检查通过后由命令层执行）。
@@ -114,6 +126,26 @@ pub struct PostStartHttpInit {
     pub body: serde_json::Value,
     /// 初始化成功后回写到 config 的字段（如 admin_token），供前端后续使用。
     pub config_fields: Vec<(String, serde_json::Value)>,
+}
+
+/// 优雅停止命令（provider 返回，由 lifecycle 执行；失败/超时回退强杀）。
+/// 程序路径用 install_path 下的绝对路径，避免依赖 PATH。
+#[derive(Debug, Clone)]
+pub struct GracefulStopCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub working_dir: PathBuf,
+    /// 等待进程自行退出的最长秒数；超时则回退强杀。
+    pub timeout_secs: u64,
+}
+
+/// 优雅停止上下文（传给 provider.graceful_stop_command）
+pub struct StopContext {
+    pub installed_id: String,
+    pub install_path: String, // 已 resolve 绝对路径
+    pub version: String,
+    pub config: serde_json::Value,
+    pub port: u16,
 }
 
 pub struct InstallContext {
@@ -287,4 +319,66 @@ pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
         Box::new(influxdb3::Influxdb3Provider::new()),
         Box::new(node::NodeProvider::new()),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P1-3 回归：已实现的语义化优雅停止命令形状正确（二进制路径 + 关键参数）。
+    /// 其余 provider 返回 None（走强杀回退），不在本次断言范围。
+    #[test]
+    fn graceful_stop_commands_are_well_formed() {
+        let ctx = StopContext {
+            installed_id: "t1".to_string(),
+            install_path: "C:/opx/apps/redis/1.0".to_string(),
+            version: "1.0".to_string(),
+            config: serde_json::json!({}),
+            port: 0,
+        };
+        for p in all_providers() {
+            let key = p.key().to_string();
+            let Some(cmd) = p.graceful_stop_command(&ctx) else {
+                continue;
+            };
+            match key.as_str() {
+                "redis" => {
+                    assert!(cmd.program.ends_with("redis-cli.exe"), "redis 停止程序应为 redis-cli.exe");
+                    assert!(cmd.args.contains(&"shutdown".to_string()), "redis 停止应带 shutdown");
+                }
+                "nginx" => {
+                    assert!(cmd.program.ends_with("nginx.exe"), "nginx 停止程序应为 nginx.exe");
+                    assert_eq!(cmd.args, vec!["-s".to_string(), "quit".to_string()]);
+                }
+                "postgresql" => {
+                    assert!(cmd.program.ends_with("pg_ctl.exe"), "pg 停止程序应为 pg_ctl.exe");
+                    assert!(cmd.args.contains(&"-D".to_string()), "pg 停止应带 -D <data>");
+                    assert!(cmd.args.contains(&"fast".to_string()), "pg 停止模式应为 fast");
+                }
+                "mongodb" => {
+                    assert!(cmd.program.ends_with("mongod.exe"), "mongo 停止程序应为 mongod.exe");
+                    assert!(cmd.args.contains(&"--shutdown".to_string()), "mongo 停止应带 --shutdown");
+                    assert!(cmd.args.contains(&"--dbpath".to_string()), "mongo 停止应带 --dbpath");
+                }
+                other => panic!("未预期的 provider 实现了 graceful_stop_command: {other}"),
+            }
+        }
+    }
+
+    /// requirepass 非空时 redis 停止命令应带 `-a` 认证参数
+    #[test]
+    fn redis_graceful_stop_includes_auth_when_password_set() {
+        let ctx = StopContext {
+            installed_id: "t1".to_string(),
+            install_path: "C:/opx/apps/redis/1.0".to_string(),
+            version: "1.0".to_string(),
+            config: serde_json::json!({ "requirepass": "s3cret" }),
+            port: 0,
+        };
+        let p = redis::RedisProvider::new();
+        let cmd = p.graceful_stop_command(&ctx).expect("redis 应有优雅停止命令");
+        let idx = cmd.args.iter().position(|a| a == "-a").expect("应带 -a");
+        assert_eq!(cmd.args[idx + 1], "s3cret");
+        assert_eq!(cmd.args[0], "-p");
+    }
 }

@@ -135,3 +135,16 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 
 > 注：死代码与 i18n 两项的"全仓彻底"结论依赖编译期检查（本环境未编译，故标"疑似需验证"而非断言）。
 
+### 7.6 P1 修复进度（fix/audit-p1 分支）
+
+| # | 状态 | 修复方案 | commit |
+|---|---|---|---|
+| P1-2 | ✅ 已修复 | `start_software` 入口在写锁内原子完成「校验 + 置 Starting + 清 last_error + 落盘」（`SoftwareManager::try_reserve_start` + `lifecycle::reserve_start_in_list`），消除并发双 spawn 竞态 | `e7b21cd` |
+| P1-4 | ✅ 已修复 | Nacos token 密钥改为每实例随机 32 字节 base64，落盘 `conf/opx-token-secret.key`（真实安装目录），缺失则临时生成；移除硬编码 `ThisIsMyCustomSecretKey012345678` | `f2c0fd4` |
+| P1-3 | ✅ 已修复 | provider trait 新增可选 `graceful_stop_command` 钩子（默认 None，其余 14 个 provider 零改动）；Redis/Nginx/PostgreSQL/MongoDB 实现各自的语义化关闭命令（redis-cli shutdown / nginx -s quit / pg_ctl stop -m fast -w / mongod --dbpath … --shutdown）。`stop_software`/`restart_software` 先执行优雅停止命令、失败/超时回退 `taskkill /F` 强杀 | 本次 |
+| P1-1 | ⏳ 未修 | 跨平台 `.exe` 双重锁定（PG/Mongo/Consul/MinIO）。属"未来跨平台就绪度"，当前 opx 仍 Windows-only；用户尚未决定启动跨平台工作，故暂缓 | — |
+
+**P1-3 已知例外（MySQL）**：MySQL root 密码为一次性 `ephemeral`（不持久化到 installed.json / 配置文件），`mysqladmin shutdown` 无法认证，`graceful_stop_command` 故意返回 `None` 走强杀回退——否则会陷入「认证失败 → 强杀」的假优雅。若要彻底优雅停止 MySQL，需将 root 密码存入 OS 凭据库（同锁屏 `LOCAL_MACHINE` 思路），属独立设计项，不在本次 P1-3 范围。
+
+> 实机验证建议（待用户本机）：装一个 Redis + 一个 PostgreSQL，分别点「停止」，观察 `opx-<id>.log` 不再出现强杀、进程干净退出；并在数据有写入时停库，重启确认数据未损坏。
+

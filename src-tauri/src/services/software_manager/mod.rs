@@ -297,6 +297,16 @@ impl SoftwareManager {
         Ok(())
     }
 
+    /// 原子「校验 + 占位 Starting」：写锁内完成启动状态校验、置 Starting、清 last_error 并落盘。
+    /// 供 start 命令入口调用，杜绝「入口校验通过 → 异步任务里才置 Starting」间隙内的
+    /// 并发双启动（P1-2 启动竞态：双进程/端口冲突）。失败时不产生任何变更。
+    pub fn try_reserve_start(&self, installed_id: &str) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        lifecycle::reserve_start_in_list(&mut installed, installed_id)?;
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
     /// 显式清空 last_error（update_runtime_fields 传 None 表示不改）
     pub fn clear_last_error(&self, installed_id: &str) -> Result<()> {
         let mut installed = self.installed.write().unwrap();

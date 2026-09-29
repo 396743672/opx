@@ -63,6 +63,37 @@ fn render_cluster_conf(nodes: &[String]) -> String {
     s
 }
 
+/// 加载或生成 Nacos token 签发密钥（`nacos.core.auth.plugin.nacos.token.secret.key`）。
+///
+/// 历史：该密钥曾硬编码在源码（`VGhpc0lz...`，即 `ThisIsMyCustomSecretKey012345678`），
+/// 任何能读到二进制的人都可据此伪造 Nacos token——已改为**每实例随机生成**：
+/// 首次启动生成 32 随机字节 → Base64（解码后恰 32 字符，满足 Nacos ≥32 要求），
+/// 写入 `<install_path>/conf/opx-token-secret.key`，此后每次启动复用（重启不失效）。
+///
+/// `install_path` 不存在（单测场景）时不落盘、每次临时生成。
+fn load_or_create_token_key(install_path: &std::path::Path) -> String {
+    use base64::Engine;
+    use rand_core::RngCore;
+
+    let key_file = install_path.join("conf").join("opx-token-secret.key");
+    if let Ok(existing) = std::fs::read_to_string(&key_file) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let mut buf = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut buf);
+    let key = base64::engine::general_purpose::STANDARD.encode(buf);
+    if install_path.exists() {
+        // 真实安装才落盘；写失败则退化为本次启动临时密钥（token 重启失效，可接受）
+        if std::fs::create_dir_all(install_path.join("conf")).is_ok() {
+            let _ = std::fs::write(&key_file, &key);
+        }
+    }
+    key
+}
+
 pub struct NacosProvider;
 
 /// 从 GitHub Releases JSON 解析 Nacos 正式版本 tag。
@@ -269,7 +300,10 @@ impl SoftwareProvider for NacosProvider {
         // 提供开发默认值（官方文档示例值），本地开发工具场景足够。
         args.insert(0, "-Dnacos.core.auth.server.identity.key=serverIdentity".to_string());
         args.insert(0, "-Dnacos.core.auth.server.identity.value=security".to_string());
-        args.insert(0, "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=".to_string());
+        // token 签发密钥：每实例随机生成并落盘复用（conf/opx-token-secret.key），
+        // 取代历史硬编码密钥（泄漏在源码/二进制中可被伪造 token，见 load_or_create_token_key）。
+        let token_key = load_or_create_token_key(&working_dir);
+        args.insert(0, format!("-Dnacos.core.auth.plugin.nacos.token.secret.key={}", token_key));
         // 鉴权开关（配置项 auth_enabled，默认开启）：开启时除 enabled=true 外必须同时
         // 设 system.type=nacos，否则 Nacos 降级为无认证模式（AuthFilter 被跳过，日志报
         // "auth system type is null, skip auth init"），控制台仍免登录。
@@ -767,6 +801,60 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// P1-4 回归：token 密钥不得再是历史硬编码值，且必须是 Base64(32 字节)。
+    /// install_path 不存在 → 临时生成（不落盘），两次调用结果不同。
+    #[test]
+    fn token_secret_is_random_not_hardcoded() {
+        let make = || StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\opx-nonexistent-nacos".to_string(),
+            version: "2.5.4".to_string(),
+            config: serde_json::json!({ "port": 8848 }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+        let arg = |ctx: &StartContext| {
+            NacosProvider
+                .start_command(ctx)
+                .expect("start_command 应成功")
+                .args
+                .into_iter()
+                .find(|a| a.starts_with("-Dnacos.core.auth.plugin.nacos.token.secret.key="))
+                .expect("token.secret.key 参数必须存在")
+        };
+        let a1 = arg(&make());
+        let a2 = arg(&make());
+        assert_ne!(
+            a1,
+            "-Dnacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=",
+            "不得再使用历史硬编码密钥"
+        );
+        let val = a1.trim_start_matches("-Dnacos.core.auth.plugin.nacos.token.secret.key=");
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(val)
+            .expect("密钥必须是合法 Base64");
+        assert_eq!(decoded.len(), 32, "解码后须为 32 字节（Nacos ≥32 要求）");
+        assert_ne!(a1, a2, "未落盘场景两次生成应不同");
+    }
+
+    /// 真实安装目录：首次生成落盘 conf/opx-token-secret.key，再次调用（模拟重启）复用同一密钥。
+    #[test]
+    fn token_secret_persists_in_conf_dir() {
+        let dir = std::env::temp_dir().join(format!("opx-nacos-key-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create tempdir");
+        let k1 = load_or_create_token_key(&dir);
+        let k2 = load_or_create_token_key(&dir);
+        assert_eq!(k1, k2, "重启（再次调用）应复用已落盘密钥");
+        let stored = std::fs::read_to_string(dir.join("conf").join("opx-token-secret.key"))
+            .expect("密钥文件应存在");
+        assert_eq!(stored.trim(), k1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
