@@ -145,6 +145,43 @@ fn restrict_file_permissions_inner(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 写敏感文件并「落盘即收紧权限」，且**支持重写**（修复 P2-6 只读位阻断覆盖写）。
+///
+/// 顺序（关键）：
+/// 1. 写前清除只读位（仅 Windows 需要；NTFS 只读属性会让 `std::fs::write` 覆盖既有文件失败）。
+/// 2. 写入内容。
+/// 3. 收紧权限（Unix 0600 / Windows 只读位）。
+///
+/// 这样首次写入与重启重写走同一落点，避免 P2-6 的只读位把 `installed.json`、
+/// influxdb3 `admin-token.json` 等**会被反复重写**的文件锁死为不可写。
+pub fn write_file_restricted<C: AsRef<[u8]>>(path: &Path, content: C) -> std::io::Result<()> {
+    clear_readonly_if_windows(path);
+    std::fs::write(path, content)?;
+    restrict_file_permissions(path);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_readonly_if_windows(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_READONLY,
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    // 仅当文件已存在且带只读位时才清除；文件不存在（首次创建）时 GetFileAttributesW 返回 MAX，跳过。
+    if attrs != u32::MAX && attrs & FILE_ATTRIBUTE_READONLY != 0 {
+        let _ = unsafe { SetFileAttributesW(wide.as_ptr(), attrs & !FILE_ATTRIBUTE_READONLY) };
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_readonly_if_windows(_path: &Path) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +218,26 @@ mod tests {
                 "Windows 上应设为只读"
             );
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_file_restricted_allows_rewrite() {
+        // 复现 P2-6 只读位阻断重写：首次写后收紧权限，第二次写（如 influxdb3 每次启动重写 token）应成功。
+        let dir = std::env::temp_dir().join(format!("opx-perm-rewrite-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = dir.join("secret.txt");
+        write_file_restricted(&p, b"first").unwrap();
+        // 第二次写入不应因只读位失败（Windows 上无 clear_readonly 会 ACCESS_DENIED）。
+        write_file_restricted(&p, b"second").unwrap();
+        let content = fs::read_to_string(&p).unwrap();
+        assert_eq!(content, "second");
+        // 权限仍被收紧
+        #[cfg(windows)]
+        assert!(
+            fs::metadata(&p).unwrap().permissions().readonly(),
+            "重写后应为只读"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

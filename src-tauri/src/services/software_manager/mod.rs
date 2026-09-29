@@ -216,8 +216,9 @@ impl SoftwareManager {
     fn save_installed_list(list: &InstalledSoftwareList) -> Result<()> {
         let path = paths::config_dir().join("installed.json");
         let content = serde_json::to_string_pretty(list)?;
-        std::fs::write(&path, content)?;
-        crate::utils::paths::restrict_file_permissions(&path);
+        // 写后即收紧权限；installed.json 会被反复重写（每次启停/安装卸载），
+        // write_file_restricted 内部先清只读位，避免 P2-6 只读位阻断覆盖写。
+        crate::utils::paths::write_file_restricted(&path, content)?;
         Ok(())
     }
 
