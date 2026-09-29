@@ -56,12 +56,12 @@ fn is_descendant(tree: &std::collections::HashMap<u32, Option<u32>>, pid: u32, r
 /// CPU 恒 0、内存恒定），只看自身会得到一条死直线；Nginx 主+worker 同理。
 /// 返回的 `pid` 仍是传入值，调用方按原 pid 索引即可。
 pub fn sample_processes(pids: &[u32]) -> Vec<ProcessSample> {
-    sample_with(&mut PROCESS_SYS.lock().unwrap(), pids)
+    sample_with(&mut PROCESS_SYS.lock().unwrap_or_else(|e| e.into_inner()), pids)
 }
 
 /// 低频（30s 落盘）专用入口：走独立的 System 实例，得到窗口期平均 CPU。
 pub fn sample_processes_slow(pids: &[u32]) -> Vec<ProcessSample> {
-    sample_with(&mut PROCESS_SYS_SLOW.lock().unwrap(), pids)
+    sample_with(&mut PROCESS_SYS_SLOW.lock().unwrap_or_else(|e| e.into_inner()), pids)
 }
 
 fn sample_with(system: &mut System, pids: &[u32]) -> Vec<ProcessSample> {
@@ -92,7 +92,7 @@ fn sample_with(system: &mut System, pids: &[u32]) -> Vec<ProcessSample> {
 
 /// 查询进程名（端口冲突占用者提示用）。进程不存在返回 None。
 pub fn process_name(pid: u32) -> Option<String> {
-    let mut system = PROCESS_SYS.lock().unwrap();
+    let mut system = PROCESS_SYS.lock().unwrap_or_else(|e| e.into_inner());
     system.refresh_processes(ProcessesToUpdate::All);
     system
         .process(Pid::from_u32(pid))

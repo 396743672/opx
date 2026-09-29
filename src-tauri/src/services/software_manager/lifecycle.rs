@@ -12,6 +12,8 @@ pub struct RegisteredProcess {
     pub key: String,
     pub kind: String,
     pub started_at: i64,
+    /// 启动顺序：退出停止时按此值逆序（高→低），保证依赖方先于依赖被停（P2-5）
+    pub startup_order: u32,
 }
 
 pub struct ProcessRegistry {
@@ -30,6 +32,7 @@ impl ProcessRegistry {
         name: String,
         key: String,
         kind: String,
+        startup_order: u32,
     ) {
         let entry = RegisteredProcess {
             installed_id: installed_id.clone(),
@@ -38,6 +41,7 @@ impl ProcessRegistry {
             key,
             kind,
             started_at: Local::now().timestamp(),
+            startup_order,
         };
         self.processes.insert(installed_id, entry);
     }
@@ -60,20 +64,30 @@ impl ProcessRegistry {
 static REGISTRY: Lazy<Mutex<ProcessRegistry>> =
     Lazy::new(|| Mutex::new(ProcessRegistry::new()));
 
-pub fn register(installed_id: String, pid: u32, name: String, key: String, kind: String) {
-    REGISTRY.lock().unwrap().register(installed_id, pid, name, key, kind);
+pub fn register(
+    installed_id: String,
+    pid: u32,
+    name: String,
+    key: String,
+    kind: String,
+    startup_order: u32,
+) {
+    REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(installed_id, pid, name, key, kind, startup_order);
 }
 
 pub fn unregister(installed_id: &str) {
-    REGISTRY.lock().unwrap().unregister(installed_id);
+    REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).unregister(installed_id);
 }
 
 pub fn get(installed_id: &str) -> Option<RegisteredProcess> {
-    REGISTRY.lock().unwrap().get(installed_id).cloned()
+    REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).get(installed_id).cloned()
 }
 
 pub fn drain() -> Vec<RegisteredProcess> {
-    REGISTRY.lock().unwrap().drain()
+    REGISTRY.lock().unwrap_or_else(|e| e.into_inner()).drain()
 }
 
 // —— spawn 执行器 ——
@@ -669,14 +683,23 @@ async fn spawn_start(
     });
 }
 
+/// P2-5：退出停止前按 `startup_order` 逆序（高→低）排序，使依赖方先于依赖被停。
+/// 依赖方启动更晚（order 更大），逆序即反向拓扑：依赖方先退，依赖后退，避免连接中断。
+pub fn sort_by_shutdown_order(procs: &mut [RegisteredProcess]) {
+    procs.sort_by(|a, b| b.startup_order.cmp(&a.startup_order));
+}
+
 /// 应用退出时停止所有运行中的进程（软件 + SpringBoot），逐个 emit 进度并最终 emit stop-complete。
 /// 同步调用，每个进程含 5s 优雅等待 + 强杀。
 pub fn stop_all_on_exit(app: &AppHandle) {
-    let procs = drain();
+    let mut procs = drain();
     if procs.is_empty() {
         let _ = app.emit("stop-complete", ());
         return;
     }
+    // P2-5：按 startup_order 逆序停止，依赖方（高 order）先于依赖（低 order）被杀，
+    // 避免依赖在被依赖者之前退出导致连接中断/数据损坏。
+    sort_by_shutdown_order(&mut procs);
     let total = procs.len();
     tracing::info!(count = total, "stop_all_on_exit");
     for (i, p) in procs.iter().enumerate() {
@@ -700,7 +723,7 @@ pub fn stop_all_on_exit(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{reserve_start_in_list, stdout_log_path};
+    use super::{reserve_start_in_list, sort_by_shutdown_order, stdout_log_path, RegisteredProcess};
     use std::path::Path;
 
     /// P1-2 启动竞态回归：占位函数原子地「校验 + 置 Starting + 清 last_error」。
@@ -765,5 +788,30 @@ mod tests {
             "stdout_log_path 必须对 installed_id 做文件名 sanitize，当前文件名: {}",
             name
         );
+    }
+
+    /// P2-5 回归：退出停止必须按 startup_order 逆序，依赖方（高 order）先于依赖（低 order）被杀。
+    #[test]
+    fn shutdown_order_is_reverse_of_startup_order() {
+        let mk = |id: &str, order: u32| RegisteredProcess {
+            installed_id: id.to_string(),
+            pid: 0,
+            name: id.to_string(),
+            key: "k".to_string(),
+            kind: "s".to_string(),
+            started_at: 0,
+            startup_order: order,
+        };
+        // db(order 1，被依赖) / cache(order 2) / app(order 3，依赖方)
+        let mut procs = vec![mk("db", 1), mk("cache", 2), mk("app", 3)];
+        sort_by_shutdown_order(&mut procs);
+        let orders: Vec<u32> = procs.iter().map(|p| p.startup_order).collect();
+        assert_eq!(orders, vec![3, 2, 1], "应逆序停止：app→cache→db");
+        // 同 order 保持稳定（app-a / app-b 启动顺序相同）
+        let mut tie = vec![mk("app-b", 5), mk("app-a", 5), mk("db", 1)];
+        sort_by_shutdown_order(&mut tie);
+        assert_eq!(tie[0].installed_id, "app-b");
+        assert_eq!(tie[1].installed_id, "app-a");
+        assert_eq!(tie[2].installed_id, "db");
     }
 }

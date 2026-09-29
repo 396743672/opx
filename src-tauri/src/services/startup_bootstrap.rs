@@ -343,10 +343,10 @@ mod tests {
             }
         }
         fn started(&self) -> Vec<String> {
-            self.started.lock().unwrap().clone()
+            self.started.lock().unwrap_or_else(|e| e.into_inner()).clone()
         }
         fn stopped(&self) -> Vec<String> {
-            self.stopped.lock().unwrap().clone()
+            self.stopped.lock().unwrap_or_else(|e| e.into_inner()).clone()
         }
     }
 
@@ -354,7 +354,7 @@ mod tests {
         fn start<'a>(&'a self, target: &'a StartupTarget) -> BoxFuture<'a, Result<(), String>> {
             Box::pin(async move {
                 let idx = {
-                    let mut calls = self.calls.lock().unwrap();
+                    let mut calls = self.calls.lock().unwrap_or_else(|e| e.into_inner());
                     let idx = *calls;
                     *calls += 1;
                     idx
@@ -362,14 +362,14 @@ mod tests {
                 if self.fail_at == Some(idx) {
                     return Err(format!("{} 启动失败", target.name));
                 }
-                self.started.lock().unwrap().push(target.id.clone());
+                self.started.lock().unwrap_or_else(|e| e.into_inner()).push(target.id.clone());
                 Ok(())
             })
         }
 
         fn stop<'a>(&'a self, target: &'a StartupTarget) -> BoxFuture<'a, Result<(), String>> {
             Box::pin(async move {
-                self.stopped.lock().unwrap().push(target.id.clone());
+                self.stopped.lock().unwrap_or_else(|e| e.into_inner()).push(target.id.clone());
                 Ok(())
             })
         }
@@ -472,11 +472,11 @@ mod tests {
         let action = FakeAction::new(Some(1));
         let events: Mutex<Vec<(String, StartupItemStatus)>> = Mutex::new(vec![]);
         let collect = |item: StartupItemReport| {
-            events.lock().unwrap().push((item.id, item.status));
+            events.lock().unwrap_or_else(|e| e.into_inner()).push((item.id, item.status));
         };
         run_plan(targets(&["a", "b", "c"]), &action, &collect).await;
 
-        let got = events.lock().unwrap().clone();
+        let got = events.lock().unwrap_or_else(|e| e.into_inner()).clone();
         assert_eq!(
             got,
             vec![

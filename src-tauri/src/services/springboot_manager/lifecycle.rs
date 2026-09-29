@@ -125,7 +125,7 @@ pub async fn start_app(
     let pid = child.id();
 
     // 注册到全局进程注册表
-    lifecycle::register(app_id.to_string(), pid, app.name.clone(), "springboot".to_string(), "springboot".to_string());
+    lifecycle::register(app_id.to_string(), pid, app.name.clone(), "springboot".to_string(), "springboot".to_string(), 0);
 
     let console_path = log_dir.join("console.log");
     // ponytail: 每 5s 读日志尾部 4KB 检测 "Started "，不等固定超时；PID 死则秒报

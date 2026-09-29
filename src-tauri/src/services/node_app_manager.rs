@@ -40,7 +40,7 @@ impl NodeAppManager {
     }
 
     fn save(&self) -> Result<(), String> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(parent) = inner.data_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -89,7 +89,7 @@ impl NodeAppManager {
     }
 
     pub fn list(&self) -> Vec<NodeApp> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         for a in inner.apps.iter_mut() {
             // 运行中但进程已退出 → 标 Error（便于前端及时更新）
             if a.status == NodeAppStatus::Running {
@@ -115,13 +115,13 @@ impl NodeAppManager {
 
     pub fn get(&self, id: &str) -> Option<NodeApp> {
         // 返回相对路径（前端展示用；启动/读取时由调用方解析为绝对）
-        self.inner.lock().unwrap().apps.iter().find(|a| a.id == id).cloned()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).apps.iter().find(|a| a.id == id).cloned()
     }
 
     pub fn create(&self, payload: CreateNodeAppParams) -> Result<NodeApp, String> {
         let name = Self::sanitize_name(&payload.name)?;
         {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.apps.iter().any(|a| a.name == name) {
                 return Err("应用名称已存在，请更换名称".to_string());
             }
@@ -144,7 +144,7 @@ impl NodeAppManager {
             last_error: None,
             log_path,
         };
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.apps.push(app.clone());
         drop(inner);
         let _ = self.save();
@@ -152,7 +152,7 @@ impl NodeAppManager {
     }
 
     pub fn update(&self, id: &str, params: UpdateNodeAppParams) -> Result<NodeApp, String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let idx = inner
             .apps
             .iter()
@@ -221,7 +221,7 @@ impl NodeAppManager {
     }
 
     pub fn delete(&self, id: &str) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let rm_name = inner.apps.iter().find(|a| a.id == id).map(|a| a.name.clone());
         let running = inner
             .apps
@@ -290,7 +290,7 @@ impl NodeAppManager {
         // 避免状态被虚高成 Running（此前 spawn 后立即置 Running）。
         std::thread::sleep(std::time::Duration::from_millis(1200));
         if !health_check::is_process_alive(pid) {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
                 a.pid = Some(pid);
                 a.status = NodeAppStatus::Error;
@@ -302,7 +302,7 @@ impl NodeAppManager {
             return Err("Node 应用启动后退出，请检查入口文件与依赖".to_string());
         }
 
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
             a.pid = Some(pid);
             a.status = NodeAppStatus::Running;
@@ -319,7 +319,7 @@ impl NodeAppManager {
         // 先置 Stopping（进程随后可能死亡），避免看门狗把「已死但状态仍 Running」
         // 误判为意外退出而重新拉起用户主动停止的应用（与 software/springboot 一致）
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
                 a.status = NodeAppStatus::Stopping;
             }
@@ -329,7 +329,7 @@ impl NodeAppManager {
                 lifecycle::stop_one(pid);
             }
         }
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = inner.apps.iter_mut().find(|a| a.id == app_id) {
             a.pid = None;
             a.status = NodeAppStatus::Stopped;
@@ -341,7 +341,7 @@ impl NodeAppManager {
 
     /// 只读快照：不改状态、不落盘（供看门狗判定意外退出）
     pub fn snapshot(&self) -> Vec<NodeApp> {
-        self.inner.lock().unwrap().apps.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).apps.clone()
     }
 
     /// 写回状态/pid/错误并落盘（看门狗复位或放弃时使用）
@@ -352,7 +352,7 @@ impl NodeAppManager {
         pid: Option<u32>,
         error: Option<String>,
     ) -> Result<(), String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let a = inner
             .apps
             .iter_mut()
@@ -373,7 +373,7 @@ impl NodeAppManager {
 
     /// 返回 auto_start 的应用（按 startup_order 升序），供启动编排协调器聚合
     pub fn auto_start_list(&self) -> Vec<NodeApp> {
-        let apps = self.inner.lock().unwrap().apps.clone();
+        let apps = self.inner.lock().unwrap_or_else(|e| e.into_inner()).apps.clone();
         let mut pick: Vec<NodeApp> = apps.into_iter().filter(|a| a.auto_start).collect();
         pick.sort_by_key(|a| a.startup_order);
         pick
@@ -381,7 +381,7 @@ impl NodeAppManager {
 
     /// 应用启动时按 order 拉起 auto_start 的应用（node_exe 由命令层解析已装 Node）
     pub fn auto_start_all(&self, node_exe: &Path) {
-        let apps = self.inner.lock().unwrap().apps.clone();
+        let apps = self.inner.lock().unwrap_or_else(|e| e.into_inner()).apps.clone();
         let mut pick: Vec<NodeApp> = apps.into_iter().filter(|a| a.auto_start).collect();
         pick.sort_by_key(|a| a.startup_order);
         for a in pick {

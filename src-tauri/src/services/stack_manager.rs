@@ -121,7 +121,7 @@ impl StackManager {
     // ------------------------- CRUD -------------------------
 
     pub fn list(&self) -> Vec<Stack> {
-        self.inner.lock().unwrap().stacks.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).stacks.clone()
     }
 
     pub fn get(&self, id: &str) -> Option<Stack> {
@@ -154,7 +154,7 @@ impl StackManager {
         let _ = Self::compute_plan(&stack)?;
 
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.stacks.push(stack.clone());
             inner.save().map_err(|e| e.to_string())?;
         }
@@ -162,7 +162,7 @@ impl StackManager {
     }
 
     pub fn update(&self, id: &str, payload: UpdateStackPayload) -> Result<Stack, String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let stack = inner
             .stacks
             .iter_mut()
@@ -214,7 +214,7 @@ impl StackManager {
 
     /// 记录某栈本次拉起的组外依赖清单（持久化到 stacks.json，供应用重启后停止时使用）
     fn set_managed_externals(&self, id: &str, externals: Vec<String>) -> Result<(), String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let stack = inner
             .stacks
             .iter_mut()
@@ -229,7 +229,7 @@ impl StackManager {
     }
 
     pub fn delete(&self, id: &str) -> Result<bool, String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let before = inner.stacks.len();
         inner.stacks.retain(|s| s.id != id);
         if inner.stacks.len() == before {
@@ -360,7 +360,7 @@ impl StackManager {
             })
             .collect();
         let report = Self::build_run_report(started_at, total_elapsed_ms, members);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(s) = inner.stacks.iter_mut().find(|s| s.id == stack_id) {
             s.last_run_report = Some(report);
         }
@@ -1013,7 +1013,7 @@ impl StackManager {
         let _ = Self::compute_plan(&stack)?;
 
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.stacks.push(stack.clone());
             inner.save().map_err(|e| e.to_string())?;
         }

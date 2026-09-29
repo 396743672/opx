@@ -61,7 +61,7 @@ pub fn init_download_config(github_proxy: String, global_proxy: String) {
     if list.is_empty() {
         list.push(DEFAULT_GITHUB_PROXY.to_string());
     }
-    let mut g = DOWNLOAD_CONFIG.lock().unwrap();
+    let mut g = DOWNLOAD_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
     *g = Some(DownloadConfig {
         github_proxies: list,
         global_proxy_url: global_proxy,
@@ -69,7 +69,7 @@ pub fn init_download_config(github_proxy: String, global_proxy: String) {
 }
 
 fn get_config() -> DownloadConfig {
-    let g = DOWNLOAD_CONFIG.lock().unwrap();
+    let g = DOWNLOAD_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
     g.clone().unwrap_or_default()
 }
 

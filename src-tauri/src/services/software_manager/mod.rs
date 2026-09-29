@@ -130,12 +130,12 @@ impl SoftwareManager {
     }
 
     pub fn is_installing(&self, key: &str, version: &str) -> bool {
-        let tasks = self.install_tasks.lock().unwrap();
+        let tasks = self.install_tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.values().any(|t| t.key == key && t.version == version)
     }
 
     pub fn add_install_task(&self, install_id: String, key: String, version: String) {
-        let mut tasks = self.install_tasks.lock().unwrap();
+        let mut tasks = self.install_tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.insert(
             install_id,
             InstallTaskState {
@@ -147,7 +147,7 @@ impl SoftwareManager {
     }
 
     pub fn remove_install_task(&self, install_id: &str) {
-        let mut tasks = self.install_tasks.lock().unwrap();
+        let mut tasks = self.install_tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.remove(install_id);
     }
 
