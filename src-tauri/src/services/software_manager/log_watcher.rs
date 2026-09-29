@@ -37,7 +37,7 @@ impl LogWatcher {
     /// 应用启动时初始化后台监听线程（幂等）
     pub fn init(app: AppHandle) {
         let w = watcher();
-        let mut guard = w.tx.lock().unwrap();
+        let mut guard = w.tx.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return;
         }
@@ -49,12 +49,12 @@ impl LogWatcher {
     pub fn register(path: &str) -> Option<u64> {
         let w = watcher();
         let id = {
-            let mut n = w.next_id.lock().unwrap();
+            let mut n = w.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *n;
             *n += 1;
             id
         };
-        let tx = w.tx.lock().unwrap().as_ref()?.clone();
+        let tx = w.tx.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.clone();
         tx.send(Cmd::Register {
             path: path.to_string(),
             id,
@@ -65,7 +65,7 @@ impl LogWatcher {
 
     pub fn unregister(id: u64) {
         let w = watcher();
-        if let Some(tx) = w.tx.lock().unwrap().as_ref() {
+        if let Some(tx) = w.tx.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             let _ = tx.send(Cmd::Unregister { id });
         }
     }

@@ -21,7 +21,7 @@ static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| {
 
 /// 采样一次整机信息（复用全局 System 基线）。
 pub fn sample_system() -> SystemInfo {
-    let mut system = SYSTEM.lock().unwrap();
+    let mut system = SYSTEM.lock().unwrap_or_else(|e| e.into_inner());
     get_system_info(&mut system)
 }
 

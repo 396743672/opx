@@ -335,7 +335,7 @@ mod tests {
             value: &'a str,
         ) -> crate::services::acme::dns::BoxFuture<'a, anyhow::Result<()>> {
             Box::pin(async move {
-                self.writes.lock().unwrap().push(value.to_string());
+                self.writes.lock().unwrap_or_else(|e| e.into_inner()).push(value.to_string());
                 Ok(())
             })
         }
@@ -356,7 +356,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(action, "A 记录新建 1.2.3.4");
-        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
+        assert_eq!(p.writes.lock().unwrap_or_else(|e| e.into_inner()).as_slice(), ["1.2.3.4"]);
 
         // 值不同 → 更新
         let p = Fake { cur: Some("9.9.9.9".into()), writes: Default::default() };
@@ -364,7 +364,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(action, "A 记录更新 9.9.9.9 → 1.2.3.4");
-        assert_eq!(p.writes.lock().unwrap().as_slice(), ["1.2.3.4"]);
+        assert_eq!(p.writes.lock().unwrap_or_else(|e| e.into_inner()).as_slice(), ["1.2.3.4"]);
 
         // 值相同 → 未变，且绝不写
         let p = Fake { cur: Some("1.2.3.4".into()), writes: Default::default() };
@@ -372,6 +372,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(action, "未变");
-        assert!(p.writes.lock().unwrap().is_empty(), "值未变时不应发起写入");
+        assert!(p.writes.lock().unwrap_or_else(|e| e.into_inner()).is_empty(), "值未变时不应发起写入");
     }
 }

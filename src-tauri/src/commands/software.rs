@@ -1339,6 +1339,7 @@ pub async fn do_start_software(
         format!("{} {}", software.name, software.version),
         software.key.clone(),
         kind,
+        software.startup_order,
     );
 
     // emit 时 error 显式传 None（清除前端旧错误）
