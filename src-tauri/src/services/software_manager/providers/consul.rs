@@ -25,7 +25,7 @@ use crate::models::software::{
 
 use super::{
     HealthContext, InstallContext, LogContext, SoftwareProvider, StartCommand, StartContext,
-    default_log_sources,
+    default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -164,7 +164,7 @@ impl SoftwareProvider for ConsulProvider {
         args.push(format!("-http-port={}", http_port));
 
         Ok(StartCommand {
-            program: "consul.exe".to_string(),
+            program: exe_name("consul"),
             args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,

@@ -142,9 +142,25 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 | P1-2 | ✅ 已修复 | `start_software` 入口在写锁内原子完成「校验 + 置 Starting + 清 last_error + 落盘」（`SoftwareManager::try_reserve_start` + `lifecycle::reserve_start_in_list`），消除并发双 spawn 竞态 | `e7b21cd` |
 | P1-4 | ✅ 已修复 | Nacos token 密钥改为每实例随机 32 字节 base64，落盘 `conf/opx-token-secret.key`（真实安装目录），缺失则临时生成；移除硬编码 `ThisIsMyCustomSecretKey012345678` | `f2c0fd4` |
 | P1-3 | ✅ 已修复 | provider trait 新增可选 `graceful_stop_command` 钩子（默认 None，其余 14 个 provider 零改动）；Redis/Nginx/PostgreSQL/MongoDB 实现各自的语义化关闭命令（redis-cli shutdown / nginx -s quit / pg_ctl stop -m fast -w / mongod --dbpath … --shutdown）。`stop_software`/`restart_software` 先执行优雅停止命令、失败/超时回退 `taskkill /F` 强杀 | 本次 |
-| P1-1 | ⏳ 未修 | 跨平台 `.exe` 双重锁定（PG/Mongo/Consul/MinIO）。属"未来跨平台就绪度"，当前 opx 仍 Windows-only；用户尚未决定启动跨平台工作，故暂缓 | — |
+| P1-1 | 🔧 起步 | per-OS 二进制名已完成（共享 `exe_name` 助手，PG/Mongo/Consul/MinIO 启动+优雅停止不再硬编码 `.exe`，Windows 行为不变）；catalog/版本发现的 `#[cfg(windows)]` 锁定与 per-OS 下载 URL 仍留待 P2-1（catalog 平台维度）一并处理，避免 Linux 上「列得出装不了」破窗 | `fe01c1b` |
 
 **P1-3 已知例外（MySQL）**：MySQL root 密码为一次性 `ephemeral`（不持久化到 installed.json / 配置文件），`mysqladmin shutdown` 无法认证，`graceful_stop_command` 故意返回 `None` 走强杀回退——否则会陷入「认证失败 → 强杀」的假优雅。若要彻底优雅停止 MySQL，需将 root 密码存入 OS 凭据库（同锁屏 `LOCAL_MACHINE` 思路），属独立设计项，不在本次 P1-3 范围。
 
 > 实机验证建议（待用户本机）：装一个 Redis + 一个 PostgreSQL，分别点「停止」，观察 `opx-<id>.log` 不再出现强杀、进程干净退出；并在数据有写入时停库，重启确认数据未损坏。
+
+### 7.7 P2 修复进度（fix/audit-p2 分支）
+
+| # | 状态 | 修复方案 | commit |
+|---|---|---|---|
+| P2-3 | ✅ 已修复 | 全局 50 处 `Mutex.lock().unwrap()` 改为 `.unwrap_or_else(\|e\| e.into_inner())`，任一线程 panic 持锁不再级联中毒崩溃（覆盖 lifecycle/process_monitor/stack_manager/node_app_manager/software_manager/mod/log_watcher/ddns/startup_bootstrap/system_monitor/info/download 共 10 文件） | `f0cc561` |
+| P2-5 | ✅ 已修复 | `RegisteredProcess` 记录 `startup_order`；`stop_all_on_exit` 按 `startup_order` 逆序停止（依赖方先于依赖被杀），抽出可测纯函数 `sort_by_shutdown_order` 并加回归测试 | `f0cc561` |
+| P2-1 | ⏳ 未修 | catalog 无 platform 维度 + `#[cfg(windows)]` 全锁。与 P1-1 的 catalog 锁定同源，需一并做 per-OS 下载 URL + 服务管理抽象 | — |
+| P2-2 | ⏳ 未修 | 其余 `.exe` 硬编码（mysql/redis/nginx/rustfs/custom_templates）按 OS 给默认 | — |
+| P2-4 | ⏳ 未修 | PID 跟踪对 `.bat` 包装 Java 应用失真（Windows 实机验证；job object/子进程树） | — |
+| P2-6 | ⏳ 未修 | 明文凭据持久化（minio/rustfs/nacos/influxdb），secret 默认 ephemeral 或接入 OS 凭据库 | — |
+| P2-7 | ⏳ 未修 | 默认弱口令（MinIO/RustFS 强制首次改密或随机生成） | — |
+| P2-8 | ⏳ 未修 | 配置 schema 不一致（统一 secret 落盘约定） | — |
+| P2-9 | ⏳ 未修 | i18n 真实孤儿键（逐键追溯，勿直接删） | — |
+
+> P2-3 / P2-5 已在 `fix/audit-p2` 分支提交并通过 `cargo test --lib`（318 passed / 0 warning）+ 全量 `cargo build`（0 warning）；**尚未合并 dev**（按工作流等「合并到 dev」指令）。
 
