@@ -20,10 +20,15 @@ use argon2::Argon2;
 use rand_core::OsRng;
 
 /// keyring 的 (service, user) 标识；仅非 Windows 平台（走 keyring）使用
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(test)))]
 const SERVICE: &str = "opx";
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(test)))]
 const USER: &str = "lock-screen";
+/// 测试专用标识：与生产隔离——用户可能已设真实锁，单测不得触碰真实凭据
+#[cfg(all(not(windows), test))]
+const SERVICE: &str = "opx-test";
+#[cfg(all(not(windows), test))]
+const USER: &str = "lock-screen-test";
 /// 密码最小长度，避免过短被暴破
 const MIN_PASSWORD_LEN: usize = 6;
 
@@ -115,6 +120,9 @@ mod tests {
     #[test]
     fn roundtrip_set_verify_clear() {
         let pw = "123456";
+        // 幂等清理：上次运行若中途 panic 会残留测试条目（target 为测试专用，
+        // 不触碰用户真实锁凭据——用户可能已在实机设锁）
+        let _ = clear_lock_password();
         assert!(!has_lock_password().unwrap());
         set_lock_password(pw).expect("set");
         assert!(has_lock_password().unwrap());

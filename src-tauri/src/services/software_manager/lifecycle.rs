@@ -302,7 +302,7 @@ pub(crate) fn reset_data_dirs(dirs: &[PathBuf], install_path: &std::path::Path) 
 
 // —— 状态转换校验 ——
 
-use crate::models::software::{CustomStartCommand, SoftwareStatus};
+use crate::models::software::{CustomStartCommand, InstalledSoftwareList, SoftwareStatus};
 
 /// 校验启动状态转换是否合法
 pub fn validate_start_transition(current: SoftwareStatus) -> anyhow::Result<()> {
@@ -323,6 +323,27 @@ pub fn validate_start_transition(current: SoftwareStatus) -> anyhow::Result<()> 
             "当前状态为初始化中，无法启动"
         )),
     }
+}
+
+/// 启动占位：在**已持写锁**的安装列表上原子地「校验 + 置 Starting」。
+///
+/// P1-2 启动竞态修复：历史上校验在命令入口、置 Starting 在 spawn 后的异步任务里
+/// （中间隔着依赖编排 + 首次初始化，最长 180s），间隙内并发第二次 start 可通过校验
+/// → 双进程/端口冲突。调用方必须在同一把写锁内完成校验与占位，保证原子。
+/// 占位同时清除 last_error（避免启动成功后仍显示旧错误）。
+pub fn reserve_start_in_list(
+    list: &mut InstalledSoftwareList,
+    installed_id: &str,
+) -> anyhow::Result<()> {
+    let item = list
+        .software
+        .iter_mut()
+        .find(|s| s.id == installed_id)
+        .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+    validate_start_transition(item.status.clone())?;
+    item.status = SoftwareStatus::Starting;
+    item.last_error = None;
+    Ok(())
 }
 
 /// 校验停止状态转换是否合法
@@ -640,8 +661,47 @@ pub fn stop_all_on_exit(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::stdout_log_path;
+    use super::{reserve_start_in_list, stdout_log_path};
     use std::path::Path;
+
+    /// P1-2 启动竞态回归：占位函数原子地「校验 + 置 Starting + 清 last_error」。
+    #[test]
+    fn reserve_start_validates_and_sets_starting() {
+        use crate::models::software::{InstalledSoftwareList, SoftwareStatus};
+        let entry = |status: &str| -> crate::models::software::InstalledSoftware {
+            let json = serde_json::json!({
+                "id": "t1", "key": "mysql", "version": "1.0", "name": "T",
+                "install_path": "apps/mysql/1.0",
+                "install_time": "2026-01-01T00:00:00",
+                "status": status, "port": 3306, "config": {},
+                "is_custom": false, "auto_start_on_app_start": false,
+                "startup_order": 0,
+                "source": {"Mirror": {"mirror_name": "m", "url": "https://x"}},
+                "last_error": "旧错误"
+            });
+            serde_json::from_value(json).expect("test entry parses")
+        };
+
+        // 可启动状态 → Ok 且置 Starting、清 last_error
+        for st in ["Stopped", "Unknown", "Error"] {
+            let mut l = InstalledSoftwareList { software: vec![entry(st)] };
+            assert!(reserve_start_in_list(&mut l, "t1").is_ok(), "{st} 应允许启动");
+            assert_eq!(l.software[0].status, SoftwareStatus::Starting);
+            assert_eq!(l.software[0].last_error, None, "占位应清除 last_error");
+        }
+
+        // 不可启动状态 → Err 且状态不变（由调用方在写锁内使用，保证原子）
+        for st in ["Running", "Starting", "Stopping", "Initializing"] {
+            let mut l = InstalledSoftwareList { software: vec![entry(st)] };
+            let before = l.software[0].status.clone();
+            assert!(reserve_start_in_list(&mut l, "t1").is_err(), "{st} 应拒绝启动");
+            assert_eq!(l.software[0].status, before, "拒绝时状态不得被改动");
+        }
+
+        // 记录不存在 → Err
+        let mut l = InstalledSoftwareList { software: vec![] };
+        assert!(reserve_start_in_list(&mut l, "t1").is_err());
+    }
 
     #[test]
     fn test_stdout_log_path_shape() {

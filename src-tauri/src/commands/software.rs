@@ -606,18 +606,22 @@ pub async fn start_software(
     let audit_detail = format!("{} ({})", software.version, software.id);
     oplog_begin!("start", &audit_target, &audit_detail);
 
-    if let Err(e) = lifecycle::validate_start_transition(software.status) {
-        oplog_fail!("start", &audit_target, &audit_detail, &e);
-        return Err(e.to_string());
-    }
-
-    // PID 残留校验：旧 PID 仍存活则拒绝启动
+    // PID 残留校验：旧 PID 仍存活则拒绝启动（纯读，先于任何状态变更）
     if let Some(pid) = software.pid {
         if health_check::is_process_alive(pid) {
             let msg = format!("进程 {} 仍在运行，请先停止", pid);
             oplog_fail!("start", &audit_target, &audit_detail, &msg);
             return Err(msg);
         }
+    }
+
+    // P1-2 启动竞态修复：原子「校验 + 占位 Starting」。
+    // 历史上校验在命令入口、置 Starting 在 spawn 后的异步任务里（do_start_software
+    // 之前还要跑依赖编排 + 首次初始化，最长 180s），间隙内并发第二次 start 可通过
+    // 校验 → 双进程/端口冲突。现在写锁内一次完成，重复启动被 Starting 状态拒绝。
+    if let Err(e) = manager.try_reserve_start(&installed_id) {
+        oplog_fail!("start", &audit_target, &audit_detail, &e);
+        return Err(e.to_string());
     }
 
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();

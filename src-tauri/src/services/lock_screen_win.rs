@@ -16,7 +16,12 @@ use windows_sys::Win32::Security::Credentials::{
 };
 
 /// 固定 target 名（等价于 keyring 的 (service, user) 概念）
+#[cfg(not(test))]
 const TARGET: &str = "opx.lock-screen";
+/// 测试专用 target：与生产隔离——用户可能已在实机设锁，单测不得触碰真实凭据
+/// （roundtrip 测试曾因真实凭据已存在而前置断言失败）。
+#[cfg(test)]
+const TARGET: &str = "opx.lock-screen.test";
 
 fn to_wstr(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
