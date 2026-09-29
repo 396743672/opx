@@ -24,6 +24,15 @@ use crate::models::settings::AppSettings;
 use crate::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList, SoftwareStatus};
 use crate::utils::paths;
 
+/// 测试专用：串行化「真实 spawn 子进程」的测试。
+///
+/// `process_monitor::sample_processes` 会把**后代进程**的 WorkingSet 累加进父采样，
+/// 因此任何并发测试的瞬时子进程都会污染它（典型：内存聚合测试的两次采样之间，
+/// 别的测试 spawn 的 cmd.exe 被回收 → 采样反而变小 → 断言偶发失败）。
+/// 凡在测试中真实 spawn 子进程的用例，开头都取一次本锁。
+#[cfg(test)]
+pub(crate) static PROCESS_SPAWN_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// 进行中的安装任务状态（用于查重和未来取消）
 pub struct InstallTaskState {
     pub key: String,
@@ -294,6 +303,31 @@ impl SoftwareManager {
         }
         if let Some(e) = last_error {
             item.last_error = Some(e);
+        }
+        Self::save_installed_list(&installed)?;
+        Ok(())
+    }
+
+    /// 归零实例的初始化态：清空 last_started_at / last_stopped_at / pid，状态置 Stopped，
+    /// **并把 config.initialized 置 false**。供「一键重置」调用——重置数据目录后，
+    /// 1) 前端凭据锁（依赖 last_started_at）自动解除，可重新填写凭据；
+    /// 2) 下次启动不再跳过 first_run_init（否则会「重置后不重新初始化」，2026-09-29 修）。
+    pub fn clear_init_state(&self, installed_id: &str) -> Result<()> {
+        let mut installed = self.installed.write().unwrap();
+        let item = installed
+            .software
+            .iter_mut()
+            .find(|s| s.id == installed_id)
+            .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+        item.status = SoftwareStatus::Stopped;
+        item.pid = None;
+        item.last_started_at = None;
+        item.last_stopped_at = None;
+        item.last_error = None;
+        // 🚨 必须清 initialized：start_software 以 config.initialized 判定是否跳过 first_run_init，
+        // 不清则重置后启动仍报 "already initialized, skipping first_run_init" → 不重新初始化。
+        if let Some(obj) = item.config.as_object_mut() {
+            obj.insert("initialized".to_string(), serde_json::json!(false));
         }
         Self::save_installed_list(&installed)?;
         Ok(())

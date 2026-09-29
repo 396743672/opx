@@ -150,31 +150,77 @@ mod tests {
         assert!(!is_descendant(&tree, 777, 1), "树里没有的 pid 不算后代");
     }
 
-    /// 真实进程树：spawn 一个子进程，验证其内存被累加进父进程采样。
+    /// 真实进程树：spawn 一个**持有大常驻内存**的子进程，验证其内存被累加进父进程采样。
     /// 这是「MySQL 父壳 + 子进程」场景的最小复现。
+    ///
+    /// 为什么不用「父进程前后两次采样对比」：测试进程自身的 WorkingSet 会被系统回收，
+    /// 且并行执行的其它用例分配/释放内存，波动可达 ±20MB——足以淹没 cmd/ping 这类几 MB
+    /// 子进程，使断言偶发失败（历史 flake）。改用确定性不变式：子进程持有 ~256MB，
+    /// 父聚合内存 = 父自身 + 全部后代，**必然 ≥ 子进程自身内存**；若聚合失效（后代未计入），
+    /// 父聚合仅父自身（~80MB）< 256MB → 断言失败。该判据对父进程波动完全免疫。
     #[test]
     fn sample_aggregates_child_process_memory() {
+        // 与其它「真实 spawn 子进程」的测试串行（见 PROCESS_SPAWN_TEST_LOCK 注释）。
+        let _spawn_guard = crate::services::software_manager::PROCESS_SPAWN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let me = std::process::id();
-        let only_self = sample_processes(&[me]);
-        assert!(!only_self.is_empty());
-        let self_mem = only_self[0].mem_bytes;
 
-        // 子进程持有 ~20MB，父进程自身测量值应随之增大
-        let mut child = std::process::Command::new("cmd")
-            .args(["/C", "ping -n 20 127.0.0.1 > nul"])
+        // 子进程：分配 ~256MB 并**实际写入**（零填充的数组映射到共享零页，不写入不占工作集），
+        // 用加密 RNG 一次性填满整个数组以触发全部缺页装入，随后保持数秒。
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$x = [byte[]]::new(268435456); [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($x); Start-Sleep -Seconds 12",
+            ])
             .spawn()
-            .expect("spawn child");
-        std::thread::sleep(std::time::Duration::from_millis(800));
-        let with_child = sample_processes(&[me]);
+            .expect("spawn memory-holding child");
+        #[cfg(not(windows))]
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 12"]) // 非 Windows：仅保证编译通过（该用例面向 Windows 进程树）
+            .spawn()
+            .expect("spawn memory-holding child");
+
+        // 轮询等待子进程内存涨到 >100MB（powershell 启动 + 分配/写入需要时间）。
+        let mut child_mem: u64 = 0;
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            child_mem = sample_processes(&[child.id()])
+                .first()
+                .map(|s| s.mem_bytes)
+                .unwrap_or(0);
+            if child_mem > 100 * 1024 * 1024 {
+                break;
+            }
+        }
+
+        // 子进程存活期间采样父进程：聚合值应包含该后代。
+        let parent_aggregate = sample_processes(&[me])
+            .first()
+            .map(|s| s.mem_bytes)
+            .unwrap_or(0);
+
         let _ = child.kill();
         let _ = child.wait();
 
-        assert!(!with_child.is_empty());
+        #[cfg(windows)]
         assert!(
-            with_child[0].mem_bytes > self_mem,
-            "含子进程的采样应大于仅自身（{} vs {}）",
-            with_child[0].mem_bytes,
-            self_mem
+            child_mem > 100 * 1024 * 1024,
+            "子进程应持有 >100MB 常驻内存（实测 {}）",
+            child_mem
         );
+        #[cfg(windows)]
+        assert!(
+            parent_aggregate >= child_mem,
+            "父聚合内存应包含后代子进程（父聚合 {} vs 子自身 {}）",
+            parent_aggregate,
+            child_mem
+        );
+        // 非 Windows：该用例面向 Windows 进程树，仅消费变量避免 unused 告警。
+        #[cfg(not(windows))]
+        let _ = (parent_aggregate, child_mem);
     }
 }

@@ -909,4 +909,59 @@ mod tests {
         assert_eq!(tie[1].installed_id, "app-a");
         assert_eq!(tie[2].installed_id, "db");
     }
+
+    /// P2-4 实机验证：`.bat` 包装的 Java 类应用，直接子进程是 cmd.exe(shell)，
+    /// `monitored_pid` 必须解析出其非 shell 后代（真实工作进程）作为监控 PID，
+    /// 而非 shell 自身——否则停止时只杀已退出的 cmd，残留孤儿工作进程。
+    #[cfg(windows)]
+    #[test]
+    fn monitored_pid_resolves_non_shell_descendant_of_bat() {
+        use std::io::Write;
+        use std::process::Command;
+
+        // 与内存聚合测试串行（二者都真实 spawn 子进程，并行会互相污染采样）。
+        let _spawn_guard = crate::services::software_manager::PROCESS_SPAWN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // 构造一个 .bat：由 cmd.exe 解释执行，内部启动非 shell 后代 ping.exe
+        let bat = std::env::temp_dir().join(format!("opx_monpid_{}.bat", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&bat).expect("create .bat");
+            writeln!(f, "@echo off").unwrap();
+            writeln!(f, "ping -t 127.0.0.1").unwrap();
+        }
+        let child = Command::new(&bat).spawn().expect("spawn .bat");
+        let direct = child.id();
+        // 给 ping.exe 启动时间（monitored_pid 内部有 6×250ms 轮询兜底）
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        let monitored = super::monitored_pid(&child);
+        let name = super::snapshot_process_tree()
+            .1
+            .get(&monitored)
+            .cloned()
+            .unwrap_or_default();
+
+        // 清理：先杀工作进程，再杀 shell 父进程
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &monitored.to_string()])
+            .output();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &direct.to_string()])
+            .output();
+        let _ = std::fs::remove_file(&bat);
+
+        assert_ne!(
+            monitored, direct,
+            "监控 PID 不应是 shell(cmd.exe) 自身，否则会误判停止且残留孤儿工作进程"
+        );
+        assert!(
+            !matches!(
+                name.as_str(),
+                "cmd.exe" | "conhost.exe" | "powershell.exe" | "pwsh.exe" | "bash.exe" | "wsl.exe"
+            ),
+            "监控 PID {monitored} 解析为 shell 进程 {name}，P2-4 解析失败"
+        );
+    }
 }

@@ -559,8 +559,20 @@ pub async fn download_and_extract(
     };
     let cache_path = cache_key_dir.join(&cache_file_name);
 
-    // 检查缓存：若 cache_path 存在则跳过下载
-    let cache_hit = cache_path.exists();
+    // 检查缓存：存在且**通过归档完整性校验**才复用；陈旧/损坏缓存直接删除并重新下载（自愈），
+    // 避免上一次截断残留的坏文件把后续安装永久卡死（用户须手动重试才恢复）。
+    let mut cache_hit = cache_path.exists();
+    if cache_hit {
+        if let Err(e) = archive::validate_archive_header(&cache_path, &version_info.archive.format) {
+            tracing::warn!(
+                path = %cache_path.display(),
+                error = %e,
+                "缓存归档校验失败，删除并重新下载"
+            );
+            let _ = fs::remove_file(&cache_path);
+            cache_hit = false;
+        }
+    }
     if cache_hit {
         emit_event(
             app,
@@ -617,6 +629,15 @@ pub async fn download_and_extract(
             let _ = fs::remove_file(&cache_path);
             return Err(e);
         }
+    }
+
+    // 下载完整性校验（防御深度）：即便服务器未返回 content-length（代理常转 chunked 丢弃长度），
+    // 也在此拦截「截断归档 / HTML 错误页」被当成有效归档导致解压崩溃。
+    // 覆盖两条路径：上方刚下载完成、以及 cache_hit 复用的旧缓存（可能为上次截断残留）。
+    if let Err(e) = archive::validate_archive_header(&cache_path, &version_info.archive.format) {
+        // 校验失败：删除坏缓存，避免下次误当命中复用；返回 Err 触发镜像回退重试。
+        let _ = fs::remove_file(&cache_path);
+        return Err(anyhow::anyhow!("下载文件校验失败: {}", e));
     }
 
     if let Some(expected_sha) = &version_info.archive.sha256 {

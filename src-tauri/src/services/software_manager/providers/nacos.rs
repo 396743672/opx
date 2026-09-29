@@ -63,6 +63,22 @@ fn render_cluster_conf(nodes: &[String]) -> String {
     s
 }
 
+/// 构造 Nacos MySQL 首次初始化 SQL：**先 DROP 再 CREATE**。
+///
+/// 🚨 必须先 DROP：nacos 自带的 `mysql-schema.sql` 全是裸 `CREATE TABLE`（无 `DROP`、
+/// 无 `IF NOT EXISTS`，共 13 张表），在已有库上重跑会报「table already exists」→ 初始化失败，
+/// 也导致「重置后无法重新初始化」。该命令仅在 `initialized == false`（全新安装 / 重置后）
+/// 时执行，此时「干净重建」正是预期语义。
+fn nacos_mysql_init_sql(db: &str, schema_sql_path: &str) -> String {
+    format!(
+        "DROP DATABASE IF EXISTS `{}`; CREATE DATABASE `{}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE `{}`; SOURCE {};",
+        db,
+        db,
+        db,
+        schema_sql_path.replace('\\', "/")
+    )
+}
+
 /// 加载或生成 Nacos token 签发密钥（`nacos.core.auth.plugin.nacos.token.secret.key`）。
 ///
 /// 历史：该密钥曾硬编码在源码（`VGhpc0lz...`，即 `ThisIsMyCustomSecretKey012345678`），
@@ -369,13 +385,8 @@ impl SoftwareProvider for NacosProvider {
             if !schema_path.exists() {
                 return Err(anyhow::anyhow!("Nacos 缺少 mysql-schema.sql，请重新安装"));
             }
-            // mysql -e "CREATE DATABASE ...; USE ...; SOURCE ..." 一步建库建表。
-            // 密码走 MYSQL_PWD 环境变量，避免命令行明文泄漏。
-            let sql = format!(
-                "CREATE DATABASE IF NOT EXISTS `{}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; USE `{}`; SOURCE {};",
-                db, db,
-                schema_path.to_string_lossy().replace('\\', "/")
-            );
+            // mysql -e "<sql>" 一步重建库建表。密码走 MYSQL_PWD 环境变量，避免命令行明文泄漏。
+            let sql = nacos_mysql_init_sql(&db, &schema_path.to_string_lossy());
             let mut env = std::collections::BTreeMap::new();
             env.insert("MYSQL_PWD".to_string(), password);
             let init_cmd = StartCommand {
@@ -856,6 +867,68 @@ mod tests {
             .expect("密钥文件应存在");
         assert_eq!(stored.trim(), k1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归（2026-09-29）：首次初始化 SQL 必须先 DROP 库再建，否则在已有 nacos 库上重跑
+    /// 裸 `CREATE TABLE` 会报「表已存在」（重置后无法重新初始化）。
+    #[test]
+    fn mysql_init_sql_drops_database_before_create() {
+        let sql = nacos_mysql_init_sql("nacos", "C:\\opx\\nacos\\conf\\mysql-schema.sql");
+        assert!(
+            sql.starts_with("DROP DATABASE IF EXISTS `nacos`;"),
+            "必须先 DROP 库（否则已有库上重跑报表已存在）: {sql}"
+        );
+        assert!(sql.contains("CREATE DATABASE `nacos`"), "应随后重建库: {sql}");
+        assert!(sql.contains("USE `nacos`;"), "应切库: {sql}");
+        // 反斜杠路径应归一化为正斜杠（mysql SOURCE 对反斜杠敏感）
+        assert!(
+            sql.contains("SOURCE C:/opx/nacos/conf/mysql-schema.sql;"),
+            "schema 路径应归一化为正斜杠: {sql}"
+        );
+    }
+
+    /// 回归（2026-09-29）：nacos **两种存储模式**下的初始化 / 重置语义。
+    /// - `embedded`（Derby，默认）：`first_run_init = None`（Derby 自建，无需建库），
+    ///   重置靠清 `<install>/data`（Derby 数据所在）。
+    /// - `mysql`：`first_run_init` 存在且 SQL 先 DROP 库（见 `mysql_init_sql_drops_database_before_create`），
+    ///   重置还须清外部库。
+    /// 两模式的 `data_dirs` 一致 = `<install>/data` → `reset_instance` 清它即覆盖 embedded 的 Derby 数据。
+    #[test]
+    fn embedded_mode_has_no_first_run_init_and_data_dirs_is_install_data() {
+        let make = |storage: &str| StartContext {
+            installed_id: "t".to_string(),
+            install_path: "C:\\nacos".to_string(),
+            version: "3.2.3".to_string(),
+            config: serde_json::json!({ "port": 8848, "console_port": 8080, "storage": storage }),
+            custom_start_command: None,
+            init_password: None,
+            jdk_install_path: Some("C:\\jdk-17".to_string()),
+            mysql_install_path: None,
+        };
+
+        // embedded：无 first_run_init（Derby 自建）
+        let cmd = NacosProvider
+            .start_command(&make("embedded"))
+            .expect("embedded start_command 应成功");
+        assert!(
+            cmd.first_run_init.is_none(),
+            "embedded 模式不应有 first_run_init（Derby 自建，无需建库）"
+        );
+
+        // 两种模式的 data_dirs 都是 <install>/data
+        use crate::services::software_manager::providers::DataDirContext;
+        for storage in ["embedded", "mysql"] {
+            let dirs = NacosProvider.data_dirs(&DataDirContext {
+                install_path: "C:\\nacos".to_string(),
+                version: "3.2.3".to_string(),
+                config: serde_json::json!({ "storage": storage }),
+            });
+            assert_eq!(
+                dirs,
+                vec![std::path::PathBuf::from("C:\\nacos").join("data")],
+                "{storage} 模式 data_dirs 应为 <install>/data"
+            );
+        }
     }
 }
 

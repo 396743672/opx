@@ -183,6 +183,22 @@ where
         downloaded += chunk.len() as u64;
         on_progress(downloaded, total_size);
     }
+    file.flush()?;
+
+    // 完整性校验（核心修复）：若服务器返回了 content-length，必须与实际写入字节一致。
+    // 否则「截断下载」会被误判为成功——大文件（如 212MB 的 nacos zip）经代理/GitHub
+    // 传输中途断流时，stream 提前结束返回 Ok(())，opx 误以为下载成功，
+    // 后续解压报 `invalid Zip archive: Could not find central directory end`。
+    // 校验失败返回 Err，由上层重试该镜像；全部重试失败则删除缓存（installer 负责）。
+    if let Some(expected) = total_size {
+        if downloaded != expected {
+            return Err(anyhow::anyhow!(
+                "下载被截断：期望 {} 字节，实际收到 {} 字节（连接可能在传输中中断，建议检查代理/网络）",
+                expected,
+                downloaded
+            ));
+        }
+    }
     Ok(())
 }
 

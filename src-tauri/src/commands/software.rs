@@ -2461,7 +2461,15 @@ pub async fn reset_instance(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<(), String> {
-    backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
+    // 审计目标：软件名 + 版本(id)；查不到则退回 id（不阻断重置本身，由 reset 内部报错）
+    let (target, detail) = manager
+        .find_installed(&installed_id)
+        .map(|s| (s.name.clone(), format!("{} ({})", s.version, s.id)))
+        .unwrap_or_else(|| (installed_id.clone(), installed_id.clone()));
+
+    audited_async!("reset", target, detail, {
+        backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
+    })
 }
 
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；

@@ -134,18 +134,26 @@ mod tests {
 
     #[tokio::test]
     async fn run_health_check_returns_process_exited_when_pid_dies() {
-        // 进程中途退出应判 ProcessExited 而非 Timeout（修复 #3 边界）
-        let mut child = if cfg!(windows) {
-            std::process::Command::new("cmd")
-                .args(["/c", "exit"])
-                .spawn()
-                .unwrap()
-        } else {
-            std::process::Command::new("true").spawn().unwrap()
+        // 与内存聚合测试串行：本用例真实 spawn 子进程，并行会污染其采样。
+        // 作用域限定到子进程回收为止——不把非 Send 的守卫持有跨 await。
+        let pid = {
+            let _spawn_guard = crate::services::software_manager::PROCESS_SPAWN_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // 进程中途退出应判 ProcessExited 而非 Timeout（修复 #3 边界）
+            let mut child = if cfg!(windows) {
+                std::process::Command::new("cmd")
+                    .args(["/c", "exit"])
+                    .spawn()
+                    .unwrap()
+            } else {
+                std::process::Command::new("true").spawn().unwrap()
+            };
+            let pid = child.id();
+            let _ = child.kill();
+            let _ = child.wait();
+            pid
         };
-        let pid = child.id();
-        let _ = child.kill();
-        let _ = child.wait();
         // 端口必然不可达，但 pid 已死应优先返回 ProcessExited（不应判 Timeout）
         let spec = HealthCheckSpec::Tcp {
             port: 1,

@@ -369,7 +369,7 @@ impl SoftwareProvider for InfluxdbProvider {
                         key: "auth_enabled".to_string(),
                         equals: serde_json::json!(true),
                     }),
-                    required: false,
+                    required: true,
                 },
                 crate::models::software::FieldRule {
                     field_key: "admin_password".to_string(),
@@ -377,7 +377,7 @@ impl SoftwareProvider for InfluxdbProvider {
                         key: "auth_enabled".to_string(),
                         equals: serde_json::json!(true),
                     }),
-                    required: false,
+                    required: true,
                 },
                 crate::models::software::FieldRule {
                     field_key: "admin_token".to_string(),

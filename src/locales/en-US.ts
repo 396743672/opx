@@ -189,6 +189,7 @@ export default {
   saveAndRestart: 'Save & Restart',
   configEditRestartHint: 'Config changes take effect after restart',
   configRequiredMissing: 'Please fill in required field: {field}',
+  credsLockedHint: 'This instance has completed first initialization; the account/password below are now fixed in the data directory (e.g. .minio.sys / the system database) and cannot be changed within the app. To change them, use the instance’s “Reset” action to wipe its data directory, then re-enter the credentials and start (reset clears all data of the instance).',
   configEditSourceHint: 'Edit config file source directly, takes effect after save',
 
   // StartupSettingsDialog

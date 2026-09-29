@@ -394,7 +394,49 @@ pub fn reset_instance(manager: &SoftwareManager, installed_id: &str) -> anyhow::
         config: sw.config.clone(),
     };
     let data_dirs = provider.data_dirs(&dctx);
-    lifecycle::reset_data_dirs(&data_dirs, &install_path)?;
+
+    // 1. 确保实例进程真正退出：只要记录里有存活 pid 就停止并等待。
+    //    覆盖 Running / Starting / **Stopping 卡住** 三种情形——旧实现只处理 Running/Starting，
+    //    实例停在 Stopping（JVM 尚未退完）时会直接跳到清空，被未释放的文件句柄挡住 → 重置失败。
+    if let Some(pid) = sw.pid {
+        if crate::services::software_manager::health_check::is_process_alive(pid) {
+            let (ok, st) = lifecycle::stop_one(pid);
+            if !ok {
+                return Err(anyhow::anyhow!(
+                    "停止实例进程失败（PID {} 仍在运行，{}），请先手动停止后再重置",
+                    pid,
+                    st
+                ));
+            }
+        }
+        lifecycle::unregister(installed_id);
+    }
+
+    // 2. 清空所有数据目录（重建空态）。Windows 杀进程后目录句柄释放有短暂延迟，
+    //    remove_dir_all 可能瞬时 PermissionDenied → 带重试（护栏已在 reset_data_dirs 内）。
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..5 {
+        match lifecycle::reset_data_dirs(&data_dirs, &install_path) {
+            Ok(()) => {
+                last_err = None;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 4 {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                }
+            }
+        }
+    }
+    if let Some(e) = last_err {
+        return Err(e);
+    }
+
+    // 3. 归零初始化态：清 last_started_at / last_stopped_at / pid + **config.initialized=false**，
+    //    状态置 Stopped。重置后凭据锁自动解除，且下次启动会重新执行 first_run_init。
+    manager.clear_init_state(installed_id)?;
+
     Ok(())
 }
 

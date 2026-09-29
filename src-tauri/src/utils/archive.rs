@@ -1,6 +1,9 @@
 use anyhow::Result;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+
+use crate::models::software::ArchiveFormat;
 
 /// 解压进度回调：(已解压字节数, 总字节数)。
 /// 约定与 installer.rs 内「下载进度回调」一致：由调用方在闭包里节流后 emit install-progress 事件
@@ -170,4 +173,108 @@ where
         on_progress(extracted, total);
     }
     Ok(())
+}
+
+/// 下载后、解压前的归档完整性校验（防御深度）。
+///
+/// 即使服务器未返回 `content-length`（代理常转为 chunked 而丢弃长度），
+/// 也能在此拦截两类「伪装成正常归档」的坏文件，避免解压阶段才崩并报出
+/// 晦涩的 `Could not find central directory end`：
+/// 1. **截断归档**：大文件经代理/GitHub 传输中途断流，文件尾中央目录缺失。
+///    - Zip：直接 `ZipArchive::new` 读文件尾 EOCD，截断即失败（正是根因复现点）。
+/// 2. **HTML 错误页**：代理返回 200 但 body 是错误页（无归档魔数）。
+///    - Zip：同上，无 PK 头 → 失败；TarGz：gzip 魔数 0x1f 0x8b 校验。
+///
+/// 校验失败由调用方删除缓存并触发镜像重试；纯二进制（Executable）不强制校验。
+pub fn validate_archive_header(path: &Path, format: &ArchiveFormat) -> Result<()> {
+    match format {
+        ArchiveFormat::Zip => {
+            let f = std::fs::File::open(path)
+                .map_err(|e| anyhow::anyhow!("无法打开下载文件: {}", e))?;
+            // 读文件尾中央目录：截断/损坏的 zip 在此即失败，错误信息直指根因。
+            zip::ZipArchive::new(f).map_err(|e| {
+                anyhow::anyhow!("ZIP 归档无效（可能下载被截断或损坏）: {}", e)
+            })?;
+        }
+        ArchiveFormat::TarGz => {
+            let mut buf = [0u8; 2];
+            let mut f = std::fs::File::open(path)
+                .map_err(|e| anyhow::anyhow!("无法打开下载文件: {}", e))?;
+            let n = f.read(&mut buf)?;
+            if n < 2 || buf != [0x1f, 0x8b] {
+                return Err(anyhow::anyhow!(
+                    "tar.gz 归档无效：文件头不是 gzip 魔数（疑似下载到 HTML 错误页或被截断）"
+                ));
+            }
+        }
+        ArchiveFormat::Executable => { /* 二进制不强制校验，交由上层测活/启动兜底 */ }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_temp(bytes: &[u8]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("opx_arch_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.zip");
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    #[test]
+    fn validate_archive_header_accepts_well_formed_zip() {
+        // 构造一个最小合法 zip（含一个空文件），中央目录完整。
+        let dir = std::env::temp_dir().join(format!("opx_zip_ok_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("ok.zip");
+        {
+            let f = std::fs::File::create(&p).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("hello.txt", opts).unwrap();
+            zw.write_all(b"hi").unwrap();
+            zw.finish().unwrap();
+        }
+        assert!(validate_archive_header(&p, &ArchiveFormat::Zip).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_archive_header_rejects_truncated_zip() {
+        // 复现用户报错：212MB 的 nacos zip 被代理截断，文件尾 EOCD 缺失。
+        // 用一个合法 zip 的前若干个字节模拟「截断」——ZipArchive::new 必失败。
+        let dir = std::env::temp_dir().join(format!("opx_zip_bad_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let full = dir.join("full.zip");
+        let trunc = dir.join("trunc.zip");
+        {
+            let f = std::fs::File::create(&full).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("data.txt", opts).unwrap();
+            zw.write_all(b"some payload that should be much longer in reality").unwrap();
+            zw.finish().unwrap();
+        }
+        let bytes = std::fs::read(&full).unwrap();
+        // 只取前半字节，模拟传输中断。
+        std::fs::write(&trunc, &bytes[..bytes.len() / 2]).unwrap();
+        let err = validate_archive_header(&trunc, &ArchiveFormat::Zip);
+        assert!(err.is_err(), "截断 zip 必须被拦截");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_archive_header_rejects_html_page_as_tar_gz() {
+        // 代理返回 200 但 body 是 HTML 错误页，却以 .tar.gz 名义下载。
+        let p = write_temp(b"<html><body>404 Not Found</body></html>");
+        let err = validate_archive_header(&p, &ArchiveFormat::TarGz);
+        assert!(err.is_err(), "HTML 错误页伪装的 tar.gz 必须被拦截");
+        let _ = std::fs::remove_file(&p);
+    }
 }

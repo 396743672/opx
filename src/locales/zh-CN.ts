@@ -189,6 +189,7 @@ export default {
   saveAndRestart: '保存并重启',
   configEditRestartHint: '配置改动需重启软件后生效',
   configRequiredMissing: '请填写必填项：{field}',
+  credsLockedHint: '该实例已完成首次初始化，以下账号密码已固化于数据目录（如 .minio.sys / 系统库），初始化完成后不可在应用内修改。如需更改，请使用实例的「重置」功能清空数据目录，随后重新填写凭据并启动（重置会清空该实例全部数据）。',
   configEditSourceHint: '直接编辑配置文件源码，保存后生效',
 
   // StartupSettingsDialog
