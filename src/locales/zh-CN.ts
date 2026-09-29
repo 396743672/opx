@@ -263,8 +263,6 @@ export default {
   kafkaOfficial: 'Apache Kafka 官方',
   nodejsOrg: 'nodejs.org 官方',
   npmmirror: 'npmmirror 镜像',
-  builtinMissing: '内置安装包缺失，请重新安装应用',
-  builtinCorrupted: '内置安装包校验失败，文件可能损坏',
   retry: '重试',
   categoryDatabase: '数据库',
   categoryRuntime: '运行时',
@@ -378,7 +376,6 @@ export default {
   appNameAlreadyExists: '应用名称"{name}"已存在，请更换名称',
   stopFirstBeforeUninstall: '请先停止再卸载',
   confirmDeleteMsgFormatted: '将删除应用配置与数据目录，此操作不可撤销。确定要删除"{name}"？',
-  unknownError: '未知错误',
   fetchJarPortFailed: '读取 JAR 端口失败',
   logPathNotConfigured: '日志路径未配置',
   cannotReadLog: '无法读取日志',
@@ -625,7 +622,6 @@ export default {
   // 配置备份
   configBackups: '配置备份',
   restoreBackup: '还原',
-  restoreBackupConfirm: '确认还原此备份？当前配置将自动备份。',
   noBackups: '暂无备份',
   backupHint: '每次保存配置前自动备份，最多保留 5 份。',
 
@@ -696,9 +692,7 @@ export default {
 
   // 配置编辑
   configDirtyConfirm: '当前改动未保存，切换 tab 会丢失，确定吗？',
-  saveWithoutRestart: '仅保存',
   configSaved: '配置已保存',
-  expectedStatus: '期望状态码',
   confirmRestoreBackup: '确认还原此备份？当前配置将自动备份。',
 
   // 卸载阻止
@@ -706,7 +700,6 @@ export default {
   uninstallBlockedRunning: '软件正在运行',
   uninstallBlockedJreDefault: '这是默认 JRE',
   uninstallBlockedJreDependents: '应用依赖此 JRE',
-  forceUninstall: '强制卸载',
 
   // 配置字段（嵌套对象，后端 label_i18n 用 configField.xxx 格式访问）
   configField: {

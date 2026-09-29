@@ -10,7 +10,7 @@ use crate::models::software::{
 
 use super::{
     ConfigContext, FirstRunInit, HealthContext, InstallContext, LogContext, SoftwareProvider,
-    StartCommand, StartContext, WorkingDirContext, default_log_sources,
+    StartCommand, StartContext, WorkingDirContext, default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -172,7 +172,7 @@ lower_case_table_names=1\n",
         let data_dir = working_dir.join("data");
 
         let init_command = StartCommand {
-            program: "bin/mysqld.exe".to_string(),
+            program: format!("bin/{}", exe_name("mysqld")),
             args: vec![
                 "--initialize-insecure".to_string(),
                 "--basedir=".to_string() + &ctx.install_path,
@@ -230,7 +230,7 @@ lower_case_table_names=1\n",
         }
 
         Ok(StartCommand {
-            program: "bin/mysqld.exe".to_string(),
+            program: format!("bin/{}", exe_name("mysqld")),
             args: main_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,

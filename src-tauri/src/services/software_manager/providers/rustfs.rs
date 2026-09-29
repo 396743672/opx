@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
-    ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
+    ConfigFieldType, ConfigSchema, FieldRule, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
 
 use super::{
     ConfigContext, DataDirContext, HealthContext, InstallContext, SoftwareProvider, StartCommand,
-    StartContext, resolve_data_dir,
+    StartContext, resolve_data_dir, exe_name,
 };
 
 #[cfg(windows)]
@@ -222,8 +222,8 @@ impl SoftwareProvider for RustfsProvider {
         let api_port = config_u64(&ctx.config, "api_port", 9000);
         let console_port = config_u64(&ctx.config, "console_port", 9001);
         let data_dir = config_str(&ctx.config, "data_dir", "./data");
-        let access_key = config_str(&ctx.config, "access_key", "rustfsadmin");
-        let secret_key = config_str(&ctx.config, "secret_key", "rustfsadmin");
+        let access_key = config_str(&ctx.config, "access_key", "");
+        let secret_key = config_str(&ctx.config, "secret_key", "");
 
         let mut env_vars = std::collections::BTreeMap::new();
         env_vars.insert("RUSTFS_CONSOLE_ENABLE".to_string(), "true".to_string());
@@ -250,7 +250,7 @@ impl SoftwareProvider for RustfsProvider {
         // RustFS 命令格式（参考官方文档）：
         // rustfs --address :9000 --access-key <key> --secret-key <key> --console-enable <data_dir>
         Ok(StartCommand {
-            program: "rustfs.exe".to_string(),
+            program: exe_name("rustfs"),
             args: vec![
                 "--address".to_string(),
                 format!(":{}", api_port),
@@ -314,7 +314,7 @@ impl SoftwareProvider for RustfsProvider {
                     key: "access_key".to_string(),
                     label_i18n: "configField.accessKey".to_string(),
                     field_type: ConfigFieldType::Text,
-                    default_value: serde_json::json!("rustfsadmin"),
+                    default_value: serde_json::json!(""),
                     section: None,
                     description_i18n: None,
                 },
@@ -322,13 +322,24 @@ impl SoftwareProvider for RustfsProvider {
                     key: "secret_key".to_string(),
                     label_i18n: "configField.secretKey".to_string(),
                     field_type: ConfigFieldType::Password,
-                    default_value: serde_json::json!("rustfsadmin"),
+                    default_value: serde_json::json!(""),
                     section: None,
                     description_i18n: None,
                 },
             ],
             ephemeral_keys: vec![],
-            field_rules: vec![],
+            field_rules: vec![
+                FieldRule {
+                    field_key: "access_key".to_string(),
+                    visible_when: None,
+                    required: true,
+                },
+                FieldRule {
+                    field_key: "secret_key".to_string(),
+                    visible_when: None,
+                    required: true,
+                },
+            ],
         })
     }
 

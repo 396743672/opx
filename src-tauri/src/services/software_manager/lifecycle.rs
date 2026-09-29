@@ -182,6 +182,101 @@ pub fn spawn_process(cmd: StartCommand, installed_id: &str) -> anyhow::Result<Ch
     Ok(child)
 }
 
+/// 取「应被监控/停止」的真实进程 PID（P2-4）。
+///
+/// Windows 上 elasticsearch / kafka / nacos 等经 `.bat` 启动：直接子进程是 `cmd.exe`，
+/// 可能先于 JVM 退出，导致状态被误判为 stopped，且停止时只杀了已退出的 cmd 而残留孤儿 JVM
+/// （Unix 上用 `.sh` + `exec java`，直接子进程即 JVM，无此问题）。
+///
+/// 这里：若直接子进程是 shell，轮询一小段时间解析其「非 shell 后代」（真实 JVM）作为监控 PID。
+/// 任何解析失败都回退到 `child.id()`（当前行为），保证无回归。非 Windows 直接返回直接 PID。
+pub fn monitored_pid(child: &Child) -> u32 {
+    let direct = child.id();
+    #[cfg(windows)]
+    {
+        if is_shell_process(direct) {
+            for _ in 0..6 {
+                if let Some(real) = first_non_shell_descendant(direct) {
+                    return real;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+    }
+    direct
+}
+
+#[cfg(windows)]
+fn is_shell_process(pid: u32) -> bool {
+    matches!(
+        snapshot_process_name(pid).as_deref(),
+        Some("cmd.exe")
+            | Some("conhost.exe")
+            | Some("powershell.exe")
+            | Some("pwsh.exe")
+            | Some("bash.exe")
+            | Some("wsl.exe")
+    )
+}
+
+/// BFS 收集 `root` 的所有后代，返回第一个非 shell 的后代 PID（真实工作进程）。
+#[cfg(windows)]
+fn first_non_shell_descendant(root: u32) -> Option<u32> {
+    let (parent_of, name_of) = snapshot_process_tree();
+    let shell = |n: &str| {
+        matches!(
+            n,
+            "cmd.exe" | "conhost.exe" | "powershell.exe" | "pwsh.exe" | "bash.exe" | "wsl.exe"
+        )
+    };
+    let mut descendants = Vec::new();
+    let mut stack = vec![root];
+    while let Some(p) = stack.pop() {
+        for (c, pp) in &parent_of {
+            if *pp == p {
+                descendants.push(*c);
+                stack.push(*c);
+            }
+        }
+    }
+    descendants
+        .into_iter()
+        .find(|d| name_of.get(d).map(|n| !shell(n)).unwrap_or(false))
+}
+
+#[cfg(windows)]
+fn snapshot_process_name(pid: u32) -> Option<String> {
+    snapshot_process_tree().1.get(&pid).cloned()
+}
+
+/// 快照全进程表，返回 (pid -> 父 pid, pid -> 小写进程名)。
+#[cfg(windows)]
+fn snapshot_process_tree() -> (HashMap<u32, u32>, HashMap<u32, String>) {
+    use windows_sys::Win32::Foundation::*;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+
+    let mut parent_of: HashMap<u32, u32> = HashMap::new();
+    let mut name_of: HashMap<u32, String> = HashMap::new();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return (parent_of, name_of);
+    }
+    let mut entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+    let mut ok = unsafe { Process32First(snapshot, &mut entry) } != 0;
+    while ok {
+        let pid = entry.th32ProcessID;
+        let ppid = entry.th32ParentProcessID;
+        parent_of.insert(pid, ppid);
+        let raw = &entry.szExeFile[..];
+        let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+        name_of.insert(pid, String::from_utf8_lossy(&raw[..end]).to_ascii_lowercase());
+        ok = unsafe { Process32Next(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    (parent_of, name_of)
+}
+
 /// 首次初始化命令超时阈值（秒）。
 /// MySQL 在慢盘/首次生成随机数据初始化时可超过 60s，放宽到 180s 避免误杀。
 const INIT_TIMEOUT_SECS: u64 = 180;

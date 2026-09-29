@@ -9,7 +9,7 @@ use crate::models::software::{
 
 use super::{
     ConfigContext, DataDirContext, GracefulStopCommand, HealthContext, InstallContext, LogContext,
-    SoftwareProvider, StartCommand, StartContext, StopContext,
+    SoftwareProvider, StartCommand, StartContext, StopContext, exe_name,
 };
 
 #[cfg(windows)]
@@ -219,7 +219,7 @@ impl SoftwareProvider for NginxProvider {
         // 确保 JSON 访问日志注入（幂等；覆盖升级/移植前的已装实例）
         Self::ensure_access_log_conf(Path::new(&ctx.install_path))?;
         Ok(StartCommand {
-            program: "nginx.exe".to_string(),
+            program: exe_name("nginx"),
             args: vec!["-g".to_string(), "daemon off;".to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
@@ -345,7 +345,7 @@ impl SoftwareProvider for NginxProvider {
     fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
         Some(GracefulStopCommand {
             program: PathBuf::from(&ctx.install_path)
-                .join("nginx.exe")
+                .join(exe_name("nginx").as_str())
                 .to_string_lossy()
                 .to_string(),
             args: vec!["-s".to_string(), "quit".to_string()],

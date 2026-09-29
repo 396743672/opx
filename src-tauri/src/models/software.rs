@@ -308,6 +308,14 @@ pub struct ConfigSchema {
     /// 标记为 ephemeral 的字段 key 列表。这些字段（如 MySQL 初始化密码）只用于首次初始化，
     /// 是敏感的一次性值，绝不写入配置文件 / installed.json（不落盘）。
     /// 前端将其渲染为红色敏感字段；后端 write_config_form / write_form_to_config 会跳过它们。
+    ///
+    /// **secret 落盘统一约定（P2-8）**：provider 对 secret 只有两种合规处理——
+    /// 1. 重启无需一致的临时 secret（如 MySQL/PG 的 init_password、InfluxDB 的 admin_user/admin_password）
+    ///    → 放进 `ephemeral_keys`，绝不落盘；
+    /// 2. 重启必须一致的 secret（如 MinIO/RustFS 的 access/secret_key、Nacos 内嵌 MySQL 密码、
+    ///    InfluxDB 的 admin_token）→ 留在 config 正常落盘，但由 `SoftwareManager::save_installed_list`
+    ///    经 `paths::write_file_restricted` 统一收紧文件权限（Unix 0600 / Windows 只读位，P2-6）。
+    /// 任何 provider 都不允许「明文落盘且不收紧权限」。
     #[serde(default)]
     pub ephemeral_keys: Vec<String>,
     /// 字段显示/必填规则（如「auth_enabled=true 时才显示 admin_token 且必填」）。

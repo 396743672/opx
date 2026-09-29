@@ -1318,7 +1318,7 @@ pub async fn do_start_software(
             return Err(e.into());
         }
     };
-    let pid = child.id();
+    let pid = lifecycle::monitored_pid(&child);
 
     // 更新状态为 Starting，清除旧的 last_error（避免启动成功后仍显示旧错误）
     manager.update_runtime_fields(

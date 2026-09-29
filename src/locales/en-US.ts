@@ -263,8 +263,6 @@ export default {
   kafkaOfficial: 'Apache Kafka Official',
   nodejsOrg: 'nodejs.org Official',
   npmmirror: 'npmmirror Mirror',
-  builtinMissing: 'Builtin package missing, please reinstall the app',
-  builtinCorrupted: 'Builtin package verification failed, file may be corrupted',
   retry: 'Retry',
   categoryDatabase: 'Database',
   categoryRuntime: 'Runtime',
@@ -378,7 +376,6 @@ export default {
   appNameAlreadyExists: 'App name "{name}" already exists',
   stopFirstBeforeUninstall: 'Stop the software first before uninstalling',
   confirmDeleteMsgFormatted: 'This will delete the app config and data directory. This cannot be undone. Are you sure you want to delete "{name}"?',
-  unknownError: 'Unknown error',
   fetchJarPortFailed: 'Failed to read JAR port',
   logPathNotConfigured: 'Log path not configured',
   cannotReadLog: 'Cannot read log',
@@ -625,7 +622,6 @@ export default {
   // config backups
   configBackups: 'Config Backups',
   restoreBackup: 'Restore',
-  restoreBackupConfirm: 'Restore this backup? Current config will be auto-backed up first.',
   noBackups: 'No backups available',
   backupHint: 'A backup is created before each config save. Max 5 kept.',
 
@@ -696,9 +692,7 @@ export default {
 
   // Config edit
   configDirtyConfirm: 'Unsaved changes will be lost when switching tabs. Continue?',
-  saveWithoutRestart: 'Save',
   configSaved: 'Configuration saved',
-  expectedStatus: 'Expected Status',
   confirmRestoreBackup: 'Restore this backup? The current config will be auto-backed up first.',
 
   // Uninstall blocked
@@ -706,7 +700,6 @@ export default {
   uninstallBlockedRunning: 'Software is running',
   uninstallBlockedJreDefault: 'This is the default JRE',
   uninstallBlockedJreDependents: 'Applications depend on this JRE',
-  forceUninstall: 'Force Uninstall',
 
   // Config fields (nested object, backend label_i18n uses configField.xxx format)
   configField: {
