@@ -44,16 +44,25 @@ const DEFAULT_VERSION_SHA256: &str =
 /// HTTP API 默认端口（官方文档：`-http-port` 覆盖的默认值即 8500）。
 const DEFAULT_HTTP_PORT: u16 = 8500;
 /// 远程版本发现最多取几个（每个版本还需一次 SHA256SUMS 请求，避免刷新升级时请求过多）。
-#[cfg(windows)]
 const REMOTE_MAX_VERSIONS: usize = 3;
 
-/// Windows amd64 归档文件名（导出供单测与远程发现复用同一拼装规则）。
-fn archive_name(version: &str) -> String {
-    format!("consul_{}_windows_amd64.zip", version)
+/// 归档 OS token：HashiCorp 用 `darwin` 表示 macOS。
+fn consul_os_token(os: &str) -> &'static str {
+    match os {
+        "linux" => "linux",
+        "macos" => "darwin",
+        _ => "windows",
+    }
 }
 
-fn archive_url(version: &str) -> String {
-    format!("{}/{}/{}", RELEASES_BASE, version, archive_name(version))
+/// 归档文件名（P2-1：按运行时 OS 拼装，Windows 行为不变）。
+/// 导出供单测与远程发现复用同一拼装规则。
+fn archive_name(version: &str, os: &str) -> String {
+    format!("consul_{}_{}_amd64.zip", version, consul_os_token(os))
+}
+
+fn archive_url(version: &str, os: &str) -> String {
+    format!("{}/{}/{}", RELEASES_BASE, version, archive_name(version, os))
 }
 
 pub struct ConsulProvider;
@@ -91,23 +100,26 @@ impl SoftwareProvider for ConsulProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-        #[cfg(windows)]
-        {
-            versions.push(CatalogVersion {
-                version: DEFAULT_VERSION.to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:consulOfficial".to_string(),
-                    url: archive_url(DEFAULT_VERSION),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo {
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 构建不再空目录）。
+        let os = crate::utils::platform::current_os();
+        let versions = vec![CatalogVersion {
+            version: DEFAULT_VERSION.to_string(),
+            mirrors: vec![MirrorSource {
+                name: "i18n:consulOfficial".to_string(),
+                url: archive_url(DEFAULT_VERSION, os),
+                builtin: None,
+            }],
+            // size/sha256 常量取自 Windows amd64 官方 SHA256SUMS；其他平台留空（下载后完整性校验兜底）
+            archive: if os == "windows" {
+                ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     size: Some(DEFAULT_VERSION_SIZE),
                     sha256: Some(DEFAULT_VERSION_SHA256.to_string()),
-                },
-            });
-        }
+                }
+            } else {
+                ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None }
+            },
+        }];
         CatalogEntry {
             key: "consul".to_string(),
             name: "Consul".to_string(),
@@ -120,17 +132,10 @@ impl SoftwareProvider for ConsulProvider {
         }
     }
 
-    /// 动态拉取 HashiCorp 官方新版本（仅社区版 / Windows amd64）。
+    /// 动态拉取 HashiCorp 官方新版本（社区版，按运行时 OS 过滤）。
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / influxdb 等实现一致）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        #[cfg(windows)]
-        {
-            consul_remote_versions()
-        }
-        #[cfg(not(windows))]
-        {
-            None
-        }
+        consul_remote_versions(crate::utils::platform::current_os())
     }
 
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
@@ -243,10 +248,9 @@ impl SoftwareProvider for ConsulProvider {
 
 // ===== 远程版本发现 =====
 
-/// 从 HashiCorp releases API 拉取社区版版本清单。
-/// API 返回按发布时间倒序，故直接取前 N 个（跳过企业版 / 预发布 / 缺 Windows amd64 构建的）。
-#[cfg(windows)]
-fn consul_remote_versions() -> Option<Vec<CatalogVersion>> {
+/// 从 HashiCorp releases API 拉取社区版版本清单（按运行时 OS 过滤 amd64 构建）。
+/// API 返回按发布时间倒序，故直接取前 N 个（跳过企业版 / 预发布 / 缺目标 OS amd64 构建的）。
+fn consul_remote_versions(os: &str) -> Option<Vec<CatalogVersion>> {
     let client = reqwest::blocking::Client::builder()
         // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持的代理，
         // 本可直连的 HashiCorp CDN 反被劫持而失败
@@ -266,18 +270,18 @@ fn consul_remote_versions() -> Option<Vec<CatalogVersion>> {
     let json: Vec<serde_json::Value> = resp.json().ok()?;
 
     let mut out = Vec::new();
-    for version in parse_oss_windows_versions(&json)
+    for version in parse_oss_versions(&json, os)
         .into_iter()
         .take(REMOTE_MAX_VERSIONS)
     {
         // sha256 只能从每个版本的 SHA256SUMS 单独取（releases API 不返回哈希）；
         // 取不到则留 None（下载侧不校验，不影响安装）
-        let sha256 = fetch_sha256(&client, &version);
+        let sha256 = fetch_sha256(&client, &version, os);
         out.push(CatalogVersion {
             version: version.clone(),
             mirrors: vec![MirrorSource {
                 name: "i18n:consulOfficial".to_string(),
-                url: archive_url(&version),
+                url: archive_url(&version, os),
                 builtin: None,
             }],
             archive: ArchiveInfo {
@@ -294,9 +298,8 @@ fn consul_remote_versions() -> Option<Vec<CatalogVersion>> {
     }
 }
 
-/// 拉取指定版本的官方 SHA256SUMS 并取出 Windows amd64 包的哈希（失败返回 None）。
-#[cfg(windows)]
-fn fetch_sha256(client: &reqwest::blocking::Client, version: &str) -> Option<String> {
+/// 拉取指定版本的官方 SHA256SUMS 并取出目标 OS amd64 包的哈希（失败返回 None）。
+fn fetch_sha256(client: &reqwest::blocking::Client, version: &str, os: &str) -> Option<String> {
     let url = format!("{}/{}/consul_{}_SHA256SUMS", RELEASES_BASE, version, version);
     let resp = client
         .get(&url)
@@ -307,13 +310,13 @@ fn fetch_sha256(client: &reqwest::blocking::Client, version: &str) -> Option<Str
         return None;
     }
     let body = resp.text().ok()?;
-    parse_sha256_for_windows_amd64(&body)
+    parse_sha256_for_amd64(&body, os)
 }
 
-/// 纯解析：从 releases API 响应提取「社区版 + 具备 Windows amd64 构建」的版本号（保持原顺序）。
+/// 纯解析：从 releases API 响应提取「社区版 + 具备目标 OS amd64 构建」的版本号（保持原顺序）。
 /// 抽成独立函数以便单测——过滤规则（排除 `+ent` / 预发布）出错会让用户装到企业版包而启动失败。
-#[cfg(windows)]
-fn parse_oss_windows_versions(releases: &[serde_json::Value]) -> Vec<String> {
+fn parse_oss_versions(releases: &[serde_json::Value], os: &str) -> Vec<String> {
+    let os_token = consul_os_token(os);
     let mut out = Vec::new();
     for r in releases {
         let Some(version) = r.get("version").and_then(|v| v.as_str()) else {
@@ -323,36 +326,36 @@ fn parse_oss_windows_versions(releases: &[serde_json::Value]) -> Vec<String> {
         if version.contains('+') || version.contains('-') {
             continue;
         }
-        let has_win_amd64 = r
+        let has_amd64 = r
             .get("builds")
             .and_then(|v| v.as_array())
             .map(|builds| {
                 builds.iter().any(|b| {
-                    b.get("os").and_then(|v| v.as_str()) == Some("windows")
+                    b.get("os").and_then(|v| v.as_str()) == Some(os_token)
                         && b.get("arch").and_then(|v| v.as_str()) == Some("amd64")
                         && b.get("url")
                             .and_then(|v| v.as_str())
-                            .map(|u| u.ends_with(&archive_name(version)))
+                            .map(|u| u.ends_with(&archive_name(version, os)))
                             .unwrap_or(false)
                 })
             })
             .unwrap_or(false);
-        if has_win_amd64 {
+        if has_amd64 {
             out.push(version.to_string());
         }
     }
     out
 }
 
-/// 纯解析：从 SHA256SUMS 文本取出 Windows amd64 包的行（`<hash>  <filename>`）。
-#[cfg(windows)]
-fn parse_sha256_for_windows_amd64(sums: &str) -> Option<String> {
+/// 纯解析：从 SHA256SUMS 文本取出目标 OS amd64 包的行（`<hash>  <filename>`）。
+fn parse_sha256_for_amd64(sums: &str, os: &str) -> Option<String> {
+    let suffix = format!("_{}_amd64.zip", consul_os_token(os));
     for line in sums.lines() {
         let mut parts = line.split_whitespace();
         let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
             continue;
         };
-        if hash.len() == 64 && name.ends_with("_windows_amd64.zip") {
+        if hash.len() == 64 && name.ends_with(&suffix) {
             return Some(hash.to_string());
         }
     }
@@ -490,9 +493,21 @@ mod tests {
         assert!(matches!(port_field.field_type, ConfigFieldType::Port));
     }
 
-    #[cfg(windows)]
     #[test]
-    fn parse_oss_versions_skips_enterprise_and_prerelease() {
+    fn archive_name_and_url_are_per_os() {
+        // Windows 行为不变（回归护栏）
+        assert_eq!(archive_name("2.0.4", "windows"), "consul_2.0.4_windows_amd64.zip");
+        assert_eq!(archive_name("2.0.4", "linux"), "consul_2.0.4_linux_amd64.zip");
+        // HashiCorp 用 darwin 表示 macOS
+        assert_eq!(archive_name("2.0.4", "macos"), "consul_2.0.4_darwin_amd64.zip");
+        assert_eq!(
+            archive_url("2.0.4", "linux"),
+            "https://releases.hashicorp.com/consul/2.0.4/consul_2.0.4_linux_amd64.zip"
+        );
+    }
+
+    #[test]
+    fn parse_oss_versions_filters_by_os() {
         let releases = serde_json::json!([
             { "version": "2.0.4+ent.fips1403", "builds": [
                 { "os": "windows", "arch": "amd64", "url": "https://releases.hashicorp.com/consul/2.0.4+ent.fips1403/consul_2.0.4+ent.fips1403_windows_amd64.zip" }] },
@@ -508,21 +523,27 @@ mod tests {
                 { "os": "windows", "arch": "amd64", "url": "https://releases.hashicorp.com/consul/2.0.2+ent/consul_2.0.2+ent_windows_amd64.zip" }] },
         ]);
         let releases = releases.as_array().unwrap();
-        assert_eq!(parse_oss_windows_versions(releases), vec!["2.0.4", "2.0.3"]);
+        // Windows amd64：2.0.4、2.0.3 均有
+        assert_eq!(parse_oss_versions(releases, "windows"), vec!["2.0.4", "2.0.3"]);
+        // Linux amd64：仅 2.0.4
+        assert_eq!(parse_oss_versions(releases, "linux"), vec!["2.0.4"]);
+        // macOS：示例里只有 darwin/arm64（非 amd64）→ 空
+        assert!(parse_oss_versions(releases, "macos").is_empty());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn parse_sha256_picks_windows_amd64_only() {
+    fn parse_sha256_picks_amd64_for_target_os() {
         let sums = "\
 9676144d944a78a1503d7466d52e520c9088b49962e2ebbc30cf1cf93f584764  consul_2.0.4_windows_386.zip
 53430f0d0d28207005a40116f8d318aef023d3e44cad03affa29ddc3b6d43172  consul_2.0.4_windows_amd64.zip
 aaaa  consul_2.0.4_linux_amd64.zip
 ";
         assert_eq!(
-            parse_sha256_for_windows_amd64(sums).as_deref(),
+            parse_sha256_for_amd64(sums, "windows").as_deref(),
             Some("53430f0d0d28207005a40116f8d318aef023d3e44cad03affa29ddc3b6d43172")
         );
-        assert!(parse_sha256_for_windows_amd64("garbage\n").is_none());
+        // linux 行的 hash 长度非 64 → 视为无效
+        assert!(parse_sha256_for_amd64(sums, "linux").is_none());
+        assert!(parse_sha256_for_amd64("garbage\n", "windows").is_none());
     }
 }

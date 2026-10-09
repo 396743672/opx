@@ -58,41 +58,57 @@ pub fn parse_node_index(json: &str) -> Vec<String> {
     out
 }
 
+/// Node.js 官方发行包后缀与归档格式（P2-1）：win `win-x64.zip` / linux `linux-x64.tar.gz` / macOS `darwin-x64.tar.gz`。
+fn node_asset_suffix(os: &str) -> (&'static str, ArchiveFormat) {
+    match os {
+        "linux" => ("linux-x64.tar.gz", ArchiveFormat::TarGz),
+        "macos" => ("darwin-x64.tar.gz", ArchiveFormat::TarGz),
+        _ => ("win-x64.zip", ArchiveFormat::Zip),
+    }
+}
+
+/// 官方源 URL（按运行时 OS 选包）。
+fn node_official_url(v: &str, os: &str) -> String {
+    let (suffix, _) = node_asset_suffix(os);
+    format!("https://nodejs.org/dist/v{v}/node-v{v}-{suffix}")
+}
+
+/// npmmirror 镜像 URL（同后缀）。
+fn node_npmmirror_url(v: &str, os: &str) -> String {
+    let (suffix, _) = node_asset_suffix(os);
+    format!("https://npmmirror.com/mirrors/node/v{v}/node-v{v}-{suffix}")
+}
+
 impl SoftwareProvider for NodeProvider {
     fn key(&self) -> &str {
         "node"
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        #[allow(unused_mut)]
-        let mut versions = vec![];
-
-        // Windows 目标（本项目），加载官方 win-x64 zip
-        #[cfg(windows)]
-        for ver in ["20.11.1", "22.14.0"] {
-            versions.push(CatalogVersion {
-                version: ver.to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:nodejsOrg".to_string(),
-                        url: format!("https://nodejs.org/dist/v{ver}/node-v{ver}-win-x64.zip"),
-                        builtin: None,
-                    },
-                    MirrorSource {
-                        name: "i18n:npmmirror".to_string(),
-                        url: format!(
-                            "https://npmmirror.com/mirrors/node/v{ver}/node-v{ver}-win-x64.zip"
-                        ),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        let os = crate::utils::platform::current_os();
+        let versions = ["20.11.1", "22.14.0"]
+            .iter()
+            .map(|ver| {
+                let (_, format) = node_asset_suffix(os);
+                CatalogVersion {
+                    version: ver.to_string(),
+                    mirrors: vec![
+                        MirrorSource {
+                            name: "i18n:nodejsOrg".to_string(),
+                            url: node_official_url(ver, os),
+                            builtin: None,
+                        },
+                        MirrorSource {
+                            name: "i18n:npmmirror".to_string(),
+                            url: node_npmmirror_url(ver, os),
+                            builtin: None,
+                        },
+                    ],
+                    archive: ArchiveInfo { format, size: None, sha256: None },
+                }
+            })
+            .collect();
 
         CatalogEntry {
             key: "node".to_string(),
@@ -135,27 +151,26 @@ impl SoftwareProvider for NodeProvider {
                 .into_iter()
                 .rev()
                 .take(20)
-                .map(|v| CatalogVersion {
-                    version: v.clone(),
-                    mirrors: vec![
-                        MirrorSource {
-                            name: "i18n:nodejsOrg".to_string(),
-                            url: format!("https://nodejs.org/dist/v{v}/node-v{v}-win-x64.zip"),
-                            builtin: None,
-                        },
-                        MirrorSource {
-                            name: "i18n:npmmirror".to_string(),
-                            url: format!(
-                                "https://npmmirror.com/mirrors/node/v{v}/node-v{v}-win-x64.zip"
-                            ),
-                            builtin: None,
-                        },
-                    ],
-                    archive: ArchiveInfo {
-                        format: ArchiveFormat::Zip,
-                        size: None,
-                        sha256: None,
-                    },
+                .map(|v| {
+                    // P2-1：远程发现同样按运行时 OS 选包（原硬编码 win-x64）。
+                    let os = crate::utils::platform::current_os();
+                    let (_, format) = node_asset_suffix(os);
+                    CatalogVersion {
+                        version: v.clone(),
+                        mirrors: vec![
+                            MirrorSource {
+                                name: "i18n:nodejsOrg".to_string(),
+                                url: node_official_url(&v, os),
+                                builtin: None,
+                            },
+                            MirrorSource {
+                                name: "i18n:npmmirror".to_string(),
+                                url: node_npmmirror_url(&v, os),
+                                builtin: None,
+                            },
+                        ],
+                        archive: ArchiveInfo { format, size: None, sha256: None },
+                    }
                 })
                 .collect(),
         )

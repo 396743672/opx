@@ -47,7 +47,7 @@ where
     Ok(())
 }
 
-pub fn extract_tar_gz<F>(archive_path: &Path, dest_dir: &Path, mut on_progress: F) -> Result<()>
+pub fn extract_tar_gz<F>(archive_path: &Path, dest_dir: &Path, on_progress: F) -> Result<()>
 where
     F: FnMut(u64, u64),
 {
@@ -67,15 +67,57 @@ where
 
     let file = std::fs::File::open(archive_path)?;
     let gz = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(gz);
+    unpack_tar(gz, dest_dir, total, on_progress)
+}
 
+/// 解压 `.tar.xz`（xz 压缩的 tar，如 MySQL Linux 官方包）。
+///
+/// 本项目的 xz 解码器（纯 Rust `lzma-rs`）是 **writer 式**（无流式 `Read`），
+/// 故先把归档整体解压成同目录临时 `.tar`，再按普通 tar 解包；结束后删除临时文件。
+pub fn extract_tar_xz<F>(archive_path: &Path, dest_dir: &Path, mut on_progress: F) -> Result<()>
+where
+    F: FnMut(u64, u64),
+{
+    let tmp = archive_path.with_extension("tar.tmp");
+    {
+        let mut src = std::io::BufReader::new(std::fs::File::open(archive_path)?);
+        let mut dst = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+        lzma_rs::xz_decompress(&mut src, &mut dst)
+            .map_err(|e| anyhow::anyhow!("xz 解压失败: {:?}", e))?;
+        std::io::Write::flush(&mut dst)?;
+    }
+    let result = (|| -> Result<()> {
+        let total: u64 = {
+            let f = std::fs::File::open(&tmp)?;
+            let mut archive = tar::Archive::new(f);
+            let mut sum: u64 = 0;
+            for entry in archive.entries()? {
+                sum += entry?.header().size()?;
+            }
+            sum
+        };
+        let f = std::fs::File::open(&tmp)?;
+        unpack_tar(f, dest_dir, total, &mut on_progress)
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+/// 从 tar 流解包到 `dest_dir`；`total` 仅用于进度百分比。
+/// 复用 tar 内部的路径归一化（与 `Archive::unpack` 行为一致），避免路径穿越。
+fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
+    reader: R,
+    dest_dir: &Path,
+    total: u64,
+    mut on_progress: F,
+) -> Result<()> {
+    let mut archive = tar::Archive::new(reader);
     let mut extracted: u64 = 0;
     for entry in archive.entries()? {
         let mut entry = entry?;
         let header = entry.header();
         let entry_size = header.size()?;
         let entry_type = header.entry_type();
-        // 复用 tar 内部的路径归一化（与 Archive::unpack 行为一致），避免路径穿越
         let outpath = dest_dir.join(entry.path()?.to_path_buf());
         match entry_type {
             tar::EntryType::Directory => {
@@ -207,6 +249,18 @@ pub fn validate_archive_header(path: &Path, format: &ArchiveFormat) -> Result<()
                 ));
             }
         }
+        ArchiveFormat::TarXz => {
+            // xz 魔数：FD 37 7A 58 5A 00（6 字节）
+            let mut buf = [0u8; 6];
+            let mut f = std::fs::File::open(path)
+                .map_err(|e| anyhow::anyhow!("无法打开下载文件: {}", e))?;
+            let n = f.read(&mut buf)?;
+            if n < 6 || buf != [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00] {
+                return Err(anyhow::anyhow!(
+                    "tar.xz 归档无效：文件头不是 xz 魔数（疑似下载到 HTML 错误页或被截断）"
+                ));
+            }
+        }
         ArchiveFormat::Executable => { /* 二进制不强制校验，交由上层测活/启动兜底 */ }
     }
     Ok(())
@@ -276,5 +330,41 @@ mod tests {
         let err = validate_archive_header(&p, &ArchiveFormat::TarGz);
         assert!(err.is_err(), "HTML 错误页伪装的 tar.gz 必须被拦截");
         let _ = std::fs::remove_file(&p);
+    }
+
+    /// 往返：构造 tar → xz 压缩 → 魔数校验通过 → 解压内容一致（覆盖 MySQL Linux 的 .tar.xz 路径）。
+    #[test]
+    fn extract_tar_xz_round_trip() {
+        let dir = std::env::temp_dir().join(format!("opx_xz_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 1) 造一个 tar（含子目录下文件）
+        let tar_path = dir.join("inner.tar");
+        {
+            let f = std::fs::File::create(&tar_path).unwrap();
+            let mut tb = tar::Builder::new(f);
+            let data = b"hello xz";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tb.append_data(&mut header, "sub/hello.txt", &data[..]).unwrap();
+            tb.finish().unwrap();
+        }
+        // 2) xz 压缩为 pkg.tar.xz
+        let xz_path = dir.join("pkg.tar.xz");
+        {
+            let mut src = std::io::BufReader::new(std::fs::File::open(&tar_path).unwrap());
+            let mut dst = std::fs::File::create(&xz_path).unwrap();
+            lzma_rs::xz_compress(&mut src, &mut dst).unwrap();
+        }
+        // 3) 魔数校验（xz）通过
+        assert!(validate_archive_header(&xz_path, &ArchiveFormat::TarXz).is_ok());
+        // 4) 解压并校验内容
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_tar_xz(&xz_path, &out, |_, _| {}).unwrap();
+        let got = std::fs::read_to_string(out.join("sub").join("hello.txt")).unwrap();
+        assert_eq!(got, "hello xz");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

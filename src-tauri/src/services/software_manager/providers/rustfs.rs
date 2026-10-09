@@ -17,28 +17,32 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NO_WINDOW: u32 = 0;
 
 /// 上游 GitHub Release 列表（`rustfs/rustfs`）。
-#[cfg(windows)]
 const RELEASES_URL: &str = "https://api.github.com/repos/rustfs/rustfs/releases?per_page=15";
 /// 远程版本发现最多取几个。
-#[cfg(windows)]
 const REMOTE_MAX_VERSIONS: usize = 3;
 
-/// 版本化 Windows 资产名：`rustfs-windows-x86_64-v<tag>.zip`。
+/// 版本化资产名（P2-1，按运行时 OS）：
+/// - Windows `rustfs-windows-x86_64-v<tag>.zip`
+/// - Linux   `rustfs-linux-x86_64-gnu-v<tag>.zip`（另有 musl 变体，取 gnu）
+/// - macOS   `rustfs-macos-aarch64-v<tag>.zip`（上游仅发布 arm64）
 ///
-/// 注意不能只按前缀匹配——stable release 里同时挂着 `rustfs-windows-x86_64-latest.zip`，
+/// 注意不能只按前缀匹配——stable release 里同时挂着 `-latest.zip`，
 /// 那是个**会移动**的资产（内容随上游更新而变），会与 sha256 校验、断点续传的前提冲突。
-fn asset_name(version: &str) -> String {
-    format!("rustfs-windows-x86_64-v{}.zip", version)
+fn asset_name(version: &str, os: &str) -> String {
+    match os {
+        "linux" => format!("rustfs-linux-x86_64-gnu-v{version}.zip"),
+        "macos" => format!("rustfs-macos-aarch64-v{version}.zip"),
+        _ => format!("rustfs-windows-x86_64-v{version}.zip"),
+    }
 }
 
-/// 纯解析：从 GitHub Release 列表提取**正式版**（跳过 draft / prerelease）的 Windows 包。
+/// 纯解析：从 GitHub Release 列表提取**正式版**（跳过 draft / prerelease）的目标 OS 包。
 ///
 /// 事实（2026-09-21 核实）：RustFS 目前只有 `1.0.0` 是正式版，其后全是
 /// `1.0.1-preview.x` / `1.0.0-rc.x` 预发布。故这里刻意**只收正式版**——
 /// 把 preview 当「可升级」推给用户会让人在运维环境里装上未发布的二进制。
 /// 现状下本函数返回 `[1.0.0]`（与内置版本相同，合并时去重），等正式版发布即自动出现。
-#[cfg(windows)]
-fn parse_stable_releases(releases: &[serde_json::Value]) -> Vec<CatalogVersion> {
+fn parse_stable_releases(releases: &[serde_json::Value], os: &str) -> Vec<CatalogVersion> {
     let mut out: Vec<CatalogVersion> = Vec::new();
     for r in releases {
         if r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -52,8 +56,8 @@ fn parse_stable_releases(releases: &[serde_json::Value]) -> Vec<CatalogVersion> 
         let Some(assets) = r.get("assets").and_then(|v| v.as_array()) else {
             continue;
         };
-        // 必须精确匹配版本化资产（排除 -latest.zip / .sbom.json 等）
-        let wanted = asset_name(tag);
+        // 必须精确匹配版本化资产（排除 -latest.zip / .sbom.json 等）；缺该 OS 包的版本自动跳过
+        let wanted = asset_name(tag, os);
         let Some(asset) = assets
             .iter()
             .find(|a| a.get("name").and_then(|v| v.as_str()) == Some(wanted.as_str()))
@@ -120,42 +124,42 @@ impl SoftwareProvider for RustfsProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-
-        #[cfg(windows)]
-        {
-            // 1.0.0（上游 GitHub Release 资产）
-            // 原官网 CDN（dl.rustfs.com）不支持 Range（请求 0-99 却返回 200 全量），故改以 GitHub 资产为主：
-            // 支持断点续传，且 URL 含 github.com 会被 download::resolve_url 自动加上 ghfast.top 前缀。
-            // 版本固定为 1.0.0 而非 "latest"——latest 内容可变，与 sha256 校验、断点续传的前提冲突。
-            versions.push(CatalogVersion {
-                version: "1.0.0".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:rustfsOfficial".to_string(),
-                        url: "https://github.com/rustfs/rustfs/releases/download/1.0.0/rustfs-windows-x86_64-v1.0.0.zip".to_string(),
-                        builtin: None,
-                    },
-                    // 兜底：上游官网 CDN（实测无 Range 支持，多源回退时自动退化为整包重下）
-                    MirrorSource {
-                        name: "i18n:rustfsCdn".to_string(),
-                        url: "https://dl.rustfs.com/artifacts/rustfs/release/rustfs-windows-x86_64-v1.0.0.zip".to_string(),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        // 版本固定为 1.0.0 而非 "latest"——latest 内容可变，与 sha256 校验、断点续传的前提冲突。
+        let os = crate::utils::platform::current_os();
+        const VER: &str = "1.0.0";
+        let name = asset_name(VER, os);
+        let mut mirrors = vec![MirrorSource {
+            // URL 含 github.com → 运行时经 download::resolve_url 自动加加速前缀。
+            name: "i18n:rustfsOfficial".to_string(),
+            url: format!("https://github.com/rustfs/rustfs/releases/download/{VER}/{name}"),
+            builtin: None,
+        }];
+        // 官网 CDN 实测只镜像 Windows 正式版资产，且不支持 Range → 仅 Windows 保留作兜底。
+        if os == "windows" {
+            mirrors.push(MirrorSource {
+                name: "i18n:rustfsCdn".to_string(),
+                url: format!("https://dl.rustfs.com/artifacts/rustfs/release/{name}"),
+                builtin: None,
+            });
+        }
+        let versions = vec![CatalogVersion {
+            version: VER.to_string(),
+            mirrors,
+            // size/sha256 为 Windows 版实测值；其他平台留空（下载后完整性校验兜底）
+            archive: if os == "windows" {
+                ArchiveInfo {
                     format: ArchiveFormat::Zip,
                     // 官方 SHA256SUMS 与 GitHub 独立 digest 双向互证（105,040,603 B）
                     size: Some(105_040_603),
                     sha256: Some(
                         "4ccf5858ce8e6f70f01af2394c8cc0e0878ee77faa6c20d3179153476554b7d8".to_string(),
                     ),
-                },
-            });
-        }
-
-        // 注：RustFS 本设计 Windows-only（与 MySQL/Redis/Nginx/MinIO 决策一致）。
-        // Unix 上 RustFS 二进制名是 rustfs（无 .exe），如需 Unix 支持须单独适配。
+                }
+            } else {
+                ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None }
+            },
+        }];
 
         CatalogEntry {
             key: "rustfs".to_string(),
@@ -165,14 +169,15 @@ impl SoftwareProvider for RustfsProvider {
             category: SoftwareCategory::Storage,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "1.0.0".to_string(),
+            default_version: VER.to_string(),
         }
     }
 
     /// 动态拉取 RustFS 正式版（GitHub Release；预发布一律不收，见 `parse_stable_releases`）。
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        #[cfg(windows)]
+        // P2-1：远程发现同样按运行时 OS 选包（原硬编码 windows 资产名）。
+        let os = crate::utils::platform::current_os();
         {
             let client = reqwest::blocking::Client::builder()
                 // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持 CONNECT 的 HTTP 代理，
@@ -198,16 +203,12 @@ impl SoftwareProvider for RustfsProvider {
                 return None;
             }
             let releases: Vec<serde_json::Value> = resp.json().ok()?;
-            let versions = parse_stable_releases(&releases);
+            let versions = parse_stable_releases(&releases, os);
             if versions.is_empty() {
                 None
             } else {
                 Some(versions)
             }
-        }
-        #[cfg(not(windows))]
-        {
-            None
         }
     }
 
@@ -379,7 +380,7 @@ mod tests {
                 "rustfs-windows-x86_64-v1.0.0.zip",
             ]),
         ];
-        let vs = parse_stable_releases(&releases);
+        let vs = parse_stable_releases(&releases, "windows");
         assert_eq!(
             vs.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(),
             vec!["1.0.0"]
@@ -390,13 +391,13 @@ mod tests {
     fn parse_prefers_versioned_asset_not_moving_latest() {
         // 只有 -latest.zip（会移动）时不应采纳，否则 sha256 与内容会随上游变化而失配
         let releases = vec![release("1.0.0", false, &["rustfs-windows-x86_64-latest.zip"])];
-        assert!(parse_stable_releases(&releases).is_empty());
+        assert!(parse_stable_releases(&releases, "windows").is_empty());
 
         let releases = vec![release("1.0.0", false, &[
             "rustfs-windows-x86_64-latest.zip",
             "rustfs-windows-x86_64-v1.0.0.zip",
         ])];
-        let vs = parse_stable_releases(&releases);
+        let vs = parse_stable_releases(&releases, "windows");
         assert_eq!(
             vs[0].mirrors[0].url,
             "https://github.com/rustfs/rustfs/releases/download/1.0.0/rustfs-windows-x86_64-v1.0.0.zip"
@@ -419,7 +420,7 @@ mod tests {
         ];
         // 1.10.0 > 1.9.0（数字分段比较，不能按字符串比）
         assert_eq!(
-            parse_stable_releases(&releases)
+            parse_stable_releases(&releases, "windows")
                 .iter()
                 .map(|v| v.version.as_str())
                 .collect::<Vec<_>>(),

@@ -17,6 +17,28 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// Nginx 官方**源码** tar.gz URL（P2-1：*nix 无预编译二进制，安装后 `./configure && make` 构建）。
+fn nginx_source_url(version: &str) -> String {
+    format!("https://nginx.org/download/nginx-{version}.tar.gz")
+}
+
+/// Nginx 可执行文件绝对路径（P2-1）：Windows 在安装根（`nginx.exe`）；
+/// *nix 源码 `make install` 后位于 `<install>/sbin/nginx`。
+fn nginx_bin_path(install_path: &str) -> String {
+    if crate::utils::platform::current_os() == "windows" {
+        PathBuf::from(install_path)
+            .join(exe_name("nginx"))
+            .to_string_lossy()
+            .to_string()
+    } else {
+        PathBuf::from(install_path)
+            .join("sbin")
+            .join("nginx")
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
 pub struct NginxProvider;
 
 impl NginxProvider {
@@ -64,35 +86,40 @@ impl SoftwareProvider for NginxProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-
-        #[cfg(windows)]
-        {
-            versions.push(CatalogVersion {
-                version: "1.31.2".to_string(),
-                mirrors: vec![
+        // P2-1：运行时按 OS 选包（Windows 官方 Windows 构建 zip / *nix 官方源码 tar.gz，装后编译）。
+        let os = crate::utils::platform::current_os();
+        const VER: &str = "1.31.2";
+        let (mirrors, format) = if os == "windows" {
+            (
+                vec![
                     MirrorSource {
                         name: "i18n:huaweiMirror".to_string(),
-                        url: "https://mirrors.huaweicloud.com/nginx/nginx-1.31.2.zip".to_string(),
+                        url: format!("https://mirrors.huaweicloud.com/nginx/nginx-{VER}.zip"),
                         builtin: None,
                     },
                     MirrorSource {
                         name: "i18n:official".to_string(),
-                        url: "https://nginx.org/download/nginx-1.31.2.zip".to_string(),
+                        url: format!("https://nginx.org/download/nginx-{VER}.zip"),
                         builtin: None,
                     },
                 ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
-
-        // 注：Nginx 本设计 Windows-only（与 MySQL/Redis 决策一致）。
-        // Unix 上 Nginx 二进制名是 nginx（无 .exe），且配置路径不同，
-        // 如需 Unix 支持须单独适配。本 provider 不在 Unix catalog 注册版本。
+                ArchiveFormat::Zip,
+            )
+        } else {
+            (
+                vec![MirrorSource {
+                    name: "i18n:official".to_string(),
+                    url: nginx_source_url(VER),
+                    builtin: None,
+                }],
+                ArchiveFormat::TarGz,
+            )
+        };
+        let versions = vec![CatalogVersion {
+            version: VER.to_string(),
+            mirrors,
+            archive: ArchiveInfo { format, size: None, sha256: None },
+        }];
 
         CatalogEntry {
             key: "nginx".to_string(),
@@ -102,11 +129,22 @@ impl SoftwareProvider for NginxProvider {
             category: SoftwareCategory::WebServer,
             icon: "mdi:web".to_string(),
             versions,
-            default_version: "1.31.2".to_string(),
+            default_version: VER.to_string(),
         }
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // P2-1：非 Windows 走官方源码包 → 配置 + 编译 + 安装到 <install>
+        // （产出 <install>/sbin/nginx 与 <install>/conf/nginx.conf）。依赖目标机 gcc/make 及 PCRE/zlib/OpenSSL 开发库。
+        if crate::utils::platform::current_os() != "windows" {
+            let prefix = format!("--prefix={}", ctx.install_path);
+            let steps: &[(&str, &[&str])] = &[
+                ("./configure", &[prefix.as_str()]),
+                ("make", &[]),
+                ("make", &["install"]),
+            ];
+            super::run_build_steps(ctx.install_dir(), "Nginx", steps)?;
+        }
         // 创建 nginx 运行所需的 temp/ 临时目录，避免启动时 [emerg] CreateDirectory failed
         Self::ensure_temp_dirs(Path::new(&ctx.install_path))?;
         // 安装后向主配置注入（全部幂等，重复安装不重复注入）：
@@ -219,7 +257,7 @@ impl SoftwareProvider for NginxProvider {
         // 确保 JSON 访问日志注入（幂等；覆盖升级/移植前的已装实例）
         Self::ensure_access_log_conf(Path::new(&ctx.install_path))?;
         Ok(StartCommand {
-            program: exe_name("nginx"),
+            program: nginx_bin_path(&ctx.install_path),
             args: vec!["-g".to_string(), "daemon off;".to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),
@@ -344,10 +382,7 @@ impl SoftwareProvider for NginxProvider {
     /// 比 `taskkill /F` 干净（避免连接被硬断）。
     fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
         Some(GracefulStopCommand {
-            program: PathBuf::from(&ctx.install_path)
-                .join(exe_name("nginx").as_str())
-                .to_string_lossy()
-                .to_string(),
+            program: nginx_bin_path(&ctx.install_path),
             args: vec!["-s".to_string(), "quit".to_string()],
             working_dir: PathBuf::from(&ctx.install_path),
             timeout_secs: 10,

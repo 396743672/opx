@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum ArchiveFormat {
     Zip,
     TarGz,
+    /// `.tar.xz`（xz/lzma 压缩的 tar，如 MySQL Linux 官方包）。
+    TarXz,
     Executable,
 }
 

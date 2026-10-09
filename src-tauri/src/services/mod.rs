@@ -1,4 +1,5 @@
 pub mod acme;
+pub mod autostart;
 pub mod ddns;
 pub mod dns_account;
 pub mod lock_screen;

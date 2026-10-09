@@ -46,6 +46,7 @@ pub struct InstallParams  { key, version, pub mirror_index: usize, set_as_defaul
 ### 3.2 安装/运行逻辑 Windows 写死
 - `lifecycle.rs` 仅有 Windows 的 `CREATE_NO_WINDOW`；`installer.rs` 有 `app.exe` 兜底。
 - **缺统一服务管理抽象**（Windows 服务 / systemd / launchd）：自启、看门狗、服务注册全缺失（代码库 grep `systemd`/`launchd`/`sc `/`net start` 无命中）。Linux 的自启/看门狗/服务注册无从落地。
+  - **2026-10-09 更新**：opx **自身**的三平台用户级自启已落地（§6 #3，`services/autostart/`，无需提权）；被管软件的「服务注册」经与用户澄清**不在范围内**——由 opx 启动后按 `auto_start_on_app_start` 拉起。
 
 ### 3.3 `cfg!(target_os)` 是编译期、单主机假设
 - opx 是原生二进制 + 单主机模型：跑 opx 的机器 = 被管软件所在机器。`cfg!` 编译时定死 OS，对"本机管本机"正确。
@@ -83,7 +84,7 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 |---|---|---|
 | 1 | 数据模型加 `os`/`arch` 维度（`CatalogVersion`/`MirrorSource` 或 provider 运行时选 URL hook） | `models/software.rs`、`catalog.rs` |
 | 2 | 逐 Windows-only provider 补 per-OS 子目录名、二进制名（`mysqld` vs `mysqld.exe`）、配置文件（`my.cnf` vs `my.ini`） | `providers/*` |
-| 3 | 新增统一服务管理抽象层（systemd / launchd / Windows-service） | 新 `services/service_mgr/` |
+| 3 | ✅ **已完成（范围收敛）**：新增 `services/autostart/` —— **仅 opx 自身**的用户级自启（Linux XDG `.desktop` / macOS LaunchAgent / Windows HKCU `Run`，均**无需提权**）；**被管软件不注册系统服务**，由 opx 启动后按各自 `auto_start_on_app_start` 拉起（`startup_bootstrap`），经 2026-10-09 与用户澄清确认 | `services/autostart/`、`commands/config.rs` |
 | 4 | 若做混合机群：把 `cfg!(target_os)` 编译期选择改为运行时按目标主机 OS 选择 | `providers/*`、`catalog.rs` |
 | 5 | 端到端验证：Linux 容器跑 headless web 服务 + 真实下载/安装一个跨平台软件（如 PostgreSQL） | 新 `opx-server` + CI |
 
@@ -154,7 +155,7 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 |---|---|---|---|
 | P2-3 | ✅ 已修复 | 全局 50 处 `Mutex.lock().unwrap()` 改为 `.unwrap_or_else(\|e\| e.into_inner())`，任一线程 panic 持锁不再级联中毒崩溃（覆盖 lifecycle/process_monitor/stack_manager/node_app_manager/software_manager/mod/log_watcher/ddns/startup_bootstrap/system_monitor/info/download 共 10 文件） | `f0cc561` |
 | P2-5 | ✅ 已修复 | `RegisteredProcess` 记录 `startup_order`；`stop_all_on_exit` 按 `startup_order` 逆序停止（依赖方先于依赖被杀），抽出可测纯函数 `sort_by_shutdown_order` 并加回归测试 | `f0cc561` |
-| P2-1 | ✅ 架构就绪 + PG 示范 | 新增 `utils/platform.rs` 运行时 OS 分发（`current_os()`），替代编译期 `#[cfg(windows)]` 锁；PostgreSQL 作示范：`archive_url_for(version, os)` 三平台 URL/格式（EDB linux/macOS/windows）、`parse_supported_versions` 去 cfg（纯解析与 OS 无关），catalog/版本发现改运行时分发，Windows 行为不变。其余 13 个 provider 待逐软件补 per-OS URL + 服务管理抽象（第 6 章 #1~#5） | 本次 |
+| P2-1 | ✅ 完成（**待非 Windows 实机验证**） | 运行时 OS 分发覆盖**全部 provider**：consul / mongodb / node / nacos / mysql / minio(SILO) / rustfs / redis / nginx 由编译期 `#[cfg(windows)]` 改为运行时 `current_os()` + per-OS URL（资产名多经官方 GitHub API / CDN HEAD 实测核实）；**`mongodb` 的 `fetch_remote_versions` 亦已去 `#[cfg(windows)]` 运行时化，并修正 Linux 社区版 edition 为 `targeted`（非 `base`，2026-10-09 实测 current.json）**；`jre` 反向锁（`#[cfg(unix)]`，Windows 反为空）改为静态留空 + `fetch_remote_versions` 填充；`mysql` 另补 per-OS 配置文件名（`my.ini`/`my.cnf`）；redis / nginx 在 *nix **无官方预编译二进制** → 走官方源码 + `run_build_steps` 现场 `make` / `./configure && make` 构建。新增 `ArchiveFormat::TarXz`（MySQL Linux 官方包为 `.tar.xz`，纯 Rust `lzma-rs` 解压）。elasticsearch / influxdb / influxdb3 / postgresql / kafka 原已跨平台。**Windows 行为不变，333 单测全绿**；⚠️ 非 Windows 的下载/解压/构建/启动路径需实机验证（第 6 章 #3「服务管理抽象」已于 2026-10-09 落地（收敛为 **opx 自身**三平台用户级自启 `services/autostart/`，无需提权；**被管软件不注册系统服务**、由 opx 启动后按配置拉起）） | 本次 |
 | P2-2 | ✅ 已修复 | mysql/redis/nginx/rustfs 启动命令 + 优雅停止统一改用 `exe_name`（与 PG/Mongo/Consul/MinIO 一致，Windows 行为不变）；`custom_templates` 默认 `executable` 按 OS 给（编译期 `cfg` 常量，redis-server/nginx），非 Windows 自动去 `.exe` | 本次 |
 | P2-4 | ✅ 架构就绪 + 待实机验证 | `lifecycle::monitored_pid`：Windows 上若直接子进程是 shell（cmd.exe/conhost 等），轮询解析其非 shell 后代（真实 JVM）作为监控/停止 PID；任何解析失败回退 `child.id()`（无回归）。job object 方案留作后续强化。**需 Windows 实机验证**：elasticsearch/kafka/nacos 经 `.bat` 启动后状态与停止是否正确 | 本次 |
 | P2-6 | ✅ 已修复 | 敏感文件落盘收紧权限：installed.json（覆盖所有 provider config secret）、nacos token 密钥文件、influxdb3 admin-token.json；Unix 0600 / Windows 只读位（真正 owner-only ACL 留 P2-1）。5 个 secret 均因重启一致性不可 ephemeral，故采用「落盘即收紧权限」。**补修**：Windows 只读位会阻断覆盖写（installed.json 每次启停重写、influxdb3 token 每次启动重写），抽出 `write_file_restricted`（清只读 → 写 → 收紧）统一三个落点，加重写回归测试 | `9985508` |

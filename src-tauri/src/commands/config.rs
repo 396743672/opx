@@ -47,44 +47,26 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
     })
 }
 
-const RUN_VALUE: &str = "OPX";
-
-fn run_key() -> winreg::RegKey {
-    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
-        )
-        .expect("打开注册表 Run 键失败")
-}
-
-/// 读取当前程序是否已开机自启（注册表 Run 项含 OPX）
+/// 读取当前程序是否已开机自启（跨平台：Linux XDG / macOS LaunchAgent / Windows 注册表）。
 #[tauri::command]
 pub fn get_autostart() -> bool {
-    if !cfg!(windows) {
-        return false;
-    }
-    run_key().get_value::<String, _>(RUN_VALUE).is_ok()
+    crate::services::autostart::current().is_enabled()
 }
 
-/// 设置开机自启（写/删注册表 Run 项，直连 WinAPI 无子进程）
+/// 设置开机自启（跨平台**用户级**，无需提权；被管软件不在此范围——由 opx 启动后按各自
+/// `auto_start_on_app_start` 配置拉起，见 `services/startup_bootstrap.rs`）。
 #[tauri::command]
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    if !cfg!(windows) {
+    let backend = crate::services::autostart::current();
+    if !backend.is_supported() {
         return Ok(());
     }
-    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
-    let exe_path = exe.to_string_lossy().replace('/', "\\");
-    let key = run_key();
-
     if enabled {
-        let quoted = format!("\"{}\"", exe_path);
-        key.set_value(RUN_VALUE, &quoted)
-            .map_err(|e| format!("写入注册表失败: {}", e))?;
+        let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+        backend.enable(&exe).map_err(|e| e.to_string())
     } else {
-        let _ = key.delete_value(RUN_VALUE);
+        backend.disable().map_err(|e| e.to_string())
     }
-    Ok(())
 }
 
 /// 发送测试通知：构造固定告警事件，按当前设置对启用的渠道真实发送一遍。

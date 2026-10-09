@@ -16,6 +16,23 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// Redis 发行包 URL 与格式（P2-1，per-OS）：
+/// - Windows：`redis-windows` 项目的 cygwin 预编译 zip；
+/// - Linux/macOS：官方**源码** tar.gz（上游无预编译二进制，安装后由 post_install 编译出 `src/redis-server`）。
+fn redis_archive(version: &str, os: &str) -> (String, ArchiveFormat) {
+    if os == "windows" {
+        (
+            format!("https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-cygwin.zip"),
+            ArchiveFormat::Zip,
+        )
+    } else {
+        (
+            format!("https://download.redis.io/releases/redis-{version}.tar.gz"),
+            ArchiveFormat::TarGz,
+        )
+    }
+}
+
 pub struct RedisProvider;
 
 impl RedisProvider {
@@ -36,60 +53,24 @@ impl SoftwareProvider for RedisProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-
-        #[cfg(windows)]
-        {
-            versions.push(CatalogVersion {
-                version: "8.8.0".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:redisWindowsGithub".to_string(),
-                        url: "https://github.com/redis-windows/redis-windows/releases/download/8.8.0/Redis-8.8.0-Windows-x64-cygwin.zip".to_string(),
+        // P2-1：运行时按 OS 选包（Windows 预编译 zip / *nix 官方源码 tar.gz，装后编译）。
+        let os = crate::utils::platform::current_os();
+        let mirror_name = if os == "windows" { "i18n:redisWindowsGithub" } else { "i18n:official" };
+        let versions = ["8.8.0", "8.2.7", "7.4.9"]
+            .iter()
+            .map(|v| {
+                let (url, format) = redis_archive(v, os);
+                CatalogVersion {
+                    version: v.to_string(),
+                    mirrors: vec![MirrorSource {
+                        name: mirror_name.to_string(),
+                        url,
                         builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            versions.push(CatalogVersion {
-                version: "8.2.7".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:redisWindowsGithub".to_string(),
-                        url: "https://github.com/redis-windows/redis-windows/releases/download/8.2.7/Redis-8.2.7-Windows-x64-cygwin.zip".to_string(),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-            versions.push(CatalogVersion {
-                version: "7.4.9".to_string(),
-                mirrors: vec![
-                    MirrorSource {
-                        name: "i18n:redisWindowsGithub".to_string(),
-                        url: "https://github.com/redis-windows/redis-windows/releases/download/7.4.9/Redis-7.4.9-Windows-x64-cygwin.zip".to_string(),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
-
-        // 注：Redis 本设计 Windows-only（与 MySQL 决策一致）。
-        // Unix 上 Redis 二进制名是 redis-server（无 .exe），配置路径与启动命令均不同，
-        // 如需 Unix 支持须单独适配。本 provider 不在 Unix catalog 注册版本。
+                    }],
+                    archive: ArchiveInfo { format, size: None, sha256: None },
+                }
+            })
+            .collect();
 
         CatalogEntry {
             key: "redis".to_string(),
@@ -130,6 +111,13 @@ impl SoftwareProvider for RedisProvider {
                 .collect::<Vec<_>>()
                 .join("\n");
             std::fs::write(&conf_path, fixed.as_bytes())?;
+        }
+
+        // P2-1：非 Windows 走官方源码包 → 在此编译出 `src/redis-server`（上游无预编译二进制）。
+        // 依赖目标机 gcc/make，缺失时 run_build_steps 给出明确错误。
+        if crate::utils::platform::current_os() != "windows" {
+            let steps: &[(&str, &[&str])] = &[("make", &[])];
+            super::run_build_steps(ctx.install_dir(), "Redis", steps)?;
         }
         Ok(())
     }
@@ -196,7 +184,16 @@ impl SoftwareProvider for RedisProvider {
         // 映射打乱为 /7.4.9/D:/path），但认相对路径 —— working_dir 已设为 install_path，
         // 直接传 "redis.conf" 即可。
         Ok(StartCommand {
-            program: exe_name("redis-server"),
+            // P2-1：*nix 上源码编译产物在 <install>/src/redis-server；Windows 为包内 redis-server.exe。
+            program: if crate::utils::platform::current_os() == "windows" {
+                exe_name("redis-server")
+            } else {
+                PathBuf::from(&ctx.install_path)
+                    .join("src")
+                    .join("redis-server")
+                    .to_string_lossy()
+                    .to_string()
+            },
             args: vec!["redis.conf".to_string()],
             env_vars: std::collections::BTreeMap::new(),
             working_dir: PathBuf::from(&ctx.install_path),

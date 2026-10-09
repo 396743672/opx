@@ -111,6 +111,21 @@ fn load_or_create_token_key(install_path: &std::path::Path) -> String {
     key
 }
 
+/// Nacos 发行包后缀与格式（P2-1）：Windows 用 `.zip`，Linux/macOS 用 `.tar.gz`
+/// （GitHub Releases 同版本两者皆有；Java 应用，两包内容等价）。
+fn nacos_asset_suffix(os: &str) -> (&'static str, ArchiveFormat) {
+    match os {
+        "linux" | "macos" => ("tar.gz", ArchiveFormat::TarGz),
+        _ => ("zip", ArchiveFormat::Zip),
+    }
+}
+
+/// Nacos GitHub Releases 下载 URL（按运行时 OS 选包）。
+fn nacos_release_url(v: &str, os: &str) -> String {
+    let (suffix, _) = nacos_asset_suffix(os);
+    format!("https://github.com/alibaba/nacos/releases/download/{v}/nacos-server-{v}.{suffix}")
+}
+
 pub struct NacosProvider;
 
 /// 从 GitHub Releases JSON 解析 Nacos 正式版本 tag。
@@ -147,27 +162,24 @@ impl SoftwareProvider for NacosProvider {
     fn key(&self) -> &str { "nacos" }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-        #[cfg(windows)]
-        {
-            // 执行时核实：alibaba/nacos GitHub Releases 下载 URL 形如
-            // https://github.com/alibaba/nacos/releases/download/<ver>/nacos-server-<ver>.zip
-            // 2.x 需 JDK 8+，3.x 需 JDK 17+，两者均内置在版本列表中按需选装。
-            for (ver, _jdk_hint) in [
-                ("2.5.3", "JDK8+"),
-                ("3.2.3", "JDK17+"),
-            ] {
-                versions.push(CatalogVersion {
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        // 2.x 需 JDK 8+，3.x 需 JDK 17+；两包均 Java 通用（win .zip / *nix .tar.gz）。
+        let os = crate::utils::platform::current_os();
+        let versions = [("2.5.3", "JDK8+"), ("3.2.3", "JDK17+")]
+            .iter()
+            .map(|(ver, _jdk_hint)| {
+                let (_, format) = nacos_asset_suffix(os);
+                CatalogVersion {
                     version: ver.to_string(),
                     mirrors: vec![MirrorSource {
                         name: "i18n:nacosOfficial".to_string(),
-                        url: format!("https://github.com/alibaba/nacos/releases/download/{}/nacos-server-{}.zip", ver, ver),
+                        url: nacos_release_url(ver, os),
                         builtin: None,
                     }],
-                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-                });
-            }
-        }
+                    archive: ArchiveInfo { format, size: None, sha256: None },
+                }
+            })
+            .collect();
         CatalogEntry {
             key: "nacos".to_string(),
             name: "Nacos".to_string(),
@@ -208,14 +220,19 @@ impl SoftwareProvider for NacosProvider {
         Some(
             versions
                 .into_iter()
-                .map(|v| CatalogVersion {
-                    version: v.clone(),
-                    mirrors: vec![MirrorSource {
-                        name: "i18n:nacosOfficial".to_string(),
-                        url: format!("https://github.com/alibaba/nacos/releases/download/{v}/nacos-server-{v}.zip"),
-                        builtin: None,
-                    }],
-                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                .map(|v| {
+                    // P2-1：远程发现同样按运行时 OS 选包（原硬编码 .zip）。
+                    let os = crate::utils::platform::current_os();
+                    let (_, format) = nacos_asset_suffix(os);
+                    CatalogVersion {
+                        version: v.clone(),
+                        mirrors: vec![MirrorSource {
+                            name: "i18n:nacosOfficial".to_string(),
+                            url: nacos_release_url(&v, os),
+                            builtin: None,
+                        }],
+                        archive: ArchiveInfo { format, size: None, sha256: None },
+                    }
                 })
                 .collect(),
         )

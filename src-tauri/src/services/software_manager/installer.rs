@@ -549,6 +549,7 @@ pub async fn download_and_extract(
     let cache_file_name = match version_info.archive.format {
         ArchiveFormat::Zip => format!("{}.zip", params.version),
         ArchiveFormat::TarGz => format!("{}.tar.gz", params.version),
+        ArchiveFormat::TarXz => format!("{}.tar.xz", params.version),
         ArchiveFormat::Executable => mirror
             .url
             .rsplit('/')
@@ -689,6 +690,9 @@ pub async fn download_and_extract(
             }
             ArchiveFormat::TarGz => {
                 archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
+            }
+            ArchiveFormat::TarXz => {
+                archive::extract_tar_xz(&cache_path2, &install_path2, on_progress)
             }
             ArchiveFormat::Executable => {
                 let dest_file = install_path2.join(
@@ -1070,6 +1074,7 @@ async fn install_from_builtin(
                 archive::extract_zip_flatten(&temp_zip, &install_path, on_progress)
             }
             ArchiveFormat::TarGz => archive::extract_tar_gz(&temp_zip, &install_path, on_progress),
+            ArchiveFormat::TarXz => archive::extract_tar_xz(&temp_zip, &install_path, on_progress),
             ArchiveFormat::Executable => {
                 // 单个可执行文件：从临时副本复制到 install_path 下
                 // （文件名仍用原始 resource_zip 的文件名，保持语义一致）

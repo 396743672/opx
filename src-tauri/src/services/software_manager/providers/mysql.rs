@@ -19,6 +19,42 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// MySQL 归档包名与格式（P2-1，per-OS，均经官方 CDN HEAD 实测核实）：
+/// - Windows `mysql-{v}-winx64.zip`
+/// - Linux   `mysql-{v}-linux-glibc2.28-x86_64.tar.xz`（官方 Linux 仅 `.tar.xz`）
+/// - macOS   `mysql-{v}-macos15-x86_64.tar.gz`
+fn mysql_asset(version: &str, os: &str) -> (String, ArchiveFormat) {
+    match os {
+        "linux" => (
+            format!("mysql-{version}-linux-glibc2.28-x86_64.tar.xz"),
+            ArchiveFormat::TarXz,
+        ),
+        "macos" => (
+            format!("mysql-{version}-macos15-x86_64.tar.gz"),
+            ArchiveFormat::TarGz,
+        ),
+        _ => (format!("mysql-{version}-winx64.zip"), ArchiveFormat::Zip),
+    }
+}
+
+/// 官方 CDN 下载 URL（`cdn.mysql.com/Downloads/MySQL-{major.minor}/{asset}`）。
+fn mysql_official_url(version: &str, os: &str) -> String {
+    let major_minor = version.split('.').take(2).collect::<Vec<_>>().join(".");
+    format!(
+        "https://cdn.mysql.com/Downloads/MySQL-{major_minor}/{}",
+        mysql_asset(version, os).0
+    )
+}
+
+/// MySQL 配置文件名：Windows 用 `my.ini`，Unix 用 `my.cnf`。
+fn mysql_config_file_name() -> &'static str {
+    if crate::utils::platform::current_os() == "windows" {
+        "my.ini"
+    } else {
+        "my.cnf"
+    }
+}
+
 /// 获取系统内存（MB）和 CPU 核数，用于动态生成 MySQL 配置
 /// 失败时回退到保守默认值（4GB 内存 / 4 核）
 fn get_system_info() -> (u64, usize) {
@@ -54,42 +90,42 @@ impl SoftwareProvider for MySqlProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-
-        #[cfg(windows)]
-        {
-            versions.push(CatalogVersion {
-                version: "8.4.11".to_string(),
-                mirrors: vec![
-                    // 自持源优先：MySQL 官方 CDN 在国内慢且易断，故把官方原版 zip 固化到
-                    // 自有 Release（URL 含 github.com → 自动经 ghfast.top 加速）。
-                    // 官方 CDN 保留在第二位，作为 UI 可切换的兜底源。
-                    MirrorSource {
-                        name: "i18n:selfHosted".to_string(),
-                        url: format!("{}/mysql-8.4.11-winx64.zip", super::RESOURCE_BASE),
-                        builtin: None,
-                    },
-                    MirrorSource {
-                        name: "i18n:official".to_string(),
-                        url: "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-winx64.zip".to_string(),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Zip,
-                    // 官方 8.4.11 winx64 zip 实测值；两源同源，故共用同一校验值
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        // 注：解压会剥掉顶层目录（mysql-{ver}-{os} 子目录）→ subdir 无需分平台；
+        // 二进制名经 exe_name 统一（P2-2）；配置文件名经 mysql_config_file_name 分平台。
+        let os = crate::utils::platform::current_os();
+        const VER: &str = "8.4.11";
+        let (asset, format) = mysql_asset(VER, os);
+        let mut mirrors = vec![];
+        if os == "windows" {
+            // 自持源优先（仅 Windows 版已固化到自有 Release）：官方 CDN 国内慢且易断。
+            mirrors.push(MirrorSource {
+                name: "i18n:selfHosted".to_string(),
+                url: format!("{}/{asset}", super::RESOURCE_BASE),
+                builtin: None,
+            });
+        }
+        mirrors.push(MirrorSource {
+            name: "i18n:official".to_string(),
+            url: mysql_official_url(VER, os),
+            builtin: None,
+        });
+        let versions = vec![CatalogVersion {
+            version: VER.to_string(),
+            mirrors,
+            // size/sha256 为 Windows 版实测值；其他平台留空（下载后完整性校验兜底）
+            archive: if os == "windows" {
+                ArchiveInfo {
+                    format,
                     size: Some(281_191_914),
                     sha256: Some(
                         "a492371d687d2bab088b0062581144a0044b8964baefdf4faa579292b423d25c".to_string(),
                     ),
-                },
-            });
-        }
-
-        // 注：MySQL 本设计 Windows-only（spec 第 770 行明确子目录 mysql-{ver}-winx64）。
-        // Unix 版本目录名不同（mysql-{ver}-linux-glibc2.28-x86_64）、二进制名不同（mysqld 无 .exe）、
-        // 配置文件名不同（my.cnf vs my.ini），如需 Unix 支持须单独适配 subdir/program/config_file 路径。
-        // 因此本 provider 不在 Unix catalog 注册版本。
+                }
+            } else {
+                ArchiveInfo { format, size: None, sha256: None }
+            },
+        }];
 
         CatalogEntry {
             key: "mysql".to_string(),
@@ -99,7 +135,7 @@ impl SoftwareProvider for MySqlProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:database".to_string(),
             versions,
-            default_version: "8.4.11".to_string(),
+            default_version: VER.to_string(),
         }
     }
 
@@ -114,21 +150,21 @@ impl SoftwareProvider for MySqlProvider {
         // ponytail: 从配置文件读版本列表
         let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok().unwrap_or_default()
             .iter().map(|ver| {
-                let major_minor = ver.split('.').take(2).collect::<Vec<_>>().join(".");
-                let dl = format!("https://cdn.mysql.com/Downloads/MySQL-{}/mysql-{}-winx64.zip", major_minor, ver);
+                let os = crate::utils::platform::current_os();
+                let (_, format) = mysql_asset(ver, os);
                 CatalogVersion {
                     version: ver.clone(),
-                    mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: dl, builtin: None }],
-                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                    mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: mysql_official_url(ver, os), builtin: None }],
+                    archive: ArchiveInfo { format, size: None, sha256: None },
                 }
             }).collect();
         Some(versions)
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        // extract_zip_flatten 已剥掉 mysql-{version}-winx64 顶层目录，
-        // install_dir 即 MySQL 程序目录根，my.ini 直接放 install_dir
-        let my_ini_path = ctx.install_dir().join("my.ini");
+        // extract_* 已剥掉 mysql-{ver}-{os} 顶层目录，install_dir 即 MySQL 程序目录根，
+        // 配置文件（win my.ini / *nix my.cnf）直接放 install_dir
+        let my_ini_path = ctx.install_dir().join(mysql_config_file_name());
 
         // 根据系统内存/CPU 动态生成配置
         let (total_mem_mb, cpu_count) = get_system_info();
@@ -202,7 +238,7 @@ lower_case_table_names=1\n",
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let mut main_args = vec![
-            "--defaults-file=my.ini".to_string(),
+            format!("--defaults-file={}", mysql_config_file_name()),
             "--basedir=".to_string() + &ctx.install_path,
             "--datadir=".to_string() + &working_dir.join("data").to_string_lossy(),
             "--console".to_string(),
@@ -333,7 +369,7 @@ lower_case_table_names=1\n",
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
         // 仅返回相对文件名，调用方（write_config_form / read_config_source）
         // 会自行拼接 install_path，避免双路径拼接 bug。
-        Some(PathBuf::from("my.ini"))
+        Some(PathBuf::from(mysql_config_file_name()))
     }
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {

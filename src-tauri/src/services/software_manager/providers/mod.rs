@@ -42,6 +42,41 @@ pub(crate) fn exe_name(base: &str) -> String {
     }
 }
 
+/// 在 `dir` 下按顺序执行构建命令（P2-1）。
+///
+/// 供**上游无预编译二进制、只能源码构建**的软件（redis / nginx）在 *nix 上安装后编译用。
+/// 每条命令为 `(program, args)`；任一步失败即返回带命令名 + stderr 尾部的明确错误，
+/// 缺工具链（make/gcc 未安装）时提示安装构建工具。
+/// ⚠️ 该路径依赖目标机工具链，且无法在 Windows CI 验证 —— 待真实 Linux/macOS 实机验证。
+pub(crate) fn run_build_steps(
+    dir: &std::path::Path,
+    what: &str,
+    steps: &[(&str, &[&str])],
+) -> anyhow::Result<()> {
+    for (program, args) in steps {
+        let out = std::process::Command::new(program)
+            .args(*args)
+            .current_dir(dir)
+            .output()
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{what} 源码构建失败：无法运行 `{program}`（{e}）。请先安装构建工具链（gcc / make）。"
+                )
+            })?;
+        if !out.status.success() {
+            let tail = String::from_utf8_lossy(&out.stderr);
+            let tail = tail.lines().rev().take(8).collect::<Vec<_>>();
+            let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+            return Err(anyhow::anyhow!(
+                "{what} 源码构建失败：`{program}` 退出码 {:?}\n{}",
+                out.status.code(),
+                tail
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub trait SoftwareProvider: Send + Sync {
     fn key(&self) -> &str;
     fn catalog_entry(&self) -> CatalogEntry;

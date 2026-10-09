@@ -19,20 +19,53 @@ const CREATE_NO_WINDOW: u32 = 0;
 
 /// 官方版本清单：`current.json` = 每个 major 的**当前**版本（另有 `full.json` = 全部历史版本）。
 /// MongoDB 官方在社区论坛把它作为「脚本取二进制」的推荐索引；无正式 API 文档，但结构长期稳定。
-#[cfg(windows)]
 const VERSION_MANIFEST_URL: &str = "https://downloads.mongodb.org/current.json";
 /// 远程版本发现最多取几个（下拉里给最新几个即可，避免被历史版本灌满；与 consul 同口径）。
-#[cfg(windows)]
 const REMOTE_MAX_VERSIONS: usize = 3;
 
-/// 纯解析：从 current.json 提取「Windows x86_64 社区版」可安装版本，按版本号降序、最多 N 个。
+/// MongoDB 社区版 per-OS 下载地址与归档格式（P2-1）。
+///
+/// 官方按「发行版」分目录：Linux 取 `ubuntu2204`（glibc 覆盖面最广），macOS 用 `osx` 目录，
+/// Windows 为 `windows` 目录 zip。⚠️ Linux/macOS 的具体可运行性待跨平台实机验证（本会话仅 Windows 可验证）。
+fn mongodb_archive(version: &str, os: &str) -> (String, ArchiveFormat) {
+    match os {
+        "linux" => (
+            format!("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-{version}.tgz"),
+            ArchiveFormat::TarGz,
+        ),
+        "macos" => (
+            format!("https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-{version}.tgz"),
+            ArchiveFormat::TarGz,
+        ),
+        _ => (
+            format!("https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{version}.zip"),
+            ArchiveFormat::Zip,
+        ),
+    }
+}
+
+/// current.json 里「当前 OS 的社区版」标识 `(target, edition)`（P2-1，2026-10-09 实测核实）。
+///
+/// ⚠️ Linux 社区版是 `targeted` 而**不是** `base`（`base` 仅 windows/macos 有）——
+/// 按 `base` 过滤 Linux 会得到空列表，这是原 Windows-only 实现迁到运行时后最易踩的坑：
+/// 实测 `('ubuntu2204','targeted')` → `fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-{v}.tgz`。
+fn mongodb_target_edition(os: &str) -> (&'static str, &'static str) {
+    match os {
+        "linux" => ("ubuntu2204", "targeted"),
+        "macos" => ("macos", "base"),
+        _ => ("windows", "base"),
+    }
+}
+
+/// 纯解析：从 current.json 提取「当前 OS 的 x86_64 社区版」可安装版本，按版本号降序、最多 N 个。
 ///
 /// 过滤规则必须严格——错了会让用户下到装不上/不能用的包：
 /// - 跳过 `development_release`（开发版）与 `release_candidate`（候选版）；
-/// - 只取 `target == "windows" && arch == "x86_64" && edition == "base"`：
-///   `enterprise` 是企业版，无授权装完也起不来；`target`/`arch` 不符则平台不匹配。
-#[cfg(windows)]
-fn parse_windows_versions(manifest: &serde_json::Value) -> Vec<CatalogVersion> {
+/// - 只取本平台社区版：Windows/macOS 为 `edition == "base"`，Linux 为 `edition == "targeted"`
+///   （见 `mongodb_target_edition`）；`enterprise` 是企业版，无授权装完也起不来；
+/// - URL 统一由 `mongodb_archive(version, os)` 生成（与 catalog 单一来源，避免两处格式漂移）。
+fn parse_versions(manifest: &serde_json::Value, os: &str) -> Vec<CatalogVersion> {
+    let (target, edition) = mongodb_target_edition(os);
     let mut out: Vec<CatalogVersion> = Vec::new();
     let Some(versions) = manifest.get("versions").and_then(|v| v.as_array()) else {
         return out;
@@ -51,27 +84,25 @@ fn parse_windows_versions(manifest: &serde_json::Value) -> Vec<CatalogVersion> {
             .and_then(|d| d.as_array())
             .and_then(|downloads| {
                 downloads.iter().find(|d| {
-                    d.get("target").and_then(|t| t.as_str()) == Some("windows")
+                    d.get("target").and_then(|t| t.as_str()) == Some(target)
                         && d.get("arch").and_then(|a| a.as_str()) == Some("x86_64")
-                        && d.get("edition").and_then(|e| e.as_str()) == Some("base")
+                        && d.get("edition").and_then(|e| e.as_str()) == Some(edition)
                 })
             })
             .and_then(|d| d.get("archive"))
         else {
             continue;
         };
-        let Some(url) = archive.get("url").and_then(|u| u.as_str()) else {
-            continue;
-        };
+        let (url, format) = mongodb_archive(version, os);
         out.push(CatalogVersion {
             version: version.to_string(),
             mirrors: vec![MirrorSource {
                 name: "i18n:mongodbOfficial".to_string(),
-                url: url.to_string(),
+                url,
                 builtin: None,
             }],
             archive: ArchiveInfo {
-                format: ArchiveFormat::Zip,
+                format,
                 // current.json 不提供包大小
                 size: None,
                 sha256: archive.get("sha256").and_then(|s| s.as_str()).map(|s| s.to_string()),
@@ -92,20 +123,18 @@ impl SoftwareProvider for MongoDbProvider {
     fn key(&self) -> &str { "mongodb" }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        let mut versions = vec![];
-        #[cfg(windows)]
-        {
-            // 执行时核实：fastdl.mongodb.org Windows zip URL
-            versions.push(CatalogVersion {
-                version: "7.0.12".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:mongodbOfficial".to_string(),
-                    url: "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-7.0.12.zip".to_string(),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
-            });
-        }
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        const VER: &str = "7.0.12";
+        let (url, format) = mongodb_archive(VER, crate::utils::platform::current_os());
+        let versions = vec![CatalogVersion {
+            version: VER.to_string(),
+            mirrors: vec![MirrorSource {
+                name: "i18n:mongodbOfficial".to_string(),
+                url,
+                builtin: None,
+            }],
+            archive: ArchiveInfo { format, size: None, sha256: None },
+        }];
         CatalogEntry {
             key: "mongodb".to_string(),
             name: "MongoDB".to_string(),
@@ -114,46 +143,41 @@ impl SoftwareProvider for MongoDbProvider {
             category: SoftwareCategory::Database,
             icon: "mdi:leaf".to_string(),
             versions,
-            default_version: "7.0.12".to_string(),
+            default_version: VER.to_string(),
         }
     }
 
-    /// 动态拉取 MongoDB 官方新版本（current.json，仅 Windows x86_64 社区版）。
+    /// 动态拉取 MongoDB 官方新版本（current.json，按当前 OS 取 x86_64 社区版）。
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        #[cfg(windows)]
-        {
-            let client = reqwest::blocking::Client::builder()
-                // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持 CONNECT 的 HTTP 代理，
-                // 本可直连的 fastdl/downloads.mongodb.org 反被劫持而失败
-                .no_proxy()
-                // blocking builder 无 read_timeout，而 timeout 是「连接→读体完成」的总 deadline：
-                // current.json 约 400 KB，慢网下 15s 会在读体中途被掐断（报成 decoding 错误，
-                // 症状像解析失败）→ 故总时长放宽到 60s，见 rustfs.rs 同名注释。
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .ok()?;
-            let resp = client
-                .get(VERSION_MANIFEST_URL)
-                .header("User-Agent", "OPX")
-                .send()
-                .ok()?;
-            if !resp.status().is_success() {
-                eprintln!("[mongodb] 版本清单返回 {}", resp.status());
-                return None;
-            }
-            let manifest: serde_json::Value = resp.json().ok()?;
-            let versions = parse_windows_versions(&manifest);
-            if versions.is_empty() {
-                None
-            } else {
-                Some(versions)
-            }
+        // P2-1：运行时按 OS 选目标（windows/macos=base，linux=targeted，见 mongodb_target_edition）。
+        let os = crate::utils::platform::current_os();
+        let client = reqwest::blocking::Client::builder()
+            // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持 CONNECT 的 HTTP 代理，
+            // 本可直连的 fastdl/downloads.mongodb.org 反被劫持而失败
+            .no_proxy()
+            // blocking builder 无 read_timeout，而 timeout 是「连接→读体完成」的总 deadline：
+            // current.json 约 400 KB，慢网下 15s 会在读体中途被掐断（报成 decoding 错误，
+            // 症状像解析失败）→ 故总时长放宽到 60s，见 rustfs.rs 同名注释。
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(VERSION_MANIFEST_URL)
+            .header("User-Agent", "OPX")
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("[mongodb] 版本清单返回 {}", resp.status());
+            return None;
         }
-        #[cfg(not(windows))]
-        {
+        let manifest: serde_json::Value = resp.json().ok()?;
+        let versions = parse_versions(&manifest, os);
+        if versions.is_empty() {
             None
+        } else {
+            Some(versions)
         }
     }
 
@@ -312,7 +336,48 @@ fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
 
-#[cfg(all(test, windows))]
+/// P2-1：per-OS URL 与格式的纯函数测试（与平台无关，Windows 上也断言非 Windows 分支）。
+#[cfg(test)]
+mod archive_os_tests {
+    use super::*;
+
+    #[test]
+    fn mongodb_archive_is_per_os() {
+        // Windows 行为不变（回归护栏）
+        assert_eq!(
+            mongodb_archive("7.0.12", "windows"),
+            (
+                "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-7.0.12.zip".to_string(),
+                ArchiveFormat::Zip,
+            )
+        );
+        assert_eq!(
+            mongodb_archive("7.0.12", "linux"),
+            (
+                "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.12.tgz"
+                    .to_string(),
+                ArchiveFormat::TarGz,
+            )
+        );
+        assert_eq!(
+            mongodb_archive("7.0.12", "macos"),
+            (
+                "https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-7.0.12.tgz".to_string(),
+                ArchiveFormat::TarGz,
+            )
+        );
+    }
+
+    #[test]
+    fn catalog_entry_selects_url_for_current_os() {
+        let entry = MongoDbProvider::new().catalog_entry();
+        assert_eq!(entry.versions.len(), 1, "catalog 不应为空");
+        let (url, _) = mongodb_archive(&entry.default_version, crate::utils::platform::current_os());
+        assert_eq!(entry.versions[0].mirrors[0].url, url);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -350,7 +415,7 @@ mod tests {
 
     #[test]
     fn parse_picks_windows_base_newest_first_and_truncates() {
-        let vs = parse_windows_versions(&manifest());
+        let vs = parse_versions(&manifest(), "windows");
         // 8.1.0-rc1（候选版）与 9.0.0（开发版）被过滤；6.0.29 因超出上限被截断
         assert_eq!(
             vs.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(),
@@ -376,10 +441,39 @@ mod tests {
                   "archive": { "url": "u", "sha256": "x" } },
                 { "target": "linux", "arch": "x86_64", "edition": "base",
                   "archive": { "url": "u", "sha256": "x" } } ] } ] });
-        assert!(parse_windows_versions(&no_base).is_empty());
+        assert!(parse_versions(&no_base, "windows").is_empty());
         // 结构异常（缺 versions / 非数组）不应 panic，而是返回空
-        assert!(parse_windows_versions(&serde_json::json!({})).is_empty());
-        assert!(parse_windows_versions(&serde_json::json!({ "versions": "oops" })).is_empty());
+        assert!(parse_versions(&serde_json::json!({}), "windows").is_empty());
+        assert!(parse_versions(&serde_json::json!({ "versions": "oops" }), "windows").is_empty());
+    }
+
+    #[test]
+    fn mongodb_target_edition_is_per_os() {
+        assert_eq!(mongodb_target_edition("windows"), ("windows", "base"));
+        assert_eq!(mongodb_target_edition("macos"), ("macos", "base"));
+        // Linux 社区版是 targeted 而非 base（2026-10-09 实测核实）
+        assert_eq!(mongodb_target_edition("linux"), ("ubuntu2204", "targeted"));
+    }
+
+    #[test]
+    fn parse_versions_linux_selects_targeted_build() {
+        let manifest = serde_json::json!({ "versions": [
+            { "version": "7.0.43", "development_release": false, "release_candidate": false,
+              "downloads": [
+                { "target": "ubuntu2204", "arch": "x86_64", "edition": "enterprise",
+                  "archive": { "url": "https://downloads.mongodb.com/linux/enterprise.tgz", "sha256": "ent" } },
+                { "target": "ubuntu2204", "arch": "x86_64", "edition": "targeted",
+                  "archive": { "url": "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.43.tgz", "sha256": "lin" } },
+                { "target": "windows", "arch": "x86_64", "edition": "base",
+                  "archive": { "url": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-7.0.43.zip", "sha256": "win" } } ] } ] });
+        let vs = parse_versions(&manifest, "linux");
+        assert_eq!(vs.len(), 1, "Linux 应取到 targeted 社区版（而非 enterprise）");
+        assert_eq!(vs[0].archive.format, ArchiveFormat::TarGz);
+        assert_eq!(
+            vs[0].mirrors[0].url,
+            "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-7.0.43.tgz"
+        );
+        assert_eq!(vs[0].archive.sha256.as_deref(), Some("lin"));
     }
 }
 

@@ -16,6 +16,31 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// SILO 发行包 OS token（P2-1）：上游用 `darwin` 表示 macOS。
+fn silo_os_token(os: &str) -> &'static str {
+    match os {
+        "linux" => "linux",
+        "macos" => "darwin",
+        _ => "windows",
+    }
+}
+
+/// 从 `RELEASE.<date>T<time>Z` 版本号推出 SILO 资产内嵌时间戳
+/// （如 `RELEASE.2026-09-16T00-00-00Z` → `20260916000000`）。
+fn silo_asset_date(version: &str) -> String {
+    version
+        .strip_prefix("RELEASE.")
+        .map(|rest| rest.chars().filter(|c| c.is_ascii_digit()).collect::<String>())
+        .filter(|d| d.len() >= 14)
+        .map(|d| d[..14].to_string())
+        .unwrap_or_default()
+}
+
+/// SILO 资产名：`silo_<date>.0.0_<os>_amd64.tar.gz`（按运行时 OS）。
+fn silo_asset_name(version: &str, os: &str) -> String {
+    format!("silo_{}.0.0_{}_amd64.tar.gz", silo_asset_date(version), silo_os_token(os))
+}
+
 /// 兜底版本（上游 MinIO）：产物是裸 `minio.exe`（文件名带版本后缀，装后需重命名）。
 /// 主版本 SILO 的产物则是 tar.gz 内的 `silo.exe`。两者二进制名不同，
 /// 故启动命令与安装后处理都需按版本区分——否则已装的兜底实例会找不到可执行文件。
@@ -33,7 +58,7 @@ const SILO_MAX_REMOTE_VERSIONS: usize = 10;
 /// 版本也列出来，用户装完会「找不到 silo.exe」启动失败。
 /// size / sha256 直接取自 GitHub 资产的 `size` 与 `digest`（形如 `sha256:<hex>`）字段。
 #[cfg(windows)]
-fn silo_remote_versions() -> Option<Vec<CatalogVersion>> {
+fn silo_remote_versions(os: &str) -> Option<Vec<CatalogVersion>> {
     let url = "https://api.github.com/repos/pgsty/silo/releases?per_page=30";
     let client = reqwest::blocking::Client::builder()
         // 关掉环境变量代理探测（ALL_PROXY 等）：reqwest 默认会读，宿主若设了
@@ -53,7 +78,7 @@ fn silo_remote_versions() -> Option<Vec<CatalogVersion>> {
         return None;
     }
     let releases: Vec<serde_json::Value> = resp.json().ok()?;
-    let out = parse_silo_releases(&releases);
+    let out = parse_silo_releases(&releases, os);
 
     if out.is_empty() {
         None
@@ -62,10 +87,9 @@ fn silo_remote_versions() -> Option<Vec<CatalogVersion>> {
     }
 }
 
-/// 纯解析：从 SILO 的 GitHub Releases JSON 提取可直接安装的 Windows amd64 版本条目。
+/// 纯解析：从 SILO 的 GitHub Releases JSON 提取可直接安装的目标 OS amd64 版本条目。
 /// 抽成独立函数以便单测（网络调用不便测试，过滤规则却是出错代价最高的一环）。
-#[cfg(windows)]
-fn parse_silo_releases(releases: &[serde_json::Value]) -> Vec<CatalogVersion> {
+fn parse_silo_releases(releases: &[serde_json::Value], os: &str) -> Vec<CatalogVersion> {
     let mut out = Vec::new();
     for r in releases {
         if r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -79,11 +103,12 @@ fn parse_silo_releases(releases: &[serde_json::Value]) -> Vec<CatalogVersion> {
         let Some(assets) = r.get("assets").and_then(|v| v.as_array()) else {
             continue;
         };
-        // 主包：silo_<时间戳>_windows_amd64.tar.gz（排除 .sbom.json 等附带资产）
+        // 主包：silo_<时间戳>_<os>_amd64.tar.gz（排除 .sbom.json 等附带资产）
+        let suffix = format!("_{}_amd64.tar.gz", silo_os_token(os));
         let Some(asset) = assets.iter().find(|a| {
             a.get("name")
                 .and_then(|v| v.as_str())
-                .is_some_and(|n| n.starts_with("silo_") && n.ends_with("_windows_amd64.tar.gz"))
+                .is_some_and(|n| n.starts_with("silo_") && n.ends_with(suffix.as_str()))
         }) else {
             continue;
         };
@@ -147,64 +172,67 @@ impl SoftwareProvider for MinioProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
+        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
+        let os = crate::utils::platform::current_os();
         let mut versions = vec![];
 
-        #[cfg(windows)]
-        {
-            // 主版本：SILO（MinIO 的社区维护 fork，pgsty/silo）。
-            // 上游自 RELEASE.2025-05-24 起以「精简控制台」为由删除约 11 万行代码、控制台退化为
-            // 纯对象浏览器，RELEASE.2025-10 起停发社区版预编译二进制，仓库已归档且官方拒修 CVE。
-            // SILO 在同一代码库上恢复完整 Web 控制台、持续发布带 sha256/sigstore 的预编译二进制
-            // 并跟进安全修复，故作为主版本；RELEASE.2025-04-22（官方最后完整控制台版）保留为兜底。
-            versions.push(CatalogVersion {
-                version: "RELEASE.2026-09-16T00-00-00Z".to_string(),
-                mirrors: vec![MirrorSource {
-                    name: "i18n:siloOfficial".to_string(),
-                    // URL 含 github.com → 运行时经 download::resolve_url 自动加 ghfast.top 前缀。
-                    // 包内为 LICENSE / NOTICE / README.md / silo.exe，无顶层目录，直解到安装根。
-                    url: "https://github.com/pgsty/silo/releases/download/RELEASE.2026-09-16T00-00-00Z/silo_20260916000000.0.0_windows_amd64.tar.gz".to_string(),
-                    builtin: None,
-                }],
-                archive: ArchiveInfo {
+        // 主版本：SILO（MinIO 的社区维护 fork，pgsty/silo）——上游三平台均发布 amd64/arm64 包。
+        // 上游自 RELEASE.2025-05-24 起以「精简控制台」为由删除约 11 万行代码、RELEASE.2025-10 起
+        // 停发社区版预编译二进制，仓库已归档且官方拒修 CVE；SILO 在同一代码库上恢复完整 Web 控制台、
+        // 持续发布带 sha256/sigstore 的预编译二进制并跟进安全修复，故作为主版本。
+        const SILO_VER: &str = "RELEASE.2026-09-16T00-00-00Z";
+        versions.push(CatalogVersion {
+            version: SILO_VER.to_string(),
+            mirrors: vec![MirrorSource {
+                // URL 含 github.com → 运行时经 download::resolve_url 自动加 ghfast.top 前缀。
+                // 包内为 LICENSE / NOTICE / README.md / silo[.exe]，无顶层目录，直解到安装根。
+                name: "i18n:siloOfficial".to_string(),
+                url: format!(
+                    "https://github.com/pgsty/silo/releases/download/{SILO_VER}/{}",
+                    silo_asset_name(SILO_VER, os)
+                ),
+                builtin: None,
+            }],
+            // size/sha256 为 Windows amd64 包实测值；其他平台留空（下载后完整性校验兜底）
+            archive: if os == "windows" {
+                ArchiveInfo {
                     format: ArchiveFormat::TarGz,
-                    // 官方 checksums.txt 逐字节核对（本地 sha256 一致）
                     size: Some(34_373_100),
                     sha256: Some(
                         "f99f4c376754aeea50c982afdd7aa3fd62ee9393e0ad603be570055c2342ee41".to_string(),
                     ),
-                },
-            });
+                }
+            } else {
+                ArchiveInfo { format: ArchiveFormat::TarGz, size: None, sha256: None }
+            },
+        });
 
-            // 兜底版本：RELEASE.2025-04-22 —— 上游最后一个保留完整 Web 控制台的官方版本，
-            // 已固化到自有 Release（tag res-v1），仅保留自有源。
-            versions.push(CatalogVersion {
-                version: "RELEASE.2025-04-22".to_string(),
-                mirrors: vec![
-                    // ⚠️ 资产名必须与上游逐字一致：ArchiveFormat::Executable 的缓存文件名取 URL
-                    // basename（installer.rs），改名会导致已缓存文件失效、用户重新下载 121MB。
-                    MirrorSource {
-                        name: "i18n:selfHosted".to_string(),
-                        url: format!(
-                            "{}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe",
-                            super::RESOURCE_BASE
-                        ),
-                        builtin: None,
-                    },
-                ],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::Executable,
-                    // 实测值（`minio --version` 自报 RELEASE.2025-04-22T22-12-26Z）
-                    size: Some(121_008_640),
-                    sha256: Some(
-                        "2ceb3b3d68bdf1c4def9702cb02c5c8adb235197d1c8f2eaad24136833ab9a57".to_string(),
+        // 兜底版本：RELEASE.2025-04-22 —— 上游最后一个保留完整 Web 控制台的官方 MinIO 版，
+        // 已固化到自有 Release（tag res-v1）。该资产是 Windows 裸 exe，仅 Windows 提供。
+        #[cfg(windows)]
+        versions.push(CatalogVersion {
+            version: "RELEASE.2025-04-22".to_string(),
+            mirrors: vec![
+                // ⚠️ 资产名必须与上游逐字一致：ArchiveFormat::Executable 的缓存文件名取 URL
+                // basename（installer.rs），改名会导致已缓存文件失效、用户重新下载 121MB。
+                MirrorSource {
+                    name: "i18n:selfHosted".to_string(),
+                    url: format!(
+                        "{}/minio.windows-amd64.RELEASE.2025-04-22T22-12-26Z.exe",
+                        super::RESOURCE_BASE
                     ),
+                    builtin: None,
                 },
-            });
-        }
-
-        // 注：本 provider 目前仅注册 Windows 版本（与 MySQL/Redis/Nginx 决策一致）。
-        // SILO 上游同时发布 linux / darwin 的 amd64、arm64 包（二进制名 silo，无 .exe），
-        // 若日后需要 Unix 支持，补对应 tar.gz 条目即可。
+            ],
+            archive: ArchiveInfo {
+                format: ArchiveFormat::Executable,
+                // 实测值（`minio --version` 自报 RELEASE.2025-04-22T22-12-26Z）
+                size: Some(121_008_640),
+                sha256: Some(
+                    "2ceb3b3d68bdf1c4def9702cb02c5c8adb235197d1c8f2eaad24136833ab9a57".to_string(),
+                ),
+            },
+        });
 
         CatalogEntry {
             key: "minio".to_string(),
@@ -214,21 +242,14 @@ impl SoftwareProvider for MinioProvider {
             category: SoftwareCategory::Storage,
             icon: "mdi:cloud".to_string(),
             versions,
-            default_version: "RELEASE.2026-09-16T00-00-00Z".to_string(),
+            default_version: SILO_VER.to_string(),
         }
     }
 
-    /// 动态拉取 SILO 上游新版本（Windows amd64）。
+    /// 动态拉取 SILO 上游新版本（按运行时 OS 过滤 amd64 构建）。
     /// 拉取失败返回 None，不阻塞其他软件（与 influxdb / jdk / jre 等实现一致）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        #[cfg(windows)]
-        {
-            silo_remote_versions()
-        }
-        #[cfg(not(windows))]
-        {
-            None
-        }
+        silo_remote_versions(crate::utils::platform::current_os())
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
@@ -432,7 +453,7 @@ mod tests {
                 ),
             ],
         )];
-        let vs = parse_silo_releases(&releases);
+        let vs = parse_silo_releases(&releases, "windows");
         assert_eq!(vs.len(), 1);
         assert_eq!(vs[0].version, "RELEASE.2026-09-16T00-00-00Z");
         assert_eq!(vs[0].archive.size, Some(34_373_100));
@@ -456,7 +477,7 @@ mod tests {
                 "sha256:ccc",
             )],
         )];
-        assert!(parse_silo_releases(&releases).is_empty());
+        assert!(parse_silo_releases(&releases, "windows").is_empty());
     }
 
     #[test]
@@ -471,7 +492,7 @@ mod tests {
             vec![asset("silo_y_windows_amd64.tar.gz", 1, "sha256:e")],
         );
         draft["draft"] = serde_json::json!(true);
-        assert!(parse_silo_releases(&[pre, draft]).is_empty());
+        assert!(parse_silo_releases(&[pre, draft], "windows").is_empty());
     }
 
     #[test]
@@ -485,7 +506,7 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            parse_silo_releases(&releases).len(),
+            parse_silo_releases(&releases, "windows").len(),
             SILO_MAX_REMOTE_VERSIONS
         );
     }

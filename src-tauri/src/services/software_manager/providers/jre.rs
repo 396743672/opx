@@ -27,21 +27,10 @@ impl SoftwareProvider for JreProvider {
     }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        #[allow(unused_mut)] // ponytail: unix 分支 push 了数据，windows 无
-        let mut versions = vec![];
-
-        #[cfg(unix)]
-        {
-            versions.push(CatalogVersion {
-                version: "21.0.2".to_string(),
-                mirrors: vec![],
-                archive: ArchiveInfo {
-                    format: ArchiveFormat::TarGz,
-                    size: None,
-                    sha256: None,
-                },
-            });
-        }
+        // 静态列表留空（与 jdk 一致）：JRE 版本由 `fetch_remote_versions` 按运行时 OS
+        // 从 Adoptium API 拉取。原实现在 `#[cfg(unix)]` 下塞一个**无 mirror** 的占位条目、
+        // Windows 反为空（反向平台锁），既不可安装又不一致，故移除。
+        let versions: Vec<CatalogVersion> = vec![];
 
         CatalogEntry {
             key: "jre".to_string(),
