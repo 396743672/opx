@@ -1,6 +1,9 @@
 //! 桌面壳的 [`EventSink`] 实现：把 core 的事件转发给前端（经 Tauri 事件总线）。
 
-use opx_core::event::EventSink;
+/// 壳层重新导出 core 的事件 trait，使commands 层可用
+/// `crate::event_sink::{EventSink, EventSinkExt}` 单一路径同时拿到 trait 与
+/// `emit_ser` 扩展方法（`pub use` 同时把名字引入本模块作用域）。
+pub use opx_core::event::{EventSink, EventSinkExt};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 

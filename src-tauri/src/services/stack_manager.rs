@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use futures::future;
-use tauri::{AppHandle, Emitter};
+use opx_core::event::{EventSink, EventSinkExt};
 use uuid::Uuid;
 
 use crate::commands::software as sw_commands;
@@ -201,12 +201,12 @@ impl StackManager {
     }
 
     /// 应用启动时按启动顺序自动拉起启用自启的服务组（逐个，不并发，单组失败不阻塞后续）
-    pub async fn auto_start_all(&self, app: &AppHandle) {
+    pub async fn auto_start_all(&self, sink: &Arc<dyn EventSink>) {
         let stacks = self.list();
         let mut eligible: Vec<&Stack> = stacks.iter().filter(|s| s.auto_start).collect();
         eligible.sort_by_key(|s| s.updated_at.clone());
         for stack in eligible {
-            if let Err(e) = self.start(app, &stack.id).await {
+            if let Err(e) = self.start(sink, &stack.id).await {
                 tracing::warn!(stack_id = %stack.id, error = %e, "服务组自启失败");
             }
         }
@@ -368,7 +368,7 @@ impl StackManager {
     }
 
     /// 一键启动：逐批（layers 顺序）启动，批内并发；依赖就绪探测 + 重试 + 回滚。
-    pub async fn start(&self, app: &AppHandle, id: &str) -> Result<StackStartPlan, String> {
+    pub async fn start(&self, sink: &Arc<dyn EventSink>, id: &str) -> Result<StackStartPlan, String> {
         let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
 
         // 运行前再次拓扑排序（双重保险）
@@ -392,7 +392,7 @@ impl StackManager {
             );
         }
         self.emit(
-            app,
+            sink,
             &stack.id,
             StackMemberStatus::Starting,
             member_status.values().cloned().collect(),
@@ -427,7 +427,7 @@ impl StackManager {
                 );
             }
             self.emit(
-                app,
+                sink,
                 &stack.id,
                 StackMemberStatus::Starting,
                 member_status.values().cloned().collect(),
@@ -437,7 +437,7 @@ impl StackManager {
                 .map(|d| (d.clone(), self.ref_running(d)))
                 .collect();
             let results =
-                future::join_all(external_deps.iter().map(|d| self.start_external(app, d))).await;
+                future::join_all(external_deps.iter().map(|d| self.start_external(sink, d))).await;
             let mut ext_err: Option<String> = None;
             for (dep, res) in external_deps.iter().zip(results.into_iter()) {
                 match res {
@@ -460,13 +460,13 @@ impl StackManager {
             }
             if let Some(err) = ext_err {
                 for dep in managed_external.iter().rev() {
-                    self.stop_external(app, dep).await;
+                    self.stop_external(sink, dep).await;
                     if let Some(m) = member_status.get_mut(dep) {
                         m.status = StackMemberStatus::Stopped;
                     }
                 }
                 self.emit(
-                    app,
+                    sink,
                     &stack.id,
                     StackMemberStatus::Failed,
                     member_status.values().cloned().collect(),
@@ -493,7 +493,7 @@ impl StackManager {
                     .find(|it| &it.ref_id == ref_id)
                     .cloned()
                     .unwrap();
-                futs.push(self.start_one(app, &stack, item));
+                futs.push(self.start_one(sink, &stack, item));
             }
             let results = future::join_all(futs).await;
 
@@ -539,21 +539,21 @@ impl StackManager {
             if blocking_failure {
                 // R9 回滚：逆序停止本次已启动的成员（仅本栈启动的）
                 for item in started.iter().rev() {
-                    self.stop_one(app, item).await;
+                    self.stop_one(sink, item).await;
                     if let Some(m) = member_status.get_mut(&item.ref_id) {
                         m.status = StackMemberStatus::Stopped;
                     }
                 }
                 // 组拉起的组外依赖一并回滚
                 for dep in managed_external.iter().rev() {
-                    self.stop_external(app, dep).await;
+                    self.stop_external(sink, dep).await;
                     if let Some(m) = member_status.get_mut(dep) {
                         m.status = StackMemberStatus::Stopped;
                     }
                 }
                 let _ = self.set_managed_externals(&stack.id, vec![]);
                 self.emit(
-                    app,
+                    sink,
                     &stack.id,
                     StackMemberStatus::Failed,
                     member_status.values().cloned().collect(),
@@ -580,7 +580,7 @@ impl StackManager {
             &t0,
         );
         self.emit(
-            app,
+            sink,
             &stack.id,
             StackMemberStatus::Running,
             member_status.values().cloned().collect(),
@@ -596,7 +596,7 @@ impl StackManager {
     /// 4. 失败按 `retry` 重试（R10）。
     async fn start_one(
         &self,
-        app: &AppHandle,
+        sink: &Arc<dyn EventSink>,
         stack: &Stack,
         item: StackItem,
     ) -> Result<(), String> {
@@ -620,7 +620,7 @@ impl StackManager {
         let max_attempts = 1 + item.retry;
         let mut last_err: Option<String> = None;
         for attempt in 0..max_attempts {
-            match self.start_once(app, &item).await {
+            match self.start_once(sink, &item).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     last_err = Some(e);
@@ -640,7 +640,7 @@ impl StackManager {
 
     /// 实际执行一次启动（不含重试），返回是否成功。
     /// 服务组拉起的成员也是用户可见的启动动作，补记操作结果（否则操作记录缺失）。
-    async fn start_once(&self, app: &AppHandle, item: &StackItem) -> Result<(), String> {
+    async fn start_once(&self, sink: &Arc<dyn EventSink>, item: &StackItem) -> Result<(), String> {
         match item.ref_type {
             StackItemRefType::Software => {
                 match self.software_mgr.find_installed(&item.ref_id) {
@@ -653,7 +653,7 @@ impl StackManager {
                         let r = async {
                             sw_commands::do_start_software(
                                 &self.software_mgr,
-                                app,
+                                sink,
                                 &item.ref_id,
                                 None,
                             )
@@ -676,7 +676,7 @@ impl StackManager {
                         &item.ref_id,
                         &self.springboot_mgr,
                         &self.software_mgr,
-                        app,
+                        sink,
                     )
                     .await
                     .map_err(|e| format!("启动 Spring Boot {} 失败: {}", item.ref_id, e));
@@ -805,7 +805,7 @@ impl StackManager {
     }
 
     /// 启动单个外部依赖（复用成员启动逻辑；已在运行则跳过）
-    async fn start_external(&self, app: &AppHandle, ref_id: &str) -> Result<(), String> {
+    async fn start_external(&self, sink: &Arc<dyn EventSink>, ref_id: &str) -> Result<(), String> {
         let rt = self
             .resolve_ref_type(ref_id)
             .ok_or_else(|| format!("未找到依赖软件: {}", ref_id))?;
@@ -820,13 +820,13 @@ impl StackManager {
             enabled: true,
             retry: 0,
         };
-        self.start_once(app, &item)
+        self.start_once(sink, &item)
             .await
             .map_err(|e| format!("外部依赖 {} 启动失败: {}", ref_id, e))
     }
 
     /// 停止单个外部依赖（仅对组拉起的调用；按 ref_id 解析类型后复用 stop_one）
-    async fn stop_external(&self, app: &AppHandle, ref_id: &str) {
+    async fn stop_external(&self, sink: &Arc<dyn EventSink>, ref_id: &str) {
         if let Some(rt) = self.resolve_ref_type(ref_id) {
             let item = StackItem {
                 ref_type: rt,
@@ -836,12 +836,12 @@ impl StackManager {
                 enabled: true,
                 retry: 0,
             };
-            self.stop_one(app, &item).await;
+            self.stop_one(sink, &item).await;
         }
     }
 
     /// 一键停止：逆序优雅停止（按拓扑分层逆序，后启动的先停）
-    pub async fn stop(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+    pub async fn stop(&self, sink: &Arc<dyn EventSink>, id: &str) -> Result<(), String> {
         let stack = self.get(id).ok_or_else(|| format!("未找到栈: {}", id))?;
 
         // 逆序：有拓扑计划则按分层逆序，否则按成员逆序
@@ -856,7 +856,7 @@ impl StackManager {
                 .iter()
                 .find(|it| &it.ref_id == ref_id && it.enabled)
             {
-                self.stop_one(app, item).await;
+                self.stop_one(sink, item).await;
             }
         }
 
@@ -865,7 +865,7 @@ impl StackManager {
         let managed = stack.managed_externals.clone().unwrap_or_default();
         if !managed.is_empty() {
             for dep in managed.iter().rev() {
-                self.stop_external(app, dep).await;
+                self.stop_external(sink, dep).await;
             }
             let _ = self.set_managed_externals(&stack.id, vec![]);
         }
@@ -884,18 +884,18 @@ impl StackManager {
             status: StackMemberStatus::Stopped,
             message: String::new(),
         }));
-        self.emit(app, &stack.id, StackMemberStatus::Stopped, members);
+        self.emit(sink, &stack.id, StackMemberStatus::Stopped, members);
         Ok(())
     }
 
     /// 一键重启：先停后起，返回新启动计划
-    pub async fn restart(&self, app: &AppHandle, id: &str) -> Result<StackStartPlan, String> {
-        self.stop(app, id).await?;
-        self.start(app, id).await
+    pub async fn restart(&self, sink: &Arc<dyn EventSink>, id: &str) -> Result<StackStartPlan, String> {
+        self.stop(sink, id).await?;
+        self.start(sink, id).await
     }
 
     /// 停止单个成员（逆序编排的最小单元）
-    async fn stop_one(&self, app: &AppHandle, item: &StackItem) {
+    async fn stop_one(&self, sink: &Arc<dyn EventSink>, item: &StackItem) {
         match item.ref_type {
             StackItemRefType::Software => {
                 let sw = self.software_mgr.find_installed(&item.ref_id);
@@ -920,7 +920,7 @@ impl StackManager {
                         .ok();
                     lifecycle::unregister(&item.ref_id);
                     lifecycle::emit_status_changed(
-                        app,
+                        sink,
                         &item.ref_id,
                         SoftwareStatus::Stopped,
                         None,
@@ -940,7 +940,7 @@ impl StackManager {
                     )
                     .ok();
                 lifecycle::emit_status_changed(
-                    app,
+                    sink,
                     &item.ref_id,
                     SoftwareStatus::Stopping,
                     None,
@@ -967,7 +967,7 @@ impl StackManager {
                     .ok();
                 lifecycle::unregister(&item.ref_id);
                 lifecycle::emit_status_changed(
-                    app,
+                    sink,
                     &item.ref_id,
                     SoftwareStatus::Stopped,
                     None,
@@ -979,7 +979,7 @@ impl StackManager {
                     &item.ref_id,
                     &self.springboot_mgr,
                     &self.software_mgr,
-                    app,
+                    sink,
                 )
                 .await;
             }
@@ -1024,7 +1024,7 @@ impl StackManager {
 
     fn emit(
         &self,
-        app: &AppHandle,
+        sink: &Arc<dyn EventSink>,
         stack_id: &str,
         status: StackMemberStatus,
         members: Vec<StackMemberRuntime>,
@@ -1034,9 +1034,8 @@ impl StackManager {
             status,
             members,
         };
-        if let Err(e) = app.emit("stack-status-changed", event) {
-            tracing::warn!(error = %e, stack_id = %stack_id, "emit stack-status-changed 失败");
-        }
+        // 结构体负载 → JSON 对象，用 emit_ser 保持与Tauri app.emit 一致的形状。
+        sink.emit_ser("stack-status-changed", event);
     }
 }
 

@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
+
+use opx_core::event::{EventSink, EventSinkExt};
 
 use opx_core::models::software::SoftwareStatus;
 use opx_core::models::springboot::AppStatus;
@@ -24,7 +26,7 @@ pub async fn start_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
     software_mgr: &SoftwareManager,
-    app_handle: &AppHandle,
+    sink: &Arc<dyn EventSink>,
 ) -> Result<(), String> {
     let app = springboot_mgr.find_app(app_id).map_err(|e| e.to_string())?;
 
@@ -47,7 +49,7 @@ pub async fn start_app(
     springboot_mgr
         .update_status(app_id, AppStatus::Starting, None, None)
         .map_err(|e| e.to_string())?;
-    let _ = app_handle.emit(
+    sink.emit_ser(
         "springboot-status-changed",
         (app_id.to_string(), "Starting", None::<u32>, None::<String>),
     );
@@ -135,7 +137,7 @@ pub async fn start_app(
             springboot_mgr
                 .update_status(app_id, AppStatus::Error, Some(pid), Some("进程意外退出".to_string()))
                 .ok();
-            let _ = app_handle.emit(
+            sink.emit_ser(
                 "springboot-status-changed",
                 (app_id.to_string(), "Error", Some(pid), Some("进程意外退出".to_string())),
             );
@@ -160,7 +162,7 @@ pub async fn start_app(
                 springboot_mgr
                     .update_status(app_id, AppStatus::Running, Some(pid), None)
                     .map_err(|e| e.to_string())?;
-                let _ = app_handle.emit(
+                sink.emit_ser(
                     "springboot-status-changed",
                     (app_id.to_string(), "Running", Some(pid), None::<String>),
                 );
@@ -171,7 +173,7 @@ pub async fn start_app(
             springboot_mgr
                 .update_status(app_id, AppStatus::Running, Some(pid), None)
                 .map_err(|e| e.to_string())?;
-            let _ = app_handle.emit(
+            sink.emit_ser(
                 "springboot-status-changed",
                 (app_id.to_string(), "Running", Some(pid), None::<String>),
             );
@@ -184,7 +186,7 @@ pub async fn start_app(
     springboot_mgr
         .update_status(app_id, AppStatus::Error, Some(pid), Some("启动超时（5min），请检查日志".to_string()))
         .map_err(|e| e.to_string())?;
-    let _ = app_handle.emit(
+    sink.emit_ser(
         "springboot-status-changed",
         (app_id.to_string(), "Error", Some(pid), Some("启动超时（5min），请检查日志".to_string())),
     );
@@ -267,7 +269,7 @@ pub async fn stop_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
     software_mgr: &SoftwareManager,
-    app_handle: &AppHandle,
+    sink: &Arc<dyn EventSink>,
 ) -> Result<StopOutcome, String> {
     let app = springboot_mgr.find_app(app_id).map_err(|e| e.to_string())?;
 
@@ -278,7 +280,7 @@ pub async fn stop_app(
     springboot_mgr
         .update_status(app_id, AppStatus::Stopping, None, None)
         .map_err(|e| e.to_string())?;
-    let _ = app_handle.emit(
+    sink.emit_ser(
         "springboot-status-changed",
         (app_id.to_string(), "Stopping", None::<u32>, None::<String>),
     );
@@ -372,7 +374,7 @@ pub async fn stop_app(
     springboot_mgr
         .update_status(app_id, AppStatus::Stopped, None, None)
         .map_err(|e| e.to_string())?;
-    let _ = app_handle.emit(
+    sink.emit_ser(
         "springboot-status-changed",
         (app_id.to_string(), "Stopped", None::<u32>, None::<String>),
     );
@@ -404,11 +406,11 @@ pub async fn restart_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
     software_mgr: &SoftwareManager,
-    app_handle: &AppHandle,
+    sink: &Arc<dyn EventSink>,
 ) -> Result<StopOutcome, String> {
-    let outcome = stop_app(app_id, springboot_mgr, software_mgr, app_handle).await?;
+    let outcome = stop_app(app_id, springboot_mgr, software_mgr, sink).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    start_app(app_id, springboot_mgr, software_mgr, app_handle).await?;
+    start_app(app_id, springboot_mgr, software_mgr, sink).await?;
     Ok(outcome)
 }
 

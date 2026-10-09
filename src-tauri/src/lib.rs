@@ -111,14 +111,14 @@ pub fn run() {
 
             // 统一启动编排：把软件/Node/Stack 的 auto_start 收敛为单一有序序列，
             // 失败逆序回滚已拉起项，产出并持久化启动报告。后台异步执行。
-            let app_handle_for_boot = app.handle().clone();
+            let sink_for_boot = event_sink.clone();
             let sw_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
                 .clone();
             // 定时备份调度（复用协调器拿到的 software Arc clone）
             let bs_manager = sw_mgr_arc.clone();
-            let bs_app = app.handle().clone();
+            let bs_sink = event_sink.clone();
             let stack_mgr_arc = app
                 .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
                 .inner()
@@ -130,16 +130,16 @@ pub fn run() {
                     sw_mgr_arc,
                     node_mgr_arc,
                     stack_mgr_arc,
-                    app_handle_for_boot,
+                    sink_for_boot,
                     node_exe_for_boot,
                 )
                 .await;
             });
 
-            // 定时备份调度：后台循环按配置间隔自动对实例做 Hot 快照
+            // 定时备份调度：后台循环按配置间隔自动对实例做Hot 快照
             tauri::async_runtime::spawn(async move {
                 crate::services::software_manager::backup_scheduler::run_scheduler(
-                    bs_manager, bs_app,
+                    bs_manager, bs_sink,
                 )
                 .await;
             });
@@ -175,14 +175,14 @@ pub fn run() {
                 .inner()
                 .clone();
             let wd_node = node_mgr.clone();
-            let wd_app = app.handle().clone();
+            let wd_sink = event_sink.clone();
             let wd_node_exe = node_exe.clone();
             tauri::async_runtime::spawn(async move {
                 crate::services::watchdog::run_watchdog(
                     wd_software,
                     wd_springboot,
                     wd_node,
-                    wd_app,
+                    wd_sink,
                     wd_node_exe,
                 )
                 .await;

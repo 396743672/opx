@@ -83,7 +83,10 @@ fn should_backup(installed_id: &str, minutes: u64) -> anyhow::Result<bool> {
 }
 
 /// 后台调度主循环：每 `CHECK_INTERVAL_SECS` 检查一次所有已启用实例
-pub async fn run_scheduler(manager: std::sync::Arc<SoftwareManager>, app: tauri::AppHandle) {
+pub async fn run_scheduler(
+    manager: std::sync::Arc<SoftwareManager>,
+    sink: std::sync::Arc<dyn opx_core::event::EventSink>,
+) {
     const CHECK_INTERVAL_SECS: u64 = 60;
     let mut tick = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
     // 首次立即执行，避免等待一个完整周期
@@ -111,7 +114,7 @@ pub async fn run_scheduler(manager: std::sync::Arc<SoftwareManager>, app: tauri:
                 .unwrap_or_default()
                 .snapshot_keep
                 .max(1) as usize;
-            match backup::create_snapshot(&manager, &app, &sw.id, BackupMode::Hot, None, None, max_keep) {
+            match backup::create_snapshot(&manager, &sink, &sw.id, BackupMode::Hot, None, None, max_keep) {
                 Ok(meta) => {
                     tracing::info!(installed_id = %sw.id, snapshot = %meta.id, "定时备份完成");
                 }

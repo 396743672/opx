@@ -17,7 +17,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tauri::Emitter;
+use opx_core::event::{EventSink, EventSinkExt};
 
 use opx_core::models::startup::{
     KIND_NODE, KIND_SOFTWARE, KIND_STACK, StartupItemReport, StartupItemStatus, StartupReport,
@@ -189,7 +189,7 @@ struct ManagerStartup {
     software: Arc<SoftwareManager>,
     node: Arc<NodeAppManager>,
     stack: Arc<StackManager>,
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     node_exe: Option<PathBuf>,
 }
 
@@ -199,7 +199,7 @@ impl StartupAction for ManagerStartup {
             match target.kind.as_str() {
                 KIND_SOFTWARE => crate::commands::software::do_start_software(
                     &self.software,
-                    &self.app,
+                    &self.sink,
                     &target.id,
                     None,
                 )
@@ -211,7 +211,7 @@ impl StartupAction for ManagerStartup {
                 },
                 KIND_STACK => self
                     .stack
-                    .start(&self.app, &target.id)
+                    .start(&self.sink, &target.id)
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string()),
@@ -230,7 +230,7 @@ impl StartupAction for ManagerStartup {
                 KIND_NODE => self.node.stop(&target.id).map_err(|e| e.to_string()),
                 KIND_STACK => self
                     .stack
-                    .stop(&self.app, &target.id)
+                    .stop(&self.sink, &target.id)
                     .await
                     .map_err(|e| e.to_string()),
                 other => Err(format!("未知启动项类型: {}", other)),
@@ -262,7 +262,7 @@ pub async fn run_bootstrap(
     software: Arc<SoftwareManager>,
     node: Arc<NodeAppManager>,
     stack: Arc<StackManager>,
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     node_exe: Option<PathBuf>,
 ) {
     let mut candidates: Vec<StartupCandidate> = Vec::new();
@@ -298,14 +298,14 @@ pub async fn run_bootstrap(
         software,
         node,
         stack,
-        app: app.clone(),
+        sink: sink.clone(),
         node_exe,
     };
-    let app_for_progress = app.clone();
+    // 闭包需move 进 run_plan，故先clone 出owned 的 sink（直接捕获 `&Arc` 会逃逸）。
+    let sink_for_progress = sink.clone();
     let on_progress = move |item: StartupItemReport| {
-        if let Err(e) = app_for_progress.emit(PROGRESS_EVENT, &item) {
-            tracing::warn!(error = %e, "推送启动进度事件失败");
-        }
+        //负载是结构体引用 → JSON 对象，用 emit_ser 保持与原Tauri emit 一致的形状。
+        sink_for_progress.emit_ser(PROGRESS_EVENT, &item);
     };
 
     let report = run_plan(plan, &action, &on_progress).await;

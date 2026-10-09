@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::Emitter;
-
+use opx_core::event::{EventSink, EventSinkExt};
 use opx_core::models::software::SoftwareStatus;
 use opx_core::models::springboot::AppStatus;
 use crate::services::node_app_manager::NodeAppManager;
@@ -99,21 +98,21 @@ pub async fn run_watchdog(
     software: Arc<SoftwareManager>,
     springboot: Arc<SpringBootManager>,
     node: Arc<NodeAppManager>,
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     node_exe: Option<PathBuf>,
 ) {
     let mut state = WatchdogState::new();
     loop {
         tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
-        watch_software(&software, &app, &mut state).await;
-        watch_springboot(&software, &springboot, &app, &mut state).await;
-        watch_node(&node, &app, node_exe.as_deref(), &mut state).await;
+        watch_software(&software, &sink, &mut state).await;
+        watch_springboot(&software, &springboot, &sink, &mut state).await;
+        watch_node(&node, &sink, node_exe.as_deref(), &mut state).await;
     }
 }
 
 async fn watch_software(
     software: &Arc<SoftwareManager>,
-    app: &tauri::AppHandle,
+    sink: &Arc<dyn EventSink>,
     state: &mut WatchdogState,
 ) {
     for sw in software.get_installed() {
@@ -137,7 +136,7 @@ async fn watch_software(
                 Some(msg.clone()),
             );
             crate::services::software_manager::lifecycle::emit_status_changed(
-                app,
+                sink,
                 &sw.id,
                 SoftwareStatus::Error,
                 None,
@@ -167,13 +166,13 @@ async fn watch_software(
                     Some(msg.clone()),
                 );
                 crate::services::software_manager::lifecycle::emit_status_changed(
-                    app,
+                    sink,
                     &sw.id,
                     SoftwareStatus::Error,
                     None,
                     Some(msg),
                 );
-                let _ = app.emit(
+                sink.emit_ser(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "software", "id": sw.id, "name": sw.name }),
                 );
@@ -191,7 +190,7 @@ async fn watch_software(
             None,
         );
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
-        match crate::commands::software::do_start_software(software, app, &sw.id, None).await {
+        match crate::commands::software::do_start_software(software, sink, &sw.id, None).await {
             Ok(_) => {
                 crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
@@ -208,7 +207,7 @@ async fn watch_software(
 async fn watch_springboot(
     software: &Arc<SoftwareManager>,
     springboot: &Arc<SpringBootManager>,
-    app: &tauri::AppHandle,
+    sink: &Arc<dyn EventSink>,
     state: &mut WatchdogState,
 ) {
     for sb in springboot.snapshot_apps() {
@@ -223,11 +222,12 @@ async fn watch_springboot(
         if is_dead_without_autorestart(sb.auto_restart, running, sb.pid, alive) {
             let msg = format!("{} 进程已退出", sb.name);
             let _ = springboot.update_status(&sb.id, AppStatus::Error, None, Some(msg.clone()));
-            let _ = app.emit(
+            // 🚨 元组负载 → JSON 数组，必须用 emit_ser 保持形状。
+            sink.emit_ser(
                 "springboot-status-changed",
                 (sb.id.clone(), "Error", None::<u32>, Some(msg)),
             );
-            let _ = app.emit(
+            sink.emit_ser(
                 "process-exited",
                 serde_json::json!({ "kind": "springboot", "id": sb.id, "name": sb.name }),
             );
@@ -247,11 +247,12 @@ async fn watch_springboot(
             {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
                 let _ = springboot.update_status(&sb.id, AppStatus::Error, None, Some(msg.clone()));
-                let _ = app.emit(
+                // 🚨 元组负载 → JSON 数组，必须用 emit_ser 保持形状。
+                sink.emit_ser(
                     "springboot-status-changed",
                     (sb.id.clone(), "Error", None::<u32>, Some(msg)),
                 );
-                let _ = app.emit(
+                sink.emit_ser(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "springboot", "id": sb.id, "name": sb.name }),
                 );
@@ -263,7 +264,7 @@ async fn watch_springboot(
         let _ = springboot.update_status(&sb.id, AppStatus::Stopped, None, None);
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match crate::services::springboot_manager::lifecycle::start_app(
-            &sb.id, springboot, software, app,
+            &sb.id, springboot, software, sink,
         )
         .await
         {
@@ -282,7 +283,7 @@ async fn watch_springboot(
 
 async fn watch_node(
     node: &Arc<NodeAppManager>,
-    app: &tauri::AppHandle,
+    sink: &Arc<dyn EventSink>,
     node_exe: Option<&std::path::Path>,
     state: &mut WatchdogState,
 ) {
@@ -303,7 +304,7 @@ async fn watch_node(
                 None,
                 Some(msg),
             );
-            let _ = app.emit(
+            sink.emit_ser(
                 "process-exited",
                 serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
             );
@@ -323,7 +324,7 @@ async fn watch_node(
             {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
                 let _ = node.set_status(&na.id, opx_core::models::node_app::NodeAppStatus::Error, None, Some(msg));
-                let _ = app.emit(
+                sink.emit_ser(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
                 );

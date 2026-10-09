@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Local;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
+
+use opx_core::event::{EventSink, EventSinkExt};
 
 use opx_core::models::software::{
     BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams,
@@ -21,6 +23,18 @@ use crate::services::software_manager::{
 };
 use opx_core::utils::topo::topo_layers;
 use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
+
+/// 把壳层的 [`AppHandle`] 转成core 的事件通道，供服务层（零tauri 依赖）使用。
+///
+/// ## 为什么需要这个助手
+/// `Arc<TauriEventSink>` **不会**自动 coerce 成 `Arc<dyn EventSink>`
+/// （unsized coercion 只对直接类型生效，不穿透 `Arc`）。若在每个调用点写
+/// `Arc::new(TauriEventSink::new(app.clone()))` 再靠期望类型推断，泛型/闭包
+/// 场景下极易推断失败或退化成 `Arc<TauriEventSink>`。集中在此转换一次，
+/// 调用点只写 `&sink_of(&app)`。
+fn sink_of(app: &AppHandle) -> Arc<dyn EventSink> {
+    Arc::new(crate::event_sink::TauriEventSink::new(app.clone()))
+}
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -63,7 +77,7 @@ pub async fn refresh_catalog(
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
     catalog::save_catalog_cache(&merged); // ponytail: 缓存到文件
-    let _ = app.emit("catalog-refreshed", merged.entries.clone());
+    sink_of(&app).emit_ser("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
 }
 
@@ -148,7 +162,7 @@ pub async fn install_software(
     installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
-    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app));
+    let sink = sink_of(&app);
     tauri::async_runtime::spawn(async move {
         installer::install_software(sink, manager_arc, params, install_id_for_task).await;
     });
@@ -172,18 +186,20 @@ pub async fn upgrade_software(
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let install_id_for_task = install_id.clone();
+    // spawn 需 'static：先构造owned 的事件通道再move 进去。
+    let sink = sink_of(&app);
     tauri::async_runtime::spawn(async move {
         let audit_target_for_task = audit_target.clone();
         let r = do_upgrade(
             &manager_arc,
-            &app,
+            &sink,
             &installed_id_for_task,
             &install_id_for_task,
         )
         .await;
         oplog_result!("upgrade", &audit_target_for_task, "", r);
         if let Err(ref e) = r {
-            let _ = app.emit(
+            sink.emit_ser(
                 "install-progress",
                 serde_json::json!({
                     "install_id": install_id_for_task,
@@ -200,7 +216,7 @@ pub async fn upgrade_software(
 /// 替换式升级核心流程（供 upgrade_software 后台任务执行）
 async fn do_upgrade(
     manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     installed_id: &str,
     install_id: &str,
 ) -> anyhow::Result<()> {
@@ -307,11 +323,10 @@ async fn do_upgrade(
     };
 
     // 4. 下载+解压到新目录（首选源不可达时自动回退其余可联网镜像）
-    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app.clone()));
     installer::download_with_mirror_fallback(
         &params,
         &new_install_path,
-        sink,
+        sink.clone(),
         install_id,
         version_info,
         preferred_index,
@@ -396,7 +411,7 @@ async fn do_upgrade(
     })?;
 
     // 7. emit completed（install_id 由前端 createTask 给定）
-    let _ = app.emit(
+    sink.emit_ser(
         "install-progress",
         serde_json::json!({
             "install_id": install_id,
@@ -526,7 +541,7 @@ pub async fn install_custom(
     installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
-    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app));
+    let sink = sink_of(&app);
     tauri::async_runtime::spawn(async move {
         installer::install_custom(sink, manager_arc, params, install_id_for_task).await;
     });
@@ -583,7 +598,7 @@ pub async fn uninstall_software(
             .map_err(|e| format!("卸载线程异常: {}", e))?
             .map_err(|e| e.to_string())?;
 
-        let _ = app.emit("software-uninstalled", &installed_id);
+        sink_of(&app).emit_ser("software-uninstalled", &installed_id);
         Ok(true)
     })
 }
@@ -629,14 +644,15 @@ pub async fn start_software(
 
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
-    let app_handle = app.clone();
+    // spawn 需 'static：先构造 owned 的事件通道再 move 进去。
+    let sink = sink_of(&app);
     let audit_target_task = audit_target.clone();
     let audit_detail_task = audit_detail.clone();
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
         // 依赖编排：先按拓扑序拉起未运行的依赖，再启动自身
-        if let Err(e) = ensure_dependencies(&manager_arc, &app_handle, &installed_id_for_task).await
+        if let Err(e) = ensure_dependencies(&manager_arc, &sink, &installed_id_for_task).await
         {
             let msg = format!("依赖编排失败：{}", e);
             oplog_fail!("start", &audit_target_task, &audit_detail_task, &msg);
@@ -650,7 +666,7 @@ pub async fn start_software(
                 Some(msg.clone()),
             );
             lifecycle::emit_status_changed(
-                &app_handle,
+                &sink,
                 &installed_id_for_task,
                 SoftwareStatus::Error,
                 None,
@@ -660,7 +676,7 @@ pub async fn start_software(
         }
         let result = do_start_software(
             &manager_arc,
-            &app_handle,
+            &sink,
             &installed_id_for_task,
             init_password,
         )
@@ -676,7 +692,7 @@ pub async fn start_software(
                 Some(format!("启动失败：{}", e)),
             );
             lifecycle::emit_status_changed(
-                &app_handle,
+                &sink,
                 &installed_id_for_task,
                 SoftwareStatus::Error,
                 None,
@@ -996,7 +1012,7 @@ fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result
 /// 返回本次已拉起的依赖 id 列表。
 async fn ensure_dependencies(
     manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     target_id: &str,
 ) -> anyhow::Result<Vec<String>> {
     // 1. DFS 展开依赖闭包（含 target，用于环检测；visited 防环无限递归）
@@ -1060,7 +1076,7 @@ async fn ensure_dependencies(
             // 依赖方（如 Nacos 连 MySQL）会在依赖就绪前启动而报错。
             let dep_name = sw.name.clone();
             let dep_detail = format!("{} ({}, 依赖编排)", sw.version, sw.id);
-            let outcome = match do_start_software(manager, app, dep_id, None).await {
+            let outcome = match do_start_software(manager, sink, dep_id, None).await {
                 Ok(()) => wait_dependency_ready(manager, dep_id).await,
                 Err(e) => Err(e),
             };
@@ -1105,7 +1121,7 @@ async fn wait_dependency_ready(manager: &Arc<SoftwareManager>, dep_id: &str) -> 
 /// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
 pub async fn do_start_software(
     manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     installed_id: &str,
     init_password: Option<String>,
 ) -> anyhow::Result<()> {
@@ -1235,7 +1251,7 @@ pub async fn do_start_software(
                 None,
             )?;
             lifecycle::emit_status_changed(
-                app,
+                sink,
                 installed_id,
                 SoftwareStatus::Initializing,
                 None,
@@ -1263,7 +1279,7 @@ pub async fn do_start_software(
                         Some(msg.clone()),
                     )?;
                     lifecycle::emit_status_changed(
-                        app,
+                        sink,
                         installed_id,
                         SoftwareStatus::Error,
                         None,
@@ -1347,7 +1363,7 @@ pub async fn do_start_software(
     );
 
     // emit 时 error 显式传 None（清除前端旧错误）
-    lifecycle::emit_status_changed(app, installed_id, SoftwareStatus::Starting, Some(pid), None);
+    lifecycle::emit_status_changed(sink, installed_id, SoftwareStatus::Starting, Some(pid), None);
     tracing::info!(installed_id = %installed_id, pid = pid, "start_software spawned");
 
     // 异步健康检查（30 次 × 1s 间隔，最多 30s）
@@ -1394,7 +1410,7 @@ pub async fn do_start_software(
     };
 
     let manager_clone = manager.clone();
-    let app_clone = app.clone();
+    let sink_for_check = sink.clone();
     let installed_id_clone = installed_id.to_string();
     let pid_for_check = pid;
     let init_sql_path_for_cleanup = init_sql_path.clone();
@@ -1415,7 +1431,7 @@ pub async fn do_start_software(
                 Some("进程意外退出（启动后立即崩溃，请检查端口冲突或 data 目录权限）".to_string()),
             );
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink_for_check,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 None,
@@ -1445,7 +1461,7 @@ pub async fn do_start_software(
                     None,
                 );
                 lifecycle::emit_status_changed(
-                    &app_clone,
+                    &sink_for_check,
                     &installed_id_clone,
                     SoftwareStatus::Running,
                     Some(pid),
@@ -1519,7 +1535,7 @@ pub async fn do_start_software(
                     Some("健康检查超时".to_string()),
                 );
                 lifecycle::emit_status_changed(
-                    &app_clone,
+                    &sink_for_check,
                     &installed_id_clone,
                     SoftwareStatus::Error,
                     None,
@@ -1536,7 +1552,7 @@ pub async fn do_start_software(
                     Some("进程意外退出".to_string()),
                 );
                 lifecycle::emit_status_changed(
-                    &app_clone,
+                    &sink_for_check,
                     &installed_id_clone,
                     SoftwareStatus::Error,
                     None,
@@ -1601,6 +1617,7 @@ pub async fn stop_software(
 
     audited_async!("stop", target, detail, {
         lifecycle::validate_stop_transition(software.status.clone()).map_err(|e| e.to_string())?;
+        let sink = sink_of(&app);
 
         // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
         let pid = match software.pid {
@@ -1618,7 +1635,7 @@ pub async fn stop_software(
                     .map_err(|e| e.to_string())?;
                 lifecycle::unregister(&installed_id);
                 lifecycle::emit_status_changed(
-                    &app,
+                    &sink,
                     &installed_id,
                     SoftwareStatus::Stopped,
                     None,
@@ -1639,7 +1656,7 @@ pub async fn stop_software(
                 None,
             )
             .map_err(|e| e.to_string())?;
-        lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
+        lifecycle::emit_status_changed(&sink, &installed_id, SoftwareStatus::Stopping, None, None);
 
         let pid_for_status = pid;
         // P1-3：优先语义化优雅停止（provider 关闭命令），失败/超时回退强杀；
@@ -1661,7 +1678,6 @@ pub async fn stop_software(
         };
 
         let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-        let app_clone = app.clone();
         let installed_id_clone = installed_id.clone();
 
         // 停止成功：置 Stopped。停止失败（进程仍存活）：如实反馈 Error，保留 pid 供下次 stop，
@@ -1679,7 +1695,7 @@ pub async fn stop_software(
                 .map_err(|e| e.to_string())?;
             lifecycle::unregister(&installed_id_clone);
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Stopped,
                 None,
@@ -1703,7 +1719,7 @@ pub async fn stop_software(
                 )
                 .map_err(|e| e.to_string())?;
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 Some(pid_for_status),
@@ -1753,11 +1769,11 @@ pub async fn restart_software(
         }
 
         // 再启动
-        let app_clone = app.clone();
+        let sink = sink_of(&app);
         let installed_id_clone = installed_id.clone();
         let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
         if let Err(e) =
-            do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password).await
+            do_start_software(&manager_arc, &sink, &installed_id_clone, init_password).await
         {
             // 启动失败（如端口占用）：置为 Error 并 emit，让管理页显示失败原因
             let msg = format!("启动失败：{}", e);
@@ -1770,7 +1786,7 @@ pub async fn restart_software(
                 Some(msg.clone()),
             );
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 None,
@@ -2405,7 +2421,7 @@ pub async fn create_snapshot(
 ) -> Result<SnapshotMeta, String> {
     backup::create_snapshot(
         &manager,
-        &app,
+        &sink_of(&app),
         &installed_id,
         mode,
         name,

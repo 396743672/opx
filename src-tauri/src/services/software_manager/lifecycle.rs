@@ -648,7 +648,7 @@ pub fn run_graceful_stop(cmd: &GracefulStopCommand, pid: u32) -> bool {
 // —— 事件推送 ——
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use opx_core::event::{EventSink, EventSinkExt};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SoftwareStatusEvent {
@@ -659,10 +659,13 @@ pub struct SoftwareStatusEvent {
     pub timestamp: String,
 }
 
-/// 通过 Tauri Emitter 推送 software-status-changed 事件
+/// 通过事件通道推送 software-status-changed 事件
 /// 前端 Pinia store 监听此事件实时更新 UI 状态
+///
+/// 注意：负载是结构体 `SoftwareStatusEvent`，用 [`EventSink::emit_ser`] 序列化成
+/// JSON **对象**——与迁移前 Tauri `app.emit` 的形状逐字节一致。
 pub fn emit_status_changed(
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     installed_id: &str,
     status: SoftwareStatus,
     pid: Option<u32>,
@@ -675,9 +678,8 @@ pub fn emit_status_changed(
         error,
         timestamp: chrono::Local::now().to_rfc3339(),
     };
-    if let Err(e) = app.emit("software-status-changed", event) {
-        tracing::warn!(error = %e, installed_id = %installed_id, "emit software-status-changed 失败");
-    }
+    // 推送失败（无订阅者等）不应影响业务流程，故只在 sink 侧告警。
+    sink.emit_ser("software-status-changed", event);
 }
 
 // —— 启动钩子（auto_start）与退出钩子（stop_all）——
@@ -694,7 +696,7 @@ use crate::services::software_manager::SoftwareManager;
 /// 健康检查任务在就绪后设置）再拉起下一批，使依赖拓扑在自启场景生效——
 /// 旧实现仅 sleep 500ms，不保证依赖方已就绪（下游可能连不上）。
 /// 应在 Tauri setup hook 中通过 `tauri::async_runtime::spawn` 调用。
-pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHandle) {
+pub async fn auto_start_all(manager: &Arc<SoftwareManager>, sink: &Arc<dyn EventSink>) {
     let auto_list = manager.list_auto_start();
     if auto_list.is_empty() {
         return;
@@ -709,7 +711,7 @@ pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHand
         if !pending.is_empty() && sw.startup_order != last_order {
             let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
             for s in pending.drain(..) {
-                spawn_start(manager.clone(), app.clone(), s.id).await;
+                spawn_start(manager.clone(), sink.clone(), s.id).await;
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
             // 等待上一批全部就绪（或失败/超时）后再进入下一批，依赖拓扑生效
@@ -721,7 +723,7 @@ pub async fn auto_start_all(manager: &Arc<SoftwareManager>, app: &tauri::AppHand
     // 处理剩余批次
     let ids: Vec<String> = pending.iter().map(|s| s.id.clone()).collect();
     for s in pending {
-        spawn_start(manager.clone(), app.clone(), s.id).await;
+        spawn_start(manager.clone(), sink.clone(), s.id).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     await_batch_ready(manager, &ids, 60_000).await;
@@ -765,15 +767,17 @@ async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeo
 /// 不等待 do_start_software 完成，避免单个慢启动阻塞后续实例
 async fn spawn_start(
     manager: Arc<SoftwareManager>,
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     installed_id: String,
 ) {
     let manager_clone = manager.clone();
-    let app_clone = app.clone();
+    // spawn 边界需要 'static：先 clone 出owned 的 sink 再 move 进去，
+    // 直接捕获外层 `&Arc` 会报 `sink escapes function body`。
+    let sink_clone = sink.clone();
     let id_clone = installed_id.clone();
     tokio::spawn(async move {
         let result =
-            crate::commands::software::do_start_software(&manager_clone, &app_clone, &id_clone, None)
+            crate::commands::software::do_start_software(&manager_clone, &sink_clone, &id_clone, None)
                 .await;
         if let Err(e) = result {
             tracing::error!(error = %e, installed_id = %id_clone, "auto_start failed");
@@ -789,10 +793,14 @@ pub fn sort_by_shutdown_order(procs: &mut [RegisteredProcess]) {
 
 /// 应用退出时停止所有运行中的进程（软件 + SpringBoot），逐个 emit 进度并最终 emit stop-complete。
 /// 同步调用，每个进程含 5s 优雅等待 + 强杀。
-pub fn stop_all_on_exit(app: &AppHandle) {
+///
+/// 🚨 `stop-complete` 的负载是**单元组`()`**，Tauri 会把它序列化成 JSON **数组
+/// `[]`**。必须用 `emit_ser(ev, ())` 保留该形状——若改写成 `Value::Null` 或
+/// `json!({...})`，前端收到的 JSON 会从 `[]` 变成 `null`/对象，属于静默行为变更。
+pub fn stop_all_on_exit(sink: &Arc<dyn EventSink>) {
     let mut procs = drain();
     if procs.is_empty() {
-        let _ = app.emit("stop-complete", ());
+        sink.emit_ser("stop-complete", ());
         return;
     }
     // P2-5：按 startup_order 逆序停止，依赖方（高 order）先于依赖（低 order）被杀，
@@ -802,7 +810,7 @@ pub fn stop_all_on_exit(app: &AppHandle) {
     tracing::info!(count = total, "stop_all_on_exit");
     for (i, p) in procs.iter().enumerate() {
         let (success, status) = stop_one(p.pid);
-        let _ = app.emit(
+        sink.emit_ser(
             "stop-progress",
             serde_json::json!({
                 "current": i + 1,
@@ -816,7 +824,7 @@ pub fn stop_all_on_exit(app: &AppHandle) {
             success = success, status = %status, "stopped on exit"
         );
     }
-    let _ = app.emit("stop-complete", ());
+    sink.emit_ser("stop-complete", ());
 }
 
 #[cfg(test)]

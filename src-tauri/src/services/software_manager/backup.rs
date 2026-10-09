@@ -11,7 +11,6 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use tauri::AppHandle;
 
 use opx_core::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
 use crate::services::software_manager::health_check;
@@ -187,7 +186,7 @@ fn extract_zip_to_data_dirs(
 #[allow(clippy::too_many_arguments)]
 pub fn create_snapshot(
     manager: &SoftwareManager,
-    app: &AppHandle,
+    sink: &std::sync::Arc<dyn opx_core::event::EventSink>,
     installed_id: &str,
     mode: BackupMode,
     name: Option<String>,
@@ -224,7 +223,7 @@ pub fn create_snapshot(
                     Some(Local::now().naive_local()),
                     None,
                 )?;
-                lifecycle::emit_status_changed(app, installed_id, SoftwareStatus::Stopped, None, None);
+                lifecycle::emit_status_changed(sink, installed_id, SoftwareStatus::Stopped, None, None);
             }
         }
     }
