@@ -12,18 +12,17 @@ use crate::{audited, audited_async};
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
+///
+/// 实现已下沉到 `opx_core::utils::website::resolve_nginx`。core 版收
+/// `&[InstalledSoftware]` 切片而非 `&SoftwareManager`（只用 `key` 与
+/// `install_path` 两字段），从而与 `SoftwareManager` 解耦 —— 它现在还在壳层，
+/// 但不必等它搬进 core，`acme` 就能引用本函数。
+///
+/// 本薄封装维持原签名，`regenerate` 与 `acme` 续期的调用点零改动。
 pub fn resolve_nginx(
     sm: &SoftwareManager,
 ) -> Result<opx_core::models::software::InstalledSoftware, String> {
-    let mut nginx = sm
-        .get_installed()
-        .into_iter()
-        .find(|s| s.key == "nginx")
-        .ok_or_else(|| "请先在软件管理中安装 nginx".to_string())?;
-    nginx.install_path = opx_core::utils::paths::resolve_install_path(&nginx.install_path)
-        .to_string_lossy()
-        .to_string();
-    Ok(nginx)
+    opx_core::utils::website::resolve_nginx(&sm.get_installed())
 }
 
 #[cfg(windows)]
@@ -605,30 +604,7 @@ fn sanitize_cert_name(s: &str) -> String {
 }
 
 /// 校验并规范化域名：去空白；空、含空白或路径分隔符则拒绝。
-pub(crate) fn sanitize_domain(domain: &str) -> Result<String, String> {
-    let d = domain.trim();
-    if d.is_empty() {
-        return Err("请先填写 server_name（域名）".to_string());
-    }
-    if d.chars()
-        .any(|c| c.is_whitespace() || c == '/' || c == '\\')
-    {
-        return Err(format!("域名不合法: {}", d));
-    }
-    Ok(d.to_string())
-}
-
-#[cfg(test)]
-mod domain_tests {
-    use super::sanitize_domain;
-
-    #[test]
-    fn sanitize_domain_trims_and_rejects_bad() {
-        assert_eq!(sanitize_domain("  example.com ").unwrap(), "example.com");
-        assert!(sanitize_domain("").is_err());
-        assert!(sanitize_domain("   ").is_err());
-        assert!(sanitize_domain("a b.com").is_err());
-        assert!(sanitize_domain("a/b.com").is_err());
-        assert!(sanitize_domain("a\\b.com").is_err());
-    }
-}
+///
+/// 实现已下沉到 `opx_core::utils::website::sanitize_domain`（纯字符串逻辑）。
+/// 注意 crate 边界使下沉的实现 **不携带本文件的测试模块**，故测试随之迁到 core 侧。
+pub use opx_core::utils::website::sanitize_domain;
