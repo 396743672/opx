@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, FieldRule, HealthCheckSpec, LogSource, MirrorSource,
     SoftwareCategory,
@@ -101,7 +101,7 @@ impl SoftwareProvider for PostgreSqlProvider {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 构建不再空目录）。
         // ⚠️ Linux/macOS 的 EDB 官方 URL 待跨平台环境验证（本会话仅 Windows 可验证）。
         let version = "16.4".to_string();
-        let (url, format) = archive_url_for(&version, opx_core::utils::platform::current_os());
+        let (url, format) = archive_url_for(&version, crate::utils::platform::current_os());
         let versions = vec![CatalogVersion {
             version: version.clone(),
             mirrors: vec![MirrorSource {
@@ -130,7 +130,7 @@ impl SoftwareProvider for PostgreSqlProvider {
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         let mut builder = reqwest::blocking::Client::builder()
             // blocking builder 无 read_timeout，timeout 是「连接→读体完成」的总 deadline：
             // 标签列表约 48 KB 虽小，但同一类失败（读体中途被掐断、报成 decoding 错误）
@@ -193,7 +193,7 @@ impl SoftwareProvider for PostgreSqlProvider {
             "-U".to_string(), "postgres".to_string(),
             "--encoding=UTF8".to_string(),
         ];
-        let pwfile_path = opx_core::utils::paths::tmp_dir().join(format!("pgpass-{}.tmp", ctx.installed_id));
+        let pwfile_path = crate::utils::paths::tmp_dir().join(format!("pgpass-{}.tmp", ctx.installed_id));
         let initialized = ctx.config.get("initialized").and_then(|v| v.as_bool()).unwrap_or(false);
         if initialized {
             // 已初始化不应再有初始化密码临时文件，删除可能残留的明文文件

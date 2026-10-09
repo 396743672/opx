@@ -9,5 +9,8 @@
 //!
 //! 另见 [`crate::utils::website`]：`resolve_nginx` / `sanitize_domain` 目前临时寄居
 //! 在 `utils`（它们的下沉早于本模块迁入），待本模块归位后可一并收拢。
+//!
+//! [`software_manager`] —— 软件管理的基础件（provider 目录、软件目录 catalog、日志读取）。
 
+pub mod software_manager;
 pub mod website_manager;

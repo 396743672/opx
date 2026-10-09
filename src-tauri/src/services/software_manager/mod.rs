@@ -1,17 +1,35 @@
+//! 软件管理服务（壳层残留部分）。
+//!
+//! 阶段 3 批次 3A1 已把 `providers` / `catalog` / `log_viewer` 搬进
+//! `opx_core::services::software_manager`，本模块只声明**尚未下沉的**子模块。
+//!
+//! 计划：3A2 搬 `audit` / `audit_log` / `health_check` / `process_monitor` /
+//! `netutils` / `lifecycle` 与 `SoftwareManager` 本体；3B / 3.5 搬
+//! `installer` / `backup` / `backup_scheduler` / `config_editor` / `log_watcher`。
+//!
+//! ## `lifecycle::auto_start_all` 三段是死代码（保留待清理）
+//!
+//! `auto_start_all` / `spawn_start` / `await_batch_ready`（本模块 `lifecycle.rs`
+//! 的 `:692-786`）**全仓库无调用方**——真正的软件自启走
+//! `startup_bootstrap::run_bootstrap`，它在 `startup_bootstrap.rs:200` 直接调
+//! `commands::software::do_start_software`。
+//!
+//! 这三段必须**留在壳层**：`spawn_start` 会调壳层的 `do_start_software`，
+//! 搬进 core 就形成 core → 壳层反向依赖。3B 把 `do_start_software` 搬进 core 后，
+//! 这三段的 import 需相应改指core 路径。**改的时候注意它们不是活代码**，
+//! 真正的自启逻辑在 `startup_bootstrap`，不要以为改这里会影响自启行为。
+
 pub mod audit;
 pub mod audit_log;
 pub mod backup;
 pub mod backup_scheduler;
-pub mod catalog;
 pub mod config_editor;
 pub mod health_check;
 pub mod installer;
 pub mod lifecycle;
-pub mod log_viewer;
 pub mod log_watcher;
 pub mod netutils;
 pub mod process_monitor;
-pub mod providers;
 pub mod uninstall_guard;
 
 use std::collections::HashMap;
@@ -23,6 +41,7 @@ use chrono::{Local, NaiveDateTime};
 use opx_core::models::settings::AppSettings;
 use opx_core::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList, SoftwareStatus};
 use opx_core::utils::paths;
+use opx_core::services::software_manager::catalog;
 
 /// 测试专用：串行化「真实 spawn 子进程」的测试。
 ///

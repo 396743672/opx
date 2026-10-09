@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use opx_core::models::software::{Catalog, CatalogEntry, CatalogVersion};
-use opx_core::utils::paths;
+use crate::models::software::{Catalog, CatalogEntry, CatalogVersion};
+use crate::utils::paths;
 
 use super::providers::all_providers;
 
@@ -43,7 +43,7 @@ pub async fn fetch_remote_catalog(mirror_url: &str) -> Option<Catalog> {
     let url = format!("{}/catalog.json", mirror_url.trim_end_matches('/'));
     // 走共享工厂：reqwest 默认读 ALL_PROXY 等环境变量，会把直连可通的镜像请求
     // 交给环境里的 HTTP 代理（不支持 CONNECT 到 443）而失败
-    let response = opx_core::utils::http::builder()
+    let response = crate::utils::http::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .ok()?
@@ -166,7 +166,7 @@ mod tests {
             name: key.to_string(),
             description: String::new(),
             description_i18n: None,
-            category: opx_core::models::software::SoftwareCategory::Database,
+            category: crate::models::software::SoftwareCategory::Database,
             icon: String::new(),
             versions: vec![],
             default_version: String::new(),
@@ -187,8 +187,8 @@ mod tests {
                     e.versions = vec![CatalogVersion {
                         version: "1.31.2".into(),
                         mirrors: vec![],
-                        archive: opx_core::models::software::ArchiveInfo {
-                            format: opx_core::models::software::ArchiveFormat::Zip,
+                        archive: crate::models::software::ArchiveInfo {
+                            format: crate::models::software::ArchiveFormat::Zip,
                             size: None,
                             sha256: None,
                         },
@@ -223,8 +223,8 @@ mod tests {
                     e.versions = vec![CatalogVersion {
                         version: "4.3.1".into(),
                         mirrors: vec![],
-                        archive: opx_core::models::software::ArchiveInfo {
-                            format: opx_core::models::software::ArchiveFormat::TarGz,
+                        archive: crate::models::software::ArchiveInfo {
+                            format: crate::models::software::ArchiveFormat::TarGz,
                             size: None,
                             sha256: None,
                         },

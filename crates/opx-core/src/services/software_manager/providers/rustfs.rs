@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, FieldRule, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -87,7 +87,7 @@ fn parse_stable_releases(releases: &[serde_json::Value], os: &str) -> Vec<Catalo
             },
         });
     }
-    out.sort_by(|a, b| crate::commands::software::compare_versions(&b.version, &a.version));
+    out.sort_by(|a, b| crate::utils::semver::compare_versions(&b.version, &a.version));
     out.truncate(REMOTE_MAX_VERSIONS);
     out
 }
@@ -126,7 +126,7 @@ impl SoftwareProvider for RustfsProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
         // 版本固定为 1.0.0 而非 "latest"——latest 内容可变，与 sha256 校验、断点续传的前提冲突。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         const VER: &str = "1.0.0";
         let name = asset_name(VER, os);
         let mut mirrors = vec![MirrorSource {
@@ -177,7 +177,7 @@ impl SoftwareProvider for RustfsProvider {
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // P2-1：远程发现同样按运行时 OS 选包（原硬编码 windows 资产名）。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         {
             let client = reqwest::blocking::Client::builder()
                 // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持 CONNECT 的 HTTP 代理，

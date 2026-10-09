@@ -15,7 +15,7 @@ use chrono::Local;
 use opx_core::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
-use crate::services::software_manager::providers::{all_providers, DataDirContext};
+use opx_core::services::software_manager::providers::{all_providers, DataDirContext};
 use crate::services::software_manager::SoftwareManager;
 use opx_core::utils::paths;
 

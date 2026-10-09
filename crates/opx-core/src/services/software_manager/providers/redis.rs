@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, MirrorSource, SoftwareCategory,
 };
@@ -54,7 +54,7 @@ impl SoftwareProvider for RedisProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选包（Windows 预编译 zip / *nix 官方源码 tar.gz，装后编译）。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         let mirror_name = if os == "windows" { "i18n:redisWindowsGithub" } else { "i18n:official" };
         let versions = ["8.8.0", "8.2.7", "7.4.9"]
             .iter()
@@ -115,7 +115,7 @@ impl SoftwareProvider for RedisProvider {
 
         // P2-1：非 Windows 走官方源码包 → 在此编译出 `src/redis-server`（上游无预编译二进制）。
         // 依赖目标机 gcc/make，缺失时 run_build_steps 给出明确错误。
-        if opx_core::utils::platform::current_os() != "windows" {
+        if crate::utils::platform::current_os() != "windows" {
             let steps: &[(&str, &[&str])] = &[("make", &[])];
             super::run_build_steps(ctx.install_dir(), "Redis", steps)?;
         }
@@ -185,7 +185,7 @@ impl SoftwareProvider for RedisProvider {
         // 直接传 "redis.conf" 即可。
         Ok(StartCommand {
             // P2-1：*nix 上源码编译产物在 <install>/src/redis-server；Windows 为包内 redis-server.exe。
-            program: if opx_core::utils::platform::current_os() == "windows" {
+            program: if crate::utils::platform::current_os() == "windows" {
                 exe_name("redis-server")
             } else {
                 PathBuf::from(&ctx.install_path)

@@ -95,7 +95,7 @@ pub fn drain() -> Vec<RegisteredProcess> {
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-use crate::services::software_manager::providers::{FirstRunInit, GracefulStopCommand, StartCommand};
+use opx_core::services::software_manager::providers::{FirstRunInit, GracefulStopCommand, StartCommand};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -689,7 +689,37 @@ use std::sync::Arc;
 use opx_core::models::software::InstalledSoftware;
 use crate::services::software_manager::SoftwareManager;
 
+// ============================================================================
+// ⚠️ 以下三段（`auto_start_all` / `await_batch_ready` / `spawn_start`）是死代码
+// ============================================================================
+//
+//阶段 3 批次 3A1 确认：**全仓库无外部调用方**。
+// `grep -rn "auto_start_all|spawn_start|await_batch_ready"` 的全部命中都在本文件内
+// （互相调用），外部只有 `node_app_manager::auto_start_all` 与
+// `stack_manager::auto_start_all` 两个**同名但不同类型**的方法，与本段无关。
+//
+// **真正的软件自启路径**是 `startup_bootstrap::run_bootstrap`：它在
+// `startup_bootstrap.rs:200` 直接调用 `commands::software::do_start_software`，
+// 与 `lib.rs:112` 注释所述「把软件 / Node 应用 / 服务组 Stack 三路 auto_start
+// 收敛为单一有序序列」一致。本段是那次收敛之前的旧实现残留。
+//
+// ## 为什么留在壳层（3A2 决策：方案 B）
+//
+// `spawn_start` 内调用壳层的 `crate::commands::software::do_start_software`。
+// 若整段搬进 `opx-core`，就会形成 **core → 壳层反向依赖**，违反依赖单向原则。
+// 故 3A2 搬 `lifecycle.rs` 其余部分时，把本段整体留下。
+//
+// ## 3B 搬 `do_start_software` 时注意
+//
+// 该函数搬进 core 后，本段的调用需改指core 路径（与 `lifecycle.rs` 其余部分
+// 拆分后的 `use` 语句一起调整）。**但请注意本段不是活代码**——真正的自启在
+// `startup_bootstrap`，改动这里不会影响自启行为。清理见另起的一轮死代码清理。
+//
+// ============================================================================
+
 /// 应用启动时按 startup_order 拉起 auto_start=true 的实例
+///
+/// ⚠️ **死代码**：无调用方，实际自启走 `startup_bootstrap::run_bootstrap`。见上方说明。
 ///
 /// 同 startup_order 的实例会被分组并发拉起（不等单个完成，仅 sleep 500ms 间隔）；
 /// 不同 startup_order 的批次之间会等待上一批「真正就绪」（status==Running，由后台
@@ -732,6 +762,8 @@ pub async fn auto_start_all(manager: &Arc<SoftwareManager>, sink: &Arc<dyn Event
 /// 等待一批自启实例真正就绪：轮询各自 status，直到全部 Running（依赖拓扑生效）、
 /// 或任一进入 Error、或超时。status==Running 仅在健康检查通过后由后台任务设置，
 /// 故轮询它等价于等待就绪，无需改动 do_start_software 的「提前返回」契约。
+///
+/// ⚠️ **死代码**：仅被 `auto_start_all` 调用，而后者无调用方。见上方说明。
 async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeout_ms: u64) {
     let start = std::time::Instant::now();
     let deadline = std::time::Duration::from_millis(timeout_ms);
@@ -765,6 +797,9 @@ async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeo
 
 /// spawn 单个 auto_start 任务（fire-and-forget）
 /// 不等待 do_start_software 完成，避免单个慢启动阻塞后续实例
+///
+/// ⚠️ **死代码**：仅被 `auto_start_all` 调用，而后者无调用方。见上方说明。
+/// 3B 搬 `do_start_software` 进 core 后，本函数体里的调用需改指 core 路径。
 async fn spawn_start(
     manager: Arc<SoftwareManager>,
     sink: Arc<dyn EventSink>,

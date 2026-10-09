@@ -13,14 +13,15 @@ use opx_core::models::software::{
     SnapshotMeta, SoftwareStatus, UninstallSafetyReport,
 };
 use crate::services::software_manager::config_editor::FormData;
-use crate::services::software_manager::providers::custom_templates;
-use crate::services::software_manager::providers::{
+use opx_core::services::software_manager::providers::custom_templates;
+use opx_core::services::software_manager::providers::{
     ConfigContext, DataDirContext, HealthContext, StartContext,
 };
 use crate::services::software_manager::{
-    backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
-    log_viewer, providers, uninstall_guard, SoftwareManager,
+    backup, backup_scheduler, config_editor, health_check, installer, lifecycle,
+    uninstall_guard, SoftwareManager,
 };
+use opx_core::services::software_manager::{catalog, log_viewer, providers};
 use opx_core::utils::topo::topo_layers;
 use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
@@ -2304,7 +2305,10 @@ pub async fn get_log_sources(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<Vec<LogSource>, String> {
-    log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())
 }
 
 /// 读取日志（tail / 增量 / 历史分页 + 关键字/正则/级别过滤）
@@ -2328,9 +2332,11 @@ pub async fn read_log(
     let limit = limit.map(|l| l as usize).unwrap_or(2000);
     let before = before.unwrap_or(false);
     let archive_index = archive_index.unwrap_or(0);
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
     log_viewer::read_log(
-        &manager,
-        &installed_id,
+        &sw,
         source_index,
         offset,
         before,
@@ -2351,8 +2357,10 @@ pub async fn download_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources =
-        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let sources = log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -2367,8 +2375,10 @@ pub async fn export_combined_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources =
-        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let sources = log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -2389,7 +2399,7 @@ pub async fn search_all_logs(
     total_limit: Option<usize>,
 ) -> Result<Vec<opx_core::models::software::LogHit>, String> {
     Ok(log_viewer::search_all(
-        &manager,
+        &manager.get_installed(),
         &keyword,
         per_source_limit.unwrap_or(50),
         total_limit.unwrap_or(200),

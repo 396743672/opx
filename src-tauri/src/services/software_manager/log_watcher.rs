@@ -2,6 +2,17 @@
 //!
 //! ponytail: 使用全局单例 + 后台线程。前端在查看某日志源时注册路径，收到事件即增量读取；
 //! 关闭/切源时注销。轮询仍保留为兜底，监听仅为「即时触发」。
+//!
+//! ## ⚠️ 死代码（阶段 3批次 3A1 确认，保留待清理）
+//!
+//! 本模块**全仓库零调用方**——`grep log_watcher` 只命中 `software_manager/mod.rs`
+//! 里的 `pub mod` 声明，没有任何实际调用点。
+//!
+//! 因此阶段 3 搬迁时**刻意不搬本文件**：搬它需要给 `opx-core` 新增 `notify` 依赖
+//! 却零收益（无调用方）。故保留在壳层，与同模块下`lifecycle.rs` 的
+//! `auto_start_all` 三段同属「死代码保留待清理」一类。
+//!
+//! 后续清理轮次可考虑：要么接上前端真正用它，要么整体删除。
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};

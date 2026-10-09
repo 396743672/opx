@@ -387,7 +387,7 @@ pub async fn list_springboot_log_sources(
     } else {
         abs
     };
-    Ok(crate::services::software_manager::log_viewer::collect_springboot_sources(&dir))
+    Ok(opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir))
 }
 
 /// 读取应用日志（tail / 增量 / 历史分页 + 关键字过滤 + 归档无缝续接）
@@ -412,14 +412,14 @@ pub async fn read_springboot_log(
     } else {
         abs
     };
-    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let sources = opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir);
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
     let archive_index = archive_index.unwrap_or(0);
     let limit = limit.map(|l| l as usize).unwrap_or(2000);
     let before = before.unwrap_or(false);
-    crate::services::software_manager::log_viewer::read_springboot_chunk(
+    opx_core::services::software_manager::log_viewer::read_springboot_chunk(
         std::path::Path::new(&source.path),
         &source.archives,
         archive_index,
@@ -448,7 +448,7 @@ pub async fn download_springboot_log(
     } else {
         abs
     };
-    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let sources = opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir);
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;

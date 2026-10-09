@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource,
     SoftwareCategory,
 };
@@ -86,7 +86,7 @@ impl SoftwareProvider for NodeProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         let versions = ["20.11.1", "22.14.0"]
             .iter()
             .map(|ver| {
@@ -153,7 +153,7 @@ impl SoftwareProvider for NodeProvider {
                 .take(20)
                 .map(|v| {
                     // P2-1：远程发现同样按运行时 OS 选包（原硬编码 win-x64）。
-                    let os = opx_core::utils::platform::current_os();
+                    let os = crate::utils::platform::current_os();
                     let (_, format) = node_asset_suffix(os);
                     CatalogVersion {
                         version: v.clone(),

@@ -14,7 +14,7 @@ use opx_core::models::software::{
     CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
-use crate::services::software_manager::providers::{all_providers, InstallContext};
+use opx_core::services::software_manager::providers::{all_providers, InstallContext};
 use crate::services::software_manager::SoftwareManager;
 use opx_core::utils::{archive, download, paths};
 use chrono::Utc;

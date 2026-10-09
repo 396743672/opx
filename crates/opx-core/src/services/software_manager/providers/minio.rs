@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, FieldRule, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -173,7 +173,7 @@ impl SoftwareProvider for MinioProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         let mut versions = vec![];
 
         // 主版本：SILO（MinIO 的社区维护 fork，pgsty/silo）——上游三平台均发布 amd64/arm64 包。
@@ -249,7 +249,7 @@ impl SoftwareProvider for MinioProvider {
     /// 动态拉取 SILO 上游新版本（按运行时 OS 过滤 amd64 构建）。
     /// 拉取失败返回 None，不阻塞其他软件（与 influxdb / jdk / jre 等实现一致）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        silo_remote_versions(opx_core::utils::platform::current_os())
+        silo_remote_versions(crate::utils::platform::current_os())
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {

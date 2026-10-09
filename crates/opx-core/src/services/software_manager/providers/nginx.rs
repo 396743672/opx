@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use opx_core::models::software::{
+use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, LogSourceKind, MirrorSource,
     SoftwareCategory,
@@ -25,7 +25,7 @@ fn nginx_source_url(version: &str) -> String {
 /// Nginx 可执行文件绝对路径（P2-1）：Windows 在安装根（`nginx.exe`）；
 /// *nix 源码 `make install` 后位于 `<install>/sbin/nginx`。
 fn nginx_bin_path(install_path: &str) -> String {
-    if opx_core::utils::platform::current_os() == "windows" {
+    if crate::utils::platform::current_os() == "windows" {
         PathBuf::from(install_path)
             .join(exe_name("nginx"))
             .to_string_lossy()
@@ -63,7 +63,7 @@ impl NginxProvider {
 
     /// 确保主配置已注入 JSON 访问日志（幂等；读-改-写，无变化不写盘）。
     fn ensure_access_log_conf(install_path: &Path) -> Result<()> {
-        use opx_core::services::website_manager::nginx_conf;
+        use crate::services::website_manager::nginx_conf;
         let conf_path = install_path.join("conf").join("nginx.conf");
         let content = std::fs::read_to_string(&conf_path)?;
         let updated = nginx_conf::ensure_access_log(&content);
@@ -87,7 +87,7 @@ impl SoftwareProvider for NginxProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选包（Windows 官方 Windows 构建 zip / *nix 官方源码 tar.gz，装后编译）。
-        let os = opx_core::utils::platform::current_os();
+        let os = crate::utils::platform::current_os();
         const VER: &str = "1.31.2";
         let (mirrors, format) = if os == "windows" {
             (
@@ -136,7 +136,7 @@ impl SoftwareProvider for NginxProvider {
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
         // P2-1：非 Windows 走官方源码包 → 配置 + 编译 + 安装到 <install>
         // （产出 <install>/sbin/nginx 与 <install>/conf/nginx.conf）。依赖目标机 gcc/make 及 PCRE/zlib/OpenSSL 开发库。
-        if opx_core::utils::platform::current_os() != "windows" {
+        if crate::utils::platform::current_os() != "windows" {
             let prefix = format!("--prefix={}", ctx.install_path);
             let steps: &[(&str, &[&str])] = &[
                 ("./configure", &[prefix.as_str()]),
@@ -152,7 +152,7 @@ impl SoftwareProvider for NginxProvider {
         // 2. map $http_upgrade $connection_upgrade {...} —— WebSocket 反代所需变量
         // 3. client_max_body_size 200m + underscores_in_headers on + gzip on
         // 4. log_format opx_json + access_log —— JSON 访问日志
-        use opx_core::services::website_manager::nginx_conf;
+        use crate::services::website_manager::nginx_conf;
         let conf_path = PathBuf::from(&ctx.install_path)
             .join("conf")
             .join("nginx.conf");

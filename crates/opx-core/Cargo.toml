@@ -29,3 +29,17 @@ lzma-rs = "0.3"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
 # paths.rs 的 Windows 分支（长路径 / 文件属性）需要；非 Windows 下为 stub，不影响跨平台编译。
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+# —— 阶段 3批次 3A1：随 providers / catalog / log_viewer 迁入 ——
+# 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份/类型不匹配。
+# regex —— log_viewer 的行过滤（`LineFilter` 的关键字正则与级别正则）+ providers 的
+#         版本号抓取（elasticsearch / influxdb / influxdb3 / kafka / nacos / nginx）。
+regex = "1.10"
+# encoding_rs —— log_viewer 的日志字节解码：非 UTF-8 时按中文 Windows 的 GBK 解码。
+encoding_rs = "0.8"
+# sysinfo —— providers 的端口占用预检（mysql.rs 启停前探测 3306 是否被占）。
+sysinfo = "0.31.0"
+# base64 —— providers 的 Nacos 认证：随机 32 字节 seed 做 Base64 编码作为 auth token。
+base64 = "0.23.1"
+# rand_core —— 同上，提供 OsRng 随机源填seed 字节。
+rand_core = { version = "0.6", features = ["getrandom"] }

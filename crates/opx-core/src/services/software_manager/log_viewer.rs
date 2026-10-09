@@ -1,4 +1,4 @@
-//! 日志查看器后端服务（C 扩展 · 日志查看器）
+//! 日志查看器后端服务（C 扩展 · 日志 查看器）
 //!
 //! 负责：列出实例的日志来源、按 offset/limit 读取日志（tail / 增量 / 历史分页）、
 //! 以及把日志下载到用户指定路径。读取时支持关键字 / 正则 / 级别过滤。
@@ -7,15 +7,33 @@
 //! - `offset == None` → tail 模式，返回末尾 `limit`（默认 2000）行，end_offset = total_bytes；
 //! - `offset == Some(o), before == false` → 增量模式，从字节 `o` 向前（朝 EOF）读取新行；
 //! - `offset == Some(o), before == true` → 历史模式，读取字节 `o` 之前（朝文件头）的 `limit` 行。
+//!
+//! ## 3A1解耦：为什么本模块不认识 `SoftwareManager`
+//!
+//! 原先 [`list_log_sources`] / [`read_log`] / [`search_all`] 收 `&SoftwareManager`。
+//! 阶段 3 批次 3A1 要把本文件搬进 `opx-core`，而 `SoftwareManager` 本体 3A2 才搬，
+//! 直接搬会形成 core → 壳层反向依赖。
+//!
+//! 按「按字段切而非按类型切」原则，改为收 `&InstalledSoftware` / `&[InstalledSoftware]`
+//! 切片——本模块对 manager 的全部需求只有 `find_installed()` 与 `get_installed()`
+//! 两个只读方法，切片已完全覆盖。
+//!
+//! ⚠️ **`install_path` 的解析状态由调用方保证，core 内部不做任何解析**：
+//! `SoftwareManager::find_installed` 会对 `install_path` 调
+//! `paths::resolve_install_path`（相对 → 绝对），而 `get_installed()` **不做**。
+//! 搬迁前本模块是自己在内部调 manager 的，故拿到的值天然带对应的解析状态；
+//! 现在改为壳层把那份求值结果原样传入，**core 内不再调manager 方法**，
+//! 因此各调用点的 `install_path` 解析状态与搬迁前逐字节一致。
 
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
 
-use opx_core::models::software::{ArchiveLog, LogChunk, LogHit, LogSource, LogSourceKind};
+use crate::models::software::{
+    ArchiveLog, InstalledSoftware, LogChunk, LogHit, LogSource, LogSourceKind,
+};
 use crate::services::software_manager::providers::{all_providers, LogContext};
-use crate::services::software_manager::SoftwareManager;
 
 /// 归档扫描上限（防海量文件拖慢「加载更早」）
 const MAX_ARCHIVES: usize = 40;
@@ -154,13 +172,11 @@ impl<'a> LineFilter<'a> {
 }
 
 /// 列出某实例的日志来源（取 provider.log_sources）
-pub fn list_log_sources(
-    manager: &SoftwareManager,
-    installed_id: &str,
-) -> anyhow::Result<Vec<LogSource>> {
-    let sw = manager
-        .find_installed(installed_id)
-        .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
+///
+/// `sw` 须由调用方从 `SoftwareManager` 取出的那一份记录直接传入
+/// （`find_installed(&id)` 的返回值），本函数不再自行查 manager —— 见模块注释
+/// 「`install_path` 的解析状态由调用方保证」。
+pub fn list_log_sources(sw: &InstalledSoftware) -> anyhow::Result<Vec<LogSource>> {
     let providers = all_providers();
     let provider = providers
         .iter()
@@ -177,10 +193,11 @@ pub fn list_log_sources(
 }
 
 /// 读取日志（按来源索引 + offset 模式）
+///
+/// `sw` 的来源要求同 [`list_log_sources`]。
 #[allow(clippy::too_many_arguments)]
 pub fn read_log(
-    manager: &SoftwareManager,
-    installed_id: &str,
+    sw: &InstalledSoftware,
     source_index: usize,
     offset: Option<u64>,
     before: bool,
@@ -190,7 +207,7 @@ pub fn read_log(
     level: Option<&str>,
     archive_index: usize,
 ) -> anyhow::Result<LogChunk> {
-    let sources = list_log_sources(manager, installed_id)?;
+    let sources = list_log_sources(sw)?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| anyhow::anyhow!("日志源索引越界: {}", source_index))?;
@@ -293,8 +310,21 @@ pub fn export_combined_source(
 
 /// 全局日志关键字搜索：遍历所有已装软件的日志源（主文件 + 归档），返回命中的行。
 /// ponytail: 逐文件整读匹配（按天归档/单文件体积可控），源码级每源限量、总量限量。
+///
+/// `installed` 须由调用方传入 `SoftwareManager::get_installed()` 的结果。
+///
+/// ## ⚠️ 为什么这里要自己 resolve 一次`install_path`
+/// 搬迁前本函数体是 `for sw in manager.get_installed()`，然后对每个 `sw` 再调
+/// `list_log_sources(manager, &sw.id)` ——后者内部走 `find_installed`，会把
+/// `install_path` **解析成绝对路径**。也就是说：**外层遍历用的`sw` 是未解析的，
+/// 而真正构造 `LogContext` 用的是`find_installed` 解析后的那一份。**
+///
+/// 改为切片后这里拿不到 manager，必须自己复现`find_installed` 的那一处变换，
+/// 否则 `LogContext.install_path` 会退化成未解析的相对路径，导致读不到文件、
+/// 全局搜索静默返回空——这正是本次搬迁最易踩的静默回归。
+///变换本身与 `SoftwareManager::find_installed` 逐行等价（只改 `install_path`）。
 pub fn search_all(
-    manager: &SoftwareManager,
+    installed: &[InstalledSoftware],
     keyword: &str,
     per_source_limit: usize,
     total_limit: usize,
@@ -304,8 +334,10 @@ pub fn search_all(
         return Vec::new();
     }
     let mut out: Vec<LogHit> = Vec::new();
-    for sw in manager.get_installed() {
-        let Ok(sources) = list_log_sources(manager, &sw.id) else { continue };
+    for sw in installed {
+        let Ok(sources) = list_log_sources(&with_resolved_install_path(sw)) else {
+            continue;
+        };
         for src in sources {
             let label = src.label.clone().unwrap_or_default();
             let mut paths: Vec<String> = vec![src.path.clone()];
@@ -341,6 +373,19 @@ pub fn search_all(
         }
     }
     out
+}
+
+/// 复现 `SoftwareManager::find_installed` 对 `install_path` 的解析变换。
+///
+/// `paths::resolve_install_path` 对已是绝对路径的输入是幂等的
+/// （`is_absolute()` 为真时原样返回），故对已解析过的记录再调一次无副作用——
+/// 这让调用方无论传`find_installed()` 还是 `get_installed()` 的结果都安全。
+fn with_resolved_install_path(sw: &InstalledSoftware) -> InstalledSoftware {
+    let mut resolved = sw.clone();
+    resolved.install_path = crate::utils::paths::resolve_install_path(&resolved.install_path)
+        .to_string_lossy()
+        .to_string();
+    resolved
 }
 
 /// 为单个日志源附加历史归档（provider 复用入口）
@@ -382,7 +427,10 @@ pub fn collect_springboot_sources(logs_dir: &Path) -> Vec<LogSource> {
 }
 
 /// SpringBoot 日志读取：tail/增量在主文件；历史走跨归档续接。keyword 做行过滤。
-pub(crate) fn read_springboot_chunk(
+///
+/// 可见性：原为 `pub(crate)`（仅壳层 crate 内可见），3A1 搬进 core 后壳层要跨 crate
+/// 调用，故提为 `pub`。与本文件其他 `pub fn` 同级，非额外放宽。
+pub fn read_springboot_chunk(
     path: &Path,
     archives: &[ArchiveLog],
     archive_index: usize,
