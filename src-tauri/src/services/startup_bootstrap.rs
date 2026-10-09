@@ -197,7 +197,7 @@ impl StartupAction for ManagerStartup {
     fn start<'a>(&'a self, target: &'a StartupTarget) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             match target.kind.as_str() {
-                KIND_SOFTWARE => crate::commands::software::do_start_software(
+                KIND_SOFTWARE => opx_core::services::software_manager::start_stop::do_start_software(
                     &self.software,
                     &self.sink,
                     &target.id,

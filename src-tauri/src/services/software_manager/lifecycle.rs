@@ -5,16 +5,21 @@
 //! `register` / `get` / `drain` / `spawn_process` / `stop_one` /
 //! `run_graceful_stop` / `emit_status_changed` / `stop_all_on_exit` 等）。
 //!
-//! ## ⚠️ 为什么这三段必须留壳层
+//! ## ⚠️ 这三段是死代码，且留壳层的理由已解除
 //!
 //! [`auto_start_all`] / [`await_batch_ready`] / [`spawn_start`] **全仓库无调用方**
 //! ——真正的软件自启走 `startup_bootstrap::run_bootstrap`，它在
-//! `startup_bootstrap.rs:200` 直接调 `commands::software::do_start_software`。
+//! `startup_bootstrap.rs:200` 直接调 `start_stop::do_start_software`。
 //! 本模块是那次收敛之前的旧实现残留。
 //!
-//! 留壳层的直接原因：非私有的 [`spawn_start`] 会调壳层的
-//! `crate::commands::software::do_start_software`，搬进 `opx-core` 就形成
-//! **core → 壳层反向依赖**，违反 workspace 的依赖单向原则。
+//! 3A2 把本段留在壳层的**唯一硬原因**是：[`spawn_start`] 会调壳层的
+//! `crate::commands::software::do_start_software`，整段搬进 `opx-core` 就形成
+//! **core → 壳层反向依赖**。
+//!
+//! **该理由已解除**：批次 3B 已把 `do_start_software` 搬进
+//! `opx_core::services::software_manager::start_stop`，本段调用已改指 core 路径。
+//! 现在这三段没有任何理由继续留在壳层——但**删除属死代码清理轮次**，不混入
+//! 「纯搬迁」的 3B。详见下方段首注释。
 //!
 //! ## 🚨 同名模块的符号歧义（最容易踩的坑）
 //!
@@ -31,11 +36,12 @@
 //! 代价是重导出层必须随 core 符号增删同步维护：core 删/改签名时这里会编译报错，
 //! 属可接受的显式失败，优于静默分叉。
 //!
-//! ## 3B 待办
+//! ## 3B 之后的 `do_start_software` 调用方
 //!
-//! [`do_start_software`] 搬进 core 后，本文件 [`spawn_start`] 里的调用路径要相应
-//! 改指 core。**但请注意这三段不是活代码**——真正的自启逻辑在
-//! `startup_bootstrap`，改动这里不会影响自启行为。清理见另起一轮死代码清理轮次。
+//! 4 个壳层调用点（`stack_manager.rs:654` / `watchdog.rs:193` /
+//! `startup_bootstrap.rs:200` / 本文件 [`spawn_start`]）均已改为全路径指向
+//! `opx_core::services::software_manager::start_stop::do_start_software`，
+//! 不再经壳层 `commands::software` 中转。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,17 +89,34 @@ pub use opx_core::services::software_manager::lifecycle::{
 // 与 `lib.rs:112` 注释所述「把软件 / Node 应用 / 服务组 Stack 三路 auto_start
 // 收敛为单一有序序列」一致。本段是那次收敛之前的旧实现残留。
 //
-// ## 为什么留在壳层（3A2 决策：方案 B）
+// ## 留在壳层的原因，以及该原因已解除（批次 3B 起）
 //
-// `spawn_start` 内调用壳层的 `crate::commands::software::do_start_software`。
-// 若整段搬进 `opx-core`，就会形成 **core → 壳层反向依赖**，违反依赖单向原则。
-// 故 3A2 搬 `lifecycle.rs` 其余部分时，把本段整体留下。
+// 3A2 决策「方案 B」把本段整体留在壳层，**原因是 `spawn_start` 调用壳层的
+// `crate::commands::software::do_start_software`——若整段搬进 `opx-core` 就形成
+// core → 壳层反向依赖，违反依赖单向原则。**
 //
-// ## 3B 搬 `do_start_software` 时注意
+// **该阻塞已解除**：批次 3B 已把 `do_start_software` 搬进
+// `opx_core::services::software_manager::start_stop`，本段调用已改指 core 路径
+// （见下方 `spawn_start`）。也就是说，现在这三段**没有任何理由继续留在壳层**。
 //
-// 该函数搬进 core 后，本段的调用需改指core 路径（与 `lifecycle.rs` 其余部分
-// 拆分后的 `use` 语句一起调整）。**但请注意本段不是活代码**——真正的自启在
-// `startup_bootstrap`，改动这里不会影响自启行为。清理见另起的一轮死代码清理。
+// ## 但本批仍不删除
+//
+// 删除属**死代码清理轮次**的范畴，不是「搬迁」轮次。批次 3B 的一致性原则是
+// 「纯搬迁不改逻辑」，把删除混进来会让该commit 不再是纯搬迁。
+//
+// 保留的实际价值：`auto_start_all` 的「同 startup_order 分组并发 + 跨批等待
+// 真正就绪（依赖拓扑）」逻辑，是本项目里唯一一份自启编排的完整实现样本；
+// 真正在跑的 `startup_bootstrap` 走的是收敛后的有序序列，形态已不同。
+//
+// ## 本项目其他待清理项（一并记录，供死代码清理轮次取用）
+//
+// - `log_watcher.rs`：零引用的死代码模块。
+// - `ProcessRegistry::get`：搬入 core 后 core 内无调用方，壳层也不用，作用待确认。
+//
+// ## ⚠️ 将来删除本段时的注意事项
+//
+// 必须同时把 `spawn_start` 里的 `do_start_software` 调用一并删掉（它只在
+// `spawn_start` 内被调用），否则会留下一个指向 core 的悬空调用而编译失败。
 //
 // ============================================================================
 
@@ -179,7 +202,8 @@ async fn await_batch_ready(manager: &Arc<SoftwareManager>, ids: &[String], timeo
 /// 不等待 do_start_software 完成，避免单个慢启动阻塞后续实例
 ///
 /// ⚠️ **死代码**：仅被 `auto_start_all` 调用，而后者无调用方。见上方说明。
-/// 3B 搬 `do_start_software` 进 core 后，本函数体里的调用需改指 core 路径。
+/// 批次 3B 已把 `do_start_software` 搬进 core，本函数体的调用已改指
+/// `opx_core::services::software_manager::start_stop::do_start_software`。
 async fn spawn_start(
     manager: Arc<SoftwareManager>,
     sink: Arc<dyn EventSink>,
@@ -192,7 +216,7 @@ async fn spawn_start(
     let id_clone = installed_id.clone();
     tokio::spawn(async move {
         let result =
-            crate::commands::software::do_start_software(&manager_clone, &sink_clone, &id_clone, None)
+            opx_core::services::software_manager::start_stop::do_start_software(&manager_clone, &sink_clone, &id_clone, None)
                 .await;
         if let Err(e) = result {
             tracing::error!(error = %e, installed_id = %id_clone, "auto_start failed");

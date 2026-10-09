@@ -21,6 +21,7 @@ pub mod log_viewer;
 pub mod netutils;
 pub mod process_monitor;
 pub mod providers;
+pub mod start_stop;
 pub mod uninstall_guard;
 
 use std::collections::HashMap;

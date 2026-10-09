@@ -190,7 +190,7 @@ async fn watch_software(
             None,
         );
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
-        match crate::commands::software::do_start_software(software, sink, &sw.id, None).await {
+        match opx_core::services::software_manager::start_stop::do_start_software(software, sink, &sw.id, None).await {
             Ok(_) => {
                 opx_core::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。

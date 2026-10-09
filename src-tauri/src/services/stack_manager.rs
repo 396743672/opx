@@ -24,7 +24,6 @@ use futures::future;
 use opx_core::event::{EventSink, EventSinkExt};
 use uuid::Uuid;
 
-use crate::commands::software as sw_commands;
 use opx_core::models::software::SoftwareStatus;
 use opx_core::models::springboot::AppStatus;
 use opx_core::models::stack::{
@@ -651,7 +650,7 @@ impl StackManager {
                     Some(sw) => {
                         let detail = format!("{} ({}, 服务组)", sw.version, sw.id);
                         let r = async {
-                            sw_commands::do_start_software(
+                            opx_core::services::software_manager::start_stop::do_start_software(
                                 &self.software_mgr,
                                 sink,
                                 &item.ref_id,
