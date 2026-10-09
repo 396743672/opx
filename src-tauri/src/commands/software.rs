@@ -23,7 +23,7 @@ use crate::services::software_manager::{
 };
 use opx_core::services::software_manager::{catalog, log_viewer, providers};
 use opx_core::utils::topo::topo_layers;
-use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
+use opx_core::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
 /// 把壳层的 [`AppHandle`] 转成core 的事件通道，供服务层（零tauri 依赖）使用。
 ///

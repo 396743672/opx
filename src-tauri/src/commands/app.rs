@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Manager};
-use crate::oplog;
+use opx_core::oplog;
 
 /// 触发退出流程：级联停止所有已注册子服务（逐个 emit stop-progress，完成后 emit stop-complete）。
 /// ponytail: async + spawn_blocking，避免同步命令阻塞主线程（多服务逐个 taskkill 可能长达数秒）。

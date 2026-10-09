@@ -226,13 +226,13 @@ pub async fn sync_once(
         for (rtype, ip) in &targets {
             match provider.sync_record(fqdn, rtype, ip).await {
                 Ok(action) if is_change(&action) => {
-                    crate::oplog!("ddns_update", fqdn, &action);
+                    opx_core::oplog!("ddns_update", fqdn, &action);
                     changes.push(format!("{}：{}", fqdn, action));
                 }
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, fqdn = %fqdn, rtype = %rtype, "DDNS 记录同步失败");
-                    crate::oplog_fail!("ddns_update", fqdn, "同步失败", &format!("{:#}", e));
+                    opx_core::oplog_fail!("ddns_update", fqdn, "同步失败", &format!("{:#}", e));
                     failures += 1;
                     changes.push(format!("{}：失败 {}", fqdn, e));
                 }

@@ -94,11 +94,11 @@ pub async fn run_scheduler(
                     // 审计要与实际一致：配置重载失败就不记为续期成功
                     match crate::commands::website::regenerate(&sm, &wm, true) {
                         Ok(_) => {
-                            crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
+                            opx_core::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
                         }
                         Err(e) => {
                             tracing::warn!(site = %site.id, error = %e, "续期后 nginx 配置重建/reload 失败");
-                            crate::oplog!("acme_renew_failed", &format!("{} ({})", site.name, domain));
+                            opx_core::oplog!("acme_renew_failed", &format!("{} ({})", site.name, domain));
                         }
                     }
                 }

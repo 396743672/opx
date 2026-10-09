@@ -662,7 +662,7 @@ impl StackManager {
                             self.wait_ready(item).await
                         }
                         .await;
-                        crate::oplog_result!("start", sw.name, detail, r);
+                        opx_core::oplog_result!("start", sw.name, detail, r);
                         r
                     }
                     None => Err(format!("未找到已装软件: {}", item.ref_id)),
@@ -680,7 +680,7 @@ impl StackManager {
                     )
                     .await
                     .map_err(|e| format!("启动 Spring Boot {} 失败: {}", item.ref_id, e));
-                    crate::oplog_result!("springboot_start", target, "服务组", r);
+                    opx_core::oplog_result!("springboot_start", target, "服务组", r);
                     r
                 }
                 Err(e) => Err(format!("未找到 Spring Boot 应用: {}", e)),

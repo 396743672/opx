@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use opx_core::models::software::HealthCheckSpec;
+use crate::models::software::HealthCheckSpec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealthCheckResult {

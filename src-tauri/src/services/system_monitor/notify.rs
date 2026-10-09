@@ -110,7 +110,7 @@ pub fn dispatch(e: AlertEvent) {
         tokio::spawn(async move {
             if let Err(err) = send_webhook(&url, &fmt, &sec, &ev).await {
                 tracing::warn!(error = %err, "告警 webhook 发送失败");
-                crate::oplog_fail!("webhook_failed", "webhook", "", &format!("{}", err));
+                opx_core::oplog_fail!("webhook_failed", "webhook", "", &format!("{}", err));
             }
         });
     }
@@ -119,7 +119,7 @@ pub fn dispatch(e: AlertEvent) {
         tokio::spawn(async move {
             if let Err(err) = send_mail(&smtp, &e).await {
                 tracing::warn!(error = %err, "告警邮件发送失败");
-                crate::oplog_fail!("webhook_failed", "smtp", "", &format!("{}", err));
+                opx_core::oplog_fail!("webhook_failed", "smtp", "", &format!("{}", err));
             }
         });
     }

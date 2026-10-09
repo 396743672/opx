@@ -7,7 +7,7 @@ use opx_core::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
 use opx_core::services::website_manager::{nginx_conf, WebsiteManager};
 use opx_core::utils::archive;
-use crate::{audited, audited_async};
+use opx_core::{audited, audited_async};
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）

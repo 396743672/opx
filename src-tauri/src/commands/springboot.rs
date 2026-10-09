@@ -15,7 +15,7 @@ use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::jvm_opts;
 use crate::services::springboot_manager::lifecycle::StopOutcome;
 use crate::services::springboot_manager::SpringBootManager;
-use crate::{audited_async, oplog_result};
+use opx_core::{audited_async, oplog_result};
 
 /// 把壳层 [`AppHandle`] 转成 core 的事件通道，供服务层（零 tauri 依赖）使用。
 ///

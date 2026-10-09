@@ -176,7 +176,7 @@ async fn watch_software(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "software", "id": sw.id, "name": sw.name }),
                 );
-                crate::oplog!("auto_restart_giveup", &sw.name, &format!("连续 {} 次失败", failures));
+                opx_core::oplog!("auto_restart_giveup", &sw.name, &format!("连续 {} 次失败", failures));
             }
             continue;
         }
@@ -192,7 +192,7 @@ async fn watch_software(
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match crate::commands::software::do_start_software(software, sink, &sw.id, None).await {
             Ok(_) => {
-                crate::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures));
+                opx_core::oplog!("auto_restart", &sw.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
                 // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
@@ -256,7 +256,7 @@ async fn watch_springboot(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "springboot", "id": sb.id, "name": sb.name }),
                 );
-                crate::oplog!("auto_restart_giveup", &sb.name, &format!("连续 {} 次失败", failures));
+                opx_core::oplog!("auto_restart_giveup", &sb.name, &format!("连续 {} 次失败", failures));
             }
             continue;
         }
@@ -269,7 +269,7 @@ async fn watch_springboot(
         .await
         {
             Ok(_) => {
-                crate::oplog!("auto_restart", &sb.name, &format!("第 {} 次", failures));
+                opx_core::oplog!("auto_restart", &sb.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
                 // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }
@@ -328,7 +328,7 @@ async fn watch_node(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),
                 );
-                crate::oplog!("auto_restart_giveup", &na.name, &format!("连续 {} 次失败", failures));
+                opx_core::oplog!("auto_restart_giveup", &na.name, &format!("连续 {} 次失败", failures));
             }
             continue;
         }
@@ -339,7 +339,7 @@ async fn watch_node(
         tokio::time::sleep(Duration::from_secs(RESTART_DELAY_SECS)).await;
         match node.start(&na.id, exe) {
             Ok(_) => {
-                crate::oplog!("auto_restart", &na.name, &format!("第 {} 次", failures));
+                opx_core::oplog!("auto_restart", &na.name, &format!("第 {} 次", failures));
                 // 注意：Ok 仅代表 spawn 成功，不代表进程存活。
                 // 此处不清零计数；清零交给下一轮「观察到 Running+存活」的 record_healthy。
             }

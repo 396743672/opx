@@ -162,7 +162,7 @@ fn eval(
 ) {
     if alerts::should_alert(value, threshold, alerting.contains(key)) {
         alerting.insert(key.to_string());
-        crate::oplog!(
+        opx_core::oplog!(
             "alert_high",
             &format!(
                 "{} {} {}%（阈值 {}%）",
@@ -184,7 +184,7 @@ fn eval(
         });
     } else if alerting.contains(key) && alerts::is_recovered(value, threshold) {
         alerting.remove(key);
-        crate::oplog!(
+        opx_core::oplog!(
             "alert_recovered",
             &format!("{} {} {}%", name, metric, value.round())
         );

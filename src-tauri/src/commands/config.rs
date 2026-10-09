@@ -1,6 +1,6 @@
 use opx_core::models::settings::AppSettings;
 use opx_core::utils::paths;
-use crate::audited;
+use opx_core::audited;
 use std::fs;
 use tauri::AppHandle;
 

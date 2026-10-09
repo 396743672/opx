@@ -110,7 +110,10 @@ pub async fn run_scheduler(
             if !due {
                 continue;
             }
-            let max_keep = crate::commands::config::read_settings()
+            // 直接指向 core：原先绕道 `crate::commands::config::read_settings`，
+            // 而后者本身只是 `pub use opx_core::utils::settings::read_settings`（壳层 commands/config.rs:23），
+            // 属纯重导出，改指后语义逐字节等价，少绕一层跨服务依赖。
+            let max_keep = opx_core::utils::settings::read_settings()
                 .unwrap_or_default()
                 .snapshot_keep
                 .max(1) as usize;
