@@ -43,9 +43,16 @@ use crate::utils::paths;
 /// 别的测试 spawn 的 cmd.exe 被回收 → 采样反而变小 → 断言偶发失败）。
 /// 凡在测试中真实 spawn 子进程的用例，开头都取一次本锁。
 ///
-/// 可见性：原为 `pub(crate)`，3A2 搬进 core 后，**仍在壳层**的
-/// `health_check` 测试要用它取锁，故提为 `pub`。仅测试期存在（`#[cfg(test)]`），
-/// 不进发布产物，非额外放宽。
+/// 可见性：**原为 `pub(crate)`**，批次 3A2 拆分搬迁时改为 `pub`。
+///
+/// 变更依据：搬迁时预估「壳层 `health_check` 的测试仍要取这把锁」故提为 `pub`；
+/// **事后 grep 证实该预估不成立**——3 个使用点
+/// （`health_check.rs:140` / `lifecycle.rs:860` / `process_monitor.rs:164`）
+/// 已随文件一起迁入 core，壳层 `grep -rn PROCESS_SPAWN_TEST_LOCK src-tauri/` 为空。
+///
+/// 结论：3A2 拆分后壳层已无调用方；**保留 `pub` 而非退回 `pub(crate)`**，
+/// 因 `#[cfg(test)]` 下该 static 仅测试期编译进本 crate、不进发布产物，
+/// 无实际代价，且可避免后续搬迁再次放宽可见性。
 #[cfg(test)]
 pub static PROCESS_SPAWN_TEST_LOCK: Mutex<()> = Mutex::new(());
 
