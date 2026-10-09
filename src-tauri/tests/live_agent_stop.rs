@@ -85,7 +85,7 @@ fn assert_injection_stops_jvm(label: &str, javac_home: &Path, launcher: Launcher
         .arg(&started)
         .stdout(console)
         .stderr(console_err);
-    opx_lib::utils::process::hide_console(&mut cmd);
+    opx_core::utils::process::hide_console(&mut cmd);
     let mut child = cmd.spawn().expect("应能启动目标 JVM");
     let pid = child.id();
 

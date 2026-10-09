@@ -25,9 +25,9 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::commands::software as sw_commands;
-use crate::models::software::SoftwareStatus;
-use crate::models::springboot::AppStatus;
-use crate::models::stack::{
+use opx_core::models::software::SoftwareStatus;
+use opx_core::models::springboot::AppStatus;
+use opx_core::models::stack::{
     CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberReport, StackMemberRuntime,
     StackMemberStatus, StackRunReport, StackStartPlan, StackStatusEvent, UpdateStackPayload,
 };
@@ -35,7 +35,7 @@ use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::lifecycle as sb_lifecycle;
 use crate::services::springboot_manager::SpringBootManager;
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 /// 成员启动后等待就绪的超时上限（毫秒）。
 /// software 的 `do_start_software` 内部健康检查最多 60s，这里给足余量。

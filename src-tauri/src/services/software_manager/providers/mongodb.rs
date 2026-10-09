@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -125,7 +125,7 @@ impl SoftwareProvider for MongoDbProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
         const VER: &str = "7.0.12";
-        let (url, format) = mongodb_archive(VER, crate::utils::platform::current_os());
+        let (url, format) = mongodb_archive(VER, opx_core::utils::platform::current_os());
         let versions = vec![CatalogVersion {
             version: VER.to_string(),
             mirrors: vec![MirrorSource {
@@ -151,7 +151,7 @@ impl SoftwareProvider for MongoDbProvider {
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / consul 同口径）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // P2-1：运行时按 OS 选目标（windows/macos=base，linux=targeted，见 mongodb_target_edition）。
-        let os = crate::utils::platform::current_os();
+        let os = opx_core::utils::platform::current_os();
         let client = reqwest::blocking::Client::builder()
             // 关掉环境变量代理探测（ALL_PROXY 等）：宿主若设了不支持 CONNECT 的 HTTP 代理，
             // 本可直连的 fastdl/downloads.mongodb.org 反被劫持而失败
@@ -373,7 +373,7 @@ mod archive_os_tests {
     fn catalog_entry_selects_url_for_current_os() {
         let entry = MongoDbProvider::new().catalog_entry();
         assert_eq!(entry.versions.len(), 1, "catalog 不应为空");
-        let (url, _) = mongodb_archive(&entry.default_version, crate::utils::platform::current_os());
+        let (url, _) = mongodb_archive(&entry.default_version, opx_core::utils::platform::current_os());
         assert_eq!(entry.versions[0].mirrors[0].url, url);
     }
 }

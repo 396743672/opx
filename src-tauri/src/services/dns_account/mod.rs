@@ -7,8 +7,8 @@ use std::sync::RwLock;
 
 use anyhow::Result;
 
-use crate::models::dns_account::DnsAccount;
-use crate::utils::paths;
+use opx_core::models::dns_account::DnsAccount;
+use opx_core::utils::paths;
 
 pub struct DnsAccountManager {
     accounts: RwLock<Vec<DnsAccount>>,
@@ -118,7 +118,7 @@ fn bind_unbound_acme_sites(account_id: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     let raw = std::fs::read_to_string(&p)?;
-    let mut list: crate::models::website::WebsiteList = serde_json::from_str(&raw)?;
+    let mut list: opx_core::models::website::WebsiteList = serde_json::from_str(&raw)?;
     let mut changed = false;
     for s in list.websites.iter_mut() {
         if s.ssl.acme && s.ssl.dns_account_id.is_none() {

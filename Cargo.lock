@@ -2974,6 +2974,7 @@ dependencies = [
  "lzma-rs",
  "notify",
  "once_cell",
+ "opx-core",
  "rand_core 0.6.4",
  "rcgen 0.13.2",
  "regex",
@@ -3000,6 +3001,26 @@ dependencies = [
  "walkdir",
  "windows-sys 0.52.0",
  "winreg 0.52.0",
+ "zip 0.6.6",
+]
+
+[[package]]
+name = "opx-core"
+version = "0.5.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "flate2",
+ "futures",
+ "lzma-rs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows-sys 0.52.0",
  "zip 0.6.6",
 ]
 

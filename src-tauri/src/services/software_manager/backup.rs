@@ -13,12 +13,12 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use tauri::AppHandle;
 
-use crate::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
+use opx_core::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::providers::{all_providers, DataDirContext};
 use crate::services::software_manager::SoftwareManager;
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 const SNAPSHOT_FORMAT: &str = "zip";
 
@@ -443,7 +443,7 @@ pub fn reset_instance(manager: &SoftwareManager, installed_id: &str) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::paths::data_dir;
+    use opx_core::utils::paths::data_dir;
     use std::fs;
     use std::io::Write;
 

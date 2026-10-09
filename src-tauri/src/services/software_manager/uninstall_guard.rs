@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::models::software::{
+use opx_core::models::software::{
     InstalledSoftware, JreDependent, JreUsageReport, SoftwareStatus, UninstallBlocker,
     UninstallSafetyReport,
 };
@@ -14,7 +14,7 @@ pub fn check_uninstall_safety(software: &InstalledSoftware) -> Result<UninstallS
 
     // B. nginx 站点依赖校验
     if software.key == "nginx" {
-        let ws_path = crate::utils::paths::config_dir().join("websites.json");
+        let ws_path = opx_core::utils::paths::config_dir().join("websites.json");
         if let Ok(content) = std::fs::read_to_string(&ws_path) {
             if let Ok(list) = serde_json::from_str::<serde_json::Value>(&content) {
                 let count = list["websites"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -119,19 +119,19 @@ pub fn check_jre_in_use(jre_installed_id: &str) -> Result<JreUsageReport> {
 }
 
 fn load_jre_default_id() -> Result<Option<String>> {
-    let sp = crate::utils::paths::settings_path();
+    let sp = opx_core::utils::paths::settings_path();
     if !sp.exists() {
         return Ok(None);
     }
     let content = std::fs::read_to_string(&sp)?;
-    let settings: crate::models::settings::AppSettings =
+    let settings: opx_core::models::settings::AppSettings =
         serde_json::from_str(&content).unwrap_or_default();
     Ok(settings.jre_default_id)
 }
 
-fn try_load_springboot_apps() -> Option<Vec<crate::models::springboot::SpringBootApp>> {
-    let path = crate::utils::paths::data_dir().join("springboot").join("apps.json");
+fn try_load_springboot_apps() -> Option<Vec<opx_core::models::springboot::SpringBootApp>> {
+    let path = opx_core::utils::paths::data_dir().join("springboot").join("apps.json");
     if !path.exists() { return None; }
-    let store: crate::models::springboot::SpringBootStore = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let store: opx_core::models::springboot::SpringBootStore = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     Some(store.applications)
 }

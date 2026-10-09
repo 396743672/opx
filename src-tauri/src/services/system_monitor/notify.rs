@@ -1,7 +1,7 @@
 //! 告警通知：资源告警触发时外送 webhook / SMTP。
 //! 纯函数层（payload/签名/文案）+ 发送层（Task 3 接线）。
 
-use crate::models::settings::AppSettings;
+use opx_core::models::settings::AppSettings;
 use serde_json::json;
 
 /// 一条告警事件（recorder 触发时传入；测试命令构造假值）
@@ -132,7 +132,7 @@ pub async fn send_webhook(
     let (full_url, body) = build_webhook(format, url, secret, ts, e);
     // 走共享工厂：reqwest 默认读 ALL_PROXY 等环境变量，会把直连可通的 webhook
     // 交给环境里的 HTTP 代理（不支持 CONNECT 到 443）而失败
-    let resp = crate::utils::http::builder()
+    let resp = opx_core::utils::http::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?
         .post(&full_url)

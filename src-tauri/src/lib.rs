@@ -1,5 +1,4 @@
 pub mod commands;
-pub mod models;
 pub mod services;
 pub mod utils;
 
@@ -31,15 +30,15 @@ pub fn run() {
 
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
-                let _ = crate::utils::paths::apps_dir();
-                let _ = crate::utils::paths::config_dir();
-                let _ = crate::utils::paths::data_dir();
-                let _ = crate::utils::paths::tmp_dir();
-                let _ = crate::utils::paths::logs_dir();
+                let _ = opx_core::utils::paths::apps_dir();
+                let _ = opx_core::utils::paths::config_dir();
+                let _ = opx_core::utils::paths::data_dir();
+                let _ = opx_core::utils::paths::tmp_dir();
+                let _ = opx_core::utils::paths::logs_dir();
                 // settings.json 不存在时写入默认值，确保便携目录有可见配置
-                let sp = crate::utils::paths::settings_path();
+                let sp = opx_core::utils::paths::settings_path();
                 if !sp.exists() {
-                    let default = crate::models::settings::AppSettings::default();
+                    let default = opx_core::models::settings::AppSettings::default();
                     if let Ok(json) = serde_json::to_string_pretty(&default) {
                         let _ = std::fs::write(&sp, json);
                     }
@@ -47,13 +46,13 @@ pub fn run() {
                 // 初始化下载代理配置
                 if let Ok(content) = std::fs::read_to_string(&sp) {
                     if let Ok(settings) =
-                        serde_json::from_str::<crate::models::settings::AppSettings>(&content)
+                        serde_json::from_str::<opx_core::models::settings::AppSettings>(&content)
                     {
-                        crate::utils::download::init_download_config(
+                        opx_core::utils::download::init_download_config(
                             settings.github_proxy_url,
                             settings.proxy_url.clone(),
                         );
-                        crate::utils::http::set_global_proxy(&settings.proxy_url);
+                        opx_core::utils::http::set_global_proxy(&settings.proxy_url);
                     }
                 }
             }
@@ -91,7 +90,7 @@ pub fn run() {
             // 否则 setup 退出时 guard drop，tracing_appender 会停止 flush
             let _audit_guard = match crate::services::software_manager::audit_log::init() {
                 Ok(g) => {
-                    let log_dir = crate::utils::paths::logs_dir();
+                    let log_dir = opx_core::utils::paths::logs_dir();
                     crate::services::software_manager::audit_log::cleanup_old_logs(&log_dir, 7);
                     Some(g)
                 }
@@ -527,9 +526,9 @@ fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
 /// 分离为纯函数以便单测验证筛选与 tooltip 逻辑。
 /// 返回运行中的软件 (id, name) 列表与数量；tooltip 文案由调用方按语言生成
 fn running_softwares(
-    installed: &[crate::models::software::InstalledSoftware],
+    installed: &[opx_core::models::software::InstalledSoftware],
 ) -> (Vec<(String, String)>, usize) {
-    use crate::models::software::SoftwareStatus;
+    use opx_core::models::software::SoftwareStatus;
     let running: Vec<_> = installed
         .iter()
         .filter(|s| s.status == SoftwareStatus::Running)
@@ -541,7 +540,7 @@ fn running_softwares(
 
 #[cfg(test)]
 mod tests {
-    use crate::models::software::{InstalledSoftware, SoftwareStatus};
+    use opx_core::models::software::{InstalledSoftware, SoftwareStatus};
 
     fn sample(status: SoftwareStatus) -> InstalledSoftware {
         InstalledSoftware {
@@ -557,7 +556,7 @@ mod tests {
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
-            source: crate::models::software::InstallSource::Builtin {
+            source: opx_core::models::software::InstallSource::Builtin {
                 version: "1.0".into(),
             },
             pid: None,

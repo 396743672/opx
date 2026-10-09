@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::{
+use opx_core::models::software::{
     CatalogEntry, CatalogVersion, ConfigSchema, CustomStartCommand, HealthCheckSpec, LogSource,
     LogSourceKind,
 };

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use crate::utils::paths::write_file_restricted;
+use opx_core::utils::paths::write_file_restricted;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
     ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -313,9 +313,9 @@ impl SoftwareProvider for Influxdb3Provider {
             // 不设 ephemeral（重启后仍需用同一 token 访问数据）。
             ephemeral_keys: vec![],
             // 认证联动：auth_enabled=true 才显示 admin_token 且必填；false 时隐藏该字段。
-            field_rules: vec![crate::models::software::FieldRule {
+            field_rules: vec![opx_core::models::software::FieldRule {
                 field_key: "admin_token".to_string(),
-                visible_when: Some(crate::models::software::FieldCondition {
+                visible_when: Some(opx_core::models::software::FieldCondition {
                     key: "auth_enabled".to_string(),
                     equals: serde_json::json!(true),
                 }),

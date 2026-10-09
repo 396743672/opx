@@ -410,7 +410,7 @@ pub(crate) fn reset_data_dirs(dirs: &[PathBuf], install_path: &std::path::Path) 
 
 // —— 状态转换校验 ——
 
-use crate::models::software::{CustomStartCommand, InstalledSoftwareList, SoftwareStatus};
+use opx_core::models::software::{CustomStartCommand, InstalledSoftwareList, SoftwareStatus};
 
 /// 校验启动状态转换是否合法
 pub fn validate_start_transition(current: SoftwareStatus) -> anyhow::Result<()> {
@@ -684,7 +684,7 @@ pub fn emit_status_changed(
 
 use std::sync::Arc;
 
-use crate::models::software::InstalledSoftware;
+use opx_core::models::software::InstalledSoftware;
 use crate::services::software_manager::SoftwareManager;
 
 /// 应用启动时按 startup_order 拉起 auto_start=true 的实例
@@ -827,8 +827,8 @@ mod tests {
     /// P1-2 启动竞态回归：占位函数原子地「校验 + 置 Starting + 清 last_error」。
     #[test]
     fn reserve_start_validates_and_sets_starting() {
-        use crate::models::software::{InstalledSoftwareList, SoftwareStatus};
-        let entry = |status: &str| -> crate::models::software::InstalledSoftware {
+        use opx_core::models::software::{InstalledSoftwareList, SoftwareStatus};
+        let entry = |status: &str| -> opx_core::models::software::InstalledSoftware {
             let json = serde_json::json!({
                 "id": "t1", "key": "mysql", "version": "1.0", "name": "T",
                 "install_path": "apps/mysql/1.0",

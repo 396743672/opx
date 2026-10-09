@@ -1,4 +1,4 @@
-use crate::models::website::{Location, LocationKind, Site};
+use opx_core::models::website::{Location, LocationKind, Site};
 
 /// 生成站点配置文件名：`{sanitize(name)}_{listen}_{short_id}.conf`
 /// - name 中非 ASCII 字母数字/连字符统一转 `_`，去首尾 `_`，为空则用 `site`
@@ -266,7 +266,7 @@ pub fn ensure_common_settings(nginx_conf: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::website::{
+    use opx_core::models::website::{
         Location, LocationKind, ProxyHeader, Site, SslConfig, StaticSource, UpstreamTarget,
     };
 

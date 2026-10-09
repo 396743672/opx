@@ -1,4 +1,4 @@
-use crate::models::system::{SystemInfo, HistoryPoint};
+use opx_core::models::system::{SystemInfo, HistoryPoint};
 use crate::services::system_monitor;
 use anyhow::Result;
 
@@ -25,7 +25,7 @@ pub fn process_metrics_history() -> Result<std::collections::HashMap<String, Vec
 
 /// 最近一次应用启动编排报告（无记录返回 null，前端展示空态）
 #[tauri::command]
-pub fn get_last_startup_report() -> Option<crate::models::startup::StartupReport> {
+pub fn get_last_startup_report() -> Option<opx_core::models::startup::StartupReport> {
     crate::services::startup_bootstrap::last_report()
 }
 

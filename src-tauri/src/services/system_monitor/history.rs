@@ -1,10 +1,10 @@
-use crate::models::system::{HistoryPoint, MetricsHistory};
+use opx_core::models::system::{HistoryPoint, MetricsHistory};
 use anyhow::Result;
 use std::path::Path;
 
 /// 指标历史文件路径（`data/metrics_history.json`）。读写方共用，避免路径字面量多处重复。
 pub fn metrics_path() -> std::path::PathBuf {
-    crate::utils::paths::data_dir().join("metrics_history.json")
+    opx_core::utils::paths::data_dir().join("metrics_history.json")
 }
 
 pub fn load_metrics(path: &Path) -> Result<MetricsHistory> {
@@ -48,7 +48,7 @@ pub fn prune_all(h: &mut MetricsHistory, now_ms: i64, retain_days: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::system::HistoryPoint;
+    use opx_core::models::system::HistoryPoint;
 
     fn pt(ms: u64) -> HistoryPoint {
         HistoryPoint { timestamp: ms, cpu_usage: 1.0, memory_usage: 2.0 }

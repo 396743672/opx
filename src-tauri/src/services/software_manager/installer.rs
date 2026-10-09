@@ -9,14 +9,14 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::models::software::ArchiveFormat;
-use crate::models::software::{
+use opx_core::models::software::ArchiveFormat;
+use opx_core::models::software::{
     CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
 use crate::services::software_manager::providers::{all_providers, InstallContext};
 use crate::services::software_manager::SoftwareManager;
-use crate::utils::{archive, download, paths};
+use opx_core::utils::{archive, download, paths};
 use chrono::Utc;
 
 fn compute_sha256(path: &Path) -> Result<String> {
@@ -846,7 +846,7 @@ async fn install_from_builtin(
     let resource_zip: Option<std::path::PathBuf> = match app.path().resource_dir() {
         Ok(d) => {
             let rel = format!("software/{}/{}.zip", &params.key, &params.version);
-            crate::utils::paths::resolve_builtin_resource(&d, &rel)
+            opx_core::utils::paths::resolve_builtin_resource(&d, &rel)
         }
         Err(e) => {
             emit_event(
@@ -1196,7 +1196,7 @@ async fn install_from_builtin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::software::{ArchiveInfo, BuiltinInfo};
+    use opx_core::models::software::{ArchiveInfo, BuiltinInfo};
 
     fn mirror(name: &str, builtin: bool) -> MirrorSource {
         MirrorSource {

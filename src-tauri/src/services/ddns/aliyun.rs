@@ -50,7 +50,7 @@ impl Aliyun {
         Self {
             key_id,
             key_secret,
-            client: crate::utils::http::client(),
+            client: opx_core::utils::http::client(),
         }
     }
 

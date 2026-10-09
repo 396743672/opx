@@ -2,7 +2,7 @@
 //!
 //! 仅采集监听态；命令失败/权限不足时降级为空集，不阻塞上层。
 
-use crate::utils::process::hidden;
+use opx_core::utils::process::hidden;
 
 /// 一条监听记录。pid 缺失（权限不足等情况）记 None。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use sysinfo::{System, Disks, Networks};
-use crate::models::system::{SystemInfo, DiskInfo, NetworkInfo};
+use opx_core::models::system::{SystemInfo, DiskInfo, NetworkInfo};
 
 /// 全局复用的 Networks 句柄，避免每次新建导致统计重置
 static NETWORKS: Lazy<Mutex<Networks>> =

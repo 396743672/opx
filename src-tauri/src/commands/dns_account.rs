@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::models::dns_account::DnsAccount;
+use opx_core::models::dns_account::DnsAccount;
 use crate::services::acme::dns::provider_for_account;
 use crate::services::dns_account::DnsAccountManager;
 use crate::services::website_manager::WebsiteManager;

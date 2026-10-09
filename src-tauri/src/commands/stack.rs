@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
-use crate::models::stack::{
+use opx_core::models::stack::{
     CreateStackPayload, Stack, StackStartPlan, UpdateStackPayload,
 };
 use crate::services::stack_manager::StackManager;

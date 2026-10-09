@@ -5,7 +5,7 @@ use std::time::Duration;
 use chrono::Local;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::models::software::{
+use opx_core::models::software::{
     BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams,
     CustomStartCommand, InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource,
     SnapshotMeta, SoftwareStatus, UninstallSafetyReport,
@@ -19,7 +19,7 @@ use crate::services::software_manager::{
     backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
     log_viewer, providers, uninstall_guard, SoftwareManager,
 };
-use crate::utils::topo::topo_layers;
+use opx_core::utils::topo::topo_layers;
 use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
 /// 获取可安装软件列表（catalog）
@@ -46,11 +46,11 @@ pub async fn refresh_catalog(
 
     // 从 settings 读取 mirror_url（远程 catalog.json，可选）
     let mirror_url = {
-        let sp = crate::utils::paths::settings_path();
+        let sp = opx_core::utils::paths::settings_path();
         if sp.exists() {
             std::fs::read_to_string(&sp)
                 .ok()
-                .and_then(|c| serde_json::from_str::<crate::models::settings::AppSettings>(&c).ok())
+                .and_then(|c| serde_json::from_str::<opx_core::models::settings::AppSettings>(&c).ok())
                 .map(|s| s.mirror_url)
                 .unwrap_or_else(|| "https://mirrors.aliyun.com".to_string())
         } else {
@@ -262,7 +262,7 @@ async fn do_upgrade(
     }
 
     // 2. 备份源：旧安装目录（不 rename，装完压缩为 {old_ver}.bak.zip 省磁盘）
-    let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+    let old_install_path = opx_core::utils::paths::resolve_install_path(&software.install_path);
     let bak_zip_path = old_install_path.with_file_name(format!(
         "{}.bak.zip",
         old_install_path
@@ -272,7 +272,7 @@ async fn do_upgrade(
     ));
 
     // 2.5 把新版本父目录建好（download_and_extract 解压时落到新目录）
-    let new_install_path = crate::utils::paths::apps_dir()
+    let new_install_path = opx_core::utils::paths::apps_dir()
         .join(&software.key)
         .join(&target_version);
     std::fs::create_dir_all(&new_install_path)
@@ -735,7 +735,7 @@ pub async fn resolve_software_deps(
             stack.push(dep);
         }
     }
-    let plan = crate::utils::topo::topo_layers(&visited, deps, &tiebreak);
+    let plan = opx_core::utils::topo::topo_layers(&visited, deps, &tiebreak);
     let missing: Vec<String> = visited
         .iter()
         .filter(|id| id.as_str() != installed_id && manager_arc.find_installed(id).is_none())
@@ -831,7 +831,7 @@ fn collect_configured_ports(
     software: &InstalledSoftware,
     provider: Option<&dyn providers::SoftwareProvider>,
 ) -> Vec<u16> {
-    use crate::models::software::{ConfigFieldType, CustomHealthSpec};
+    use opx_core::models::software::{ConfigFieldType, CustomHealthSpec};
     let mut ports = Vec::new();
     if software.is_custom {
         if let Some(c) = &software.custom_start_command {
@@ -883,7 +883,7 @@ fn find_installed_jdk(
     {
         if let Some(sw) = installed.iter().find(|s| s.id == id) {
             return Some(
-                crate::utils::paths::resolve_install_path(&sw.install_path)
+                opx_core::utils::paths::resolve_install_path(&sw.install_path)
                     .to_string_lossy()
                     .to_string(),
             );
@@ -895,7 +895,7 @@ fn find_installed_jdk(
         .filter(|s| s.key == "jdk" || s.key == "jre")
         .min_by_key(|s| if s.key == "jdk" { 0 } else { 1 })
         .map(|s| {
-            crate::utils::paths::resolve_install_path(&s.install_path)
+            opx_core::utils::paths::resolve_install_path(&s.install_path)
                 .to_string_lossy()
                 .to_string()
         })
@@ -909,7 +909,7 @@ fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
         .iter()
         .find(|s| s.key == "mysql")
         .map(|s| {
-            crate::utils::paths::resolve_install_path(&s.install_path)
+            opx_core::utils::paths::resolve_install_path(&s.install_path)
                 .to_string_lossy()
                 .to_string()
         })
@@ -1358,25 +1358,25 @@ pub async fn do_start_software(
         // 自定义软件的健康检查从 custom_start_command 推导
         match &software.custom_start_command {
             Some(c) => match &c.health_check {
-                crate::models::software::CustomHealthSpec::None => {
-                    crate::models::software::HealthCheckSpec::ProcessOnly
+                opx_core::models::software::CustomHealthSpec::None => {
+                    opx_core::models::software::HealthCheckSpec::ProcessOnly
                 }
-                crate::models::software::CustomHealthSpec::Tcp { port } => {
-                    crate::models::software::HealthCheckSpec::Tcp {
+                opx_core::models::software::CustomHealthSpec::Tcp { port } => {
+                    opx_core::models::software::HealthCheckSpec::Tcp {
                         port: *port,
                         timeout_ms: 1000,
                     }
                 }
-                crate::models::software::CustomHealthSpec::Http {
+                opx_core::models::software::CustomHealthSpec::Http {
                     url,
                     expected_status,
-                } => crate::models::software::HealthCheckSpec::Http {
+                } => opx_core::models::software::HealthCheckSpec::Http {
                     url: url.clone(),
                     expected_status: *expected_status,
                     timeout_ms: 1000,
                 },
             },
-            None => crate::models::software::HealthCheckSpec::ProcessOnly,
+            None => opx_core::models::software::HealthCheckSpec::ProcessOnly,
         }
     } else {
         provider.health_check(&hctx)
@@ -2075,16 +2075,16 @@ pub async fn write_config_source(
 /// 辅助：按 installed_id 从 installed.json 读单条记录（不依赖 State）
 /// 适用于不需要修改 installed.json 的只读命令（如 get_config_schema、read_config_form）
 fn load_software_for_id(installed_id: &str) -> Result<InstalledSoftware, String> {
-    let path = crate::utils::paths::config_dir().join("installed.json");
+    let path = opx_core::utils::paths::config_dir().join("installed.json");
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let list: crate::models::software::InstalledSoftwareList =
+    let list: opx_core::models::software::InstalledSoftwareList =
         serde_json::from_str(&content).map_err(|e| e.to_string())?;
     let mut sw = list
         .software
         .into_iter()
         .find(|s| s.id == installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    sw.install_path = crate::utils::paths::resolve_install_path(&sw.install_path)
+    sw.install_path = opx_core::utils::paths::resolve_install_path(&sw.install_path)
         .to_string_lossy()
         .to_string();
     Ok(sw)
@@ -2368,7 +2368,7 @@ pub async fn search_all_logs(
     keyword: String,
     per_source_limit: Option<usize>,
     total_limit: Option<usize>,
-) -> Result<Vec<crate::models::software::LogHit>, String> {
+) -> Result<Vec<opx_core::models::software::LogHit>, String> {
     Ok(log_viewer::search_all(
         &manager,
         &keyword,
@@ -2493,11 +2493,11 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 fn compute_upgrades(
     installed: &[InstalledSoftware],
     catalog: &Catalog,
-) -> Vec<crate::models::software::UpgradeInfo> {
-    use crate::models::software::UpgradeInfo;
+) -> Vec<opx_core::models::software::UpgradeInfo> {
+    use opx_core::models::software::UpgradeInfo;
     let mut out = Vec::new();
     for sw in installed {
-        if sw.is_custom || sw.category == Some(crate::models::software::SoftwareCategory::Runtime) {
+        if sw.is_custom || sw.category == Some(opx_core::models::software::SoftwareCategory::Runtime) {
             continue;
         }
         let Some(entry) = catalog.entries.iter().find(|e| e.key == sw.key) else {
@@ -2526,7 +2526,7 @@ fn compute_upgrades(
 #[tauri::command]
 pub fn check_upgrades(
     manager: State<'_, Arc<SoftwareManager>>,
-) -> Vec<crate::models::software::UpgradeInfo> {
+) -> Vec<opx_core::models::software::UpgradeInfo> {
     let catalog = manager.get_catalog();
     let installed = manager.get_installed();
     compute_upgrades(&installed, &catalog)
@@ -2536,7 +2536,7 @@ pub fn check_upgrades(
 /// 返回去 `.bak.zip` 后缀的文件名作为回滚目标版本；无备份返回 None。
 /// 供 check_upgrades 填充 rollback_to（升级后同 key 会保留 <old_ver>.bak.zip）。
 fn scan_rollback_backup(install_path: &str) -> Option<String> {
-    let dir = crate::utils::paths::resolve_install_path(install_path);
+    let dir = opx_core::utils::paths::resolve_install_path(install_path);
     let key_dir = dir.parent()?;
     std::fs::read_dir(key_dir)
         .ok()?
@@ -2566,8 +2566,8 @@ pub async fn rollback_software(
     audited_async!("rollback", target, detail, {
         // 1. 解析 key、当前版本目录与同 key 的 .bak.zip 备份
         let key = software.key.clone();
-        let key_dir = crate::utils::paths::apps_dir().join(&key);
-        let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+        let key_dir = opx_core::utils::paths::apps_dir().join(&key);
+        let old_install_path = opx_core::utils::paths::resolve_install_path(&software.install_path);
 
         let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
             .map_err(|e| format!("读取目录失败: {}", e))?
@@ -2658,7 +2658,7 @@ mod tests {
     use super::{compare_versions, post_init_already_done, probe_reports_done};
     use std::cmp::Ordering;
 
-    use crate::models::software::{
+    use opx_core::models::software::{
         Catalog, CatalogEntry, CatalogVersion, InstallSource, InstalledSoftware, SoftwareCategory,
         SoftwareStatus,
     };
@@ -2708,8 +2708,8 @@ mod tests {
                     .map(|v| CatalogVersion {
                         version: v.to_string(),
                         mirrors: vec![],
-                        archive: crate::models::software::ArchiveInfo {
-                            format: crate::models::software::ArchiveFormat::Zip,
+                        archive: opx_core::models::software::ArchiveInfo {
+                            format: opx_core::models::software::ArchiveFormat::Zip,
                             size: None,
                             sha256: None,
                         },

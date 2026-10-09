@@ -18,7 +18,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
     ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -101,7 +101,7 @@ impl SoftwareProvider for ConsulProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 构建不再空目录）。
-        let os = crate::utils::platform::current_os();
+        let os = opx_core::utils::platform::current_os();
         let versions = vec![CatalogVersion {
             version: DEFAULT_VERSION.to_string(),
             mirrors: vec![MirrorSource {
@@ -135,7 +135,7 @@ impl SoftwareProvider for ConsulProvider {
     /// 动态拉取 HashiCorp 官方新版本（社区版，按运行时 OS 过滤）。
     /// 拉取失败返回 None，不阻塞其他软件（与 minio / influxdb 等实现一致）。
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
-        consul_remote_versions(crate::utils::platform::current_os())
+        consul_remote_versions(opx_core::utils::platform::current_os())
     }
 
     fn post_install(&self, _ctx: &InstallContext) -> Result<()> {
@@ -235,7 +235,7 @@ impl SoftwareProvider for ConsulProvider {
         })
     }
 
-    fn log_sources(&self, ctx: &LogContext) -> Vec<crate::models::software::LogSource> {
+    fn log_sources(&self, ctx: &LogContext) -> Vec<opx_core::models::software::LogSource> {
         // Consul 日志形如 `2026-09-21T13:00:00.000Z [INFO]  agent: ...`，
         // 内置默认级别正则（\b(ERROR|WARN|INFO|...)\b）即可匹配，仅需启用级别筛选
         let mut sources = default_log_sources(ctx);

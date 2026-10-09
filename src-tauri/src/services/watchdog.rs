@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use tauri::Emitter;
 
-use crate::models::software::SoftwareStatus;
-use crate::models::springboot::AppStatus;
+use opx_core::models::software::SoftwareStatus;
+use opx_core::models::springboot::AppStatus;
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::{health_check, SoftwareManager};
 use crate::services::springboot_manager::SpringBootManager;
@@ -288,7 +288,7 @@ async fn watch_node(
 ) {
     for na in node.snapshot() {
         let key = format!("node:{}", na.id);
-        let running = na.status == crate::models::node_app::NodeAppStatus::Running;
+        let running = na.status == opx_core::models::node_app::NodeAppStatus::Running;
         let alive = running && na.pid.map_or(false, health_check::is_process_alive);
         if running && alive {
             state.record_healthy(&key);
@@ -299,7 +299,7 @@ async fn watch_node(
             let msg = format!("{} 进程已退出", na.name);
             let _ = node.set_status(
                 &na.id,
-                crate::models::node_app::NodeAppStatus::Error,
+                opx_core::models::node_app::NodeAppStatus::Error,
                 None,
                 Some(msg),
             );
@@ -322,7 +322,7 @@ async fn watch_node(
             state.mark_given_up(&key);
             {
                 let msg = format!("自动重启失败，已放弃（连续 {} 次）", failures);
-                let _ = node.set_status(&na.id, crate::models::node_app::NodeAppStatus::Error, None, Some(msg));
+                let _ = node.set_status(&na.id, opx_core::models::node_app::NodeAppStatus::Error, None, Some(msg));
                 let _ = app.emit(
                     "auto-restart-giveup",
                     serde_json::json!({ "kind": "node", "id": na.id, "name": na.name }),

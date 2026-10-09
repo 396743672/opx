@@ -3,24 +3,24 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::models::software::SoftwareStatus;
-use crate::models::website::Site;
+use opx_core::models::software::SoftwareStatus;
+use opx_core::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::website_manager::{nginx_conf, WebsiteManager};
-use crate::utils::archive;
+use opx_core::utils::archive;
 use crate::{audited, audited_async};
 
 /// 解析目标 nginx（软件管理里已安装的第一个 nginx 实例）
 /// ponytail: 单 nginx 假设；多实例选择留待后续（Site 加 nginx_id）
 pub fn resolve_nginx(
     sm: &SoftwareManager,
-) -> Result<crate::models::software::InstalledSoftware, String> {
+) -> Result<opx_core::models::software::InstalledSoftware, String> {
     let mut nginx = sm
         .get_installed()
         .into_iter()
         .find(|s| s.key == "nginx")
         .ok_or_else(|| "请先在软件管理中安装 nginx".to_string())?;
-    nginx.install_path = crate::utils::paths::resolve_install_path(&nginx.install_path)
+    nginx.install_path = opx_core::utils::paths::resolve_install_path(&nginx.install_path)
         .to_string_lossy()
         .to_string();
     Ok(nginx)
@@ -404,7 +404,7 @@ pub fn set_site_conf(
     let _ = std::fs::remove_file(&stale_path);
 
     // 若 nginx 正在运行，先校验再 reload
-    if nginx.status == crate::models::software::SoftwareStatus::Running {
+    if nginx.status == opx_core::models::software::SoftwareStatus::Running {
         let test = run_nginx(Path::new(&nginx.install_path), &["-t"]).map_err(|e| e.to_string())?;
         if !test.status.success() {
             return Err(format!(

@@ -1,5 +1,5 @@
-use crate::models::settings::AppSettings;
-use crate::utils::paths;
+use opx_core::models::settings::AppSettings;
+use opx_core::utils::paths;
 use crate::audited;
 use std::fs;
 use tauri::AppHandle;
@@ -16,8 +16,8 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
 }
 
 /// 读取 settings.json；文件缺失或内容损坏时返回默认设置（并记录告警）。
-pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
-    let path = crate::utils::paths::settings_path();
+pub fn read_settings() -> Result<opx_core::models::settings::AppSettings, String> {
+    let path = opx_core::utils::paths::settings_path();
     let Ok(s) = std::fs::read_to_string(&path) else {
         return Ok(Default::default());
     };
@@ -40,9 +40,9 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
             serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化失败: {}", e))?;
         fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
         fs::rename(&tmp, &path).map_err(|e| format!("重命名失败: {}", e))?;
-        crate::utils::http::set_global_proxy(&settings.proxy_url);
+        opx_core::utils::http::set_global_proxy(&settings.proxy_url);
         // 立即刷新下载代理配置
-        crate::utils::download::init_download_config(settings.github_proxy_url, settings.proxy_url);
+        opx_core::utils::download::init_download_config(settings.github_proxy_url, settings.proxy_url);
         Ok(())
     })
 }

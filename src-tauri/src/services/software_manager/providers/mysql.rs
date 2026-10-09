@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, FieldRule, HealthCheckSpec, LogSource, MirrorSource,
     SoftwareCategory,
@@ -49,7 +49,7 @@ fn mysql_official_url(version: &str, os: &str) -> String {
 
 /// MySQL 配置文件名：Windows 用 `my.ini`，Unix 用 `my.cnf`。
 fn mysql_config_file_name() -> &'static str {
-    if crate::utils::platform::current_os() == "windows" {
+    if opx_core::utils::platform::current_os() == "windows" {
         "my.ini"
     } else {
         "my.cnf"
@@ -94,7 +94,7 @@ impl SoftwareProvider for MySqlProvider {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
         // 注：解压会剥掉顶层目录（mysql-{ver}-{os} 子目录）→ subdir 无需分平台；
         // 二进制名经 exe_name 统一（P2-2）；配置文件名经 mysql_config_file_name 分平台。
-        let os = crate::utils::platform::current_os();
+        let os = opx_core::utils::platform::current_os();
         const VER: &str = "8.4.11";
         let (asset, format) = mysql_asset(VER, os);
         let mut mirrors = vec![];
@@ -142,7 +142,7 @@ impl SoftwareProvider for MySqlProvider {
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // ponytail: 从 config/mysql-versions.json 读取 LTS 版本列表
-        let path = crate::utils::paths::config_dir().join("mysql-versions.json");
+        let path = opx_core::utils::paths::config_dir().join("mysql-versions.json");
         let defaults = r#"["8.0.41","8.4.11","9.7.2"]"#;
         let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
             let _ = std::fs::write(&path, defaults);
@@ -151,7 +151,7 @@ impl SoftwareProvider for MySqlProvider {
         // ponytail: 从配置文件读版本列表
         let versions: Vec<CatalogVersion> = serde_json::from_str::<Vec<String>>(&content).ok().unwrap_or_default()
             .iter().map(|ver| {
-                let os = crate::utils::platform::current_os();
+                let os = opx_core::utils::platform::current_os();
                 let (_, format) = mysql_asset(ver, os);
                 CatalogVersion {
                     version: ver.clone(),

@@ -20,9 +20,9 @@ use std::sync::{Mutex, RwLock};
 use anyhow::Result;
 use chrono::{Local, NaiveDateTime};
 
-use crate::models::settings::AppSettings;
-use crate::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList, SoftwareStatus};
-use crate::utils::paths;
+use opx_core::models::settings::AppSettings;
+use opx_core::models::software::{Catalog, InstalledSoftware, InstalledSoftwareList, SoftwareStatus};
+use opx_core::utils::paths;
 
 /// 测试专用：串行化「真实 spawn 子进程」的测试。
 ///
@@ -116,7 +116,7 @@ impl SoftwareManager {
     pub fn merge_entry_versions(
         &self,
         key: &str,
-        remote_versions: Vec<crate::models::software::CatalogVersion>,
+        remote_versions: Vec<opx_core::models::software::CatalogVersion>,
     ) {
         let mut catalog = self.catalog.write().unwrap();
         if let Some(entry) = catalog.entries.iter_mut().find(|e| e.key == key) {
@@ -227,7 +227,7 @@ impl SoftwareManager {
         let content = serde_json::to_string_pretty(list)?;
         // 写后即收紧权限；installed.json 会被反复重写（每次启停/安装卸载），
         // write_file_restricted 内部先清只读位，避免 P2-6 只读位阻断覆盖写。
-        crate::utils::paths::write_file_restricted(&path, content)?;
+        opx_core::utils::paths::write_file_restricted(&path, content)?;
         Ok(())
     }
 
@@ -438,7 +438,7 @@ impl SoftwareManager {
     pub fn set_custom_start_command(
         &self,
         installed_id: &str,
-        cmd: crate::models::software::CustomStartCommand,
+        cmd: opx_core::models::software::CustomStartCommand,
     ) -> Result<()> {
         let mut installed = self.installed.write().unwrap();
         let item = installed
@@ -461,7 +461,7 @@ impl Default for SoftwareManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::software::{InstalledSoftware, SoftwareStatus};
+    use opx_core::models::software::{InstalledSoftware, SoftwareStatus};
 
     /// 测试条目：走 JSON 构造避免逐字段填 20+ 个字段。
     /// 伪 pid 用不可能存活的极大值（走「死 pid → 重置」路径）。

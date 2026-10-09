@@ -50,7 +50,7 @@ async fn download_retries_and_backs_off_on_failure() {
     let url = format!("http://127.0.0.1:{port}/probe.zip");
     let started = std::time::Instant::now();
     let result =
-        opx_lib::utils::download::download_with_progress(&url, &probe_dest(), |_, _| {}).await;
+        opx_core::utils::download::download_with_progress(&url, &probe_dest(), |_, _| {}).await;
     let elapsed = started.elapsed();
     let accepts = hits.load(Ordering::SeqCst);
 
@@ -84,14 +84,14 @@ async fn download_rotates_through_multiple_proxy_prefixes() {
     let s2 = spawn_counter(l2, Arc::clone(&h2));
 
     // 两个前缀，换行分隔（同时验证解析器接受这种写法）
-    opx_lib::utils::download::init_download_config(
+    opx_core::utils::download::init_download_config(
         format!("http://127.0.0.1:{p1}\nhttp://127.0.0.1:{p2}"),
         String::new(),
     );
 
     // 含 github.com → 会被依次加上两个前缀
     let url = "https://github.com/pgsty/silo/releases/download/V/probe.zip";
-    let result = opx_lib::utils::download::download_with_progress(url, &probe_dest(), |_, _| {}).await;
+    let result = opx_core::utils::download::download_with_progress(url, &probe_dest(), |_, _| {}).await;
     let n1 = h1.load(Ordering::SeqCst);
     let n2 = h2.load(Ordering::SeqCst);
 

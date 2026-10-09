@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, HealthCheckSpec, LogSource, LogSourceKind, MirrorSource,
     SoftwareCategory,
@@ -25,7 +25,7 @@ fn nginx_source_url(version: &str) -> String {
 /// Nginx 可执行文件绝对路径（P2-1）：Windows 在安装根（`nginx.exe`）；
 /// *nix 源码 `make install` 后位于 `<install>/sbin/nginx`。
 fn nginx_bin_path(install_path: &str) -> String {
-    if crate::utils::platform::current_os() == "windows" {
+    if opx_core::utils::platform::current_os() == "windows" {
         PathBuf::from(install_path)
             .join(exe_name("nginx"))
             .to_string_lossy()
@@ -87,7 +87,7 @@ impl SoftwareProvider for NginxProvider {
 
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选包（Windows 官方 Windows 构建 zip / *nix 官方源码 tar.gz，装后编译）。
-        let os = crate::utils::platform::current_os();
+        let os = opx_core::utils::platform::current_os();
         const VER: &str = "1.31.2";
         let (mirrors, format) = if os == "windows" {
             (
@@ -136,7 +136,7 @@ impl SoftwareProvider for NginxProvider {
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
         // P2-1：非 Windows 走官方源码包 → 配置 + 编译 + 安装到 <install>
         // （产出 <install>/sbin/nginx 与 <install>/conf/nginx.conf）。依赖目标机 gcc/make 及 PCRE/zlib/OpenSSL 开发库。
-        if crate::utils::platform::current_os() != "windows" {
+        if opx_core::utils::platform::current_os() != "windows" {
             let prefix = format!("--prefix={}", ctx.install_path);
             let steps: &[(&str, &[&str])] = &[
                 ("./configure", &[prefix.as_str()]),

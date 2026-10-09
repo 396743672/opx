@@ -8,8 +8,8 @@ use std::sync::RwLock;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::models::springboot::{AppGroup, AppStatus, CreateAppParams, SpringBootApp, SpringBootStore, UpdateAppParams};
-use crate::utils::paths;
+use opx_core::models::springboot::{AppGroup, AppStatus, CreateAppParams, SpringBootApp, SpringBootStore, UpdateAppParams};
+use opx_core::utils::paths;
 
 pub struct SpringBootManager {
     store: RwLock<SpringBootStore>,

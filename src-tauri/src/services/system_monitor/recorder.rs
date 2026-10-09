@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
-use crate::models::system::HistoryPoint;
+use opx_core::models::system::HistoryPoint;
 use crate::services::software_manager::{process_monitor, SoftwareManager};
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::system_monitor::{alerts, history, info};
@@ -42,14 +42,14 @@ async fn sample_once(
     // 运行中实例：(显示名, pid)
     let mut targets: Vec<(String, u32)> = Vec::new();
     for sw in software.get_installed() {
-        if sw.status == crate::models::software::SoftwareStatus::Running {
+        if sw.status == opx_core::models::software::SoftwareStatus::Running {
             if let Some(pid) = sw.pid {
                 targets.push((sw.name.clone(), pid));
             }
         }
     }
     for sb in springboot.snapshot_apps() {
-        if sb.status == crate::models::springboot::AppStatus::Running {
+        if sb.status == opx_core::models::springboot::AppStatus::Running {
             if let Some(pid) = sb.pid {
                 targets.push((sb.name.clone(), pid));
             }

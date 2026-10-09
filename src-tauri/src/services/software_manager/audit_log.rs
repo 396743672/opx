@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 /// 默认保留天数（spec 第 1284 行明确 7 天）
 pub const DEFAULT_RETAIN_DAYS: u64 = 7;

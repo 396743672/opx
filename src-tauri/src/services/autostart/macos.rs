@@ -61,7 +61,7 @@ impl MacosAutostart {
 
     /// 当前用户 uid（`gui/<uid>` 域）。
     fn current_uid() -> Result<String> {
-        let out = crate::utils::process::hidden("id")
+        let out = opx_core::utils::process::hidden("id")
             .arg("-u")
             .output()
             .context("执行 id -u 失败")?;
@@ -92,7 +92,7 @@ impl Autostart for MacosAutostart {
             .with_context(|| format!("写入 plist 失败: {}", path.display()))?;
         // 立即加载（已加载时会失败，忽略——下次登录仍会按 plist 自动启动）
         if let Ok(uid) = Self::current_uid() {
-            let _ = crate::utils::process::hidden("launchctl")
+            let _ = opx_core::utils::process::hidden("launchctl")
                 .args(["bootstrap", &format!("gui/{uid}"), &path.to_string_lossy()])
                 .output();
         }
@@ -101,7 +101,7 @@ impl Autostart for MacosAutostart {
     fn disable(&self) -> Result<()> {
         let path = Self::path()?;
         if let Ok(uid) = Self::current_uid() {
-            let _ = crate::utils::process::hidden("launchctl")
+            let _ = opx_core::utils::process::hidden("launchctl")
                 .args(["bootout", &format!("gui/{uid}/{LABEL}")])
                 .output();
         }

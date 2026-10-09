@@ -14,7 +14,7 @@ use std::pin::Pin;
 
 use anyhow::Result;
 
-use crate::models::dns_account::DnsAccount;
+use opx_core::models::dns_account::DnsAccount;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -114,7 +114,7 @@ mod tests {
     /// 凭证缺失或服务商未知时必须返回 None（调用方据此报「请先配置凭证」）
     #[test]
     fn provider_for_account_rejects_missing_credentials() {
-        let base = crate::models::dns_account::DnsAccount {
+        let base = opx_core::models::dns_account::DnsAccount {
             id: "a1".into(),
             name: "n".into(),
             provider: "cloudflare".into(),

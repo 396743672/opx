@@ -12,9 +12,9 @@ use std::path::PathBuf;
 
 use tokio::time::{Duration, Instant};
 
-use crate::models::software::BackupMode;
+use opx_core::models::software::BackupMode;
 use crate::services::software_manager::{backup, SoftwareManager};
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 /// 调度配置文件名
 const SCHEDULES_FILE: &str = "backup_schedules.json";

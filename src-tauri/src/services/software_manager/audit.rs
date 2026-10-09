@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 /// result 字段取值：空串 = 未采集（系统内部动作 / 一期历史条目）
 pub const RESULT_OK: &str = "ok";

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
     ConfigFieldType, ConfigSchema, FieldCondition, FieldRule, HealthCheckSpec, LogSource,
     MirrorSource, SoftwareCategory,
@@ -24,7 +24,7 @@ fn config_str(c: &serde_json::Value, key: &str, default: &str) -> String {
     c.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string())
 }
 
-use crate::utils::local_ip::preferred_local_ip;
+use opx_core::utils::local_ip::preferred_local_ip;
 fn config_u64(c: &serde_json::Value, key: &str, default: u64) -> u64 {
     c.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
@@ -105,7 +105,7 @@ fn load_or_create_token_key(install_path: &std::path::Path) -> String {
         // 真实安装才落盘；写失败则退化为本次启动临时密钥（token 重启失效，可接受）
         if std::fs::create_dir_all(install_path.join("conf")).is_ok() {
             // 写后即收紧权限；write_file_restricted 内部先清只读位，覆盖重生成也安全。
-            let _ = crate::utils::paths::write_file_restricted(&key_file, &key);
+            let _ = opx_core::utils::paths::write_file_restricted(&key_file, &key);
         }
     }
     key
@@ -164,7 +164,7 @@ impl SoftwareProvider for NacosProvider {
     fn catalog_entry(&self) -> CatalogEntry {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 不再空目录）。
         // 2.x 需 JDK 8+，3.x 需 JDK 17+；两包均 Java 通用（win .zip / *nix .tar.gz）。
-        let os = crate::utils::platform::current_os();
+        let os = opx_core::utils::platform::current_os();
         let versions = [("2.5.3", "JDK8+"), ("3.2.3", "JDK17+")]
             .iter()
             .map(|(ver, _jdk_hint)| {
@@ -222,7 +222,7 @@ impl SoftwareProvider for NacosProvider {
                 .into_iter()
                 .map(|v| {
                     // P2-1：远程发现同样按运行时 OS 选包（原硬编码 .zip）。
-                    let os = crate::utils::platform::current_os();
+                    let os = opx_core::utils::platform::current_os();
                     let (_, format) = nacos_asset_suffix(os);
                     CatalogVersion {
                         version: v.clone(),

@@ -19,14 +19,14 @@ use std::time::Instant;
 
 use tauri::Emitter;
 
-use crate::models::startup::{
+use opx_core::models::startup::{
     KIND_NODE, KIND_SOFTWARE, KIND_STACK, StartupItemReport, StartupItemStatus, StartupReport,
     StartupTarget,
 };
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::stack_manager::StackManager;
-use crate::utils::paths;
+use opx_core::utils::paths;
 
 /// 启动报告持久化文件名（位于 `<app_data>/`）
 const REPORT_FILE: &str = "startup_report.json";
@@ -246,7 +246,7 @@ fn stop_software(manager: &SoftwareManager, id: &str) {
             crate::services::software_manager::lifecycle::stop_one(pid);
             let _ = manager.update_runtime_fields(
                 id,
-                crate::models::software::SoftwareStatus::Stopped,
+                opx_core::models::software::SoftwareStatus::Stopped,
                 None,
                 None,
                 None,

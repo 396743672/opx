@@ -1,0 +1,31 @@
+[package]
+name = "opx-core"
+version = "0.5.1"
+description = "Platform-agnostic core of opx (data models, provider catalog, install/run logic) — free of any Tauri dependency"
+authors = ["opx-dev"]
+license = "MIT"
+repository = "https://github.com/396743672/opx"
+edition = "2021"
+
+[lib]
+name = "opx_core"
+path = "src/lib.rs"
+
+# 依赖方向单向：壳（opx / opx-server）→ opx-core。
+# 本 crate 只允许「平台无关」的依赖；**不得**引入 tauri / tauri-plugin-*。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+tracing = "0.1"
+futures = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "stream"] }
+zip = { version = "0.6", default-features = false, features = ["deflate", "bzip2", "time"] }
+tar = "0.4"
+flate2 = "1.0"
+lzma-rs = "0.3"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
+# paths.rs 的 Windows 分支（长路径 / 文件属性）需要；非 Windows 下为 stub，不影响跨平台编译。
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

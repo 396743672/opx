@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::software::ConfigSchema;
+use opx_core::models::software::ConfigSchema;
 
 pub type FormData = std::collections::BTreeMap<String, serde_json::Value>;
 

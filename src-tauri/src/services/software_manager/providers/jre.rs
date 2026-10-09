@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource,
     SoftwareCategory,
 };

@@ -5,8 +5,8 @@ use std::sync::RwLock;
 
 use anyhow::Result;
 
-use crate::models::website::{Site, WebsiteList};
-use crate::utils::paths;
+use opx_core::models::website::{Site, WebsiteList};
+use opx_core::utils::paths;
 
 pub struct WebsiteManager {
     websites: RwLock<WebsiteList>,

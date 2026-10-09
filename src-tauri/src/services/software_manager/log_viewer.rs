@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
 
-use crate::models::software::{ArchiveLog, LogChunk, LogHit, LogSource, LogSourceKind};
+use opx_core::models::software::{ArchiveLog, LogChunk, LogHit, LogSource, LogSourceKind};
 use crate::services::software_manager::providers::{all_providers, LogContext};
 use crate::services::software_manager::SoftwareManager;
 

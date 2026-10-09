@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::models::software::{
+use opx_core::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField, ConfigFieldType,
     ConfigSchema, HealthCheckSpec, MirrorSource, SoftwareCategory,
 };
@@ -363,25 +363,25 @@ impl SoftwareProvider for InfluxdbProvider {
             ephemeral_keys: vec!["admin_user".to_string(), "admin_password".to_string()],
             // 认证联动：auth_enabled=true 才显示认证字段且 admin_token 必填；false 时隐藏。
             field_rules: vec![
-                crate::models::software::FieldRule {
+                opx_core::models::software::FieldRule {
                     field_key: "admin_user".to_string(),
-                    visible_when: Some(crate::models::software::FieldCondition {
+                    visible_when: Some(opx_core::models::software::FieldCondition {
                         key: "auth_enabled".to_string(),
                         equals: serde_json::json!(true),
                     }),
                     required: true,
                 },
-                crate::models::software::FieldRule {
+                opx_core::models::software::FieldRule {
                     field_key: "admin_password".to_string(),
-                    visible_when: Some(crate::models::software::FieldCondition {
+                    visible_when: Some(opx_core::models::software::FieldCondition {
                         key: "auth_enabled".to_string(),
                         equals: serde_json::json!(true),
                     }),
                     required: true,
                 },
-                crate::models::software::FieldRule {
+                opx_core::models::software::FieldRule {
                     field_key: "admin_token".to_string(),
-                    visible_when: Some(crate::models::software::FieldCondition {
+                    visible_when: Some(opx_core::models::software::FieldCondition {
                         key: "auth_enabled".to_string(),
                         equals: serde_json::json!(true),
                     }),
