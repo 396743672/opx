@@ -148,8 +148,9 @@ pub async fn install_software(
     installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
+    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app));
     tauri::async_runtime::spawn(async move {
-        installer::install_software(app, manager_arc, params, install_id_for_task).await;
+        installer::install_software(sink, manager_arc, params, install_id_for_task).await;
     });
     Ok(install_id)
 }
@@ -306,10 +307,11 @@ async fn do_upgrade(
     };
 
     // 4. 下载+解压到新目录（首选源不可达时自动回退其余可联网镜像）
+    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app.clone()));
     installer::download_with_mirror_fallback(
         &params,
         &new_install_path,
-        app,
+        sink,
         install_id,
         version_info,
         preferred_index,
@@ -524,8 +526,9 @@ pub async fn install_custom(
     installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
+    let sink = Arc::new(crate::event_sink::TauriEventSink::new(app));
     tauri::async_runtime::spawn(async move {
-        installer::install_custom(app, manager_arc, params, install_id_for_task).await;
+        installer::install_custom(sink, manager_arc, params, install_id_for_task).await;
     });
     Ok(install_id)
 }

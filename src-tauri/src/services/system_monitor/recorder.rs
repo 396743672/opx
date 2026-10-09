@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use opx_core::event::EventSink;
 
 use opx_core::models::system::HistoryPoint;
 use crate::services::software_manager::{process_monitor, SoftwareManager};
@@ -14,7 +14,7 @@ use crate::services::system_monitor::{alerts, history, info};
 pub const SAMPLE_INTERVAL_SECS: u64 = 30;
 
 pub async fn run_recorder(
-    app: AppHandle,
+    sink: std::sync::Arc<dyn EventSink>,
     software: Arc<SoftwareManager>,
     springboot: Arc<SpringBootManager>,
 ) {
@@ -25,12 +25,12 @@ pub async fn run_recorder(
     tick.tick().await; // 消耗初始化 tick
     loop {
         tick.tick().await;
-        sample_once(&app, &software, &springboot, &mut alerting).await;
+        sample_once(&sink, &software, &springboot, &mut alerting).await;
     }
 }
 
 async fn sample_once(
-    app: &AppHandle,
+    sink: &std::sync::Arc<dyn EventSink>,
     software: &Arc<SoftwareManager>,
     springboot: &Arc<SpringBootManager>,
     alerting: &mut HashSet<String>,
@@ -111,7 +111,7 @@ async fn sample_once(
     alerts::release_stale(alerting, &live);
 
     eval(
-        app,
+        sink,
         alerting,
         "system:cpu",
         "整机",
@@ -120,7 +120,7 @@ async fn sample_once(
         thresholds.alert_system_cpu,
     );
     eval(
-        app,
+        sink,
         alerting,
         "system:mem",
         "整机",
@@ -130,7 +130,7 @@ async fn sample_once(
     );
     for (pid, name, cpu, mem_pct) in &rows {
         eval(
-            app,
+            sink,
             alerting,
             &alerts::proc_key(*pid, "cpu"),
             name,
@@ -139,7 +139,7 @@ async fn sample_once(
             thresholds.alert_process_cpu,
         );
         eval(
-            app,
+            sink,
             alerting,
             &alerts::proc_key(*pid, "mem"),
             name,
@@ -152,7 +152,7 @@ async fn sample_once(
 
 /// 触发/恢复单条告警：触发写审计 + emit 事件；恢复只写审计（不打扰）。
 fn eval(
-    app: &AppHandle,
+    sink: &std::sync::Arc<dyn EventSink>,
     alerting: &mut HashSet<String>,
     key: &str,
     name: &str,
@@ -172,7 +172,7 @@ fn eval(
                 threshold
             )
         );
-        let _ = app.emit(
+        let _ = sink.emit(
             "resource-alert",
             serde_json::json!({ "kind": if key.starts_with("proc:") { "process" } else { "system" }, "name": name, "metric": metric, "value": value.round(), "threshold": threshold }),
         );

@@ -12,6 +12,8 @@
 //! - [x] `models` —— 数据模型（仅依赖 serde / serde_json / chrono）
 //! - [x] `utils` —— 通用工具（下载 / 解压 / 路径 / 进程 / 拓扑 / IP 探测；
 //!   `utils::update` 因依赖 `tauri-plugin-updater`，留在壳层）
+//! - [x] `event` —— 事件推送抽象（`EventSink`），供两个壳分别实现
 
+pub mod event;
 pub mod models;
 pub mod utils;

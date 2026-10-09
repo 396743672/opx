@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager};
+use opx_core::event::EventSink;
 
 use opx_core::models::software::ArchiveFormat;
 use opx_core::models::software::{
@@ -58,7 +58,7 @@ pub fn register_install_audit(install_id: &str, action: &str, target: &str, deta
         );
 }
 
-fn emit_event(app: &AppHandle, payload: serde_json::Value) {
+fn emit_event(sink: &Arc<dyn EventSink>, payload: serde_json::Value) {
     // 终态（failed / completed）顺带补写审计完成记录：这是安装任务唯一的完成出口，
     // 覆盖 install_software / install_custom / install_from_builtin 的全部失败分支。
     let phase = payload.get("phase").and_then(|v| v.as_str()).unwrap_or("");
@@ -90,7 +90,7 @@ fn emit_event(app: &AppHandle, payload: serde_json::Value) {
             }
         }
     }
-    let _ = app.emit("install-progress", payload);
+    sink.emit("install-progress", payload);
 }
 
 // ponytail: 节流 emit，避免大文件每 chunk 刷屏 IPC
@@ -129,7 +129,7 @@ fn is_valid_custom_name(name: &str) -> bool {
 
 /// 安装预置软件（在线镜像）
 pub async fn install_software(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     manager: Arc<SoftwareManager>,
     params: InstallParams,
     install_id: String,
@@ -141,7 +141,7 @@ pub async fn install_software(
         Some(e) => e,
         None => {
             emit_event(
-                &app,
+                &sink,
                 serde_json::json!({
                     "install_id": install_id,
                     "phase": "failed",
@@ -156,7 +156,7 @@ pub async fn install_software(
         Some(v) => v,
         None => {
             emit_event(
-                &app,
+                &sink,
                 serde_json::json!({
                     "install_id": install_id,
                     "phase": "failed",
@@ -169,7 +169,7 @@ pub async fn install_software(
     };
     if params.mirror_index >= version_info.mirrors.len() {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -184,7 +184,7 @@ pub async fn install_software(
     // builtin 分流：若选中的镜像带 builtin 标记，走本地解压
     if selected_mirror.builtin.is_some() {
         install_from_builtin(
-            app,
+            sink.clone(),
             manager,
             params,
             install_id,
@@ -199,7 +199,7 @@ pub async fn install_software(
     // 查重
     if manager.is_installed(&params.key, &params.version) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -211,7 +211,7 @@ pub async fn install_software(
     }
     if manager.is_installing(&params.key, &params.version) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -224,7 +224,7 @@ pub async fn install_software(
 
     if let Err(e) = fs::create_dir_all(&install_path) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -248,7 +248,7 @@ pub async fn install_software(
         let used_mirror = download_with_mirror_fallback(
             &params,
             &install_path,
-            &app,
+            sink.clone(),
             &install_id,
             version_info,
             params.mirror_index,
@@ -294,7 +294,7 @@ pub async fn install_software(
         }
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "completed",
@@ -312,7 +312,7 @@ pub async fn install_software(
             params.key, params.version, e
         );
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "failed",
@@ -328,7 +328,7 @@ pub async fn install_software(
 
 /// 安装用户上传的自定义压缩包
 pub async fn install_custom(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     manager: Arc<SoftwareManager>,
     params: CustomInstallParams,
     install_id: String,
@@ -340,7 +340,7 @@ pub async fn install_custom(
     // 校验压缩包存在
     if !archive_path.exists() {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -358,7 +358,7 @@ pub async fn install_custom(
         path_str.to_lowercase().ends_with(".tar.gz") || path_str.to_lowercase().ends_with(".tgz");
     if !is_zip && !is_tar_gz {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -372,7 +372,7 @@ pub async fn install_custom(
     // 校验名称字符集（防止路径遍历：仅允许字母、数字、下划线、连字符）
     if !is_valid_custom_name(name_trimmed) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -386,7 +386,7 @@ pub async fn install_custom(
     // 查重：custom 用 key="custom" + version=name 查重
     if manager.is_installed("custom", name_trimmed) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -399,7 +399,7 @@ pub async fn install_custom(
 
     if let Err(e) = fs::create_dir_all(&install_path) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -418,7 +418,7 @@ pub async fn install_custom(
 
     let result: Result<()> = async {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
@@ -426,7 +426,7 @@ pub async fn install_custom(
             }),
         );
 
-        let app_ep = app.clone();
+        let sink_ep = sink.clone();
         let id_ep = install_id.clone();
         let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
@@ -437,7 +437,7 @@ pub async fn install_custom(
             };
             if throttle.should_emit(percent) {
                 emit_event(
-                    &app_ep,
+                    &sink_ep,
                     serde_json::json!({
                         "install_id": id_ep.clone(),
                         "phase": "extracting",
@@ -454,7 +454,7 @@ pub async fn install_custom(
         }
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
@@ -497,7 +497,7 @@ pub async fn install_custom(
         manager.add_installed(installed)?;
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "completed",
@@ -515,7 +515,7 @@ pub async fn install_custom(
             name_trimmed, e
         );
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "failed",
@@ -534,7 +534,7 @@ pub async fn install_custom(
 pub async fn download_and_extract(
     params: &InstallParams,
     install_path: &Path,
-    app: &AppHandle,
+    sink: Arc<dyn EventSink>,
     install_id: &str,
     version_info: &CatalogVersion,
     mirror: &MirrorSource,
@@ -576,7 +576,7 @@ pub async fn download_and_extract(
     }
     if cache_hit {
         emit_event(
-            app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "downloading",
@@ -588,7 +588,7 @@ pub async fn download_and_extract(
         );
     } else {
         emit_event(
-            app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "downloading",
@@ -598,7 +598,7 @@ pub async fn download_and_extract(
             }),
         );
 
-        let app_for_progress = app.clone();
+        let sink_for_progress = sink.clone();
         let install_id_for_progress = install_id.to_string();
         // 节流：大文件按每 chunk 回调会刷屏 IPC，限制为最多每 200ms 或百分比变化时 emit 一次
         let mut last_emit = std::time::Instant::now();
@@ -613,7 +613,7 @@ pub async fn download_and_extract(
                         last_percent = p;
                     }
                     emit_event(
-                        &app_for_progress,
+                        &sink_for_progress,
                         serde_json::json!({
                             "install_id": install_id_for_progress.clone(),
                             "phase": "downloading",
@@ -651,7 +651,7 @@ pub async fn download_and_extract(
     }
 
     emit_event(
-        app,
+        &sink,
         serde_json::json!({
             "install_id": install_id,
             "phase": "extracting",
@@ -659,7 +659,7 @@ pub async fn download_and_extract(
         }),
     );
 
-    let app_ep = app.clone();
+    let sink_ep = sink.clone();
     let id_ep = install_id.to_string();
     let cache_path2 = cache_path.clone();
     let install_path2 = install_path.to_path_buf();
@@ -674,7 +674,7 @@ pub async fn download_and_extract(
             };
             if throttle.should_emit(percent) {
                 emit_event(
-                    &app_ep,
+                    &sink_ep,
                     serde_json::json!({
                         "install_id": id_ep.clone(),
                         "phase": "extracting",
@@ -711,7 +711,7 @@ pub async fn download_and_extract(
     inner?;
 
     emit_event(
-        app,
+        &sink,
         serde_json::json!({
             "install_id": install_id,
             "phase": "extracting",
@@ -729,7 +729,7 @@ pub async fn download_and_extract(
     }
 
     emit_event(
-        app,
+        &sink,
         serde_json::json!({
             "install_id": install_id,
             "phase": "extracting",
@@ -765,7 +765,7 @@ fn mirror_candidates(version_info: &CatalogVersion, preferred_index: usize) -> V
 pub async fn download_with_mirror_fallback(
     params: &InstallParams,
     install_path: &Path,
-    app: &AppHandle,
+    sink: Arc<dyn EventSink>,
     install_id: &str,
     version_info: &CatalogVersion,
     preferred_index: usize,
@@ -793,7 +793,7 @@ pub async fn download_with_mirror_fallback(
             );
         }
 
-        match download_and_extract(params, install_path, app, install_id, version_info, mirror).await
+        match download_and_extract(params, install_path, sink.clone(), install_id, version_info, mirror).await
         {
             Ok(()) => {
                 if attempt > 0 {
@@ -824,7 +824,7 @@ pub async fn download_with_mirror_fallback(
 
 /// 从内置 zip 安装（离线安装）
 async fn install_from_builtin(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     manager: Arc<SoftwareManager>,
     params: InstallParams,
     install_id: String,
@@ -843,18 +843,18 @@ async fn install_from_builtin(
     // macOS 上 resource_dir() 已是 .app/Contents/Resources/，资源直接在其下。
     // resolve_builtin_resource 会尝试两个候选路径并返回第一个存在的；不存在则返回 None。
     // resource_zip 改为 Option：本地存在时为 Some(路径)，缺失时为 None（交由下方回退下载）。
-    let resource_zip: Option<std::path::PathBuf> = match app.path().resource_dir() {
-        Ok(d) => {
+    let resource_zip: Option<std::path::PathBuf> = match sink.resource_dir() {
+        Some(d) => {
             let rel = format!("software/{}/{}.zip", &params.key, &params.version);
             opx_core::utils::paths::resolve_builtin_resource(&d, &rel)
         }
-        Err(e) => {
+        None => {
             emit_event(
-                &app,
+                &sink,
                 serde_json::json!({
                     "install_id": install_id,
                     "phase": "failed",
-                    "error": format!("无法定位资源目录: {}", e),
+                    "error": "无法定位资源目录",
                     "stage": "extract"
                 }),
             );
@@ -890,7 +890,7 @@ async fn install_from_builtin(
             Some(url) => {
                 // 进入 downloading 阶段，联网拉取官方安装包
                 emit_event(
-                    &app,
+                    &sink,
                     serde_json::json!({
                         "install_id": install_id.clone(),
                         "phase": "downloading",
@@ -899,7 +899,7 @@ async fn install_from_builtin(
                         "percent": serde_json::Value::Null
                     }),
                 );
-                let app_ep = app.clone();
+                let sink_ep = sink.clone();
                 let id_ep = install_id.clone();
                 let mut last_emit = std::time::Instant::now();
                 let mut last_percent: i64 = -1;
@@ -913,7 +913,7 @@ async fn install_from_builtin(
                                 last_percent = p;
                             }
                             emit_event(
-                                &app_ep,
+                                &sink_ep,
                                 serde_json::json!({
                                     "install_id": id_ep.clone(),
                                     "phase": "downloading",
@@ -928,7 +928,7 @@ async fn install_from_builtin(
                 {
                     cleanup_temp(&temp_zip);
                     emit_event(
-                        &app,
+                        &sink,
                         serde_json::json!({
                             "install_id": install_id,
                             "phase": "failed",
@@ -943,7 +943,7 @@ async fn install_from_builtin(
             None => {
                 cleanup_temp(&temp_zip);
                 emit_event(
-                    &app,
+                    &sink,
                     serde_json::json!({
                         "install_id": install_id,
                         "phase": "failed",
@@ -962,7 +962,7 @@ async fn install_from_builtin(
         if let Err(e) = fs::copy(resource_zip.as_ref().unwrap(), &temp_zip) {
             cleanup_temp(&temp_zip);
             emit_event(
-                &app,
+                &sink,
                 serde_json::json!({
                     "install_id": install_id,
                     "phase": "failed",
@@ -977,7 +977,7 @@ async fn install_from_builtin(
     // 3. 查重
     if manager.is_installed(&params.key, &params.version) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -989,7 +989,7 @@ async fn install_from_builtin(
     }
     if manager.is_installing(&params.key, &params.version) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -1003,7 +1003,7 @@ async fn install_from_builtin(
     // 4. 创建 install_path
     if let Err(e) = fs::create_dir_all(&install_path) {
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id,
                 "phase": "failed",
@@ -1024,7 +1024,7 @@ async fn install_from_builtin(
     //    本地存在时跳过了 downloading；走回退下载时已先行 emit 过 downloading，
     //    此处切到 extracting 衔接解压，避免 createTask 默认 downloading 阶段滞留。
     emit_event(
-        &app,
+        &sink,
         serde_json::json!({
             "install_id": install_id.clone(),
             "phase": "extracting",
@@ -1047,7 +1047,7 @@ async fn install_from_builtin(
             }
         }
 
-        let app_ep = app.clone();
+        let sink_ep = sink.clone();
         let id_ep = install_id.clone();
         let mut throttle = ThrottledEmitter::new();
         let on_progress = move |extracted: u64, total: u64| {
@@ -1058,7 +1058,7 @@ async fn install_from_builtin(
             };
             if throttle.should_emit(percent) {
                 emit_event(
-                    &app_ep,
+                    &sink_ep,
                     serde_json::json!({
                         "install_id": id_ep.clone(),
                         "phase": "extracting",
@@ -1097,7 +1097,7 @@ async fn install_from_builtin(
         extract_result?;
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
@@ -1116,7 +1116,7 @@ async fn install_from_builtin(
         }
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "extracting",
@@ -1161,7 +1161,7 @@ async fn install_from_builtin(
         }
 
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "completed",
@@ -1179,7 +1179,7 @@ async fn install_from_builtin(
             params.key, params.version, e
         );
         emit_event(
-            &app,
+            &sink,
             serde_json::json!({
                 "install_id": install_id.clone(),
                 "phase": "failed",

@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
+use opx_core::event::EventSink;
 
 enum Cmd {
     Register { path: String, id: u64 },
@@ -35,7 +35,7 @@ impl LogWatcher {
     }
 
     /// 应用启动时初始化后台监听线程（幂等）
-    pub fn init(app: AppHandle) {
+    pub fn init(sink: std::sync::Arc<dyn EventSink>) {
         let w = watcher();
         let mut guard = w.tx.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
@@ -43,7 +43,7 @@ impl LogWatcher {
         }
         let (tx, rx) = mpsc::channel();
         *guard = Some(tx);
-        std::thread::spawn(move || run_loop(app, rx));
+        std::thread::spawn(move || run_loop(sink, rx));
     }
 
     pub fn register(path: &str) -> Option<u64> {
@@ -71,7 +71,7 @@ impl LogWatcher {
     }
 }
 
-fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
+fn run_loop(sink: std::sync::Arc<dyn EventSink>, rx: Receiver<Cmd>) {
     let (ev_tx, ev_rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let Ok(mut watcher) = notify::recommended_watcher(move |res| {
         let _ = ev_tx.send(res);
@@ -117,7 +117,7 @@ fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
                         if due {
                             last_emit.insert(pstr.clone(), Instant::now());
                             let payload = serde_json::json!({ "id": id, "path": pstr });
-                            let _ = app.emit("log-file-changed", payload);
+                            sink.emit("log-file-changed", payload);
                         }
                     }
                 }

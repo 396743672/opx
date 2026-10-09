@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod event_sink;
 pub mod services;
 pub mod utils;
 
@@ -25,8 +26,13 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            // 事件出口：core 内服务统一经 `EventSink` 推事件，壳层实现转发给前端。
+            // 后续 watchdog / recorder / startup_bootstrap 等后台任务共用这一实例。
+            let event_sink = std::sync::Arc::new(crate::event_sink::TauriEventSink::new(
+                app.handle().clone(),
+            ));
             // 日志文件监听后台线程（notify 实时推送增量）
-            crate::services::software_manager::log_watcher::LogWatcher::init(app.handle().clone());
+            crate::services::software_manager::log_watcher::LogWatcher::init(event_sink.clone());
 
             // 便携布局：启动时主动创建所有运行目录（exe 同级）
             {
@@ -183,7 +189,7 @@ pub fn run() {
             });
 
             // 指标采样器：30s 采样整机与运行中实例，落盘 7 天，并做阈值告警
-            let rec_app = app.handle().clone();
+            let rec_sink = event_sink.clone();
             let rec_sw = app
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
@@ -193,7 +199,7 @@ pub fn run() {
                 .inner()
                 .clone();
             tauri::async_runtime::spawn(async move {
-                crate::services::system_monitor::recorder::run_recorder(rec_app, rec_sw, rec_sb)
+                crate::services::system_monitor::recorder::run_recorder(rec_sink, rec_sw, rec_sb)
                     .await;
             });
 
