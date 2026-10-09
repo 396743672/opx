@@ -16,19 +16,11 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
 }
 
 /// 读取 settings.json；文件缺失或内容损坏时返回默认设置（并记录告警）。
-pub fn read_settings() -> Result<opx_core::models::settings::AppSettings, String> {
-    let path = opx_core::utils::paths::settings_path();
-    let Ok(s) = std::fs::read_to_string(&path) else {
-        return Ok(Default::default());
-    };
-    match serde_json::from_str(&s) {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            tracing::warn!(error = %e, path = %path.display(), "settings.json 解析失败，使用默认设置");
-            Ok(Default::default())
-        }
-    }
-}
+///
+/// 实现已下沉到 `opx-core::utils::settings::read_settings`（纯文件读取，零宿主依赖），
+/// 此处 `pub use` 重导出以保持既有 5 处调用方（`renew_scheduler` / `ddns/scheduler` /
+/// `backup_scheduler` / `notify` / `recorder`）零改动。
+pub use opx_core::utils::settings::read_settings;
 
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]

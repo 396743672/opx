@@ -10,4 +10,6 @@ pub mod local_ip;
 pub mod paths;
 pub mod platform;
 pub mod process;
+pub mod semver;
+pub mod settings;
 pub mod topo;

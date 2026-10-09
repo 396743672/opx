@@ -2494,19 +2494,11 @@ pub async fn reset_instance(
 
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
 /// 任一段含非数字时退化为字符串比较（v1 < v2）。
-/// 升级检测与 provider 的远程版本排序共用同一份语义，故对 crate 内可见。
-pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let ap: Vec<&str> = a.split('.').collect();
-    let bp: Vec<&str> = b.split('.').collect();
-    for i in 0..ap.len().min(bp.len()) {
-        match (ap[i].parse::<u64>(), bp[i].parse::<u64>()) {
-            (Ok(x), Ok(y)) if x != y => return x.cmp(&y),
-            (Ok(_), Ok(_)) => {}
-            _ => return a.cmp(b),
-        }
-    }
-    ap.len().cmp(&bp.len())
-}
+///
+/// 实现已下沉到 `opx-core::utils::semver::compare_versions`——升级检测与各 provider
+/// 的远程版本排序必须共用同一份语义，搬进 core 后 `providers` 也能直接引用而
+/// 无需反向依赖壳层 commands。此处 `pub use` 重导出以保持既有调用方零改动。
+pub use opx_core::utils::semver::compare_versions;
 
 /// 计算已装软件的升级目标：catalog 中高于当前版本的最高版本
 fn compute_upgrades(
