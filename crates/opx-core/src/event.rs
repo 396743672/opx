@@ -28,6 +28,29 @@ pub trait EventSink: Send + Sync {
     }
 }
 
+/// [`EventSink`] 的便捷扩展：允许推送**任意 `Serialize`** 负载。
+///
+/// ## 为什么需要它
+/// Tauri 的 `app.emit(event, payload)` 接受任意 `Serialize`——元组会被序列化成
+/// **JSON 数组**、结构体序列化成 **JSON 对象**。而 [`EventSink::emit`] 为保持
+/// **对象安全**（必需 `dyn EventSink`）只能限定 `serde_json::Value`
+/// ——trait 里若直接写泛型方法 `emit<S: Serialize>`，`dyn EventSink` 立刻失效。
+///
+/// 本扩展 trait 把 `Serialize → Value` 的转换收在一处，**保证前端收到的 JSON 形状
+/// 与迁移前逐字节一致**。迁移旧代码时务必用它，而不是把元组/结构体改写成
+/// `json!({...})`——那会把数组变成对象，造成**静默的行为变更**。
+pub trait EventSinkExt: EventSink {
+    /// 推送任意 `Serialize` 负载；序列化失败时告警并丢弃（不打断业务流程）。
+    fn emit_ser<S: serde::Serialize>(&self, event: &str, payload: S) {
+        match serde_json::to_value(payload) {
+            Ok(v) => self.emit(event, v),
+            Err(e) => tracing::warn!(error = %e, event, "事件负载序列化失败，已丢弃"),
+        }
+    }
+}
+
+impl<T: EventSink + ?Sized> EventSinkExt for T {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +74,43 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, "install-progress");
         assert_eq!(got[0].1["percent"], 42);
+    }
+
+    /// 🚨 **形状回归**：`emit_ser` 必须复刻 Tauri `app.emit` 的 JSON 形状
+    /// （元组 → **数组**、结构体 → **对象**），否则前端解析会**静默失败**。
+    ///
+    /// 这是迁移期最危险的陷阱：把 `app.emit(ev, (a, b, c))` 改写成
+    /// `json!({"a":…, "b":…, "c":…})` 能编译通过，但事件结构从数组变对象，
+    /// 前端拿到的数据结构完全变了。本测试把三种形态钉死。
+    #[test]
+    fn emit_ser_preserves_tauri_json_shape() {
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct Ev {
+            status: String,
+            pid: u32,
+        }
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let sink = Recorder(log.clone());
+
+        sink.emit_ser("tuple", ("Running", 1234u32));
+        sink.emit_ser("struct", Ev { status: "Running".into(), pid: 1234 });
+        sink.emit_ser("value", serde_json::json!({ "a": 1 }));
+
+        let got = log.lock().unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(
+            got[0].1,
+            serde_json::json!(["Running", 1234]),
+            "元组必须序列化为 JSON 数组（Tauri 原行为）"
+        );
+        assert_eq!(
+            got[1].1,
+            serde_json::json!({ "status": "Running", "pid": 1234 }),
+            "结构体必须序列化为 JSON 对象"
+        );
+        assert_eq!(got[2].1, serde_json::json!({ "a": 1 }), "Value 应原样透传");
     }
 }
