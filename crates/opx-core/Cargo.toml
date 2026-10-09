@@ -28,7 +28,11 @@ flate2 = "1.0"
 lzma-rs = "0.3"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
 # paths.rs 的 Windows 分支（长路径 / 文件属性）需要；非 Windows 下为 stub，不影响跨平台编译。
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# Win32_System_Diagnostics_ToolHelp —— lifecycle.rs 的 Windows 进程枚举
+# （CreateToolhelp32Snapshot / Process32First / TH32CS_SNAPPROCESS / PROCESSENTRY32）。
+# ⚠️ 批次 3B 之前本feature 只在壳层声明，靠 workspace 的 feature 统一化才让 core 编译通过，
+#导致 `cargo check -p opx-core` 单独构建失败（core 无法自包含）。3B 起必须在 core 自己声明。
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp"] }
 
 # —— 阶段 3批次 3A1：随 providers / catalog / log_viewer 迁入 ——
 # 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份/类型不匹配。

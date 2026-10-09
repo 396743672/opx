@@ -7,7 +7,7 @@
 //!
 //! ## 为什么与 `lifecycle` 分两个文件
 //!
-//! 壳层 `commands/software.rs` 里这 13 个函数是**连续的一块**（`:846-1604`），
+//! 壳层 `commands/software.rs` 里这 10 个函数是**连续的一块**（`:846-1604`），
 //! 依赖方向单一（都调`lifecycle::*` / `health_check::*` / `providers::*`），
 //! 且**零 Tauri 依赖**（无 `AppHandle` / `State` / `tauri::`）——因此可整块搬入。
 //! 放在独立文件而非并入既有 `lifecycle.rs`，是为了让「进程注册表/启停原语」
