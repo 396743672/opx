@@ -16,4 +16,5 @@
 
 pub mod event;
 pub mod models;
+pub mod services;
 pub mod utils;

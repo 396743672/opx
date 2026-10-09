@@ -6,7 +6,7 @@ use std::time::Duration;
 use opx_core::event::EventSink;
 
 use crate::services::software_manager::SoftwareManager;
-use crate::services::website_manager::WebsiteManager;
+use opx_core::services::website_manager::WebsiteManager;
 
 const CHECK_INTERVAL_SECS: u64 = 3600;
 const RENEW_BEFORE_DAYS: i64 = 30;

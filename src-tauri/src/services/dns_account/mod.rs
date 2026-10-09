@@ -113,7 +113,7 @@ fn read_legacy_token() -> String {
 
 /// 给所有「已启用 ACME 且未绑定账号」的站点绑上该账号，并落盘。
 fn bind_unbound_acme_sites(account_id: &str) -> anyhow::Result<()> {
-    let p = crate::services::website_manager::WebsiteManager::store_path();
+    let p = opx_core::services::website_manager::WebsiteManager::store_path();
     if !p.exists() {
         return Ok(());
     }

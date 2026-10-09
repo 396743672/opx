@@ -73,7 +73,7 @@ pub fn run() {
                 tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
             }
             app.manage(std::sync::Arc::new(
-                crate::services::website_manager::WebsiteManager::new(),
+                opx_core::services::website_manager::WebsiteManager::new(),
             ));
             let dns_account_mgr =
                 std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
@@ -146,7 +146,7 @@ pub fn run() {
 
             // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
             let renew_wm = app
-                .state::<std::sync::Arc<crate::services::website_manager::WebsiteManager>>()
+                .state::<std::sync::Arc<opx_core::services::website_manager::WebsiteManager>>()
                 .inner()
                 .clone();
             let renew_sm = app

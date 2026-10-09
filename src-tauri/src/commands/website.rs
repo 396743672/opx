@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use opx_core::models::software::SoftwareStatus;
 use opx_core::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
-use crate::services::website_manager::{nginx_conf, WebsiteManager};
+use opx_core::services::website_manager::{nginx_conf, WebsiteManager};
 use opx_core::utils::archive;
 use crate::{audited, audited_async};
 
@@ -25,121 +24,25 @@ pub fn resolve_nginx(
     opx_core::utils::website::resolve_nginx(&sm.get_installed())
 }
 
-#[cfg(windows)]
-fn run_nginx(install_path: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new(install_path.join("nginx.exe"))
-        .args(args)
-        .current_dir(install_path)
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output()
-}
-
-#[cfg(not(windows))]
-fn run_nginx(install_path: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    std::process::Command::new("nginx")
-        .args(args)
-        .current_dir(install_path)
-        .output()
-}
+/// 调用 nginx 二进制（`-t` 校验 / `-s reload`）。
+///
+/// 实现已下沉到 [`opx_core::services::website_manager::regenerate::run_nginx`]，
+/// 含**必须保留的平台差异**（Windows 走 `install_path/nginx.exe`，非 Windows 走
+/// PATH 查找）与静默启动（`process::hidden`）。本`pub use` 让 `set_site_conf`
+/// 手写 conf 落盘后的校验/reload 与 `regenerate` 共用同一份实现。
+pub use opx_core::services::website_manager::regenerate::run_nginx;
 
 /// 从当前站点列表重建 conf/sites/*.conf（幂等，天然处理删除/下线）。
-/// 文件处理规则见 [`sync_site_files`]。
-pub fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result<(), String> {
-    let nginx = resolve_nginx(sm)?;
-    let base = PathBuf::from(&nginx.install_path);
-    let conf_dir = base.join("conf");
-    let sites_dir = conf_dir.join("sites");
-    std::fs::create_dir_all(&sites_dir).map_err(|e| e.to_string())?;
-
-    sync_site_files(&sites_dir, &wm.list()).map_err(|e| e.to_string())?;
-
-    // 确保主配置 include（幂等）
-    let main_conf = conf_dir.join("nginx.conf");
-    if let Ok(content) = std::fs::read_to_string(&main_conf) {
-        let updated = nginx_conf::ensure_include(&content);
-        if updated != content {
-            std::fs::write(&main_conf, updated).map_err(|e| e.to_string())?;
-        }
-    }
-
-    if reload && nginx.status == SoftwareStatus::Running {
-        let test = run_nginx(&base, &["-t"]).map_err(|e| e.to_string())?;
-        if !test.status.success() {
-            tracing::warn!(stderr = %String::from_utf8_lossy(&test.stderr), "nginx 配置校验失败");
-            return Err("i18n:nginxConfInvalid".to_string());
-        }
-        let rl = run_nginx(&base, &["-s", "reload"]).map_err(|e| e.to_string())?;
-        if !rl.status.success() {
-            tracing::warn!(stderr = %String::from_utf8_lossy(&rl.stderr), "nginx reload 失败");
-            return Err("i18n:nginxReloadFailed".to_string());
-        }
-    }
-    Ok(())
-}
-
-/// 同步 sites 目录下的 conf 文件到与站点列表一致的状态（纯文件 IO，便于单测）。
 ///
-/// # 规则（全部站点统一）
-/// - **启用** → 确保 `.conf` 存在（若当前为 `.conf.disabled` 则改回；不存在则从数据生成）
-/// - **停用** → `.conf` 改名为 `.conf.disabled`（内容保留，nginx 不加载）
-/// - **已删除** → 清理阶段删掉不再属于任何站点的 `.conf` / `.conf.disabled`
-/// - **手写站点** 的 `.conf` 通过源码视图写入，此处仅改名不覆盖
-fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> {
-    // 所有站点的文件名（启用态 .conf 与停用态 .conf.disabled）都要保护，清理阶段不得删除
-    let protected: std::collections::HashSet<String> = sites
-        .iter()
-        .flat_map(|s| {
-            let f = nginx_conf::site_conf_filename(s);
-            [format!("{}.disabled", f), f]
-        })
-        .collect();
-
-    // 清理：删除不属于任何站点的残留 .conf / .conf.disabled（如已删除站点）
-    if let Ok(rd) = std::fs::read_dir(sites_dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let is_conf_like = name.ends_with(".conf") || name.ends_with(".conf.disabled");
-            if is_conf_like && !protected.contains(name) {
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
-
-    for site in sites {
-        let fname = nginx_conf::site_conf_filename(site);
-        let conf_path = sites_dir.join(&fname);
-        let disabled_path = sites_dir.join(format!("{}.disabled", fname));
-
-        if site.enabled {
-            // 启用态：确保 .conf 存在
-            if disabled_path.exists() && !conf_path.exists() {
-                // 从停用恢复：只改名，不写内容
-                std::fs::rename(&disabled_path, &conf_path)?;
-            } else if !conf_path.exists() && !disabled_path.exists() {
-                // 全新启用：从数据生成
-                let block = nginx_conf::generate_server_block(site);
-                std::fs::write(&conf_path, block)?;
-            } else if !site.custom_conf {
-                // ponytail: 表单模式 → 每次保存都从表单数据重建 .conf，确保路由更改生效
-                let block = nginx_conf::generate_server_block(site);
-                std::fs::write(&conf_path, block)?;
-            } // 手写模式（custom_conf=true）→ 跳过，保留源码视图写入的内容
-        } else {
-            // 停用态：改为 .disabled（nginx 不加载）
-            if conf_path.exists() {
-                std::fs::rename(&conf_path, &disabled_path)?;
-            }
-            // ponytail: 表单模式 → 停用态也随表单重建 .disabled，
-            // 避免站点停用时编辑（如切换 SSL/路由）后配置残留旧内容，下次启用备份失效
-            if !site.custom_conf && disabled_path.exists() {
-                let block = nginx_conf::generate_server_block(site);
-                std::fs::write(&disabled_path, block)?;
-            }
-        }
-    }
-    Ok(())
+/// 实现已下沉到 [`opx_core::services::website_manager::regenerate::regenerate`]：
+/// 连带 `sync_site_files`（sites 目录文件同步）与 `run_nginx` 一并搬入 core，
+/// 使 headless 壳也能在站点列表变更后重建配置。core 版不认识
+/// `SoftwareManager`（尚在壳层），按「按字段切而非按类型切」收
+/// `&[InstalledSoftware]` 切片；本薄封装传入 `sm.get_installed()` 维持原签名，
+/// 5 处调用点（`save_website` / `delete_website` / `set_website_enabled` /
+/// `unlock_site_conf` / `issue_site_certificate`）零改动。
+pub fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Result<(), String> {
+    opx_core::services::website_manager::regenerate::regenerate(&sm.get_installed(), wm, reload)
 }
 
 #[tauri::command]

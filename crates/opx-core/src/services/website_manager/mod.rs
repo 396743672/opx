@@ -1,12 +1,13 @@
 pub mod nginx_conf;
+pub mod regenerate;
 
 use std::path::PathBuf;
 use std::sync::RwLock;
 
 use anyhow::Result;
 
-use opx_core::models::website::{Site, WebsiteList};
-use opx_core::utils::paths;
+use crate::models::website::{Site, WebsiteList};
+use crate::utils::paths;
 
 pub struct WebsiteManager {
     websites: RwLock<WebsiteList>,

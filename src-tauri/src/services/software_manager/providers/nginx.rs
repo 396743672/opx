@@ -63,7 +63,7 @@ impl NginxProvider {
 
     /// 确保主配置已注入 JSON 访问日志（幂等；读-改-写，无变化不写盘）。
     fn ensure_access_log_conf(install_path: &Path) -> Result<()> {
-        use crate::services::website_manager::nginx_conf;
+        use opx_core::services::website_manager::nginx_conf;
         let conf_path = install_path.join("conf").join("nginx.conf");
         let content = std::fs::read_to_string(&conf_path)?;
         let updated = nginx_conf::ensure_access_log(&content);
@@ -152,7 +152,7 @@ impl SoftwareProvider for NginxProvider {
         // 2. map $http_upgrade $connection_upgrade {...} —— WebSocket 反代所需变量
         // 3. client_max_body_size 200m + underscores_in_headers on + gzip on
         // 4. log_format opx_json + access_log —— JSON 访问日志
-        use crate::services::website_manager::nginx_conf;
+        use opx_core::services::website_manager::nginx_conf;
         let conf_path = PathBuf::from(&ctx.install_path)
             .join("conf")
             .join("nginx.conf");
