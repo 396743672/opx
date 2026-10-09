@@ -153,14 +153,14 @@ pub fn run() {
                 .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
                 .inner()
                 .clone();
-            let renew_app = app.handle().clone();
+            let renew_sink = event_sink.clone();
             let renew_accounts = app
                 .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
                 .inner()
                 .clone();
             tauri::async_runtime::spawn(async move {
                 crate::services::acme::renew_scheduler::run_scheduler(
-                    renew_app, renew_wm, renew_sm, renew_accounts,
+                    renew_sink, renew_wm, renew_sm, renew_accounts,
                 )
                 .await;
             });

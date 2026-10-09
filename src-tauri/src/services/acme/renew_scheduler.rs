@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::AppHandle;
+use opx_core::event::EventSink;
 
 use crate::services::software_manager::SoftwareManager;
 use crate::services::website_manager::WebsiteManager;
@@ -19,7 +19,7 @@ pub fn needs_renewal(expires: Option<&str>, now: chrono::DateTime<chrono::Local>
 }
 
 pub async fn run_scheduler(
-    _app: AppHandle,
+    _sink: std::sync::Arc<dyn EventSink>,
     wm: Arc<WebsiteManager>,
     sm: Arc<SoftwareManager>,
     dns_accounts: Arc<crate::services::dns_account::DnsAccountManager>,
