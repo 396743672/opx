@@ -423,7 +423,6 @@ impl SoftwareProvider for NacosProvider {
             };
             first_run_init = Some(Box::new(FirstRunInit {
                 init_command: init_cmd,
-                temp_secret_output: None,
             }));
         }
 

@@ -287,7 +287,6 @@ const INIT_TIMEOUT_SECS: u64 = 180;
 /// stdout/stderr 设为 `Stdio::null()`（见 RC1 修复）：避免在轮询期间不读管道而
 /// 造成管道缓冲死锁，也避免把 mysqld 的真实报错闷在管道里。诊断由 provider 的
 /// --log-error 落文件。因此返回的 `Output` 中 stdout/stderr 为空。
-/// `temp_secret_output` 仍由调用方（software.rs）按需处理。
 pub fn run_first_run_init(fri: &FirstRunInit) -> anyhow::Result<std::process::Output> {
     let init = &fri.init_command;
     let program_path = resolve_program_path(&init.program, &init.working_dir);
@@ -616,6 +615,10 @@ pub fn run_graceful_stop(cmd: &GracefulStopCommand, pid: u32) -> bool {
     }
     let mut command = std::process::Command::new(&cmd.program);
     command.args(&cmd.args).current_dir(&cmd.working_dir);
+    // 需要认证的关闭命令（如 MySQL 的 MYSQL_PWD）经环境变量传凭据
+    for (k, v) in &cmd.env_vars {
+        command.env(k, v);
+    }
     // 关闭命令自身不产生需要消费的输出，丢弃避免管道缓冲死锁
     command
         .stdin(std::process::Stdio::null())

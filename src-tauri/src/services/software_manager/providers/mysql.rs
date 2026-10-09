@@ -10,8 +10,9 @@ use crate::models::software::{
 };
 
 use super::{
-    ConfigContext, FirstRunInit, HealthContext, InstallContext, LogContext, SoftwareProvider,
-    StartCommand, StartContext, WorkingDirContext, default_log_sources, exe_name,
+    ConfigContext, FirstRunInit, GracefulStopCommand, HealthContext, InstallContext, LogContext,
+    SoftwareProvider, StartCommand, StartContext, StopContext, WorkingDirContext,
+    default_log_sources, exe_name,
 };
 
 #[cfg(windows)]
@@ -275,8 +276,53 @@ lower_case_table_names=1\n",
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: Some(Box::new(FirstRunInit {
                 init_command,
-                temp_secret_output: None,
             })),
+        })
+    }
+
+    /// P1-3 补完：MySQL 此前无优雅停止（root 密码 ephemeral → `mysqladmin shutdown` 无法认证），
+    /// 停止即被 `taskkill /F` 强杀，有 InnoDB 未刷盘/数据损坏风险。
+    ///
+    /// 现凭据已随 P2-6 统一落盘（收紧权限），故可从 config 读回密码，经 **`MYSQL_PWD` 环境变量**
+    /// 传给 `mysqladmin shutdown`（不落在命令行，避免被同机其他用户从进程列表读到），
+    /// 让其干净关闭（刷盘、正常下线）。
+    ///
+    /// 未初始化或密码缺失（老实例，密码未落盘）→ 返回 `None`，走既有强杀回退，**行为不变**。
+    fn graceful_stop_command(&self, ctx: &StopContext) -> Option<GracefulStopCommand> {
+        let password = ctx
+            .config
+            .get("init_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if password.is_empty() {
+            return None;
+        }
+        let port = ctx
+            .config
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+            .unwrap_or(if ctx.port > 0 { ctx.port } else { 3306 });
+        let mut env_vars = std::collections::BTreeMap::new();
+        env_vars.insert("MYSQL_PWD".to_string(), password.to_string());
+        Some(GracefulStopCommand {
+            program: PathBuf::from(&ctx.install_path)
+                .join("bin")
+                .join(exe_name("mysqladmin"))
+                .to_string_lossy()
+                .to_string(),
+            args: vec![
+                "-h".to_string(),
+                "127.0.0.1".to_string(),
+                "-P".to_string(),
+                port.to_string(),
+                "-u".to_string(),
+                "root".to_string(),
+                "shutdown".to_string(),
+            ],
+            working_dir: PathBuf::from(&ctx.install_path),
+            env_vars,
+            timeout_secs: 30,
         })
     }
 
@@ -346,8 +392,10 @@ lower_case_table_names=1\n",
                     description_i18n: Some("configField.initPasswordDesc".to_string()),
                 },
             ],
-            // init_password 为一次性敏感字段：仅首次初始化消费，绝不写入 my.ini / installed.json
-            ephemeral_keys: vec!["init_password".to_string()],
+            // init_password 改为**持久化**（经 `write_file_restricted` 收紧权限，同 P2-6 的 secret 约定）：
+            // 优雅停止需 `mysqladmin shutdown` 认证，故不再 ephemeral；
+            // 该字段在「已初始化」实例上由前端按 last_started_at 锁定禁用（不改动）。
+            ephemeral_keys: vec![],
             // 初始化凭据：首启前必填（避免无密码 root 弱口令），首启后由前端按 last_started_at 锁定禁用
             field_rules: vec![FieldRule {
                 field_key: "init_password".to_string(),

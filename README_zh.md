@@ -188,6 +188,7 @@ npm run tauri:build
 
 ### 设置与界面
 - **设置页 Tab 分区**：通用 / 监控与告警 / 域名与 DNS / 安全 四个 Tab，选中态记入 URL（`?tab=`，刷新与直达均保持，非法值回退「通用」）。
+- **开机自启**：设置页可开启，OPX 随**用户登录**自动启动。三平台均为**用户级、无需管理员权限**——Windows 写注册表 `HKCU\...\Run`；macOS 写 LaunchAgent（`~/Library/LaunchAgents/com.opx.app.plist`）；Linux 写 XDG autostart（`~/.config/autostart/opx.desktop`）。
 - 配置面板官方文档外链。
 - 站点对话框改为头部固定、仅表单区滚动。
 

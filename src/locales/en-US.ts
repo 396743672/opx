@@ -511,7 +511,7 @@ export default {
   auto: 'Auto',
   closeWindowAction: 'Close Window Action',
   autoStartOnBoot: 'Start on Boot',
-  autoStartOnBootDesc: 'Launch OPX automatically when Windows starts',
+  autoStartOnBootDesc: 'Launch OPX automatically at login (Windows / macOS / Linux)',
   minimizeToTray: 'Minimize to system tray',
   exitDirectly: 'Exit directly',
   about: 'About',

@@ -142,10 +142,10 @@ opx-core (Rust lib)  ← 下载/安装/运行/凭据/provider，平台无关逻�
 |---|---|---|---|
 | P1-2 | ✅ 已修复 | `start_software` 入口在写锁内原子完成「校验 + 置 Starting + 清 last_error + 落盘」（`SoftwareManager::try_reserve_start` + `lifecycle::reserve_start_in_list`），消除并发双 spawn 竞态 | `e7b21cd` |
 | P1-4 | ✅ 已修复 | Nacos token 密钥改为每实例随机 32 字节 base64，落盘 `conf/opx-token-secret.key`（真实安装目录），缺失则临时生成；移除硬编码 `ThisIsMyCustomSecretKey012345678` | `f2c0fd4` |
-| P1-3 | ✅ 已修复 | provider trait 新增可选 `graceful_stop_command` 钩子（默认 None，其余 14 个 provider 零改动）；Redis/Nginx/PostgreSQL/MongoDB 实现各自的语义化关闭命令（redis-cli shutdown / nginx -s quit / pg_ctl stop -m fast -w / mongod --dbpath … --shutdown）。`stop_software`/`restart_software` 先执行优雅停止命令、失败/超时回退 `taskkill /F` 强杀 | 本次 |
-| P1-1 | 🔧 起步 | per-OS 二进制名已完成（共享 `exe_name` 助手，PG/Mongo/Consul/MinIO 启动+优雅停止不再硬编码 `.exe`，Windows 行为不变）；catalog/版本发现的 `#[cfg(windows)]` 锁定与 per-OS 下载 URL 仍留待 P2-1（catalog 平台维度）一并处理，避免 Linux 上「列得出装不了」破窗 | `fe01c1b` |
+| P1-3 | ✅ 已修复 | provider trait 新增可选 `graceful_stop_command` 钩子（默认 None）；Redis/Nginx/PostgreSQL/MongoDB 实现各自的语义化关闭命令（redis-cli shutdown / nginx -s quit / pg_ctl stop -m fast -w / mongod --dbpath … --shutdown）。`stop_software`/`restart_software` 先执行优雅停止命令、失败/超时回退 `taskkill /F` 强杀。**MySQL 已于 2026-10-09 补完**（密码落盘 + `mysqladmin shutdown` 经 `MYSQL_PWD`，见下方例外段） | 本次 + 2026-10-09 |
+| P1-1 | ✅ 已修复 | per-OS 二进制名（共享 `exe_name` 助手，PG/Mongo/Consul/MinIO 启动+优雅停止不再硬编码 `.exe`，Windows 行为不变）**+** catalog/版本发现的 `#[cfg(windows)]` 锁定与 per-OS 下载 URL —— 后者已随 **P2-1（2026-10-09）** 全部改为运行时 `current_os()` 分发 | `fe01c1b` + `3d1ee43` |
 
-**P1-3 已知例外（MySQL）**：MySQL root 密码为一次性 `ephemeral`（不持久化到 installed.json / 配置文件），`mysqladmin shutdown` 无法认证，`graceful_stop_command` 故意返回 `None` 走强杀回退——否则会陷入「认证失败 → 强杀」的假优雅。若要彻底优雅停止 MySQL，需将 root 密码存入 OS 凭据库（同锁屏 `LOCAL_MACHINE` 思路），属独立设计项，不在本次 P1-3 范围。
+**P1-3 已知例外（MySQL）→ ✅ 已于 2026-10-09 解决**：原 root 密码为一次性 `ephemeral`（不落盘），`mysqladmin shutdown` 无法认证 → 只能强杀。现改为**密码随 P2-6 统一落盘**（`write_file_restricted` 收紧权限；`ephemeral_keys` 清空），并实现 `graceful_stop_command`：经 **`MYSQL_PWD` 环境变量**（不落命令行，避免被同机他用户从进程列表读到）传密码给 `mysqladmin -h 127.0.0.1 -P <port> -u root shutdown`。为此 `GracefulStopCommand` 新增 `env_vars` 字段（其余 4 个 provider 填空表）。**老实例**（密码未落盘）仍返回 `None` 走强杀回退，**无回归**。
 
 > 实机验证建议（待用户本机）：装一个 Redis + 一个 PostgreSQL，分别点「停止」，观察 `opx-<id>.log` 不再出现强杀、进程干净退出；并在数据有写入时停库，重启确认数据未损坏。
 

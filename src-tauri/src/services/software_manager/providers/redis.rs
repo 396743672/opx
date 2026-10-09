@@ -312,6 +312,7 @@ impl SoftwareProvider for RedisProvider {
                 .to_string(),
             args,
             working_dir: PathBuf::from(&ctx.install_path),
+            env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 10,
         })
     }

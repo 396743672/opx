@@ -181,6 +181,9 @@ pub struct GracefulStopCommand {
     pub program: String,
     pub args: Vec<String>,
     pub working_dir: PathBuf,
+    /// 附加环境变量。用于需要认证的关闭命令——如 MySQL 经 `MYSQL_PWD` 传密码，
+    /// 避免密码出现在命令行参数中被其他用户从进程列表读到。
+    pub env_vars: std::collections::BTreeMap<String, String>,
     /// 等待进程自行退出的最长秒数；超时则回退强杀。
     pub timeout_secs: u64,
 }
@@ -336,14 +339,6 @@ pub struct StartCommand {
 #[derive(Debug)]
 pub struct FirstRunInit {
     pub init_command: StartCommand,
-    pub temp_secret_output: Option<TempSecretSpec>,
-}
-
-/// 临时密码提取方式
-#[derive(Debug)]
-pub enum TempSecretSpec {
-    FromStdoutRegex(String),
-    FromLogFile { path: PathBuf, regex: String },
 }
 
 pub fn all_providers() -> Vec<Box<dyn SoftwareProvider>> {
@@ -426,5 +421,51 @@ mod tests {
         let idx = cmd.args.iter().position(|a| a == "-a").expect("应带 -a");
         assert_eq!(cmd.args[idx + 1], "s3cret");
         assert_eq!(cmd.args[0], "-p");
+    }
+
+    /// P1-3 补完：MySQL 密码落盘后应产出 `mysqladmin shutdown` 优雅停止，
+    /// 且密码经 `MYSQL_PWD` 环境变量传递（**绝不**出现在命令行参数中）。
+    #[test]
+    fn mysql_graceful_stop_uses_mysqladmin_with_mysql_pwd() {
+        let ctx = StopContext {
+            installed_id: "t1".to_string(),
+            install_path: "C:/opx/apps/mysql/8.4.11".to_string(),
+            version: "8.4.11".to_string(),
+            config: serde_json::json!({ "init_password": "s3cret", "port": 3307 }),
+            port: 0,
+        };
+        let p = mysql::MySqlProvider::new();
+        let cmd = p
+            .graceful_stop_command(&ctx)
+            .expect("有密码时应产出优雅停止命令");
+        assert!(cmd.program.ends_with(&exe_name("mysqladmin")), "{}", cmd.program);
+        assert!(cmd.args.contains(&"shutdown".to_string()), "应带 shutdown");
+        assert!(cmd.args.contains(&"3307".to_string()), "应使用配置端口，而非默认 3306");
+        assert_eq!(
+            cmd.env_vars.get("MYSQL_PWD").map(|s| s.as_str()),
+            Some("s3cret"),
+            "密码应经 MYSQL_PWD 传递"
+        );
+        assert!(
+            !cmd.args.iter().any(|a| a.contains("s3cret")),
+            "密码绝不能出现在命令行"
+        );
+    }
+
+    /// 无密码（老实例：密码未落盘）→ `None`，走既有强杀回退，**无回归**。
+    #[test]
+    fn mysql_graceful_stop_is_none_without_password() {
+        let ctx = StopContext {
+            installed_id: "t1".to_string(),
+            install_path: "C:/opx/apps/mysql/8.4.11".to_string(),
+            version: "8.4.11".to_string(),
+            config: serde_json::json!({}),
+            port: 0,
+        };
+        let p = mysql::MySqlProvider::new();
+        assert!(
+            p.graceful_stop_command(&ctx).is_none(),
+            "无密码时应返回 None（回退强杀）"
+        );
     }
 }

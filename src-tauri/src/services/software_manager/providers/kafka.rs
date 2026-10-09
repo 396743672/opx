@@ -324,7 +324,6 @@ impl SoftwareProvider for KafkaProvider {
                     creation_flags: CREATE_NO_WINDOW,
                     first_run_init: None,
                 },
-                temp_secret_output: None,
             }))
         } else {
             None

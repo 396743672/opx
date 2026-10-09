@@ -324,6 +324,7 @@ impl SoftwareProvider for MongoDbProvider {
                 .to_string(),
             args: vec!["--dbpath".to_string(), abs_dbpath, "--shutdown".to_string()],
             working_dir: PathBuf::from(&ctx.install_path),
+            env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 15,
         })
     }

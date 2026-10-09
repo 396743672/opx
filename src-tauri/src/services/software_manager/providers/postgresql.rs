@@ -231,7 +231,6 @@ impl SoftwareProvider for PostgreSqlProvider {
             creation_flags: CREATE_NO_WINDOW,
             first_run_init: Some(Box::new(FirstRunInit {
                 init_command,
-                temp_secret_output: None,
             })),
         })
     }
@@ -336,6 +335,7 @@ impl SoftwareProvider for PostgreSqlProvider {
                 "-w".to_string(),
             ],
             working_dir: PathBuf::from(&ctx.install_path),
+            env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 15,
         })
     }

@@ -1283,7 +1283,8 @@ pub async fn do_start_software(
                     return Err(err);
                 }
             };
-            let _ = output; // 暂不使用 stderr 输出（如 MySQL 临时密码），保留接口
+            // 初始化命令的 stdout/stderr 均为 null（见 lifecycle::run_first_run_init），无需读取
+            let _ = output;
 
             // initdb 已退出（pwfile 必已读取），立即删除临时明文密码文件
             cleanup_pwfile();

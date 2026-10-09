@@ -177,7 +177,8 @@ npm run tauri:build
 - The Nacos console link differs by version (3.x omits `/nacos`); the DB field reflects `storage` live.
 
 ### Settings Tabs
-- Three tabs: General / Monitor & Alert / Domain & DNS. The selected tab is recorded in the URL (`?tab=`, preserved on refresh and deep-link; illegal values fall back to General).
+- Four tabs: General / Monitor & Alert / Domain & DNS / Security. The selected tab is recorded in the URL (`?tab=`, preserved on refresh and deep-link; illegal values fall back to General).
+- **Start on Boot**: opt-in from Settings — OPX launches automatically at **user login**. User-level on all three platforms (no administrator rights needed): Windows writes `HKCU\...\Run`; macOS writes a LaunchAgent (`~/Library/LaunchAgents/com.opx.app.plist`); Linux writes an XDG autostart entry (`~/.config/autostart/opx.desktop`).
 
 ### Lock Screen
 - On/off switch: setting a password enables the lock; clearing it disables it — an empty lock never auto-locks.

@@ -385,6 +385,7 @@ impl SoftwareProvider for NginxProvider {
             program: nginx_bin_path(&ctx.install_path),
             args: vec!["-s".to_string(), "quit".to_string()],
             working_dir: PathBuf::from(&ctx.install_path),
+            env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 10,
         })
     }
