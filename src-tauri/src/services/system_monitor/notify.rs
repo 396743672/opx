@@ -95,6 +95,11 @@ pub fn parse_recipients(to: &str) -> Vec<String> {
 
 /// 发送入口（recorder 触发分支调用）：读最新设置，两个渠道各自游离 spawn，
 /// 不阻塞采样轮询。失败 warn + 审计，不重试。
+///
+/// ⚠️ 这里用 `tokio::spawn` 而非 `tauri::async_runtime::spawn`，以彻底去掉 Tauri 依赖
+/// （本文件因此可搬入 opx-core）。代价：**必须在 tokio runtime 上下文内调用**。
+/// 当前唯一调用点是 `recorder::eval`（async 函数）满足此条件；若将来从同步上下文
+/// 调用，会 panic（no reactor running）——届时需改为 `Handle::try_current()` 兜底。
 pub fn dispatch(e: AlertEvent) {
     let s = crate::commands::config::read_settings().unwrap_or_default();
     if !s.alert_webhook_url.trim().is_empty() {
@@ -102,7 +107,7 @@ pub fn dispatch(e: AlertEvent) {
         let fmt = s.alert_webhook_format.clone();
         let sec = s.alert_webhook_secret.clone();
         let ev = e.clone();
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             if let Err(err) = send_webhook(&url, &fmt, &sec, &ev).await {
                 tracing::warn!(error = %err, "告警 webhook 发送失败");
                 crate::oplog_fail!("webhook_failed", "webhook", "", &format!("{}", err));
@@ -111,7 +116,7 @@ pub fn dispatch(e: AlertEvent) {
     }
     if s.smtp_enabled && !s.smtp_host.trim().is_empty() && !s.smtp_to.trim().is_empty() {
         let smtp = s;
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             if let Err(err) = send_mail(&smtp, &e).await {
                 tracing::warn!(error = %err, "告警邮件发送失败");
                 crate::oplog_fail!("webhook_failed", "smtp", "", &format!("{}", err));
