@@ -36,7 +36,9 @@ async fn sample_once(
     alerting: &mut HashSet<String>,
 ) {
     let thresholds = crate::commands::config::read_settings().unwrap_or_default();
-    let sys = info::sample_system();
+    // 走低频专用实例：增量窗口 = 真实 30s（与实时轮询的 ~1s 窗口隔离，
+    // 历史曲线「30s 平均」语义才成立，也才能与任务管理器稳定对照）
+    let sys = info::sample_system_slow();
     let now_ms = chrono::Local::now().timestamp_millis();
 
     // 运行中实例：(显示名, pid)

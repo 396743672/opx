@@ -2,38 +2,61 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use sysinfo::{System, Disks, Networks};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System, Disks, Networks};
 use opx_core::models::system::{SystemInfo, DiskInfo, NetworkInfo};
 
 /// 全局复用的 Networks 句柄，避免每次新建导致统计重置
 static NETWORKS: Lazy<Mutex<Networks>> =
     Lazy::new(|| Mutex::new(Networks::new_with_refreshed_list()));
 
-/// 全局 System 实例：CPU% 依赖两次 refresh 的时间差，recorder 与 system_info 命令
-/// 必须共用同一实例，否则各自算出的增量都不准。
-static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| {
-    let mut s = System::new();
-    s.refresh_all();
+/// 构造只含 CPU 用量 + 内存的 System，并按官方要求做间隔 ≥200ms 的双次刷新
+/// （sysinfo 的 CPU% 是两次测量的差值，首采无效；见 DeepWiki sysinfo §2.4）。
+fn new_cpu_mem_system() -> System {
+    let mut s = System::new_with_specifics(
+        // 0.31 版 API 是 `new()`（master 才改名 `nothing()`，勿照抄新版文档）
+        RefreshKind::new()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything()),
+    );
     thread::sleep(Duration::from_millis(200));
-    s.refresh_all();
-    Mutex::new(s)
-});
+    s.refresh_cpu_usage();
+    s.refresh_memory();
+    s
+}
 
-/// 采样一次整机信息（复用全局 System 基线）。
+/// 全局 System 实例（**实时轮询路径**，~1s 窗口）。刻意不用 `refresh_all`：
+/// 它附带全量进程扫描（本机 276 进程、数百 ms），既拖慢 1s 轮询的锁持有，
+/// 又会把增量窗口切得参差。CPU% 取官方 `global_cpu_usage()`（= 各核平均，
+/// 已用探针实测与手写平均逐值相等）。
+static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| Mutex::new(new_cpu_mem_system()));
+
+/// 低频（30s 落盘）**专用**实例：独立后 recorder 的增量窗口是真实的 30s，
+/// 历史曲线才是「30s 平均」语义。若与实时路径共用实例，1s 轮询会把
+/// recorder 的增量窗口切割成 ~1s（窗口语义失真，与任务管理器的对照点
+/// 也不再稳定）。同款模式见 `process_monitor::PROCESS_SYS_SLOW`。
+static SYSTEM_SLOW: Lazy<Mutex<System>> = Lazy::new(|| Mutex::new(new_cpu_mem_system()));
+
+/// 实时采样（~1s 窗口，`system_info` 命令 / 前端 1s 轮询用）。
 pub fn sample_system() -> SystemInfo {
     let mut system = SYSTEM.lock().unwrap_or_else(|e| e.into_inner());
     get_system_info(&mut system)
 }
 
+/// 低频采样（真实 30s 窗口，recorder 落盘 / 告警判定用）。
+pub fn sample_system_slow() -> SystemInfo {
+    let mut system = SYSTEM_SLOW.lock().unwrap_or_else(|e| e.into_inner());
+    get_system_info(&mut system)
+}
+
 pub fn get_system_info(system: &mut System) -> SystemInfo {
-    system.refresh_all();
+    system.refresh_cpu_usage();
+    system.refresh_memory();
     // 单独刷新网络（refresh_all 不含 Networks）
     if let Ok(mut nets) = NETWORKS.lock() {
         nets.refresh();
     }
 
-    let cpu_usage = system.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / system.cpus().len() as f32;
-    let cpu_usage = cpu_usage as f64;
+    let cpu_usage = system.global_cpu_usage() as f64;
 
     let memory_used = system.used_memory();
     let memory_total = system.total_memory();
