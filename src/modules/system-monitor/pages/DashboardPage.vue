@@ -1,16 +1,7 @@
 <template>
   <div class="animate-fade-in">
-    <PageHeader
-      icon="mdi:gauge"
-      :title="$t('systemMonitor')"
-      :subtitle="$t('dashboardSubtitle')"
-    >
-      <template #actions>
-        <span class="text-xs text-muted-foreground tnum">
-          {{ systemInfo?.hostname || '—' }}
-        </span>
-      </template>
-    </PageHeader>
+    <!-- 批次 4.7：页头（图标/标题/副标题/主机名）已并入顶部导航栏；
+         主机名在下方「系统信息」卡仍有展示，此处不再重复 -->
 
     <!-- 数据未就绪时显示骨架屏 -->
     <div v-if="!systemInfo" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -274,7 +265,6 @@ import { useRunningSoftware } from '@/composables/useRunningSoftware'
 import type { HistoryPoint } from '@/models/system'
 import type { StartupItemReport, StartupItemStatus, StartupReport } from '@/models/startup'
 import { useI18n } from 'vue-i18n'
-import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import CardHeader from '@/components/CardHeader.vue'
 import TrendChart from '@/components/TrendChart.vue'

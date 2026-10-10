@@ -1,32 +1,20 @@
 <template>
-  <div class="flex items-center justify-between gap-4 mb-8">
-    <div class="flex items-center gap-3 min-w-0">
-      <div
-        v-if="icon"
-        class="flex items-center justify-center w-9 h-9 rounded-xl bg-primary/8 text-primary flex-shrink-0"
-      >
-        <Icon :icon="icon" class="text-xl" />
-      </div>
-      <div class="min-w-0">
-        <h1 class="text-lg font-semibold tracking-tight">{{ title }}</h1>
-        <p v-if="subtitle" class="text-sm text-muted-foreground/70">
-          {{ subtitle }}
-        </p>
-      </div>
-    </div>
-    <div class="flex items-center gap-1.5 flex-wrap justify-end" style="max-width:65%">
-      <slot name="actions" />
-    </div>
+  <!-- 批次 4.7：标题/图标/副标题已并入顶部导航栏（图标与侧边栏同源 navGroups），
+       页面纵向空间归还正文。本组件退化为「页面操作按钮行」：
+       仅当调用方提供 #actions 时渲染（紧凑单行），否则不占任何空间。 -->
+  <div
+    v-if="$slots.actions"
+    class="flex items-center justify-end gap-1.5 flex-wrap mb-4"
+  >
+    <slot name="actions" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { Icon } from '@iconify/vue'
-
-interface Props {
-  title: string
+// props 仍声明以兼容既有调用点（各页面传了 title/subtitle/icon 但不再渲染）
+defineProps<{
+  title?: string
   subtitle?: string
   icon?: string
-}
-defineProps<Props>()
+}>()
 </script>

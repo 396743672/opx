@@ -108,32 +108,20 @@
   </aside>
 </template>
 
-<script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { Icon } from '@iconify/vue'
-import { useI18n } from 'vue-i18n'
-
-useI18n()
-const router = useRouter()
-const route = useRoute()
-
-const props = defineProps<{ pinned: boolean }>()
-const emit = defineEmits<{ 'update:pinned': [value: boolean] }>()
-
-const currentPath = computed(() => route.path)
-
-interface NavItem {
+<script lang="ts">
+// 导航菜单配置（含图标）——导出供 MainLayout 标题栏复用同一图标源，
+// 避免「侧边栏图标」与「标题栏图标」两份来源漂移。
+export interface NavItem {
   path: string
   titleKey: string
   icon: string
 }
-interface NavGroup {
+export interface NavGroup {
   label: string
   items: NavItem[]
 }
 
-const groups: NavGroup[] = [
+export const navGroups: NavGroup[] = [
   {
     label: 'monitor',
     items: [
@@ -155,6 +143,24 @@ const groups: NavGroup[] = [
     ],
   },
 ]
+</script>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { Icon } from '@iconify/vue'
+import { useI18n } from 'vue-i18n'
+
+useI18n()
+const router = useRouter()
+const route = useRoute()
+
+const props = defineProps<{ pinned: boolean }>()
+const emit = defineEmits<{ 'update:pinned': [value: boolean] }>()
+
+const currentPath = computed(() => route.path)
+
+const groups = navGroups
 
 const navigate = (path: string) => {
   router.push(path)

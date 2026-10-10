@@ -21,7 +21,11 @@
           </div>
         </div>
         <div v-show="sidebarPinned" class="h-4 w-px bg-border/60 flex-shrink-0 transition-all duration-300"></div>
-        <span class="text-sm text-muted-foreground/80 px-3">{{ $t(currentTitle) }}</span>
+        <!-- 当前页：图标 + 名称（图标与侧边栏同源 navGroups，批次 4.7 页面头部精简） -->
+        <span class="text-sm text-muted-foreground/80 px-3 flex items-center gap-1.5">
+          <Icon v-if="currentIcon" :icon="currentIcon" class="text-base text-primary" />
+          {{ $t(currentTitle) }}
+        </span>
       </div>
 
       <div class="flex items-center gap-1">
@@ -90,12 +94,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
 import { useLockStore } from '@/stores/lock'
 import type { ThemeMode } from '@/models/settings'
-import Sidebar from './Sidebar.vue'
+import Sidebar, { navGroups } from './Sidebar.vue'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
@@ -110,6 +114,27 @@ const lockStore = useLockStore()
 const sidebarPinned = computed(() => !settingsStore.sidebarCollapsed)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
+// 批次 4.7：自动登录后剥离 URL 里的 token——transport 虽已转存 sessionStorage
+// 并 replaceState，但 router 的根路由 redirect 会把 query 原样带回，需在
+// 路由层再清一次（设计 D3：token 不得停留在地址栏/历史记录）
+watch(
+  () => route.query.token,
+  (t) => {
+    if (!t) return
+    const q = { ...route.query }
+    delete q.token
+    router.replace({ query: q }).catch(() => {})
+  },
+  { immediate: true },
+)
+// 当前路由图标：与侧边栏菜单同一来源（navGroups），标题栏随页面切换
+const currentIcon = computed(() => {
+  for (const g of navGroups) {
+    const hit = g.items.find((i) => i.path === route.path)
+    if (hit) return hit.icon
+  }
+  return ''
+})
 
 /* —— 主题切换（auto → light → warm → dark 循环）—— */
 const themeOrder: ThemeMode[] = ['auto', 'light', 'warm', 'dark']
