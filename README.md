@@ -26,6 +26,8 @@ OPX is a Windows desktop application for managing infrastructure software and se
 
 ## System Architecture
 
+The backend is a Cargo workspace with two crates: **`opx`** (the Tauri shell — Tauri command layer, system integration and lifecycle orchestration) and **`opx-core`** (platform-agnostic business logic — all services, data models and utilities, zero Tauri dependency, independently buildable via `cargo check -p opx-core`).
+
 ```
 ┌─────────────────────────────────────────────┐
 │            Frontend (Vue 3 + TypeScript)      │
@@ -34,21 +36,25 @@ OPX is a Windows desktop application for managing infrastructure software and se
 ├─────────────────────────────────────────────┤
 │              Tauri IPC (invoke)              │
 ├─────────────────────────────────────────────┤
-│                 Backend (Rust)               │
-│  ├─ commands/      — Tauri command layer     │
-│  ├─ services/      — business logic          │
+│         opx  (Tauri shell, src-tauri/)       │
+│  ├─ commands/       — Tauri command layer    │
+│  ├─ event_sink.rs   — EventSink impl         │
+│  └─ services/       — shell-side orchestration
+│  │   (stack_manager / watchdog / system_monitor /
+│  │    startup_bootstrap / autostart / lock_screen …)
+├─────────────────────────────────────────────┤
+│      opx-core  (crates/opx-core/, no Tauri)  │
+│  ├─ services/       — business logic         │
 │  │  ├─ software_manager/  — software lifecycle│
 │  │  ├─ springboot_manager/ — SpringBoot mgmt │
 │  │  ├─ node_app_manager/   — Node app mgmt   │
-│  │  ├─ stack_manager/     — Stack orchestr.  │
 │  │  ├─ website_manager/   — website mgmt     │
 │  │  ├─ dns_account/       — DNS credential   │
 │  │  ├─ acme/              — cert automation  │
-│  │  ├─ ddns/              — dynamic DNS      │
-│  │  ├─ watchdog/          — crash self-heal  │
-│  │  └─ system_monitor/    — metrics/alert    │
-│  ├─ models/        — data models            │
-│  └─ utils/         — utilities              │
+│  │  └─ ddns/              — dynamic DNS      │
+│  ├─ models/         — data models            │
+│  ├─ utils/          — utilities              │
+│  └─ event.rs        — EventSink trait        │
 ├─────────────────────────────────────────────┤
 │          Local Storage (JSON files)          │
 │  apps.json │ node-apps.json │ installed.json │

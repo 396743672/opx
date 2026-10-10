@@ -26,6 +26,8 @@ OPX 是一个 Windows 桌面应用，用于管理本地开发环境中的基础�
 
 ## 系统架构
 
+后端为 Cargo workspace 双 crate 结构：**`opx`**（Tauri 壳层 —— Tauri 命令层、系统集成与生命周期编排）与 **`opx-core`**（平台无关业务逻辑 —— 全部业务服务、数据模型与工具，零 Tauri 依赖，可经 `cargo check -p opx-core` 独立构建）。
+
 ```
 ┌─────────────────────────────────────────────┐
 │                 前端 (Vue 3 + TypeScript)     │
@@ -34,16 +36,22 @@ OPX 是一个 Windows 桌面应用，用于管理本地开发环境中的基础�
 ├─────────────────────────────────────────────┤
 │             Tauri IPC (invoke)              │
 ├─────────────────────────────────────────────┤
-│               后端 (Rust)                     │
+│         opx（Tauri 壳层，src-tauri/）         │
 │  ├─ commands/    — Tauri 命令层              │
-│  ├─ services/   — 业务逻辑层                  │
+│  ├─ event_sink.rs — EventSink 实现           │
+│  └─ services/    — 壳层侧编排                 │
+│  │   (stack_manager / watchdog / system_monitor /
+│  │    startup_bootstrap / autostart / lock_screen …)
+├─────────────────────────────────────────────┤
+│      opx-core（crates/opx-core/，零 Tauri）   │
+│  ├─ services/    — 业务逻辑层                 │
 │  │  ├─ software_manager/  — 软件生命周期      │
 │  │  ├─ springboot_manager/ — SpringBoot 管理  │
 │  │  ├─ node_app_manager/  — Node 应用管理     │
-│  │  ├─ stack_manager/     — 服务组编排        │
 │  │  └─ website_manager/   — 网站管理           │
-│  ├─ models/     — 数据模型                    │
-│  └─ utils/      — 工具函数                    │
+│  ├─ models/      — 数据模型                  │
+│  ├─ utils/       — 工具函数                  │
+│  └─ event.rs     — EventSink trait           │
 ├─────────────────────────────────────────────┤
 │          本地存储 (JSON 文件)                 │
 │  apps.json │ node-apps.json │ installed.json │

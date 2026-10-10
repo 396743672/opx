@@ -1,7 +1,7 @@
-# opx 架构重构交接文档（阶段 1 ~ 2）
+# opx 架构重构交接文档（阶段 1 ~ 3）
 
-> **日期**：2026-10-09 · **HEAD**：`2e25d40`（gitee + github 已同步）
-> **测试**：`cargo test --workspace` = **344 passed / 0 failed / 0 warning**
+> **日期**：2026-10-09 起稿 · **2026-10-10 补阶段 3 成果** · **HEAD**：`32cfe47`（gitee + github 已同步）
+> **测试**：`cargo test --workspace` = **349 passed / 0 failed**（`opx 93` + `opx-core 256`）
 > **关联文档**：形态 A 设计 `2026-10-09-opx-web-architecture.md` · 跨平台 ADR `2026-09-28-cross-platform-readiness.md`
 
 ---
@@ -64,7 +64,7 @@ opx/
 | 中心函数 | 被谁调用 |
 |---|---|
 | `commands::software::do_start_software`<br>`(software.rs:1106)` | `watchdog.rs:194`、`stack_manager.rs:654`、`software_manager/lifecycle.rs:776`、`startup_bootstrap.rs:200` |
-| `software_manager::lifecycle::emit_status_changed`<br>`(lifecycle.rs:664)` | **21 处**：`commands/software.rs` 15 · `stack_manager.rs` 3 · `watchdog.rs` 2 · `backup.rs` 1 |
+| `software_manager::lifecycle::emit_status_changed`<br>`(lifecycle.rs:664)` | **21 行命中**（20 个调用点 + 1 处定义）：`commands/software.rs` 14 · `stack_manager.rs` 3 · `watchdog.rs` 2 · `backup.rs` 1 |
 
 ### 3.2 改动顺序（约 30+ 点 / 9 文件）
 
@@ -112,4 +112,64 @@ Windows 实机验证（P2-1 遗留）：装一个软件走完整链路（下载�
 ## 6. 待处理 / 未提交
 
 - `docs/2026-10-09-opx-web-architecture.md` —— **形态 A 设计草案，仍 untracked 未提交**（属 web 拆分那条线，待阶段 4 开工时再提交）。
-- 阶段 2.5 完成后，阶段 3（services 搬入 core）才有意义；届时 `software_manager/mod.rs` 需拆分（它当前同时声明纯逻辑子模块与 tauri 子模块）。
+- ~~阶段 2.5 完成后，阶段 3（services 搬入 core）才有意义；届时 `software_manager/mod.rs` 需拆分（它当前同时声明纯逻辑子模块与 tauri 子模块）。~~
+  **已不成立**（2026-10-10 注记）：mod.rs 从未拆分——后续批次（3A2 起）采用**整模块 `pub use` 重导出**（壳层 mod.rs 声明壳层侧子模块 + 转发 core 符号），调用点零改动，无需先拆。该手法在 3.5/3.6/4B/4A 反复验证，成为本项目的标准搬迁手法。
+
+---
+
+## 7. 阶段 3 成果（2026-10-10 补记，截至 `32cfe47`）
+
+阶段 2.5（互连子图去 Tauri）之后，阶段 3 把全部业务逻辑搬入 `opx-core`。**全部批次已交付并推双远程。**
+
+### 7.1 批次清单
+
+| 批次 | 内容 | commit |
+|---|---|---|
+| 第 0 批 | 纯函数下沉（read_settings / compare_versions / sanitize_domain / resolve_nginx） | `b06c028` |
+| website 解耦 | `resolve_nginx(&SoftwareManager)` → `(&[InstalledSoftware])` 按字段切 | `fbfcda4` |
+| 2.5 | 互连子图 7 服务 + 3 命令层去 Tauri 依赖 | （多个 commit） |
+| 批次 2.5 | website_manager + regenerate 搬入 core | `a7c7575` |
+| 3A1 | providers 全家（18 文件）+ catalog + log_viewer | `51d9769` |
+| 3A2 | SoftwareManager 本体 + audit/audit_log/netutils/uninstall_guard/health_check/process_monitor + lifecycle 主体 | `54cefa3` |
+| 3B | do_start_software + 9 辅助函数（start_stop.rs）| `d1d1ee6`+`80351fa`+`c977c48` |
+| 3.5 | installer（含 sha2 依赖） | `4266de9` |
+| 3.6 | config_editor + backup + backup_scheduler（含 walkdir） | `fd16adb` |
+| 4B | springboot_manager + node_app_manager（含 opx-stop.jar 资源跟迁） | `9b63440` |
+| 4A | dns_account + acme + ddns 耦合簇（含 hmac/sha1/instant-acme） | `9f2ec5c` |
+| 清理轮 | 删壳层三段死代码 + log_watcher 死代码声明勘误 | `73e542f`+`32cfe47` |
+
+### 7.2 终态架构
+
+- **core**（`cargo check -p opx-core` 独立可构建）：`services/` 含 software_manager（+providers 全家）/ website_manager / springboot_manager / node_app_manager / dns_account / acme / ddns —— **全部业务逻辑**；models / utils / event 齐备。
+- **壳层**（Tauri 集成与编排）：services 仅剩 autostart / lock_screen×3 / stack_manager / startup_bootstrap / system_monitor / watchdog + software_manager 转发层三文件（纯转发 mod.rs / 40 行薄 lifecycle 重导出 / 活跃的 log_watcher）。
+- **测试分布**：`opx 303→93` / `opx-core 46→256`（阶段 2.5 后基线 303+46=349，逐批 −N/+N 精确对账），总数恒守 **349**。
+- **core 新增依赖**（各附用途注释）：sha2（installer 校验）/ walkdir（backup 遍历）/ hmac+sha1（ddns 签名）/ instant-acme（ACME）。交接预判的 keyring/argon2 实测零使用，未加。
+
+### 7.3 验收门禁纪律（沿用至今）
+
+```bash
+RUSTFLAGS="-Dwarnings" cargo check --workspace --offline --all-targets   # 门禁 → EXIT=0
+cargo check -p opx-core --offline                                        # core 自包含 → EXIT=0
+cargo test --workspace --offline                                         # 349 passed，连跑 3 次
+```
+
+判退出码用 `${PIPESTATUS[0]}`（`cmd | tail; echo $?` 恒为 0）；warning 门禁走 `cargo check --all-targets`（不用 `RUSTFLAGS=... cargo test`，会触发 tests/*.txt 怪错）。
+
+### 7.4 静态核对四教训（判依赖/死代码必须双形态 grep）
+
+1. **宏调用**：宏搬迁要 grep 调用点而不只 import（3A2：22 处而非 6 处）
+2. **全路径前缀**：`walkdir::WalkDir` 这类全路径调用不经 use 语句（3.6：walkdir 漏检）
+3. **编译期资源路径**：`include_bytes!`/`include_str!` 的相对路径只有编译才暴露（4B：opx-stop.jar 跟迁）
+4. **类型调用形态**：判死代码必须同时查 `模块路径::` 与 `类型::方法` 形态，且连前端 invoke 一起查（清理轮：log_watcher 被误判死代码——`LogWatcher::init`/`watch_log_file` 均为活调用，`73e542f` 取证推翻后 `32cfe47` 修正声明）
+
+### 7.5 标准搬迁手法（后续批次直接套用）
+
+- `git mv` 保留历史 → `opx_core::` → `crate::` 纯路径 sed（改前预检注释含旧路径、改后 grep 残留清零）
+- 壳层整模块 `pub use` 重导出：调用点（含 lib.rs 启动点）零改动；写错路径编译失败而非静默分叉
+- 测试守恒对账：`#[(tokio::)?test]` 正则计数（纯 `#[test]` 会漏 tokio 变体），每批 −N/+N 与搬迁数精确对账
+
+### 7.6 待办交接（阶段 4 议题）
+
+- `opx-http`（内嵌 HTTP/WS + token 鉴权）+ 前端传输层 —— core 已自包含，具备开工条件
+- stack_manager / startup_bootstrap / watchdog 是否下沉：它们调 core 符号但自身是**壳层编排逻辑**（依赖 Tauri 运行时环境），性质与已搬模块不同，需另行讨论
+- 前端契约核查（如需要）：watch_log_file / unwatch_log_file 的前端 invoke 是否仍活跃，属产品决策非代码问题
