@@ -643,8 +643,9 @@ let unlistenServerError: UnlistenFn | null = null
 async function openWebUi() {
   if (!webToken.value) return
   const port = webPortValue.value || 17580
-  // fragment 传 token：不随请求上送、不入访问日志（设计 D3 / ADR §3.4）
-  const url = `http://127.0.0.1:${port}/#token=${webToken.value}`
+  // fragment 传 token：不随请求上送、不入访问日志（设计 D3 / ADR §3.4）。
+  // router 兼容形态 `#/?token=`：裸 `#token=` 会被 hash 路由当路径改写销毁
+  const url = `http://127.0.0.1:${port}/#/?token=${webToken.value}`
   openUrl(url).catch(() => {})
 }
 

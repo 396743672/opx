@@ -100,7 +100,7 @@ pub fn get_web_access_urls() -> Result<Vec<String>, String> {
     hosts.push("127.0.0.1".to_string());
     Ok(hosts
         .into_iter()
-        .map(|ip| format!("http://{ip}:{port}/#token={token}"))
+        .map(|ip| format!("http://{ip}:{port}/#/?token={token}"))
         .collect())
 }
 

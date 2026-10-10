@@ -135,11 +135,35 @@ class HttpTransport implements Transport {
   constructor() {
     // D3：fragment 携带 token → 转存 sessionStorage 并立即从地址栏剥离
     //（fragment 不随请求上送，但不能停留在 URL/历史记录里）。
-    // 批次 4.6：接受新 10 位 Crockford Base32 与旧 64 hex 两种形态
-    const m = /^#token=([0-9A-HJKMNP-TV-Za-z]{10}|[0-9a-fA-F]{64})$/.exec(window.location.hash)
-    if (m) {
-      sessionStorage.setItem(TOKEN_KEY, m[1])
-      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    // 批次 4.6：接受新 10 位 Crockford Base32 与旧 64 hex 两种形态。
+    // 批次 4.7：本应用是 vue-router **hash 模式**，裸 `#token=X` 会被路由器
+    // 当作路由路径解析并重写（#token=X → #/dashboard），token 在本模块被
+    // 求值前就已销毁（实测：打开浏览器后仍弹 TokenGate）。故自动登录 URL
+    // 改用 router 兼容形态 `#/?token=X`（token 位于 hash 内的 query，
+    // vue-router 导航会保留 query，任意求值时序都能读到）；旧裸形态仍兼容读。
+    const TOKEN_RE = /^(?:[0-9A-HJKMNP-TV-Za-z]{10}|[0-9a-fA-F]{64})$/
+    const raw = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash
+    let candidate: string | null = null
+    let bareLegacy = false
+    if (raw.startsWith('token=')) {
+      // 旧裸形态 #token=X（router 改写前才存在，兼容直开旧链接）
+      candidate = raw.slice('token='.length)
+      bareLegacy = true
+    } else {
+      const qi = raw.indexOf('?')
+      if (qi >= 0) {
+        const t = new URLSearchParams(raw.slice(qi + 1)).get('token')
+        if (t) candidate = t
+      }
+    }
+    if (candidate && TOKEN_RE.test(candidate)) {
+      sessionStorage.setItem(TOKEN_KEY, candidate)
+      // 从地址栏剥离：保留路由路径、去掉 token query；裸形态路径本身已被
+      // 路由污染，直接回落 `#/`
+      const pathPart = bareLegacy ? '/' : (raw.split('?')[0] || '/')
+      window.history.replaceState(null, '', `${window.location.pathname}#${pathPart}`)
     }
     this.token = sessionStorage.getItem(TOKEN_KEY)
   }

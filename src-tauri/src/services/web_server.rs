@@ -80,10 +80,10 @@ pub fn banner_lines(
     let mut lines = vec![
         "==============================================".to_string(),
         "  OPX Web 管理入口已启动".to_string(),
-        format!("  地址: http://{host}:{port}/#token={token}"),
+        format!("  地址: http://{host}:{port}/#/?token={token}"),
     ];
     if let Some(ip) = lan_ip {
-        lines.push(format!("  局域网: http://{ip}:{port}/#token={token}"));
+        lines.push(format!("  局域网: http://{ip}:{port}/#/?token={token}"));
     }
     lines.push(
         "  （点击上方链接即自动登录；token 亦可在 settings.json 查看/重置）".to_string(),
@@ -261,7 +261,7 @@ mod tests {
             None,
         );
         let joined = lines.join("\n");
-        assert!(joined.contains("http://127.0.0.1:17580/#token=abc123"));
+        assert!(joined.contains("http://127.0.0.1:17580/#/?token=abc123"));
         assert!(joined.contains("settings.json"));
         assert!(joined.contains("Ctrl-C"));
         assert!(!joined.contains("局域网"), "无出口 IP 时不打 LAN 行");
@@ -278,6 +278,6 @@ mod tests {
             Some("192.168.1.7"),
         );
         let joined = lines.join("\n");
-        assert!(joined.contains("http://192.168.1.7:17580/#token=abc123"));
+        assert!(joined.contains("http://192.168.1.7:17580/#/?token=abc123"));
     }
 }
