@@ -260,8 +260,9 @@ main {
   scrollbar-gutter: stable;
   scrollbar-color: transparent transparent;
 }
-main:hover,
-main:focus-within {
+/* 仅悬停浮现——不加 focus-within：点击页面任意可聚焦元素会触发
+   focus-within，令滚动条「点击就出现」（实测反馈），刷新才消失 */
+main:hover {
   scrollbar-color: var(--color-border) transparent;
 }
 
