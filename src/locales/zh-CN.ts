@@ -86,6 +86,17 @@ export default {
   webTokenConfirm: '连接',
   webTokenInvalid: '令牌格式不正确（应为 64 位十六进制）或已被拒绝，请重新输入',
   webTokenRequired: '缺少访问令牌，请重新输入',
+  // 批次 4.5：设置页 web 组扩展
+  webLanWarning:
+    '警告：HTTP 为明文传输，开启局域网访问后令牌可被同网段设备嗅探，请仅在可信网络中开启',
+  webTokenLabel: '访问令牌（web_token）',
+  webOpenBrowser: '打开浏览器',
+  webResetToken: '重置令牌',
+  webResetTokenOk: '确认重置',
+  webResetting: '重置中…',
+  webResetDone: '令牌已重置，旧浏览器会话已失效；请用新令牌重新打开浏览器',
+  webServerError: 'Web 服务启动失败：{msg}',
+  webDesktopOnlyHint: '此功能依赖本机文件选择器，请在桌面端操作',
   portConflictBy: '端口冲突：被 PID {pid}（{name}）占用',
   portConflictByPid: '端口冲突：被 PID {pid} 占用',
   portNotListening: '端口未监听',

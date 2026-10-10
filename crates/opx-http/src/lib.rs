@@ -32,6 +32,7 @@ pub mod api;
 pub mod auth;
 pub mod context;
 pub mod sinks;
+pub mod static_files;
 pub mod ticket;
 pub mod token;
 pub mod ws;
@@ -58,8 +59,18 @@ async fn health() -> Json<serde_json::Value> {
 ///
 /// 分两组：`/api/health`、`/api/{cmd}`、`/api/ws-ticket` 经 Bearer 中间件；
 /// `/api/events/ws` **不**经 Bearer（浏览器 WS 无法设 Authorization 头，
-/// 由一次性 ticket 鉴权替代，D3.2）。4.5 批次追加静态 SPA 服务。
+/// 由一次性 ticket 鉴权替代，D3.2）。
+///
+/// 静态 SPA（批次 4.5）：若 [`static_files::resolve_dist_dir`] 找到前端产物，
+/// 挂为 fallback 服务（未匹配路径 → 静态文件 → SPA 回落 index.html）；
+/// 找不到则保持纯 API 模式（未知路径 404）。
 pub fn router(state: AppState) -> Router {
+    let dist = static_files::resolve_dist_dir();
+    router_with_dist(state, dist)
+}
+
+/// [`router`] 的可注入形态（测试用）：dist 由调用方给定，不碰环境探测。
+pub fn router_with_dist(state: AppState, dist: Option<std::path::PathBuf>) -> Router {
     let protected = Router::new()
         .route("/api/health", get(health))
         .route("/api/{cmd}", post(api::dispatch))
@@ -70,10 +81,15 @@ pub fn router(state: AppState) -> Router {
         ));
     let public = Router::new().route("/api/events/ws", get(ws::events_ws));
 
-    Router::new()
+    let app = Router::new()
         .merge(protected)
         .merge(public)
-        .with_state(state)
+        .with_state(state);
+
+    match dist {
+        Some(dir) => app.fallback_service(static_files::spa_service(&dir)),
+        None => app,
+    }
 }
 
 /// 在给定 listener 上启动 server（薄封装 `axum::serve`）。

@@ -23,6 +23,9 @@ axum = { version = "0.8", features = ["ws", "json"] }
 tower = "0.5"
 # subtle —— token 的常量时间比较，防时序侧信道（设计 §3 / ADR §3.4）。
 subtle = "2.6.1"
+# tower-http —— 静态 SPA 托管（批次 4.5，fs feature：ServeDir/ServeFile +
+#              内部用 mime_guess 定 Content-Type；设计 §5 资源表已定 2.0.5 版本族）。
+tower-http = { version = "0.6", features = ["fs"] }
 # rand_core —— token 生成的 CSPRNG（OsRng + getrandom）；与 opx-core 同版本
 #              同 feature，workspace 已有，零新增传递依赖（设计 §10：倾向复用）。
 rand_core = { version = "0.6", features = ["getrandom"] }

@@ -86,6 +86,17 @@ export default {
   webTokenConfirm: 'Connect',
   webTokenInvalid: 'Invalid token (expected 64 hex characters) or rejected. Please try again.',
   webTokenRequired: 'Access token missing, please enter it again',
+  // Batch 4.5: settings web group extensions
+  webLanWarning:
+    'Warning: HTTP is transmitted in plaintext. With LAN access enabled, the token can be sniffed by devices on the same network — enable only on trusted networks',
+  webTokenLabel: 'Access token (web_token)',
+  webOpenBrowser: 'Open Browser',
+  webResetToken: 'Reset Token',
+  webResetTokenOk: 'Confirm Reset',
+  webResetting: 'Resetting…',
+  webResetDone: 'Token reset; existing browser sessions are signed out. Reopen the browser with the new token',
+  webServerError: 'Web server failed to start: {msg}',
+  webDesktopOnlyHint: 'This feature requires the native file picker — please use the desktop app',
   portConflictBy: 'Port conflict: occupied by PID {pid} ({name})',
   portConflictByPid: 'Port conflict: occupied by PID {pid}',
   portNotListening: 'Port not listening',

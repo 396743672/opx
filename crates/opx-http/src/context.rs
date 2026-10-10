@@ -32,6 +32,9 @@ use opx_core::services::website_manager::WebsiteManager;
 ///
 /// 以 `State<'_, AppContext>` 形态注入 Tauri 命令，也可在 HTTP 分发器
 /// （批次 4.2+）中经 `Arc<AppContext>` 复用——字段全部是可 clone 的句柄。
+/// `Clone`（批次 4.5）：字段全为 Arc 句柄，克隆廉价且共享底层实例——壳层
+/// 装配点用同一份字段克隆出「plain 管理 + Arc 管理」两种 State 形态。
+#[derive(Clone)]
 pub struct AppContext {
     /// 软件管理器（安装/启停/卸载/日志等）
     pub software: Arc<SoftwareManager>,

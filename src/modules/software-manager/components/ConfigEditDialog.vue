@@ -108,6 +108,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { isDesktop } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import { confirmAsync } from '@/composables/useConfirm'
 import { toast } from '@/composables/useToast'
@@ -144,7 +145,10 @@ const DOC_URLS: Record<string, string> = {
 }
 const docUrl = computed(() => DOC_URLS[props.software.key] ?? null)
 function openDoc() {
-  if (docUrl.value) openUrl(docUrl.value).catch(() => {})
+  if (!docUrl.value) return
+  // Web 模式无 opener 插件：退化为浏览器新开标签页
+  if (isDesktop) openUrl(docUrl.value).catch(() => {})
+  else window.open(docUrl.value, '_blank', 'noopener')
 }
 
 const tab = ref<'form' | 'source' | 'backups'>('form')

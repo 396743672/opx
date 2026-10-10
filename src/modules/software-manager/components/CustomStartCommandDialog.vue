@@ -34,7 +34,7 @@
             class="input input-mono"
             placeholder="bin/app.exe"
           />
-          <button class="browse-btn" @click="browseExecutable">
+          <button v-if="isDesktop" class="browse-btn" @click="browseExecutable">
             <Icon icon="mdi:folder-open" />{{ $t('browse') }}
           </button>
         </div>
@@ -59,7 +59,7 @@
             class="input input-mono"
             :placeholder="$t('workingDirDefault')"
           />
-          <button class="browse-btn" @click="browseWorkingDir">
+          <button v-if="isDesktop" class="browse-btn" @click="browseWorkingDir">
             <Icon icon="mdi:folder-open" />{{ $t('browse') }}
           </button>
         </div>
@@ -120,7 +120,7 @@
             class="input input-mono"
             placeholder="conf/app.conf"
           />
-          <button class="browse-btn" @click="browseConfigFile">
+          <button v-if="isDesktop" class="browse-btn" @click="browseConfigFile">
             <Icon icon="mdi:folder-open" />{{ $t('browse') }}
           </button>
         </div>
@@ -147,6 +147,7 @@ import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import type {
   CustomHealthSpec,
   CustomStartCommand,

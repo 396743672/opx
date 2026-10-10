@@ -451,9 +451,17 @@
           </div>
         </div>
 
-        <!-- Web 管理入口（批次 4.2：仅存储设置；server 启停/打开浏览器归 4.3/4.5） -->
+        <!-- Web 管理入口（批次 4.5：server 生命周期由后端 supervisor 热生效，
+             本组补 token 查看/重置 + 打开浏览器 + LAN 强提示 + 启动失败横幅） -->
         <div class="px-5 pt-4 pb-1">
           <h3 class="text-sm font-semibold tracking-tight">{{ $t('webGroup') }}</h3>
+        </div>
+        <div
+          v-if="webServerErrorMsg"
+          class="mx-5 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-start gap-2"
+        >
+          <Icon icon="mdi:alert-circle-outline" class="text-base flex-shrink-0" />
+          <span>{{ $t('webServerError', { msg: webServerErrorMsg }) }}</span>
         </div>
         <div class="px-5 pb-4 divide-y divide-border">
           <div class="flex items-center justify-between gap-4 py-3">
@@ -480,6 +488,38 @@
             </div>
             <SwitchBtn v-model="webLanAccessValue" />
           </div>
+          <!-- LAN 强提示（D6/风险对策：HTTP 明文，同网段可嗅探 token） -->
+          <div v-if="webLanAccessValue" class="flex items-start gap-2 py-3 text-xs text-destructive">
+            <Icon icon="mdi:alert-outline" class="text-base flex-shrink-0" />
+            <span>{{ $t('webLanWarning') }}</span>
+          </div>
+          <!-- token 查看/重置 + 打开浏览器：桌面专属（token 明文不经 HTTP 回传，
+               Web 端重置后新令牌无法送回浏览器） -->
+          <div v-if="isDesktop" class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-sm">{{ $t('webTokenLabel') }}</span>
+              <div class="text-xs text-muted-foreground font-mono break-all">{{ webToken || '—' }}</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <button class="btn text-xs h-7 px-2" :disabled="!webToken" @click="openWebUi">
+                <Icon icon="mdi:open-in-new" />
+                {{ $t('webOpenBrowser') }}
+              </button>
+              <template v-if="!webResetConfirming">
+                <button class="btn text-xs h-7 px-2" @click="webResetConfirming = true">
+                  {{ $t('webResetToken') }}
+                </button>
+              </template>
+              <template v-else>
+                <button class="btn text-xs h-7 px-2" :disabled="webResetting" @click="resetWebToken">
+                  {{ webResetting ? $t('webResetting') : $t('webResetTokenOk') }}
+                </button>
+                <button class="btn text-xs h-7 px-2" @click="webResetConfirming = false">
+                  {{ $t('lockCancel') }}
+                </button>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -487,10 +527,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
+import { listen, isDesktop, type UnlistenFn } from '@/utils/transport'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { toast } from '@/composables/useToast'
 import { useSettingsStore } from '@/stores/settings'
 import { useLockStore } from '@/stores/lock'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
@@ -564,10 +608,37 @@ const ddnsIpv6Value = ref(false)
 const ddnsSyncing = ref(false)
 const ddnsSyncResult = ref('')
 const ddnsSyncOk = ref(false)
-// Web 管理入口（批次 4.2：仅存储字段；server 启停/热生效归 4.3/4.5）
+// Web 管理入口（批次 4.2：仅存储字段；批次 4.5：token/打开浏览器/错误横幅）
 const webEnabledValue = ref(false)
 const webPortValue = ref(17580)
 const webLanAccessValue = ref(false)
+const webToken = ref('')
+const webServerErrorMsg = ref('')
+const webResetConfirming = ref(false)
+const webResetting = ref(false)
+let unlistenServerError: UnlistenFn | null = null
+
+async function openWebUi() {
+  if (!webToken.value) return
+  const port = webPortValue.value || 17580
+  // fragment 传 token：不随请求上送、不入访问日志（设计 D3 / ADR §3.4）
+  const url = `http://127.0.0.1:${port}/#token=${webToken.value}`
+  openUrl(url).catch(() => {})
+}
+
+async function resetWebToken() {
+  webResetting.value = true
+  try {
+    await invoke('reset_web_token')
+    webToken.value = await invoke<string>('get_web_token')
+    webResetConfirming.value = false
+    toast(t('webResetDone'), 'ok')
+  } catch (e) {
+    toast(typeof e === 'string' ? e : String((e as Error)?.message ?? e), 'err')
+  } finally {
+    webResetting.value = false
+  }
+}
 
 onMounted(async () => {
   try {
@@ -575,6 +646,22 @@ onMounted(async () => {
   } catch {
     autostartValue.value = false
   }
+  if (isDesktop) {
+    try {
+      webToken.value = await invoke<string>('get_web_token')
+    } catch {
+      webToken.value = ''
+    }
+  }
+  // 端口冲突等启动失败 → 后端 emit web-server-error，横幅显示（D6 明确报错）
+  unlistenServerError = await listen<string>('web-server-error', (e) => {
+    webServerErrorMsg.value = e.payload ?? ''
+  })
+})
+
+onUnmounted(() => {
+  unlistenServerError?.()
+  unlistenServerError = null
 })
 
 async function onToggleAutostart(v: boolean) {

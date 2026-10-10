@@ -3,317 +3,77 @@ pub mod event_sink;
 pub mod services;
 pub mod utils;
 
+use std::sync::OnceLock;
+
 use tauri::{
     menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Listener, Manager, WindowEvent,
 };
 
+/// headless 模式标志（run() 开头写入；on_window_event 等非 setup 上下文读取）。
+static HEADLESS_MODE: OnceLock<bool> = OnceLock::new();
+
+/// release 构建为 `windows_subsystem = "windows"`（无控制台），headless 需要
+/// 控制台横幅：优先附着父进程控制台（从 cmd/PowerShell 启动），失败则自建。
+#[cfg(windows)]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            // 双击启动 / 无父控制台：自建一个控制台窗口承载横幅输出
+            AllocConsole();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        // 单例：第二实例启动时激活已有窗口
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = set_focus_safe(&window);
-            }
-        }))
-        .setup(|app| {
-            // 事件出口：core 内服务统一经 `EventSink` 推事件，壳层实现转发给前端。
-            // 后续 watchdog / recorder / startup_bootstrap 等后台任务共用这一实例。
-            let event_sink = std::sync::Arc::new(crate::event_sink::TauriEventSink::new(
-                app.handle().clone(),
-            ));
-            // 日志文件监听后台线程（notify 实时推送增量）
-            crate::services::software_manager::log_watcher::LogWatcher::init(event_sink.clone());
+    // 批次 4.5（D2 方案 A 能力）：--headless 进入无窗 web-only 模式。
+    //
+    // ⚠️ 与设计 D2 原文「跳过 tauri::Builder」的一处偏差（已记入汇报）：4.2
+    // 钉死 tauri `State<T>` 不可凭空构造（无 From<&T>），113 个命令的注册
+    // 闭包依赖 `AppHandle::state::<T>()` 取与 IPC 相同的 State 实例（D7 铁律：
+    // 调用与 Tauri IPC 同一个命令函数）——没有 AppHandle 就没有命令注册表。
+    // 故 headless 仍走最小 tauri runtime：不注册任何插件（单实例 R8 / updater
+    // / dialog / fs / opener / process 全跳过）、不建托盘、关闭主窗口；事件
+    // 循环照常泵（无窗口无托盘零消息负担），业务全在 tokio 侧。
+    let headless = std::env::args().any(|a| a == "--headless");
+    if headless {
+        #[cfg(windows)]
+        attach_console();
+        #[cfg(not(windows))]
+        {}
+    }
+    HEADLESS_MODE.get_or_init(|| headless);
 
-            // 便携布局：启动时主动创建所有运行目录（exe 同级）
-            {
-                let _ = opx_core::utils::paths::apps_dir();
-                let _ = opx_core::utils::paths::config_dir();
-                let _ = opx_core::utils::paths::data_dir();
-                let _ = opx_core::utils::paths::tmp_dir();
-                let _ = opx_core::utils::paths::logs_dir();
-                // settings.json 不存在时写入默认值，确保便携目录有可见配置
-                let sp = opx_core::utils::paths::settings_path();
-                if !sp.exists() {
-                    let default = opx_core::models::settings::AppSettings::default();
-                    if let Ok(json) = serde_json::to_string_pretty(&default) {
-                        let _ = std::fs::write(&sp, json);
-                    }
+    let mut builder = tauri::Builder::default();
+    if !headless {
+        builder = builder
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init())
+            // 单例：第二实例启动时激活已有窗口（headless 跳过，R8）
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = set_focus_safe(&window);
                 }
-                // 初始化下载代理配置
-                if let Ok(content) = std::fs::read_to_string(&sp) {
-                    if let Ok(settings) =
-                        serde_json::from_str::<opx_core::models::settings::AppSettings>(&content)
-                    {
-                        opx_core::utils::download::init_download_config(
-                            settings.github_proxy_url,
-                            settings.proxy_url.clone(),
-                        );
-                        opx_core::utils::http::set_global_proxy(&settings.proxy_url);
-                    }
-                }
-            }
-
-            // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
-            let software_mgr =
-                std::sync::Arc::new(crate::services::software_manager::SoftwareManager::new());
-            app.manage(software_mgr.clone());
-            // 旧全局 DNS 配置 → DNS 账号（一次性）。必须在 WebsiteManager::new()
-            // 之前：迁移会给 websites.json 写 dns_account_id，晚了就落不进内存。
-            if let Err(e) = crate::services::dns_account::run_startup_migration() {
-                tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
-            }
-            let website_mgr =
-                std::sync::Arc::new(opx_core::services::website_manager::WebsiteManager::new());
-            app.manage(website_mgr.clone());
-            let dns_account_mgr =
-                std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
-            app.manage(dns_account_mgr.clone());
-            let springboot_mgr =
-                std::sync::Arc::new(crate::services::springboot_manager::SpringBootManager::new());
-            app.manage(springboot_mgr.clone());
-            // Node 应用管理：注册 State（auto_start 应用由底部统一启动编排协调器拉起）
-            let node_mgr =
-                std::sync::Arc::new(crate::services::node_app_manager::NodeAppManager::new());
-            let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
-            app.manage(node_mgr.clone());
-            // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
-            let stack_mgr = std::sync::Arc::new(crate::services::stack_manager::StackManager::new(
-                software_mgr.clone(),
-                springboot_mgr.clone(),
-            ));
-            app.manage(stack_mgr.clone());
-
-            // 批次 4.1：AppContext 共享命令胶水（设计 D7-A，opx-http 定义、桌面/headless
-            // 两边共用）。命令层 sink_of(app) 型 AppHandle 已替换为 State<'_, AppContext>。
-            // 桌面 web 未开启时 sink = FanOut[TauriEventSink]：emit 逐份转发、resource_dir
-            // 穿透，行为与直用 TauriEventSink 逐字节一致（回归底线）；4.3 批次 web 开启后
-            // 扩为 FanOut[Tauri, Ws]。后台任务（bootstrap/watchdog/recorder/renew 等）
-            // 仍直用 event_sink，本批不动。
-            let ctx_sink: std::sync::Arc<dyn opx_core::event::EventSink> = std::sync::Arc::new(
-                opx_http::FanOutSink::new(vec![event_sink.clone()]),
-            );
-            app.manage(opx_http::AppContext {
-                software: software_mgr.clone(),
-                website: website_mgr.clone(),
-                springboot: springboot_mgr.clone(),
-                node: node_mgr.clone(),
-                dns: dns_account_mgr.clone(),
-                stack: stack_mgr,
-                sink: ctx_sink,
-                node_exe: node_exe.clone(),
-            });
-
-            // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
-            // guard 必须用 Mutex 包装后 manage 到 Tauri State，
-            // 否则 setup 退出时 guard drop，tracing_appender 会停止 flush
-            let _audit_guard = match crate::services::software_manager::audit_log::init() {
-                Ok(g) => {
-                    let log_dir = opx_core::utils::paths::logs_dir();
-                    crate::services::software_manager::audit_log::cleanup_old_logs(&log_dir, 7);
-                    Some(g)
-                }
-                Err(e) => {
-                    eprintln!("[audit_log] 初始化失败: {}", e);
-                    None
-                }
-            };
-            if let Some(g) = _audit_guard {
-                app.manage(std::sync::Mutex::new(g));
-            }
-
-            // 统一启动编排：把软件/Node/Stack 的 auto_start 收敛为单一有序序列，
-            // 失败逆序回滚已拉起项，产出并持久化启动报告。后台异步执行。
-            let sink_for_boot = event_sink.clone();
-            let sw_mgr_arc = app
-                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
-                .inner()
-                .clone();
-            // 定时备份调度（复用协调器拿到的 software Arc clone）
-            let bs_manager = sw_mgr_arc.clone();
-            let bs_sink = event_sink.clone();
-            let stack_mgr_arc = app
-                .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
-                .inner()
-                .clone();
-            let node_mgr_arc = node_mgr.clone();
-            let node_exe_for_boot = node_exe.clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::startup_bootstrap::run_bootstrap(
-                    sw_mgr_arc,
-                    node_mgr_arc,
-                    stack_mgr_arc,
-                    sink_for_boot,
-                    node_exe_for_boot,
-                )
-                .await;
-            });
-
-            // 定时备份调度：后台循环按配置间隔自动对实例做Hot 快照
-            tauri::async_runtime::spawn(async move {
-                crate::services::software_manager::backup_scheduler::run_scheduler(
-                    bs_manager, bs_sink,
-                )
-                .await;
-            });
-
-            // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
-            let renew_wm = app
-                .state::<std::sync::Arc<opx_core::services::website_manager::WebsiteManager>>()
-                .inner()
-                .clone();
-            let renew_sm = app
-                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
-                .inner()
-                .clone();
-            let renew_sink = event_sink.clone();
-            let renew_accounts = app
-                .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
-                .inner()
-                .clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::acme::renew_scheduler::run_scheduler(
-                    renew_sink, renew_wm, renew_sm, renew_accounts,
-                )
-                .await;
-            });
-
-            // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
-            let wd_software = app
-                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
-                .inner()
-                .clone();
-            let wd_springboot = app
-                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
-                .inner()
-                .clone();
-            let wd_node = node_mgr.clone();
-            let wd_sink = event_sink.clone();
-            let wd_node_exe = node_exe.clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::watchdog::run_watchdog(
-                    wd_software,
-                    wd_springboot,
-                    wd_node,
-                    wd_sink,
-                    wd_node_exe,
-                )
-                .await;
-            });
-
-            // 指标采样器：30s 采样整机与运行中实例，落盘 7 天，并做阈值告警
-            let rec_sink = event_sink.clone();
-            let rec_sw = app
-                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
-                .inner()
-                .clone();
-            let rec_sb = app
-                .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
-                .inner()
-                .clone();
-            tauri::async_runtime::spawn(async move {
-                crate::services::system_monitor::recorder::run_recorder(rec_sink, rec_sw, rec_sb)
-                    .await;
-            });
-
-            // DDNS 动态域名：5 分钟一轮公网 IP 检测与记录同步
-            // （常驻循环，停用只跳过本轮，改设置即时生效）
-            tauri::async_runtime::spawn(async move {
-                crate::services::ddns::scheduler::run_ddns_scheduler().await;
-            });
-
-            // 应用更新自动检查：启动 10s 后首查，之后每 24h 一次（受 auto_check_update 控制）
-            let au_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    if let Ok(s) = crate::commands::config::read_settings() {
-                        if s.auto_check_update {
-                            crate::commands::update::auto_check(au_app.clone()).await;
-                        }
-                    }
-                    tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
-                }
-            });
-
-            #[cfg(desktop)]
-            {
-                // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
-                let tray_manager: std::sync::Arc<
-                    crate::services::software_manager::SoftwareManager,
-                > = app
-                    .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
-                    .inner()
-                    .clone();
-
-                let (menu, tooltip) = build_tray_menu(app.handle(), &tray_manager)?;
-
-                let icon = app.default_window_icon().cloned();
-                // 固定 id：语言切换后可用 tray_by_id 取回托盘以重建菜单文案
-                let mut builder = TrayIconBuilder::with_id("main")
-                    .menu(&menu)
-                    .show_menu_on_left_click(false);
-                if let Some(img) = icon {
-                    builder = builder.icon(img);
-                }
-                if !tooltip.is_empty() {
-                    builder = builder.tooltip(&tooltip);
-                }
-                let tray = builder
-                    .on_menu_event(move |app, event| match event.id.as_ref() {
-                        "quit" => {
-                            let _ = app.emit("close-requested", ());
-                        }
-                        other => {
-                            // running_{installed_id}：转发给前端执行停止
-                            if let Some(id) = other.strip_prefix("running_") {
-                                let _ = app.emit("tray-software-stop", id.to_string());
-                            }
-                        }
-                    })
-                    .on_tray_icon_event(move |tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                        {
-                            let app = tray.app_handle();
-                            show_main_window(app);
-                        }
-                    })
-                    .build(app)?;
-
-                // 软件状态变化时重建托盘，保持「运行中列表 + tooltip 运行数」同步
-                let tray_for_listen = tray.clone();
-                let manager_for_listen = tray_manager.clone();
-                app.handle().listen("software-status-changed", move |_| {
-                    let handle = tray_for_listen.app_handle().clone();
-                    if let Ok((menu, tooltip)) = build_tray_menu(&handle, &manager_for_listen) {
-                        let _ = tray_for_listen.set_menu(Some(menu));
-                        let tooltip = if tooltip.is_empty() {
-                            None
-                        } else {
-                            Some(tooltip)
-                        };
-                        let _ = tray_for_listen.set_tooltip(tooltip);
-                    }
-                });
-            }
-            Ok(())
-        })
+            }));
+    }
+    builder
+        .setup(move |app| setup_app(app, headless))
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
+                    // headless：主窗口在 setup 里主动关闭（配置窗口无法按条件
+                    // 跳过创建），必须放行——prevent_close 会让它永远关不掉
+                    if *HEADLESS_MODE.get().unwrap_or(&false) {
+                        return;
+                    }
                     api.prevent_close();
                     let _ = window.app_handle().emit("close-requested", ());
                 }
@@ -329,6 +89,8 @@ pub fn run() {
             commands::config::save_settings,
             commands::config::get_autostart,
             commands::config::set_autostart,
+            commands::config::get_web_token,
+            commands::config::reset_web_token,
             refresh_tray_menu,
             commands::config::test_alert_webhook,
             commands::config::sync_ddns_now,
@@ -447,6 +209,349 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while starting tauri application");
+}
+
+/// 应用装配（桌面与 headless 共用；差异由 `headless` flag 控制）。
+///
+/// 桌面路径与批次 4.4 前逐字节等价（除 FanOut 组合里常驻 Ws——无订阅者时
+/// emit 为 no-op，桌面行为不变）。
+fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // headless：关闭配置创建的主窗口（窗口创建无法按条件跳过；CloseRequested
+    // 在 on_window_event 中对 headless 放行，故能真正关掉）
+    if headless {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.close();
+        }
+    }
+
+    // 事件出口：core 内服务统一经 `EventSink` 推事件，壳层实现转发给前端。
+    // 批次 4.5：WsEventSink **常驻**（身份不变约束——启停 server 不重建 sink，
+    // 6 个后台任务持引用）；桌面 sink = FanOut[Tauri, Ws]（无订阅者时 Ws 分支
+    // no-op，桌面行为不变），headless sink = FanOut[Ws]（设计 §8 装配表）。
+    let tauri_sink: std::sync::Arc<dyn opx_core::event::EventSink> = std::sync::Arc::new(
+        crate::event_sink::TauriEventSink::new(app.handle().clone()),
+    );
+    let ws_sink = opx_http::WsEventSink::shared();
+    app.manage(ws_sink.clone());
+    let ctx_sink: std::sync::Arc<dyn opx_core::event::EventSink> = std::sync::Arc::new(
+        opx_http::FanOutSink::new(if headless {
+            vec![ws_sink.clone()]
+        } else {
+            vec![tauri_sink.clone(), ws_sink.clone()]
+        }),
+    );
+
+    // 日志文件监听后台线程（notify 实时推送增量）——桌面专属：Web 前端的
+    // watch 通道（watch/unwatch_log_file 命令）未挂 HTTP 注册表，headless 无意义
+    if !headless {
+        crate::services::software_manager::log_watcher::LogWatcher::init(tauri_sink.clone());
+    }
+
+    // 便携布局：启动时主动创建所有运行目录（exe 同级）
+    {
+        let _ = opx_core::utils::paths::apps_dir();
+        let _ = opx_core::utils::paths::config_dir();
+        let _ = opx_core::utils::paths::data_dir();
+        let _ = opx_core::utils::paths::tmp_dir();
+        let _ = opx_core::utils::paths::logs_dir();
+        // settings.json 不存在时写入默认值，确保便携目录有可见配置
+        let sp = opx_core::utils::paths::settings_path();
+        if !sp.exists() {
+            let default = opx_core::models::settings::AppSettings::default();
+            if let Ok(json) = serde_json::to_string_pretty(&default) {
+                let _ = std::fs::write(&sp, json);
+            }
+        }
+        // 初始化下载代理配置
+        if let Ok(content) = std::fs::read_to_string(&sp) {
+            if let Ok(settings) =
+                serde_json::from_str::<opx_core::models::settings::AppSettings>(&content)
+            {
+                opx_core::utils::download::init_download_config(
+                    settings.github_proxy_url,
+                    settings.proxy_url.clone(),
+                );
+                opx_core::utils::http::set_global_proxy(&settings.proxy_url);
+            }
+        }
+    }
+
+    // 注册 SoftwareManager State（用 Arc 包装，供命令层 clone 入后台 task）
+    let software_mgr =
+        std::sync::Arc::new(crate::services::software_manager::SoftwareManager::new());
+    app.manage(software_mgr.clone());
+    // 旧全局 DNS 配置 → DNS 账号（一次性）。必须在 WebsiteManager::new()
+    // 之前：迁移会给 websites.json 写 dns_account_id，晚了就落不进内存。
+    if let Err(e) = crate::services::dns_account::run_startup_migration() {
+        tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
+    }
+    let website_mgr =
+        std::sync::Arc::new(opx_core::services::website_manager::WebsiteManager::new());
+    app.manage(website_mgr.clone());
+    let dns_account_mgr =
+        std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
+    app.manage(dns_account_mgr.clone());
+    let springboot_mgr =
+        std::sync::Arc::new(crate::services::springboot_manager::SpringBootManager::new());
+    app.manage(springboot_mgr.clone());
+    // Node 应用管理：注册 State（auto_start 应用由底部统一启动编排协调器拉起）
+    let node_mgr =
+        std::sync::Arc::new(crate::services::node_app_manager::NodeAppManager::new());
+    let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
+    app.manage(node_mgr.clone());
+    // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
+    let stack_mgr = std::sync::Arc::new(crate::services::stack_manager::StackManager::new(
+        software_mgr.clone(),
+        springboot_mgr.clone(),
+    ));
+    app.manage(stack_mgr.clone());
+
+    // 批次 4.1：AppContext 共享命令胶水（设计 D7-A，opx-http 定义、桌面/headless
+    // 两边共用）。批次 4.5：sink 扩为常驻 Ws 的 FanOut 组合（见上），后台任务
+    // 一并改用组合 sink——Web 端才能收到 bootstrap/watchdog/告警事件（桌面
+    // 分支逐字节透传，行为不变）。
+    // 同一份字段克隆出两种管理形态：plain（命令层 State<AppContext>）与
+    // Arc（axum AppState 组装用），底层管理器实例完全共享。
+    let ctx = opx_http::AppContext {
+        software: software_mgr.clone(),
+        website: website_mgr.clone(),
+        springboot: springboot_mgr.clone(),
+        node: node_mgr.clone(),
+        dns: dns_account_mgr.clone(),
+        stack: stack_mgr,
+        sink: ctx_sink.clone(),
+        node_exe: node_exe.clone(),
+    };
+    app.manage(ctx.clone());
+    app.manage(std::sync::Arc::new(ctx));
+
+    // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
+    // guard 必须用 Mutex 包装后 manage 到 Tauri State，
+    // 否则 setup 退出时 guard drop，tracing_appender 会停止 flush
+    let _audit_guard = match crate::services::software_manager::audit_log::init() {
+        Ok(g) => {
+            let log_dir = opx_core::utils::paths::logs_dir();
+            crate::services::software_manager::audit_log::cleanup_old_logs(&log_dir, 7);
+            Some(g)
+        }
+        Err(e) => {
+            eprintln!("[audit_log] 初始化失败: {}", e);
+            None
+        }
+    };
+    if let Some(g) = _audit_guard {
+        app.manage(std::sync::Mutex::new(g));
+    }
+
+    // 统一启动编排：把软件/Node/Stack 的 auto_start 收敛为单一有序序列，
+    // 失败逆序回滚已拉起项，产出并持久化启动报告。后台异步执行。
+    let sw_mgr_arc = app
+        .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+        .inner()
+        .clone();
+    // 定时备份调度（复用协调器拿到的 software Arc clone）
+    let bs_manager = sw_mgr_arc.clone();
+    let bs_sink = ctx_sink.clone();
+    let stack_mgr_arc = app
+        .state::<std::sync::Arc<crate::services::stack_manager::StackManager>>()
+        .inner()
+        .clone();
+    let node_mgr_arc = node_mgr.clone();
+    let node_exe_for_boot = node_exe.clone();
+    let boot_sink = ctx_sink.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::services::startup_bootstrap::run_bootstrap(
+            sw_mgr_arc,
+            node_mgr_arc,
+            stack_mgr_arc,
+            boot_sink,
+            node_exe_for_boot,
+        )
+        .await;
+    });
+
+    // 定时备份调度：后台循环按配置间隔自动对实例做Hot 快照
+    tauri::async_runtime::spawn(async move {
+        crate::services::software_manager::backup_scheduler::run_scheduler(
+            bs_manager, bs_sink,
+        )
+        .await;
+    });
+
+    // ACME 证书自动续期：每小时检查，距到期 <30 天则重签并 reload
+    let renew_wm = app
+        .state::<std::sync::Arc<opx_core::services::website_manager::WebsiteManager>>()
+        .inner()
+        .clone();
+    let renew_sm = app
+        .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+        .inner()
+        .clone();
+    let renew_sink = ctx_sink.clone();
+    let renew_accounts = app
+        .state::<std::sync::Arc<crate::services::dns_account::DnsAccountManager>>()
+        .inner()
+        .clone();
+    tauri::async_runtime::spawn(async move {
+        crate::services::acme::renew_scheduler::run_scheduler(
+            renew_sink, renew_wm, renew_sm, renew_accounts,
+        )
+        .await;
+    });
+
+    // 崩溃自愈看门狗：周期性检测意外退出并按策略自动拉起
+    let wd_software = app
+        .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+        .inner()
+        .clone();
+    let wd_springboot = app
+        .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+        .inner()
+        .clone();
+    let wd_node = node_mgr.clone();
+    let wd_sink = ctx_sink.clone();
+    let wd_node_exe = node_exe.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::services::watchdog::run_watchdog(
+            wd_software,
+            wd_springboot,
+            wd_node,
+            wd_sink,
+            wd_node_exe,
+        )
+        .await;
+    });
+
+    // 指标采样器：30s 采样整机与运行中实例，落盘 7 天，并做阈值告警
+    // （全部 tauri-free；Web 端 Dashboard 的 system_history / resource-alert
+    // 依赖本任务产数，headless 同启）
+    let rec_sink = ctx_sink.clone();
+    let rec_sw = app
+        .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+        .inner()
+        .clone();
+    let rec_sb = app
+        .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+        .inner()
+        .clone();
+    tauri::async_runtime::spawn(async move {
+        crate::services::system_monitor::recorder::run_recorder(rec_sink, rec_sw, rec_sb)
+            .await;
+    });
+
+    // DDNS 动态域名：5 分钟一轮公网 IP 检测与记录同步
+    // （常驻循环，停用只跳过本轮，改设置即时生效）
+    tauri::async_runtime::spawn(async move {
+        crate::services::ddns::scheduler::run_ddns_scheduler().await;
+    });
+
+    // 应用更新自动检查：启动 10s 后首查，之后每 24h 一次（受 auto_check_update 控制）
+    // ——桌面专属（updater 插件 + AppHandle 事件），headless 跳过
+    if !headless {
+        let au_app = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if let Ok(s) = crate::commands::config::read_settings() {
+                    if s.auto_check_update {
+                        crate::commands::update::auto_check(au_app.clone()).await;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+            }
+        });
+    }
+
+    // Web 服务器生命周期（批次 4.5）：supervisor 2s 轮询 settings/token 变更
+    // 热生效（启停/换端口/换 token 均重启任务，sink 身份不变）。桌面按
+    // web_enabled 开关启停；headless 无条件启动（唯一入口）。
+    app.manage(crate::services::web_server::WebServerState::new(headless));
+    crate::services::web_server::spawn_supervisor(app.handle());
+
+    // headless：Ctrl-C 优雅停——级联停止运行中的软件（对照桌面 quit_app 的
+    // stop_all_on_exit 语义）后退出 tauri 事件循环
+    if headless {
+        let exit_handle = app.handle().clone();
+        let stop_sink = ctx_sink.clone();
+        tauri::async_runtime::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                println!("[opx] 收到 Ctrl-C，级联停止运行中的软件…");
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::services::software_manager::lifecycle::stop_all_on_exit(&stop_sink);
+                })
+                .await;
+                exit_handle.exit(0);
+            }
+        });
+    }
+
+    #[cfg(desktop)]
+    {
+        if !headless {
+            // 托盘右键菜单（R7：动态列出运行中软件，点击即停止）
+            let tray_manager: std::sync::Arc<
+                crate::services::software_manager::SoftwareManager,
+            > = app
+                .state::<std::sync::Arc<crate::services::software_manager::SoftwareManager>>()
+                .inner()
+                .clone();
+
+            let (menu, tooltip) = build_tray_menu(app.handle(), &tray_manager)?;
+
+            let icon = app.default_window_icon().cloned();
+            // 固定 id：语言切换后可用 tray_by_id 取回托盘以重建菜单文案
+            let mut builder = TrayIconBuilder::with_id("main")
+                .menu(&menu)
+                .show_menu_on_left_click(false);
+            if let Some(img) = icon {
+                builder = builder.icon(img);
+            }
+            if !tooltip.is_empty() {
+                builder = builder.tooltip(&tooltip);
+            }
+            let tray = builder
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "quit" => {
+                        let _ = app.emit("close-requested", ());
+                    }
+                    other => {
+                        // running_{installed_id}：转发给前端执行停止
+                        if let Some(id) = other.strip_prefix("running_") {
+                            let _ = app.emit("tray-software-stop", id.to_string());
+                        }
+                    }
+                })
+                .on_tray_icon_event(move |tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        show_main_window(app);
+                    }
+                })
+                .build(app)?;
+
+            // 软件状态变化时重建托盘，保持「运行中列表 + tooltip 运行数」同步
+            let tray_for_listen = tray.clone();
+            let manager_for_listen = tray_manager.clone();
+            app.handle().listen("software-status-changed", move |_| {
+                let handle = tray_for_listen.app_handle().clone();
+                if let Ok((menu, tooltip)) = build_tray_menu(&handle, &manager_for_listen) {
+                    let _ = tray_for_listen.set_menu(Some(menu));
+                    let tooltip = if tooltip.is_empty() {
+                        None
+                    } else {
+                        Some(tooltip)
+                    };
+                    let _ = tray_for_listen.set_tooltip(tooltip);
+                }
+            });
+        }
+    }
+    Ok(())
 }
 
 fn set_focus_safe(window: &tauri::WebviewWindow) -> Result<(), tauri::Error> {
@@ -615,8 +720,7 @@ mod tests {
     #[test]
     fn running_softwares_empty_count() {
         let list = vec![sample(SoftwareStatus::Stopped)];
-        let (running, count) = super::running_softwares(&list);
-        assert!(running.is_empty());
-        assert_eq!(count, 0);
+        assert!(super::running_softwares(&list).0.is_empty());
+        assert_eq!(super::running_softwares(&list).1, 0);
     }
 }

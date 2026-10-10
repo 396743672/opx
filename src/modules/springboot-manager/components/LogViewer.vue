@@ -44,7 +44,7 @@
           <label class="chk"><input type="checkbox" v-model="onlyErrors" /> {{ $t('onlyErrors') }}</label>
           <label class="chk"><input type="checkbox" v-model="realtime" @change="onRealtimeToggle" /> {{ $t('realtime') }}</label>
           <label class="chk"><input type="checkbox" v-model="autoScroll" /> {{ $t('autoScroll') }}</label>
-          <button class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
+          <button v-if="isDesktop" class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
             <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
           </button>
           <button class="btn btn-sm" @click="loadTail"><Icon icon="mdi:refresh" /> {{ $t('refresh') }}</button>
@@ -84,6 +84,7 @@ import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import { listen, type UnlistenFn } from '@/utils/transport'
 import { save } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import type { LogSource } from '@/models/software'
 

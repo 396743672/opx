@@ -1055,6 +1055,14 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     reg.register("auto_check", |_ctx, _args| {
         Box::pin(async move { Err(ApiError::desktop_only("auto_check")) })
     });
+    // 批次 4.5：token 查看/重置为桌面专属——令牌明文不得经 HTTP 响应回传
+    //（Web 端重置后新令牌无法送回浏览器，等于把所有会话锁在门外）
+    reg.register("get_web_token", |_ctx, _args| {
+        Box::pin(async move { Err(ApiError::desktop_only("get_web_token")) })
+    });
+    reg.register("reset_web_token", |_ctx, _args| {
+        Box::pin(async move { Err(ApiError::desktop_only("reset_web_token")) })
+    });
 
     reg
 }

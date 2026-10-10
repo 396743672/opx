@@ -60,6 +60,29 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
 }
 
+/// 读取当前 Web 访问令牌（设置页展示 + 「打开浏览器」拼 `#token=` URL 用）。
+///
+/// 桌面专属：HTTP 分发器按 `desktop_only` 注册（409）——令牌明文不得经
+/// HTTP 响应回传，重置/查看只能在桌面端进行（Web 端重置后无法把新令牌
+/// 送回浏览器，等于把所有人锁在门外）。
+#[tauri::command]
+pub fn get_web_token() -> Result<String, String> {
+    opx_http::token::load_or_generate().map_err(|e| format!("读取 token 失败: {e}"))
+}
+
+/// 重置 Web 访问令牌：重生成 → 受限写盘 → 触发 server 重启（若在跑）。
+/// 旧会话的 Bearer 立即失效（重启后的 AppState 持新 token），前端 401 后
+/// 由 TokenGate 引导重新输入。返回新令牌供设置页展示/拼 URL。
+#[tauri::command]
+pub async fn reset_web_token(app: tauri::AppHandle) -> Result<String, String> {
+    let t = opx_http::token::generate();
+    opx_http::token::store(&t).map_err(|e| format!("令牌写盘失败: {e}"))?;
+    // 强制对齐：applied 中的旧 token 与新 token 必然不同 → supervisor 语义
+    // 下 sync 会重启 server；此处直接同步调用拿到确定性的重启结果。
+    crate::services::web_server::sync(&app)?;
+    Ok(t)
+}
+
 /// 发送测试通知：构造固定告警事件，按当前设置对启用的渠道真实发送一遍。
 /// 未配置任何渠道时报错提示。
 #[tauri::command]

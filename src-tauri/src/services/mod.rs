@@ -1,5 +1,6 @@
 pub mod autostart;
 pub mod lock_screen;
+pub mod web_server;
 pub mod software_manager;
 pub mod startup_bootstrap;
 pub mod system_monitor;

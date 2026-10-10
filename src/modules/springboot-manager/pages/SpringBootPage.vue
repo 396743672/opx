@@ -22,10 +22,10 @@
         <button class="btn" @click="showGlobalEnv = true">
           <Icon icon="mdi:earth" /> {{ $t('globalEnvVars') }}
         </button>
-        <button class="btn" @click="onExport">
+        <button v-if="isDesktop" class="btn" @click="onExport">
           <Icon icon="mdi:export-variant" /> {{ $t('exportConfig') }}
         </button>
-        <button class="btn" @click="onImport">
+        <button v-if="isDesktop" class="btn" @click="onImport">
           <Icon icon="mdi:import" /> {{ $t('importConfig') }}
         </button>
       </template>
@@ -188,6 +188,7 @@ import { invoke } from '@/utils/ipc'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@/utils/transport'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { toast } from '@/composables/useToast'
 import { translateError } from '@/utils/i18nError'
 import PageHeader from '@/components/PageHeader.vue'
@@ -405,6 +406,10 @@ function handleConfig(id: string) {
 }
 
 async function handleReplace(id: string) {
+  if (!isDesktop) {
+    toast(t('webDesktopOnlyHint'), 'err')
+    return
+  }
   const selected = await open({
     multiple: false,
     filters: [{ name: 'JAR', extensions: ['jar'] }],
@@ -416,6 +421,10 @@ async function handleReplace(id: string) {
 }
 
 async function handleReplaceRestart(id: string) {
+  if (!isDesktop) {
+    toast(t('webDesktopOnlyHint'), 'err')
+    return
+  }
   const selected = await open({
     multiple: false,
     filters: [{ name: 'JAR', extensions: ['jar'] }],

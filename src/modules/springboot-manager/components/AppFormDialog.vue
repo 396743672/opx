@@ -18,7 +18,7 @@
             <div class="field-label">{{ $t('jarFile') }}</div>
             <div class="file-row">
               <input class="input input-mono flex-1" :value="form.jar_path" readonly placeholder="..." />
-              <button class="btn" @click="selectJar">{{ $t('browse') }}</button>
+              <button v-if="isDesktop" class="btn" @click="selectJar">{{ $t('browse') }}</button>
             </div>
           </div>
 
@@ -261,6 +261,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption, GcUnsupportedReason } from '@/models/springboot'

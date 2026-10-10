@@ -21,7 +21,7 @@
             </button>
           </div>
         </div>
-        <button class="btn" @click="onImport">
+        <button v-if="isDesktop" class="btn" @click="onImport">
           <Icon icon="mdi:file-import" /> {{ t('importStack') }}
         </button>
         <button class="btn primary" @click="openCreate">
@@ -95,7 +95,7 @@
             <Icon v-else icon="mdi:restart" />
             {{ t('restartStack') }}
           </button>
-          <button class="btn" :disabled="busyId === stack.id || !canStop(stack)" @click="onExport(stack)">
+          <button v-if="isDesktop" class="btn" :disabled="busyId === stack.id || !canStop(stack)" @click="onExport(stack)">
             <Icon icon="mdi:export" /> {{ t('exportStack') }}
           </button>
           <button class="btn" :disabled="!canEdit(stack) || busyId === stack.id" @click="onEdit(stack)">
@@ -129,6 +129,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { useStackStore } from '@/stores/stack'
 import type { Stack, StackMemberStatus, StackItem } from '@/models/stack'
 import StackEditDialog from './StackEditDialog.vue'
