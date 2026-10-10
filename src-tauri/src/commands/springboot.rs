@@ -2,9 +2,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::State;
 
-use opx_core::event::{EventSink, EventSinkExt};
+use opx_http::AppContext;
+use opx_core::event::EventSinkExt;
 
 use opx_core::models::software::{LogChunk, LogSource};
 use opx_core::models::springboot::{
@@ -16,14 +17,6 @@ use crate::services::springboot_manager::jvm_opts;
 use crate::services::springboot_manager::lifecycle::StopOutcome;
 use crate::services::springboot_manager::SpringBootManager;
 use opx_core::{audited_async, oplog_result};
-
-/// 把壳层 [`AppHandle`] 转成 core 的事件通道，供服务层（零 tauri 依赖）使用。
-///
-/// `Arc<TauriEventSink>` 不会自动 coerce 成 `Arc<dyn EventSink>`（unsized coercion
-/// 不穿透 `Arc`），故集中在此转换一次，调用点只写 `&sink_of(&app_handle)`。
-fn sink_of(app_handle: &AppHandle) -> Arc<dyn EventSink> {
-    Arc::new(crate::event_sink::TauriEventSink::new(app_handle.clone()))
-}
 
 #[tauri::command]
 pub async fn list_springboot_apps(
@@ -79,7 +72,7 @@ pub async fn delete_springboot_app(
 pub async fn start_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<(), String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -88,7 +81,7 @@ pub async fn start_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &sink_of(&app_handle),
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_start", target, "", r);
@@ -99,7 +92,7 @@ pub async fn start_springboot_app(
 pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -108,7 +101,7 @@ pub async fn stop_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &sink_of(&app_handle),
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_stop", target, "", r);
@@ -119,7 +112,7 @@ pub async fn stop_springboot_app(
 pub async fn restart_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -128,7 +121,7 @@ pub async fn restart_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &sink_of(&app_handle),
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_restart", target, "", r);
@@ -166,7 +159,7 @@ pub async fn replace_springboot_jar(
 pub async fn replace_springboot_jar_and_restart(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
     new_jar_path: String,
 ) -> Result<ReplaceResult, String> {
@@ -182,7 +175,7 @@ pub async fn replace_springboot_jar_and_restart(
                 &id,
                 &manager,
                 &software_mgr,
-                &sink_of(&app_handle),
+                &ctx.sink.clone(),
             )
             .await?;
             if let Some(w) = stop.message {
@@ -203,7 +196,7 @@ pub async fn replace_springboot_jar_and_restart(
             &id,
             &manager,
             &software_mgr,
-            &sink_of(&app_handle),
+            &ctx.sink.clone(),
         )
         .await?;
 
@@ -472,7 +465,7 @@ pub struct ExportSummary {
 /// `group_names` 为 None 时导出全部应用。
 #[tauri::command]
 pub async fn export_springboot_config(
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
     group_names: Option<Vec<String>>,
@@ -525,7 +518,7 @@ pub async fn export_springboot_config(
     let mut warnings: Vec<String> = Vec::new();
 
     for (i, app) in apps.iter().enumerate() {
-        sink_of(&app_handle).emit_ser(
+        ctx.sink.clone().emit_ser(
             "export-progress",
             serde_json::json!({ "current": i + 1, "total": total, "name": app.name }),
         );
@@ -579,7 +572,7 @@ pub async fn export_springboot_config(
         tracing::warn!(error = %e, "导出：导出包落盘失败");
         "i18n:exportWriteFailed".to_string()
     })?;
-    sink_of(&app_handle).emit_ser("export-progress", serde_json::json!({ "done": true }));
+    ctx.sink.clone().emit_ser("export-progress", serde_json::json!({ "done": true }));
     Ok(ExportSummary {
         apps: exported,
         files,
@@ -599,11 +592,11 @@ pub struct ImportSummary {
 /// 从 zip 文件导入应用（含 JAR 与应用目录）与全局配置
 #[tauri::command]
 pub async fn import_springboot_config(
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
 ) -> Result<ImportSummary, String> {
-    sink_of(&app_handle).emit_ser(
+    ctx.sink.clone().emit_ser(
         "import-progress",
         serde_json::json!({ "phase": "extracting" }),
     );
@@ -657,7 +650,7 @@ pub async fn import_springboot_config(
         }
     }
 
-    sink_of(&app_handle).emit_ser("import-progress", serde_json::json!({ "phase": "config" }));
+    ctx.sink.clone().emit_ser("import-progress", serde_json::json!({ "phase": "config" }));
     let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json")).map_err(|e| {
         tracing::warn!(error = %e, "导入：读取 manifest.json 失败");
         "i18n:importManifestMissing".to_string()
@@ -790,7 +783,7 @@ pub async fn import_springboot_config(
     }
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    sink_of(&app_handle).emit_ser("import-progress", serde_json::json!({ "done": true }));
+    ctx.sink.clone().emit_ser("import-progress", serde_json::json!({ "done": true }));
     Ok(ImportSummary {
         apps: imported_count,
         warnings,

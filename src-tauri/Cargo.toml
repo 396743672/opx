@@ -18,6 +18,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # 平台无关核心（数据模型 / provider 目录 / 安装运行逻辑），**无 tauri 依赖**
 opx-core = { path = "../crates/opx-core" }
+# HTTP/WS 入口 crate：批次 4.1 起提供 AppContext 共享命令胶水（D7-A）与
+# FanOutSink；依赖方向 src-tauri → opx-http → opx-core（单向）。
+opx-http = { path = "../crates/opx-http" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"

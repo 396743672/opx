@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use opx_http::AppContext;
 use opx_core::models::website::Site;
 use crate::services::software_manager::SoftwareManager;
 use opx_core::services::website_manager::{nginx_conf, WebsiteManager};
@@ -402,7 +403,7 @@ pub fn generate_self_signed_cert(
 /// 为站点申请/重新申请 Let's Encrypt 证书（DNS-01）。
 #[tauri::command]
 pub async fn issue_site_certificate(
-    app: tauri::AppHandle,
+    ctx: State<'_, AppContext>,
     wm: State<'_, Arc<WebsiteManager>>,
     sm: State<'_, Arc<SoftwareManager>>,
     dns_accounts: State<'_, Arc<crate::services::dns_account::DnsAccountManager>>,
@@ -419,7 +420,6 @@ pub async fn issue_site_certificate(
     let target = format!("{} ({})", site.name, domain);
 
     audited_async!("acme_issue", target, "", {
-        use tauri::Emitter;
         let accounts = dns_accounts.list();
         let account = site
             .ssl
@@ -438,10 +438,13 @@ pub async fn issue_site_certificate(
             .join("sites-data")
             .join("certs");
 
-        let app_for_progress = app.clone();
+        // 批次 4.1：进度事件改走 ctx.sink（AppContext 统一事件出口）。
+        // 桌面装配下 sink 即 TauriEventSink，emit 行为与原先直接 app.emit 一致
+        // （投递失败静默忽略），事件名/负载形状不变，前端无感。
+        let sink_for_progress = ctx.sink.clone();
         let domain_for_progress = domain.clone();
         let on_progress = move |phase: &str, msg: &str| {
-            let _ = app_for_progress.emit(
+            sink_for_progress.emit(
                 "acme-progress",
                 serde_json::json!({ "domain": domain_for_progress, "phase": phase, "message": msg }),
             );

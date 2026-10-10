@@ -10,17 +10,9 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::State;
 
-use opx_core::event::EventSink;
-
-/// 把壳层 [`AppHandle`] 转成 core 的事件通道，供服务层（零 tauri 依赖）使用。
-///
-/// `Arc<TauriEventSink>` 不会自动 coerce 成 `Arc<dyn EventSink>`（unsized coercion
-/// 不穿透 `Arc`），故集中在此转换一次，调用点只写 `&sink_of(&app)`。
-fn sink_of(app: &AppHandle) -> std::sync::Arc<dyn EventSink> {
-    std::sync::Arc::new(crate::event_sink::TauriEventSink::new(app.clone()))
-}
+use opx_http::AppContext;
 
 use opx_core::models::stack::{
     CreateStackPayload, Stack, StackStartPlan, UpdateStackPayload,
@@ -79,30 +71,30 @@ pub async fn delete_stack(
 #[tauri::command]
 pub async fn start_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StackStartPlan, String> {
-    manager.start(&sink_of(&app), &id).await.map_err(|e| e.to_string())
+    manager.start(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 一键停止栈（逆序优雅停止）
 #[tauri::command]
 pub async fn stop_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<(), String> {
-    manager.stop(&sink_of(&app), &id).await.map_err(|e| e.to_string())
+    manager.stop(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 一键重启栈（先停后起，返回新启动计划）
 #[tauri::command]
 pub async fn restart_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StackStartPlan, String> {
-    manager.restart(&sink_of(&app), &id).await.map_err(|e| e.to_string())
+    manager.restart(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 导出栈为 JSON 文件（R7，含 items / depends_on，供团队分享）

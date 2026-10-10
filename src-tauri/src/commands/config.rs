@@ -2,12 +2,11 @@ use opx_core::models::settings::AppSettings;
 use opx_core::utils::paths;
 use opx_core::audited;
 use std::fs;
-use tauri::AppHandle;
 
 /// 读取设置；文件缺失或解析失败返回默认值。
 /// 路径相对 exe 所在目录（便携布局），不再使用外部 APPDATA。
 #[tauri::command]
-pub fn get_settings(_app: AppHandle) -> AppSettings {
+pub fn get_settings() -> AppSettings {
     let path = paths::settings_path();
     match fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str::<AppSettings>(&content).unwrap_or_default(),
@@ -24,7 +23,7 @@ pub use opx_core::utils::settings::read_settings;
 
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]
-pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), String> {
+pub fn save_settings(settings: AppSettings) -> Result<(), String> {
     audited!("save_settings", "all", "", {
         let path = paths::settings_path();
         let tmp = path.with_extension("json.tmp");

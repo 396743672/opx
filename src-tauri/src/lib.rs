@@ -72,9 +72,9 @@ pub fn run() {
             if let Err(e) = crate::services::dns_account::run_startup_migration() {
                 tracing::warn!(error = %format!("{:#}", e), "DNS 账号迁移失败（已跳过）");
             }
-            app.manage(std::sync::Arc::new(
-                opx_core::services::website_manager::WebsiteManager::new(),
-            ));
+            let website_mgr =
+                std::sync::Arc::new(opx_core::services::website_manager::WebsiteManager::new());
+            app.manage(website_mgr.clone());
             let dns_account_mgr =
                 std::sync::Arc::new(crate::services::dns_account::DnsAccountManager::new());
             app.manage(dns_account_mgr.clone());
@@ -87,9 +87,31 @@ pub fn run() {
             let node_exe = crate::commands::node_app::resolve_node_exe(&software_mgr, None);
             app.manage(node_mgr.clone());
             // 注册 StackManager State（携带 SoftwareManager / SpringBootManager 的 Arc）
-            app.manage(std::sync::Arc::new(
-                crate::services::stack_manager::StackManager::new(software_mgr, springboot_mgr),
+            let stack_mgr = std::sync::Arc::new(crate::services::stack_manager::StackManager::new(
+                software_mgr.clone(),
+                springboot_mgr.clone(),
             ));
+            app.manage(stack_mgr.clone());
+
+            // 批次 4.1：AppContext 共享命令胶水（设计 D7-A，opx-http 定义、桌面/headless
+            // 两边共用）。命令层 sink_of(app) 型 AppHandle 已替换为 State<'_, AppContext>。
+            // 桌面 web 未开启时 sink = FanOut[TauriEventSink]：emit 逐份转发、resource_dir
+            // 穿透，行为与直用 TauriEventSink 逐字节一致（回归底线）；4.3 批次 web 开启后
+            // 扩为 FanOut[Tauri, Ws]。后台任务（bootstrap/watchdog/recorder/renew 等）
+            // 仍直用 event_sink，本批不动。
+            let ctx_sink: std::sync::Arc<dyn opx_core::event::EventSink> = std::sync::Arc::new(
+                opx_http::FanOutSink::new(vec![event_sink.clone()]),
+            );
+            app.manage(opx_http::AppContext {
+                software: software_mgr.clone(),
+                website: website_mgr.clone(),
+                springboot: springboot_mgr.clone(),
+                node: node_mgr.clone(),
+                dns: dns_account_mgr.clone(),
+                stack: stack_mgr,
+                sink: ctx_sink,
+                node_exe: node_exe.clone(),
+            });
 
             // 初始化审计日志（tracing + 按日 rolling），并清理 7 天前的旧日志
             // guard 必须用 Mutex 包装后 manage 到 Tauri State，

@@ -8,6 +8,7 @@
 //! ## 本 crate 的职责边界
 //!
 //! - [`token`]：token 生成 / 常量时间校验 / 受限写盘
+//! - [`context`]：[`context::AppContext`] 命令层共享胶水（D7-A，桌面/headless 共用）
 //! - [`sinks`]：[`sinks::FanOutSink`]（多入口组合广播）与
 //!   [`sinks::WsEventSink`]（WS 广播，R3 背压对策）
 //! - [`auth`]：Bearer 中间件
@@ -24,6 +25,7 @@
 //!   runtime 上启动并完成鉴权往返——这就是「同宿可行」的回归证明
 
 pub mod auth;
+pub mod context;
 pub mod sinks;
 pub mod token;
 
@@ -32,6 +34,7 @@ use axum::{Json, Router};
 use serde_json::json;
 
 pub use auth::AppState;
+pub use context::AppContext;
 pub use sinks::{FanOutSink, WsEventSink};
 
 /// `/api/health`：无业务语义的存活探针（受 Bearer 保护）。

@@ -2,8 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Local;
-use tauri::{AppHandle, State};
+use tauri::State;
 
+use opx_http::AppContext;
 use opx_core::event::{EventSink, EventSinkExt};
 
 use opx_core::models::software::{
@@ -30,18 +31,6 @@ pub use opx_core::services::software_manager::start_stop::{
 };
 use opx_core::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
-/// 把壳层的 [`AppHandle`] 转成core 的事件通道，供服务层（零tauri 依赖）使用。
-///
-/// ## 为什么需要这个助手
-/// `Arc<TauriEventSink>` **不会**自动 coerce 成 `Arc<dyn EventSink>`
-/// （unsized coercion 只对直接类型生效，不穿透 `Arc`）。若在每个调用点写
-/// `Arc::new(TauriEventSink::new(app.clone()))` 再靠期望类型推断，泛型/闭包
-/// 场景下极易推断失败或退化成 `Arc<TauriEventSink>`。集中在此转换一次，
-/// 调用点只写 `&sink_of(&app)`。
-fn sink_of(app: &AppHandle) -> Arc<dyn EventSink> {
-    Arc::new(crate::event_sink::TauriEventSink::new(app.clone()))
-}
-
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
 pub async fn list_available_software(
@@ -60,7 +49,7 @@ pub async fn list_available_software(
 #[tauri::command]
 pub async fn refresh_catalog(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
 ) -> Result<Vec<CatalogEntry>, String> {
     let builtin = catalog::build_builtin_catalog();
 
@@ -83,7 +72,7 @@ pub async fn refresh_catalog(
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
     catalog::save_catalog_cache(&merged); // ponytail: 缓存到文件
-    sink_of(&app).emit_ser("catalog-refreshed", merged.entries.clone());
+    ctx.sink.clone().emit_ser("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
 }
 
@@ -160,7 +149,7 @@ pub async fn list_installed_software(
 #[tauri::command]
 pub async fn install_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     params: InstallParams,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -168,7 +157,7 @@ pub async fn install_software(
     installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
-    let sink = sink_of(&app);
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
         installer::install_software(sink, manager_arc, params, install_id_for_task).await;
     });
@@ -180,7 +169,7 @@ pub async fn install_software(
 #[tauri::command]
 pub async fn upgrade_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -193,7 +182,7 @@ pub async fn upgrade_software(
     let installed_id_for_task = installed_id.clone();
     let install_id_for_task = install_id.clone();
     // spawn 需 'static：先构造owned 的事件通道再move 进去。
-    let sink = sink_of(&app);
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
         let audit_target_for_task = audit_target.clone();
         let r = do_upgrade(
@@ -539,7 +528,7 @@ fn unzip_to(zip_path: &std::path::Path, dst_dir: &std::path::Path) -> std::io::R
 #[tauri::command]
 pub async fn install_custom(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     params: CustomInstallParams,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -547,7 +536,7 @@ pub async fn install_custom(
     installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
-    let sink = sink_of(&app);
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
         installer::install_custom(sink, manager_arc, params, install_id_for_task).await;
     });
@@ -564,7 +553,7 @@ pub async fn install_custom(
 #[tauri::command]
 pub async fn uninstall_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<bool, String> {
     let software = manager
@@ -604,7 +593,7 @@ pub async fn uninstall_software(
             .map_err(|e| format!("卸载线程异常: {}", e))?
             .map_err(|e| e.to_string())?;
 
-        sink_of(&app).emit_ser("software-uninstalled", &installed_id);
+        ctx.sink.clone().emit_ser("software-uninstalled", &installed_id);
         Ok(true)
     })
 }
@@ -619,7 +608,7 @@ pub async fn uninstall_software(
 #[tauri::command]
 pub async fn start_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
@@ -651,7 +640,7 @@ pub async fn start_software(
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     // spawn 需 'static：先构造 owned 的事件通道再 move 进去。
-    let sink = sink_of(&app);
+    let sink = ctx.sink.clone();
     let audit_target_task = audit_target.clone();
     let audit_detail_task = audit_detail.clone();
 
@@ -853,7 +842,7 @@ pub async fn get_software_port_report(
 #[tauri::command]
 pub async fn stop_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<bool, String> {
     let software = manager
@@ -864,7 +853,7 @@ pub async fn stop_software(
 
     audited_async!("stop", target, detail, {
         lifecycle::validate_stop_transition(software.status.clone()).map_err(|e| e.to_string())?;
-        let sink = sink_of(&app);
+        let sink = ctx.sink.clone();
 
         // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
         let pid = match software.pid {
@@ -982,7 +971,7 @@ pub async fn stop_software(
 #[tauri::command]
 pub async fn restart_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
@@ -1016,7 +1005,7 @@ pub async fn restart_software(
         }
 
         // 再启动
-        let sink = sink_of(&app);
+        let sink = ctx.sink.clone();
         let installed_id_clone = installed_id.clone();
         let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
         if let Err(e) =
@@ -1669,7 +1658,7 @@ pub fn unwatch_log_file(id: u64) {
 #[tauri::command]
 pub async fn create_snapshot(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     mode: BackupMode,
     name: Option<String>,
@@ -1677,7 +1666,7 @@ pub async fn create_snapshot(
 ) -> Result<SnapshotMeta, String> {
     backup::create_snapshot(
         &manager,
-        &sink_of(&app),
+        &ctx.sink.clone(),
         &installed_id,
         mode,
         name,
