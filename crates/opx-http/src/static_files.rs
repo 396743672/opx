@@ -29,6 +29,12 @@ pub fn resolve_dist_dir() -> Option<PathBuf> {
     }
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("dist"));
+        // 开发态 exe 由 `cargo run` 从 src-tauri/ 拉起（cwd=src-tauri），
+        // tauri dev watcher 重启后的进程实测会丢失 OPX_WEB_DIST 环境变量
+        // → 静态路由消失（404）。向上找一层仓库根的 dist 兜底。
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("dist"));
+        }
     }
     candidates.into_iter().find(|d| d.join("index.html").is_file())
 }
