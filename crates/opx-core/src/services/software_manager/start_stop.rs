@@ -348,6 +348,20 @@ pub async fn do_start_software(
         }
     }
 
+    // init_password：优先用调用方显式传入（安装向导的一次性消费）；
+    // 回退读 config 持久化值（配置表单保存后再启动的主路径——前端启动按钮
+    // 不携带该参数，运行时 store 刷新即失效，实测导致 MySQL root 密码为空）。
+    // provider 侧的 initialized 门禁保证只在首次启动注入，此回退不破坏
+    // consume-once 语义（重启时 initialized=true 直接跳过注入）。
+    let init_password = init_password.or_else(|| {
+        software
+            .config
+            .get("init_password")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    });
+
     let start_ctx = StartContext {
         installed_id: software.id.clone(),
         install_path: software.install_path.clone(),
