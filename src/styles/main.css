@@ -250,6 +250,21 @@ body {
   background-color: var(--color-muted-foreground);
 }
 
+/* 主内容滚动区：对齐桌面 WebView2 的 overlay 滚动条观感。
+   ① scrollbar-gutter: stable 预留滚动条槽位——长页（软件仓库/审计）与
+   短页之间切换时内容宽度不再跳变（实测差 10px 的 reflow）；
+   ② 标准属性 scrollbar-color 做静默模式——拇指默认透明、悬停主区域浮现。
+   ⚠️ 必须用标准 scrollbar-color：Chromium 121+ 里 scrollbar-width 一旦
+   非 auto，::-webkit-scrollbar 系伪元素样式整体失效（探针实测）。 */
+main {
+  scrollbar-gutter: stable;
+  scrollbar-color: transparent transparent;
+}
+main:hover,
+main:focus-within {
+  scrollbar-color: var(--color-border) transparent;
+}
+
 /* 渐入动画 */
 @keyframes opx-fade-in {
   from {
