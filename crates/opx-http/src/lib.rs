@@ -9,6 +9,8 @@
 //!
 //! - [`token`]：token 生成 / 常量时间校验 / 受限写盘
 //! - [`context`]：[`context::AppContext`] 命令层共享胶水（D7-A，桌面/headless 共用）
+//! - [`api`]：`POST /api/{cmd}` 分发器 + [`api::Registry`] 命令注册表
+//!   （D7；注册点在 src-tauri，见模块文档的职责边界说明）
 //! - [`sinks`]：[`sinks::FanOutSink`]（多入口组合广播）与
 //!   [`sinks::WsEventSink`]（WS 广播，R3 背压对策）
 //! - [`auth`]：Bearer 中间件
@@ -24,15 +26,17 @@
 //! - 集成测试 `tests/http_gate.rs` 验证 server 能在普通 `#[tokio::test]`
 //!   runtime 上启动并完成鉴权往返——这就是「同宿可行」的回归证明
 
+pub mod api;
 pub mod auth;
 pub mod context;
 pub mod sinks;
 pub mod token;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
+pub use api::{ApiError, Registry};
 pub use auth::AppState;
 pub use context::AppContext;
 pub use sinks::{FanOutSink, WsEventSink};
@@ -47,9 +51,12 @@ async fn health() -> Json<serde_json::Value> {
 
 /// 装配 axum 路由：`/api/*` 全部经 Bearer 中间件。
 ///
-/// 4.2/4.3 批次在 `api_routes` 里追加 `POST /:cmd` 分发器与 WS 端点。
+/// `POST /api/{cmd}` 为通用分发器（批次 4.2）；4.3 批次追加
+/// `POST /api/ws-ticket` 与 `GET /api/events/ws`。
 pub fn router(state: AppState) -> Router {
-    let api_routes = Router::new().route("/api/health", get(health));
+    let api_routes = Router::new()
+        .route("/api/health", get(health))
+        .route("/api/{cmd}", post(api::dispatch));
 
     Router::new()
         .merge(api_routes)
@@ -85,17 +92,45 @@ pub async fn bind(
     Ok((local, Box::pin(serve(listener, app))))
 }
 
-/// 单测：路由装配本身不 panic、health 路由存在。
+/// 单测：路由装配本身不 panic、health 路由存在、分发器路由已挂。
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::Registry;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use std::sync::Arc;
     use tower::ServiceExt;
+
+    /// 构造带真实管理器的 AppState（与 tests/http_gate.rs 的 test_context 同构；
+    /// 管理器 ::new() 缺文件回默认，无写入副作用）。
+    fn test_state() -> AppState {
+        struct NoopSink;
+        impl opx_core::event::EventSink for NoopSink {
+            fn emit(&self, _: &str, _: serde_json::Value) {}
+        }
+        let software =
+            Arc::new(opx_core::services::software_manager::SoftwareManager::new());
+        let springboot =
+            Arc::new(opx_core::services::springboot_manager::SpringBootManager::new());
+        let ctx = Arc::new(AppContext {
+            software: software.clone(),
+            website: Arc::new(opx_core::services::website_manager::WebsiteManager::new()),
+            springboot: springboot.clone(),
+            node: Arc::new(opx_core::services::node_app_manager::NodeAppManager::new()),
+            dns: Arc::new(opx_core::services::dns_account::DnsAccountManager::new()),
+            stack: Arc::new(opx_core::services::stack_manager::StackManager::new(
+                software, springboot,
+            )),
+            sink: Arc::new(NoopSink),
+            node_exe: None,
+        });
+        AppState::new(crate::token::generate(), ctx, Registry::new())
+    }
 
     #[tokio::test]
     async fn health_is_wired_behind_bearer() {
-        let state = AppState::new(crate::token::generate());
+        let state = test_state();
         let app = router(state.clone());
 
         // 无 token → 401
@@ -108,6 +143,7 @@ mod tests {
 
         // 正确 token → 200 + {"status":"ok"}
         let res = app
+            .clone()
             .oneshot(
                 Request::get("/api/health")
                     .header("Authorization", format!("Bearer {}", state.token))
@@ -119,5 +155,18 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
         assert_eq!(body.as_ref(), br#"{"status":"ok"}"#);
+
+        // 分发器路由已挂：带 token POST 未注册命令 → 404 unknown_command（空注册表）
+        let res = app
+            .clone()
+            .oneshot(
+                Request::post("/api/whatever")
+                    .header("Authorization", format!("Bearer {}", state.token))
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 }

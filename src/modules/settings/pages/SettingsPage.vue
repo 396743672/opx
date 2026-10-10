@@ -450,6 +450,37 @@
             </div>
           </div>
         </div>
+
+        <!-- Web 管理入口（批次 4.2：仅存储设置；server 启停/打开浏览器归 4.3/4.5） -->
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('webGroup') }}</h3>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1">
+              <span class="text-sm">{{ $t('webEnabled') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('webEnabledHint') }}</div>
+            </div>
+            <SwitchBtn v-model="webEnabledValue" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('webPort') }}</span>
+            <input
+              v-model.number="webPortValue"
+              type="number"
+              min="1"
+              max="65535"
+              class="h-8 px-2 w-24 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+            />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1">
+              <span class="text-sm">{{ $t('webLanAccess') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('webLanAccessHint') }}</div>
+            </div>
+            <SwitchBtn v-model="webLanAccessValue" />
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -533,6 +564,10 @@ const ddnsIpv6Value = ref(false)
 const ddnsSyncing = ref(false)
 const ddnsSyncResult = ref('')
 const ddnsSyncOk = ref(false)
+// Web 管理入口（批次 4.2：仅存储字段；server 启停/热生效归 4.3/4.5）
+const webEnabledValue = ref(false)
+const webPortValue = ref(17580)
+const webLanAccessValue = ref(false)
 
 onMounted(async () => {
   try {
@@ -622,6 +657,9 @@ watch(
       ddnsHuaweiSecretValue.value = s.ddns_huawei_secret_key || ''
       ddnsDomainsText.value = (s.ddns_domains || []).join('\n')
       ddnsIpv6Value.value = s.ddns_enable_ipv6
+      webEnabledValue.value = s.web_enabled ?? false
+      webPortValue.value = s.web_port ?? 17580
+      webLanAccessValue.value = s.web_lan_access ?? false
     }
   },
   { immediate: true }
@@ -638,7 +676,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value, webEnabledValue, webPortValue, webLanAccessValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -699,6 +737,11 @@ async function save() {
   settingsStore.settings.ddns_domains = ddnsDomainsText.value.split('\n')
     .map((x) => x.trim()).filter(Boolean)
   settingsStore.settings.ddns_enable_ipv6 = ddnsIpv6Value.value
+  // Web 端口输入清空时 v-model.number 给 ''，归一回落 17580（同 smtp_port 兜底逻辑）
+  webPortValue.value = Number(webPortValue.value) >= 1 && Number(webPortValue.value) <= 65535 ? Number(webPortValue.value) : 17580
+  settingsStore.settings.web_enabled = webEnabledValue.value
+  settingsStore.settings.web_port = webPortValue.value
+  settingsStore.settings.web_lan_access = webLanAccessValue.value
   await settingsStore.saveSettings()
 }
 

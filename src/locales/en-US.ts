@@ -71,6 +71,14 @@ export default {
   lockKeyringUnavailable: 'OS credential store unavailable; lock screen cannot be used',
   lockPasswordTooShort: 'Password must be at least 6 characters',
   lockHashFailed: 'Failed to process password',
+
+  // Web management entry (batch 4.2: settings only; server start/stop & open-browser belong to 4.3/4.5)
+  webGroup: 'Web Management',
+  webEnabled: 'Enable browser management',
+  webEnabledHint: 'When enabled, the management UI is also available in a browser (same backend, same data)',
+  webPort: 'HTTP Port',
+  webLanAccess: 'Allow LAN access',
+  webLanAccessHint: 'Only this machine (127.0.0.1) can access by default; when enabled, devices on the same LAN can access — make sure your network is trusted',
   portConflictBy: 'Port conflict: occupied by PID {pid} ({name})',
   portConflictByPid: 'Port conflict: occupied by PID {pid}',
   portNotListening: 'Port not listening',

@@ -71,6 +71,14 @@ export default {
   lockKeyringUnavailable: '系统凭据库不可用，锁屏功能无法使用',
   lockPasswordTooShort: '密码至少 6 位',
   lockHashFailed: '密码处理失败',
+
+  // Web 管理入口（批次 4.2：仅存储设置；server 启停/打开浏览器归 4.3/4.5）
+  webGroup: 'Web 管理',
+  webEnabled: '启用浏览器管理入口',
+  webEnabledHint: '开启后可在浏览器访问本机管理界面（同一后端，同一份数据）',
+  webPort: 'HTTP 端口',
+  webLanAccess: '允许局域网访问',
+  webLanAccessHint: '默认仅本机（127.0.0.1）可访问；开启后同一局域网内的设备可访问，请确保网络环境可信',
   portConflictBy: '端口冲突：被 PID {pid}（{name}）占用',
   portConflictByPid: '端口冲突：被 PID {pid} 占用',
   portNotListening: '端口未监听',

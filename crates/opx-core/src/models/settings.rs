@@ -102,6 +102,16 @@ pub struct AppSettings {
     /// 开启后额外同步 AAAA 记录
     #[serde(default)]
     pub ddns_enable_ipv6: bool,
+    // --- Web 管理入口（批次 4.2：仅存字段；server 启停/热生效归 4.3/4.5）---
+    /// 是否启用浏览器管理入口（默认关闭；开启后桌面壳 spawn axum server）
+    #[serde(default)]
+    pub web_enabled: bool,
+    /// HTTP 服务端口（ADR §7 #2 固定默认 17580，可配置；冲突明确报错）
+    #[serde(default = "default_web_port")]
+    pub web_port: u16,
+    /// 局域网访问开关：false 绑定 127.0.0.1（安全底线），true 绑定 0.0.0.0
+    #[serde(default)]
+    pub web_lan_access: bool,
 }
 
 fn default_ninety() -> u32 {
@@ -126,6 +136,10 @@ fn default_webhook_format() -> String {
 
 fn default_smtp_port() -> u16 {
     465
+}
+
+fn default_web_port() -> u16 {
+    17580
 }
 
 impl Default for AppSettings {
@@ -170,6 +184,9 @@ impl Default for AppSettings {
             ddns_huawei_secret_key: String::new(),
             ddns_domains: Vec::new(),
             ddns_enable_ipv6: false,
+            web_enabled: false,
+            web_port: default_web_port(),
+            web_lan_access: false,
         }
     }
 }
@@ -262,5 +279,33 @@ mod tests {
         assert!(s.ddns_huawei_secret_key.is_empty());
         assert!(s.ddns_domains.is_empty());
         assert!(!s.ddns_enable_ipv6);
+    }
+
+    #[test]
+    fn web_fields_default_on_legacy_json() {
+        // 批次 4.2：旧 settings.json 不含 web_* 三字段 → 全部回落安全默认
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert!(!s.web_enabled, "web 入口默认关闭");
+        assert_eq!(s.web_port, 17580, "端口默认 17580（ADR §7 #2）");
+        assert!(!s.web_lan_access, "默认仅绑 127.0.0.1");
+    }
+
+    #[test]
+    fn web_fields_roundtrip_through_json() {
+        let mut s = AppSettings::default();
+        s.web_enabled = true;
+        s.web_port = 18000;
+        s.web_lan_access = true;
+        let json = serde_json::to_string(&s).expect("serialize settings");
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(back.web_enabled);
+        assert_eq!(back.web_port, 18000);
+        assert!(back.web_lan_access);
     }
 }

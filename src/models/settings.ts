@@ -52,4 +52,11 @@ export interface AppSettings {
   ddns_domains: string[]
   /** 开启后额外同步 AAAA 记录 */
   ddns_enable_ipv6: boolean
+  // --- Web 管理入口（批次 4.2：仅存字段；server 启停/热生效归 4.3/4.5）---
+  /** 是否启用浏览器管理入口，默认关闭 */
+  web_enabled: boolean
+  /** HTTP 服务端口，默认 17580 */
+  web_port: number
+  /** 局域网访问开关：false 仅绑 127.0.0.1，true 绑 0.0.0.0 */
+  web_lan_access: boolean
 }

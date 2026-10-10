@@ -4,6 +4,8 @@
 //! 所有 `/api/*` 路由经本中间件；WS 握手走一次性 ticket（D3.2，4.3 批次接入
 //! `/api/ws-ticket` + query 参数），不复用本中间件。
 
+use crate::api::Registry;
+use crate::context::AppContext;
 use crate::token;
 use axum::extract::{Request, State};
 use axum::http::{header, StatusCode};
@@ -16,11 +18,19 @@ use std::sync::Arc;
 pub struct AppState {
     /// 期望的 token（hex 64 字符）。`Arc<String>` 便于未来热替换（token 重置）。
     pub token: Arc<String>,
+    /// 命令层共享上下文（D7-A：六管理器 + sink + node_exe）
+    pub ctx: Arc<AppContext>,
+    /// 命令注册表（注册点在 src-tauri，见 `api` 模块文档）
+    pub registry: Registry,
 }
 
 impl AppState {
-    pub fn new(token: String) -> Self {
-        Self { token: Arc::new(token) }
+    pub fn new(token: String, ctx: Arc<AppContext>, registry: Registry) -> Self {
+        Self {
+            token: Arc::new(token),
+            ctx,
+            registry,
+        }
     }
 }
 
