@@ -11,15 +11,14 @@
 //! | `audit` / `audit_log` / `health_check` / `process_monitor` / `netutils` / `lifecycle` | ✅ 在 core | 3A2 |
 //! | `installer` | ✅ 在 core | 3.5 |
 //! | `backup` / `backup_scheduler` / `config_editor` | ✅ 在 core | 3.6 |
-//! | `log_watcher` | ⏳ 仍在壳层 | 3.7（需新增 notify 依赖，见其文件头说明） |
+//! | `log_watcher` | ⏳ 仍在壳层（**活代码**：lib.rs:35 启动 init + lib.rs:354-355 注册的两个 command；早期「零调用方」判断有误） | — |
 //!
-//! ## 🚨 `lifecycle.rs` 是拆分搬迁的产物
+//! ## 🚨 `lifecycle.rs` 已只剩 core 符号重导出
 //!
-//! 本目录的 [`lifecycle`] **只含三段死代码**（`auto_start_all` /
-//! `await_batch_ready` / `spawn_start`，全仓库无调用方，真正的自启走
-//! `startup_bootstrap::run_bootstrap`）。主体（`register` / `get` / `stop_one` /
-//! `run_graceful_stop` / `stop_all_on_exit` 等）已搬进
-//! `opx_core::services::software_manager::lifecycle`。详见本文件内 [`lifecycle`] 的文件头。
+//! 死代码清理轮次删除了三段死代码（`auto_start_all` / `await_batch_ready` /
+//! `spawn_start`，全仓库无调用方，真正的自启走 `startup_bootstrap::run_bootstrap`）。
+//! 本目录的 [`lifecycle`] 现在**只含一行 `pub use`**，把 core
+//! `software_manager::lifecycle` 的 13 个公开符号转发给壳层调用点。详见该文件头。
 //!
 //! ## 🚨 同名模块的符号歧义
 //!
