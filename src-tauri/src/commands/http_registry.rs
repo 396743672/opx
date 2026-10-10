@@ -105,7 +105,8 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
         })
     });
 
-    // ===== lock_screen（1；verify_lock_password 不挂——密码面从严）=====
+    // ===== lock_screen（1；verify_lock_password 在下方写命令段——4.2 的
+    //       「从严排除」经实测推翻：Web 端锁屏解锁无通道直接 404）=====
     reg.register("has_lock_password", |_ctx, _args| {
         Box::pin(async move { ok(lock_screen::has_lock_password()) })
     });
@@ -473,8 +474,16 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
         Box::pin(async move { ok(config::sync_ddns_now().await) })
     });
 
-    // ===== lock_screen 写命令（2；verify_lock_password 维持排除——密码
-    //       校验面从严，HTTP 入口不做暴力破解面扩张）=====
+    // ===== lock_screen 写命令（3）——verify_lock_password 后补挂：实测
+    //       Web 端锁屏解锁 404（stores/lock.ts 是唯一调用方）。原「密码校验
+    //       面从严」理由不成立：set/clear_lock_password（可改/清除密码）已
+    //       挂，持 token 者本可直呼 clear；verify 不扩大任何权限面 =====
+    reg.register("verify_lock_password", |_ctx, args| {
+        Box::pin(async move {
+            let pw: String = arg(&args, "pw")?;
+            ok(lock_screen::verify_lock_password(pw))
+        })
+    });
     reg.register("set_lock_password", |_ctx, args| {
         Box::pin(async move {
             let pw: String = arg(&args, "pw")?;
