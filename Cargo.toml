@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/opx-core", "src-tauri"]
+members = ["crates/opx-core", "crates/opx-http", "src-tauri"]

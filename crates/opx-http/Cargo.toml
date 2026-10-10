@@ -1,0 +1,39 @@
+[package]
+name = "opx-http"
+version = "0.5.1"
+description = "HTTP/WS server of opx (axum) — serves the same backend over a browser entry; shares opx-core with the Tauri shell"
+authors = ["opx-dev"]
+license = "MIT"
+repository = "https://github.com/396743672/opx"
+edition = "2021"
+
+[lib]
+name = "opx_http"
+path = "src/lib.rs"
+
+# 依赖方向：opx-http → opx-core（单向，同壳层）；本 crate 零 tauri 依赖，
+# 桌面壳与未来 headless 壳（opx-server）共用本 crate 提供 web 入口。
+[dependencies]
+opx-core = { path = "../opx-core" }
+# axum —— HTTP 路由/分发器 + WS upgrade（ws feature 内含 tokio-tungstenite，
+#         无需直接依赖）。选型依据见 docs/2026-10-10-opx-http-design.md §1（D1）：
+#         原生 tokio，与 tauri::async_runtime 同宿零摩擦（R1）。
+axum = { version = "0.8", features = ["ws", "json"] }
+# tower —— axum 的中间件基础设施（随 axum 传递，显式声明以便日后自定义 layer）。
+tower = "0.5"
+# subtle —— token 的常量时间比较，防时序侧信道（设计 §3 / ADR §3.4）。
+subtle = "2.6.1"
+# rand_core —— token 生成的 CSPRNG（OsRng + getrandom）；与 opx-core 同版本
+#              同 feature，workspace 已有，零新增传递依赖（设计 §10：倾向复用）。
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.0", features = ["net", "rt-multi-thread", "macros", "time", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# 集成测试需要独立的多线程 runtime + #[tokio::test] 宏（R1：验证 server 能在
+# 普通 tokio runtime 上启动——tauri::async_runtime 底层就是它）。
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
+# reqwest 作为测试客户端发 HTTP 请求（workspace 已有同版本，lock 零新增）。
+reqwest = { version = "0.13", features = ["json"] }
