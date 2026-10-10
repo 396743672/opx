@@ -82,7 +82,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import type { LogSource } from '@/models/software'

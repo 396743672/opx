@@ -79,6 +79,13 @@ export default {
   webPort: 'HTTP 端口',
   webLanAccess: '允许局域网访问',
   webLanAccessHint: '默认仅本机（127.0.0.1）可访问；开启后同一局域网内的设备可访问，请确保网络环境可信',
+  // 批次 4.4：Web 模式访问令牌输入页（D3）
+  webTokenTitle: '访问令牌',
+  webTokenDesc: '此页面通过 Web 入口连接本机 OPX 后端，请输入桌面端「设置 → Web 管理」提供的访问令牌',
+  webTokenPlaceholder: '64 位访问令牌',
+  webTokenConfirm: '连接',
+  webTokenInvalid: '令牌格式不正确（应为 64 位十六进制）或已被拒绝，请重新输入',
+  webTokenRequired: '缺少访问令牌，请重新输入',
   portConflictBy: '端口冲突：被 PID {pid}（{name}）占用',
   portConflictByPid: '端口冲突：被 PID {pid} 占用',
   portNotListening: '端口未监听',

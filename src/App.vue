@@ -14,6 +14,8 @@
     </div>
   </div>
   <MainLayout v-show="!booting" />
+  <!-- Web 模式无 token：访问令牌输入页（D3），整页重载后走干净启动 -->
+  <TokenGate v-if="needToken" />
   <CloseDialog
     v-if="showCloseDialog"
     :default-choice="defaultChoice"
@@ -35,12 +37,14 @@ import StopProgressDialog from '@/components/StopProgressDialog.vue'
 import ErrorDialog from '@/components/ErrorDialog.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ToastHost from '@/components/ToastHost.vue'
+import TokenGate from '@/components/TokenGate.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import { useLockStore } from '@/stores/lock'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
+import { getTransport } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from '@/composables/useToast'
@@ -57,6 +61,14 @@ const showCloseDialog = ref(false)
 const showStopProgress = ref(false)
 /** 启动加载态：设置加载 + 首次系统数据就绪前显示遮罩 */
 const booting = ref(true)
+
+// Web 模式且未持有 token（D3）：展示令牌输入页；HTTP 通道 401 时同样唤起
+const transport = getTransport()
+const needToken = ref(!transport.isDesktop && !transport.authenticated)
+const offUnauthorized = transport.onUnauthorized(() => {
+  needToken.value = true
+})
+onUnmounted(offUnauthorized)
 
 const defaultChoice = computed<'tray' | 'exit'>(() =>
   settingsStore.settings?.close_window_action === CloseWindowAction.Exit

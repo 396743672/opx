@@ -79,6 +79,13 @@ export default {
   webPort: 'HTTP Port',
   webLanAccess: 'Allow LAN access',
   webLanAccessHint: 'Only this machine (127.0.0.1) can access by default; when enabled, devices on the same LAN can access — make sure your network is trusted',
+  // Batch 4.4: web-mode access token gate (D3)
+  webTokenTitle: 'Access Token',
+  webTokenDesc: 'This page connects to the local OPX backend over the web entry. Enter the access token from the desktop app under "Settings → Web Management".',
+  webTokenPlaceholder: '64-character access token',
+  webTokenConfirm: 'Connect',
+  webTokenInvalid: 'Invalid token (expected 64 hex characters) or rejected. Please try again.',
+  webTokenRequired: 'Access token missing, please enter it again',
   portConflictBy: 'Port conflict: occupied by PID {pid} ({name})',
   portConflictByPid: 'Port conflict: occupied by PID {pid}',
   portNotListening: 'Port not listening',

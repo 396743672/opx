@@ -138,7 +138,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'

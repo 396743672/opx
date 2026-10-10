@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
 
 type InstallPhase = 'downloading' | 'extracting' | 'completed' | 'failed'
 

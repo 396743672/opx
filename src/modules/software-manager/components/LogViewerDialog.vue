@@ -111,7 +111,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
 import { invoke } from '@/utils/ipc'
 import { Icon } from '@iconify/vue'
 import { save } from '@tauri-apps/plugin-dialog'
