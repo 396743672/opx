@@ -16,6 +16,10 @@
 //! - 成功：`200` + 命令返回值序列化的 JSON（与 Tauri IPC 返回形状一致）
 //! - 未注册命令：`404` + `{"code":"unknown_command","message":"..."}`
 //! - 参数缺失/类型不符：`400` + `{"code":"invalid_args","message":"..."}`
+//! - 桌面专属命令（窗口/托盘/更新器等）：`409` +
+//!   `{"code":"desktop_only","message":"..."}` —— 命令存在但当前 HTTP 入口
+//!   无对应能力（比 404 友好：前端按 code 渲染「请到桌面端操作」提示，
+//!   而非当作未知命令；409 语义 = 命令可识别、但与当前访问方式冲突）
 //! - 命令执行失败（`Result<_, String>` 的 Err）：`500` +
 //!   `{"code":"command_failed","message":"<原始错误串>"}`
 //!   —— `message` 保持与 Tauri reject 相同的字符串（含 `i18n:key` 形态），
@@ -68,11 +72,24 @@ impl ApiError {
         Self::new("command_failed", message)
     }
 
+    /// 桌面专属命令（窗口/托盘/更新器等，设计 §5 桌面专属表）→ 409。
+    ///
+    /// 注册进注册表但 handler 直接返回本错误：前端按 `code == "desktop_only"`
+    /// 渲染「请到桌面端操作」提示（比 404 更友好——命令是已知的，只是
+    /// HTTP 入口无对应宿主能力，409 = 可识别但与访问方式冲突）。
+    pub fn desktop_only(cmd: &str) -> Self {
+        Self::new(
+            "desktop_only",
+            format!("命令 {cmd} 为桌面专属功能，请在桌面端操作"),
+        )
+    }
+
     /// code → HTTP 状态码映射（分发器统一裁定，注册点不感知 HTTP 语义）
     fn status(&self) -> StatusCode {
         match self.code.as_str() {
             "unknown_command" => StatusCode::NOT_FOUND,
             "invalid_args" => StatusCode::BAD_REQUEST,
+            "desktop_only" => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

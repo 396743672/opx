@@ -6,7 +6,9 @@
 
 use crate::api::Registry;
 use crate::context::AppContext;
+use crate::ticket::TicketStore;
 use crate::token;
+use crate::sinks::WsEventSink;
 use axum::extract::{Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;
@@ -22,14 +24,27 @@ pub struct AppState {
     pub ctx: Arc<AppContext>,
     /// 命令注册表（注册点在 src-tauri，见 `api` 模块文档）
     pub registry: Registry,
+    /// WS 事件广播 sink（D4：WS 路由把连接挂进它的订阅组；
+    /// 装配方同时把它放进 FanOutSink，桌面 web 开启时双入口同收）
+    pub ws: Arc<WsEventSink>,
+    /// WS 握手一次性 ticket 表（D3.2：60 秒单次）
+    pub tickets: Arc<TicketStore>,
 }
 
 impl AppState {
-    pub fn new(token: String, ctx: Arc<AppContext>, registry: Registry) -> Self {
+    pub fn new(
+        token: String,
+        ctx: Arc<AppContext>,
+        registry: Registry,
+        ws: Arc<WsEventSink>,
+        tickets: Arc<TicketStore>,
+    ) -> Self {
         Self {
             token: Arc::new(token),
             ctx,
             registry,
+            ws,
+            tickets,
         }
     }
 }

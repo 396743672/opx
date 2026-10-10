@@ -37,3 +37,9 @@ tracing = "0.1"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
 # reqwest 作为测试客户端发 HTTP 请求（workspace 已有同版本，lock 零新增）。
 reqwest = { version = "0.13", features = ["json"] }
+# tokio-tungstenite —— 测试侧 WS 客户端，验证 ws-ticket → events/ws 全链路
+#                     （批次 4.3；生产侧的 WS 服务端由 axum ws feature 内置的
+#                     tungstenite 承担，同版本族零新增传递依赖）。
+tokio-tungstenite = "0.29"
+# futures-util —— 测试侧 StreamExt（读 WS 帧流）；axum/hyper 传递已有同版本。
+futures-util = "0.3"

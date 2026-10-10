@@ -11,6 +11,8 @@
 //! - [`context`]：[`context::AppContext`] 命令层共享胶水（D7-A，桌面/headless 共用）
 //! - [`api`]：`POST /api/{cmd}` 分发器 + [`api::Registry`] 命令注册表
 //!   （D7；注册点在 src-tauri，见模块文档的职责边界说明）
+//! - [`ticket`]：WS 握手一次性 ticket（D3.2，60 秒单次，时间可注入）
+//! - [`ws`]：WS 事件通路（`/api/ws-ticket` + `/api/events/ws`，D3/D4）
 //! - [`sinks`]：[`sinks::FanOutSink`]（多入口组合广播）与
 //!   [`sinks::WsEventSink`]（WS 广播，R3 背压对策）
 //! - [`auth`]：Bearer 中间件
@@ -30,7 +32,9 @@ pub mod api;
 pub mod auth;
 pub mod context;
 pub mod sinks;
+pub mod ticket;
 pub mod token;
+pub mod ws;
 
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -40,6 +44,7 @@ pub use api::{ApiError, Registry};
 pub use auth::AppState;
 pub use context::AppContext;
 pub use sinks::{FanOutSink, WsEventSink};
+pub use ticket::TicketStore;
 
 /// `/api/health`：无业务语义的存活探针（受 Bearer 保护）。
 ///
@@ -49,21 +54,25 @@ async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
 }
 
-/// 装配 axum 路由：`/api/*` 全部经 Bearer 中间件。
+/// 装配 axum 路由。
 ///
-/// `POST /api/{cmd}` 为通用分发器（批次 4.2）；4.3 批次追加
-/// `POST /api/ws-ticket` 与 `GET /api/events/ws`。
+/// 分两组：`/api/health`、`/api/{cmd}`、`/api/ws-ticket` 经 Bearer 中间件；
+/// `/api/events/ws` **不**经 Bearer（浏览器 WS 无法设 Authorization 头，
+/// 由一次性 ticket 鉴权替代，D3.2）。4.5 批次追加静态 SPA 服务。
 pub fn router(state: AppState) -> Router {
-    let api_routes = Router::new()
+    let protected = Router::new()
         .route("/api/health", get(health))
-        .route("/api/{cmd}", post(api::dispatch));
-
-    Router::new()
-        .merge(api_routes)
+        .route("/api/{cmd}", post(api::dispatch))
+        .route("/api/ws-ticket", post(ws::issue_ticket))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
-        ))
+        ));
+    let public = Router::new().route("/api/events/ws", get(ws::events_ws));
+
+    Router::new()
+        .merge(protected)
+        .merge(public)
         .with_state(state)
 }
 
@@ -125,7 +134,13 @@ mod tests {
             sink: Arc::new(NoopSink),
             node_exe: None,
         });
-        AppState::new(crate::token::generate(), ctx, Registry::new())
+        AppState::new(
+            crate::token::generate(),
+            ctx,
+            Registry::new(),
+            WsEventSink::shared(),
+            Arc::new(TicketStore::new()),
+        )
     }
 
     #[tokio::test]

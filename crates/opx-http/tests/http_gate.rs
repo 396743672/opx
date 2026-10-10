@@ -5,8 +5,9 @@
 //! `async_runtime` 底层就是共享 tokio runtime（设计 F4），桌面侧
 //! `tauri::async_runtime::spawn(serve(..))` 的同宿可行性由本测试钉死。
 
+use opx_core::event::EventSink; // ws.emit 是 trait 方法，测试侧需在作用域内
 use opx_http::api::{arg, ok, Registry};
-use opx_http::{token, AppContext, AppState};
+use opx_http::{token, AppContext, AppState, TicketStore, WsEventSink};
 use std::sync::Arc;
 
 /// 测试用空事件出口（分发器测试不关心事件，只占位满足 AppContext 字段）。
@@ -34,7 +35,8 @@ fn test_context() -> Arc<AppContext> {
     })
 }
 
-/// 测试注册表：三个探针命令覆盖分发器的全部响应路径（200/400/500）。
+/// 测试注册表：三个探针命令覆盖分发器的全部响应路径（200/400/500）+ 一个
+/// desktop_only 形态探针（409）。
 fn test_registry() -> Registry {
     let mut reg = Registry::new();
     // 有参命令：验证 arg 提取 + 200 包装
@@ -61,29 +63,34 @@ fn test_registry() -> Registry {
             ok::<serde_json::Value>(Err("i18n:someBusinessError".to_string()))
         })
     });
+    // 桌面专属形态：handler 直接返回 desktop_only 信封（批次 4.3 语义）
+    reg.register("quit_app", |_ctx, _args| {
+        Box::pin(async move { Err(opx_http::ApiError::desktop_only("quit_app")) })
+    });
     reg
 }
 
-/// 起 server（127.0.0.1:0 随机端口）→ 返回 `(实际地址, token)`。
+/// 起 server（127.0.0.1:0 随机端口）→ 返回 `(实际地址, token, ws 广播 sink)`。
 ///
 /// 端口 0 由内核分配，测试间无冲突；D6 的「端口占用明确报错」由 `bind` 的
-/// `Err` 路径承担，此处不触发。token 仅存于测试进程内存，不落盘、不入 URL
-/// —— 这正是设计 D3 对 token 泄漏面的约定。
-async fn spawn_server(token: String) -> (std::net::SocketAddr, String) {
+/// `Err` 路径承担，此处不触发。token/ticket 仅存于测试进程内存，不落盘、
+/// 不入 URL —— 这正是设计 D3 对 token 泄漏面的约定。
+async fn spawn_server(token: String) -> (std::net::SocketAddr, String, Arc<WsEventSink>) {
+    let ws = WsEventSink::shared();
     let (addr, serve_fut) = opx_http::bind(
         std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-        AppState::new(token.clone(), test_context(), test_registry()),
+        AppState::new(token.clone(), test_context(), test_registry(), ws.clone(), Arc::new(TicketStore::new())),
     )
     .await
     .expect("绑定 127.0.0.1:0 不应失败");
     tokio::spawn(serve_fut);
-    (addr, token)
+    (addr, token, ws)
 }
 
 /// 带 token 打通 health：200 + {"status":"ok"}。
 #[tokio::test]
 async fn health_with_valid_token() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -100,7 +107,7 @@ async fn health_with_valid_token() {
 /// 缺 token → 401。
 #[tokio::test]
 async fn health_without_token_is_401() {
-    let (addr, _token) = spawn_server(token::generate()).await;
+    let (addr, _token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -114,7 +121,7 @@ async fn health_without_token_is_401() {
 /// 错 token → 401（与缺 token 响应一致，不帮助探测）。
 #[tokio::test]
 async fn health_with_wrong_token_is_401() {
-    let (addr, _token) = spawn_server(token::generate()).await;
+    let (addr, _token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -132,7 +139,7 @@ async fn health_with_wrong_token_is_401() {
 #[tokio::test]
 async fn token_stays_stable_across_connections() {
     let t = token::generate();
-    let (addr, token) = spawn_server(t.clone()).await;
+    let (addr, token, _ws) = spawn_server(t.clone()).await;
     assert_eq!(token, t, "spawn 不应轮换传入的 token");
 
     let client = reqwest::Client::new();
@@ -150,7 +157,7 @@ async fn token_stays_stable_across_connections() {
 /// 分发器：已注册命令 + 正确参数 → 200 + 命令返回值 JSON（批次 4.2）。
 #[tokio::test]
 async fn dispatch_registered_command_returns_200() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -169,7 +176,7 @@ async fn dispatch_registered_command_returns_200() {
 /// 等价 `invoke(cmd)` 无参调用 → 200。
 #[tokio::test]
 async fn dispatch_empty_body_and_context_passthrough() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -188,7 +195,7 @@ async fn dispatch_empty_body_and_context_passthrough() {
 /// 分发器：未注册命令 → 404 + unknown_command 信封（前端 translateError 可衔接）。
 #[tokio::test]
 async fn dispatch_unknown_command_is_404() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -207,7 +214,7 @@ async fn dispatch_unknown_command_is_404() {
 /// 分发器：已注册命令但参数缺失 → 400 + invalid_args 信封。
 #[tokio::test]
 async fn dispatch_bad_args_is_400() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -226,7 +233,7 @@ async fn dispatch_bad_args_is_400() {
 /// 分发器：请求体非法 JSON → 400。
 #[tokio::test]
 async fn dispatch_malformed_json_is_400() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -246,7 +253,7 @@ async fn dispatch_malformed_json_is_400() {
 /// message 原样透传（i18n:key 形态留给前端 translateError）。
 #[tokio::test]
 async fn dispatch_command_error_is_500_with_envelope() {
-    let (addr, token) = spawn_server(token::generate()).await;
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -265,7 +272,7 @@ async fn dispatch_command_error_is_500_with_envelope() {
 /// 分发器同样受 Bearer 保护：缺 token 的 POST → 401（中间件全量生效）。
 #[tokio::test]
 async fn dispatch_requires_bearer() {
-    let (addr, _token) = spawn_server(token::generate()).await;
+    let (addr, _token, _ws) = spawn_server(token::generate()).await;
     let client = reqwest::Client::new();
 
     let res = client
@@ -275,4 +282,137 @@ async fn dispatch_requires_bearer() {
         .await
         .unwrap();
     assert_eq!(res.status(), 401);
+}
+
+// ===== 批次 4.3：ws-ticket + WS 事件通路 + desktop_only =====
+
+/// 换取 ticket 的辅助：POST /api/ws-ticket（Bearer）→ ticket 字符串。
+async fn fetch_ticket(addr: std::net::SocketAddr, token: &str) -> String {
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/api/ws-ticket"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .expect("ws-ticket 请求不应失败");
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    body["ticket"].as_str().expect("ticket 为字符串").to_string()
+}
+
+/// ws-ticket 需要 Bearer 保护：缺 token → 401。
+#[tokio::test]
+async fn ws_ticket_requires_bearer() {
+    let (addr, _token, _ws) = spawn_server(token::generate()).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/api/ws-ticket"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 401);
+}
+
+/// WS 全链路：Bearer 换 ticket → 握手 → 经 WsEventSink emit → 客户端收到
+/// `{"event","payload"}` 信封帧（D3.2 + D4 通路钉死）。message 格式定稿的
+/// 回归证明。
+#[tokio::test]
+async fn ws_roundtrip_broadcasts_envelope_frame() {
+    let (addr, token, ws) = spawn_server(token::generate()).await;
+    let ticket = fetch_ticket(addr, &token).await;
+
+    let (mut client, _resp) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/events/ws?ticket={ticket}"
+    ))
+    .await
+    .expect("合法 ticket 握手应成功");
+
+    // 服务端侧经同一个广播 sink 发事件（等价于命令/后台任务 emit）
+    ws.emit(
+        "software-status-changed",
+        serde_json::json!({ "id": "abc", "status": "Running" }),
+    );
+
+    use futures_util::StreamExt;
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
+        .await
+        .expect("5 秒内应收到广播帧")
+        .expect("流未结束")
+        .expect("帧非错误");
+    let text = msg.into_text().expect("应为文本帧");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("帧为合法 JSON");
+    assert_eq!(v["event"], "software-status-changed");
+    assert_eq!(v["payload"]["id"], "abc");
+    assert_eq!(v["payload"]["status"], "Running");
+}
+
+/// 双客户端同收广播（D4 fan-out 语义经真实 WS 验证）。
+#[tokio::test]
+async fn ws_two_clients_both_receive() {
+    let (addr, token, ws) = spawn_server(token::generate()).await;
+    use futures_util::StreamExt;
+
+    let ticket_a = fetch_ticket(addr, &token).await;
+    let ticket_b = fetch_ticket(addr, &token).await;
+    let (mut a, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/events/ws?ticket={ticket_a}"
+    ))
+    .await
+    .unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/events/ws?ticket={ticket_b}"
+    ))
+    .await
+    .unwrap();
+
+    ws.emit("install-progress", serde_json::json!({ "phase": "done" }));
+
+    for (name, sock) in [("a", &mut a), ("b", &mut b)] {
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), sock.next())
+            .await
+            .expect("双客户端均应在 5 秒内收到帧")
+            .expect("流未结束")
+            .expect("帧非错误");
+        let v: serde_json::Value = serde_json::from_str(&msg.into_text().unwrap()).unwrap();
+        assert_eq!(v["event"], "install-progress", "客户端 {name} 收到广播");
+    }
+}
+
+/// ticket 单次有效：同一 ticket 第二次握手被拒（D3.2 用后即焚）。
+#[tokio::test]
+async fn ws_ticket_is_single_use() {
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
+    let ticket = fetch_ticket(addr, &token).await;
+
+    let (first, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/events/ws?ticket={ticket}"
+    ))
+    .await
+    .expect("首次握手成功");
+    drop(first);
+
+    // 二次使用同一 ticket → 握手被拒（服务端 401 → upgrade 不发生）
+    let second = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/events/ws?ticket={ticket}"
+    ))
+    .await;
+    assert!(second.is_err(), "已用 ticket 的第二次握手必须失败");
+}
+
+/// 桌面专属命令形态：409 + `desktop_only` 信封（批次 4.3 语义钉死）。
+#[tokio::test]
+async fn desktop_only_command_returns_409_envelope() {
+    let (addr, token, _ws) = spawn_server(token::generate()).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/api/quit_app"))
+        .header("Authorization", format!("Bearer {token}"))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 409);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["code"], "desktop_only");
+    assert!(body["message"].as_str().unwrap().contains("quit_app"));
 }
