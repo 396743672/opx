@@ -16,7 +16,7 @@ impl Cloudflare {
     pub fn new(token: String) -> Self {
         Self {
             token,
-            client: opx_core::utils::http::client(),
+            client: crate::utils::http::client(),
         }
     }
 

@@ -7,8 +7,8 @@ use std::sync::RwLock;
 
 use anyhow::Result;
 
-use opx_core::models::dns_account::DnsAccount;
-use opx_core::utils::paths;
+use crate::models::dns_account::DnsAccount;
+use crate::utils::paths;
 
 pub struct DnsAccountManager {
     accounts: RwLock<Vec<DnsAccount>>,
@@ -113,12 +113,12 @@ fn read_legacy_token() -> String {
 
 /// 给所有「已启用 ACME 且未绑定账号」的站点绑上该账号，并落盘。
 fn bind_unbound_acme_sites(account_id: &str) -> anyhow::Result<()> {
-    let p = opx_core::services::website_manager::WebsiteManager::store_path();
+    let p = crate::services::website_manager::WebsiteManager::store_path();
     if !p.exists() {
         return Ok(());
     }
     let raw = std::fs::read_to_string(&p)?;
-    let mut list: opx_core::models::website::WebsiteList = serde_json::from_str(&raw)?;
+    let mut list: crate::models::website::WebsiteList = serde_json::from_str(&raw)?;
     let mut changed = false;
     for s in list.websites.iter_mut() {
         if s.ssl.acme && s.ssl.dns_account_id.is_none() {

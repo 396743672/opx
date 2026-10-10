@@ -86,7 +86,7 @@ impl<T: crate::services::acme::dns::DnsProvider + ?Sized> DdnsProvider for T {
 
 /// 按账号取实现；凭证缺失返回 None（调用方给出「请先配置凭证」错误）。
 pub fn provider_for_account(
-    a: &opx_core::models::dns_account::DnsAccount,
+    a: &crate::models::dns_account::DnsAccount,
 ) -> Option<Box<dyn DdnsProvider>> {
     match a.provider.as_str() {
         "cloudflare" if !a.token.trim().is_empty() => Some(Box::new(
@@ -124,8 +124,8 @@ pub fn provider_for_account(
 ///
 /// **这是刻意的适配层**：DDNS 的凭证字段与证书账号解耦（用户明确要求「证书可以
 /// 是其他家的」），DDNS 不引入账号概念，只是复用同一个 provider 工厂。
-pub fn ddns_account_of(s: &opx_core::models::settings::AppSettings) -> opx_core::models::dns_account::DnsAccount {
-    opx_core::models::dns_account::DnsAccount {
+pub fn ddns_account_of(s: &crate::models::settings::AppSettings) -> crate::models::dns_account::DnsAccount {
+    crate::models::dns_account::DnsAccount {
         id: String::new(),
         name: "ddns".into(),
         provider: s.ddns_provider.clone(),
@@ -187,8 +187,8 @@ fn is_change(action: &str) -> bool {
 /// 全程持 `SYNC_GUARD`（锁覆盖 API 调用，这正是加锁的目的）；已有同步在跑时
 /// 立即返回错误，不排队 —— 设置页点击需要即时可见的反馈，而非静默等待。
 pub async fn sync_once(
-    s: &opx_core::models::settings::AppSettings,
-    account: &opx_core::models::dns_account::DnsAccount,
+    s: &crate::models::settings::AppSettings,
+    account: &crate::models::dns_account::DnsAccount,
 ) -> anyhow::Result<SyncResult> {
     let _guard = SYNC_GUARD
         .try_lock()
@@ -226,13 +226,13 @@ pub async fn sync_once(
         for (rtype, ip) in &targets {
             match provider.sync_record(fqdn, rtype, ip).await {
                 Ok(action) if is_change(&action) => {
-                    opx_core::oplog!("ddns_update", fqdn, &action);
+                    crate::oplog!("ddns_update", fqdn, &action);
                     changes.push(format!("{}：{}", fqdn, action));
                 }
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, fqdn = %fqdn, rtype = %rtype, "DDNS 记录同步失败");
-                    opx_core::oplog_fail!("ddns_update", fqdn, "同步失败", &format!("{:#}", e));
+                    crate::oplog_fail!("ddns_update", fqdn, "同步失败", &format!("{:#}", e));
                     failures += 1;
                     changes.push(format!("{}：失败 {}", fqdn, e));
                 }
@@ -282,7 +282,7 @@ mod tests {
     /// 因此无需网络即可稳定区分「抢锁失败」与「业务失败」。
     #[tokio::test]
     async fn sync_once_rejects_second_concurrent_entry() {
-        let s = opx_core::models::settings::AppSettings::default();
+        let s = crate::models::settings::AppSettings::default();
         let account = ddns_account_of(&s);
         let held = SYNC_GUARD.try_lock().expect("首轮应能拿到锁");
         let err = sync_once(&s, &account)

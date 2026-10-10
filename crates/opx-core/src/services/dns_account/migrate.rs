@@ -4,7 +4,7 @@
 //! 必须区分「从没配过」（不建账号）与「迁移后用户删光了账号」
 //! （不能每次启动又冒出来一个）。
 
-use opx_core::models::dns_account::DnsAccount;
+use crate::models::dns_account::DnsAccount;
 
 /// 迁移决策。
 #[derive(Debug, PartialEq)]

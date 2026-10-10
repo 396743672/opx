@@ -16,13 +16,13 @@ use dns::provider_for_account;
 
 pub struct AcmeSettings {
     /// 该站点的 DNS 账号（服务商 + 凭证）
-    pub account: opx_core::models::dns_account::DnsAccount,
+    pub account: crate::models::dns_account::DnsAccount,
     pub use_staging: bool,
 }
 
 /// ACME 账户凭据持久化路径（续期进程共用一个账户）。
 pub fn account_path() -> PathBuf {
-    opx_core::utils::paths::data_dir().join("acme-account.json")
+    crate::utils::paths::data_dir().join("acme-account.json")
 }
 
 pub fn directory_url(staging: bool) -> String {

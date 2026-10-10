@@ -15,7 +15,7 @@ pub async fn run_ddns_scheduler() {
     loop {
         tick.tick().await;
         // 每轮重读设置：调度器本身永不休眠，停用只是本轮不干活
-        let s = crate::commands::config::read_settings().unwrap_or_default();
+        let s = crate::utils::settings::read_settings().unwrap_or_default();
         if !s.ddns_enabled {
             continue;
         }

@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use opx_core::event::EventSink;
+use crate::event::EventSink;
 
 use crate::services::software_manager::SoftwareManager;
-use opx_core::services::website_manager::WebsiteManager;
+use crate::services::website_manager::WebsiteManager;
 
 const CHECK_INTERVAL_SECS: u64 = 3600;
 const RENEW_BEFORE_DAYS: i64 = 30;
@@ -28,7 +28,7 @@ pub async fn run_scheduler(
     tick.tick().await; // 消耗初始化 tick
     loop {
         tick.tick().await;
-        let settings = match crate::commands::config::read_settings() {
+        let settings = match crate::utils::settings::read_settings() {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %e, "读取设置失败，跳过本轮 ACME 续期");
@@ -38,7 +38,7 @@ pub async fn run_scheduler(
         let accounts = dns_accounts.list();
 
         // 每轮解析一次 nginx 与证书目录，避免逐站点重算
-        let Ok(nginx) = crate::commands::website::resolve_nginx(&sm) else {
+        let Ok(nginx) = crate::utils::website::resolve_nginx(&sm.get_installed()) else {
             tracing::warn!("未找到可用的 nginx 实例，跳过本轮 ACME 续期");
             continue;
         };
@@ -68,7 +68,7 @@ pub async fn run_scheduler(
                 use_staging: settings.acme_use_staging,
             };
             let Some(raw) = site.server_name.clone() else { continue };
-            let domain = match crate::commands::website::sanitize_domain(&raw) {
+            let domain = match crate::utils::website::sanitize_domain(&raw) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::warn!(site = %site.id, error = %e, "域名不合法，跳过续期");
@@ -92,13 +92,13 @@ pub async fn run_scheduler(
                         tracing::warn!(site = %site.id, error = %e, "持久化站点配置失败");
                     }
                     // 审计要与实际一致：配置重载失败就不记为续期成功
-                    match crate::commands::website::regenerate(&sm, &wm, true) {
+                    match crate::services::website_manager::regenerate::regenerate(&sm.get_installed(), &wm, true) {
                         Ok(_) => {
-                            opx_core::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
+                            crate::oplog!("acme_renew", &format!("{} ({})", site.name, domain));
                         }
                         Err(e) => {
                             tracing::warn!(site = %site.id, error = %e, "续期后 nginx 配置重建/reload 失败");
-                            opx_core::oplog!("acme_renew_failed", &format!("{} ({})", site.name, domain));
+                            crate::oplog!("acme_renew_failed", &format!("{} ({})", site.name, domain));
                         }
                     }
                 }

@@ -17,6 +17,9 @@
 //! [`crate::services::software_manager::lifecycle`] 与
 //! [`springboot_manager::lifecycle`]：不同父模块，合法并存，靠全路径区分。
 
+pub mod acme;
+pub mod ddns;
+pub mod dns_account;
 pub mod node_app_manager;
 pub mod software_manager;
 pub mod springboot_manager;

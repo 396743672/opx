@@ -109,7 +109,7 @@ impl Dnspod {
         Self {
             secret_id,
             secret_key,
-            client: opx_core::utils::http::client(),
+            client: crate::utils::http::client(),
         }
     }
 

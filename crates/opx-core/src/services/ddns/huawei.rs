@@ -79,7 +79,7 @@ impl Huawei {
         Self {
             ak,
             sk,
-            client: opx_core::utils::http::client(),
+            client: crate::utils::http::client(),
         }
     }
 

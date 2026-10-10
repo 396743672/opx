@@ -61,6 +61,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 #             有一定开销，用全局惰性单例跨轮复用。
 once_cell = "1.19"
 
+# —— 阶段 3 批次 4A：随 acme / ddns 迁入 ——
+# 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份。
+# instant-acme —— ACME 协议客户端（RFC 8555）：acme 证书签发/续期的申请、
+#                 challenge 应答、证书下载。
+instant-acme = "0.8"
+# hmac —— ddns 三个 DNS 服务商的 API 请求签名（HMAC 构造）。
+hmac = "0.12"
+# sha1 —— aliyun DNS API 的 HMAC-SHA1 签名算法（其官方文档指定，无 SHA-256 版）。
+sha1 = "0.10"
+
 # —— 阶段 3 批次 3.6：随 backup 迁入 ——
 # walkdir —— backup 快照前的目录递归遍历（zip 打包时逐文件收集）。
 #          版本抄壳层 src-tauri/Cargo.toml:37，lock 实锁 2.5.0。

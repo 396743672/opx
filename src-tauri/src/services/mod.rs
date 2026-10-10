@@ -1,7 +1,4 @@
-pub mod acme;
 pub mod autostart;
-pub mod ddns;
-pub mod dns_account;
 pub mod lock_screen;
 pub mod software_manager;
 pub mod stack_manager;
@@ -16,3 +13,12 @@ pub mod watchdog;
 // 壳层调用点写错路径会编译失败而非静默用错实现。
 pub use opx_core::services::node_app_manager;
 pub use opx_core::services::springboot_manager;
+
+// —— 批次 4A：dns_account / acme / ddns 已搬入 core，整模块重导出 ——
+// 使 commands/dns_account.rs、commands/website.rs、commands/config.rs 及 lib.rs
+// 的三个启动点（run_startup_migration / renew_scheduler::run_scheduler /
+// run_ddns_scheduler）零改动。acme 与 ddns 在 core 内互为依赖（DnsProvider trait
+// 与 provider 实现），同批搬迁后同 crate 直调，无需转发层。
+pub use opx_core::services::acme;
+pub use opx_core::services::ddns;
+pub use opx_core::services::dns_account;
