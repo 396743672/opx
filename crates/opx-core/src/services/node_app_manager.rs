@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
 
-use opx_core::models::node_app::{
+use crate::models::node_app::{
     CreateNodeAppParams, NodeApp, NodeAppStatus, UpdateNodeAppParams,
 };
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
-use opx_core::utils::paths;
-use opx_core::utils::process::hidden;
+use crate::utils::paths;
+use crate::utils::process::hidden;
 
 pub struct NodeAppManager {
     inner: Mutex<NodeAppManagerInner>,

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use opx_core::models::springboot::{GcOption, GcUnsupportedReason, JvmOptsTemplate};
-use opx_core::utils::process::hidden;
+use crate::models::springboot::{GcOption, GcUnsupportedReason, JvmOptsTemplate};
+use crate::utils::process::hidden;
 
 use super::parse_java_major;
 
@@ -198,7 +198,7 @@ pub fn generate_opts(jdk_version: u32, oracle_runtime: bool) -> JvmOptsTemplate 
 #[cfg(test)]
 mod tests {
     use super::{gc_catalog, generate_opts, is_oracle_runtime, recommended_gc_type};
-    use opx_core::models::springboot::GcUnsupportedReason;
+    use crate::models::springboot::GcUnsupportedReason;
 
     /// 各测试默认用「非 Oracle 运行时」——推荐值与可用性都不受厂商影响，
     /// 厂商差异由 `catalog_blocks_shenandoah_on_oracle_runtime` 单独覆盖。

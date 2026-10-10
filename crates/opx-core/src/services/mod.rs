@@ -11,6 +11,13 @@
 //! 在 `utils`（它们的下沉早于本模块迁入），待本模块归位后可一并收拢。
 //!
 //! [`software_manager`] —— 软件管理的基础件（provider 目录、软件目录 catalog、日志读取）。
+//!
+//! [`node_app_manager`] / [`springboot_manager`] —— 应用运行时管理（Node 应用、
+//! Spring Boot JAR），批次 4B 自壳层迁入。注意 core 内同时存在
+//! [`crate::services::software_manager::lifecycle`] 与
+//! [`springboot_manager::lifecycle`]：不同父模块，合法并存，靠全路径区分。
 
+pub mod node_app_manager;
 pub mod software_manager;
+pub mod springboot_manager;
 pub mod website_manager;

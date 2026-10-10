@@ -2,14 +2,14 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use opx_core::event::{EventSink, EventSinkExt};
+use crate::event::{EventSink, EventSinkExt};
 
-use opx_core::models::software::SoftwareStatus;
-use opx_core::models::springboot::AppStatus;
+use crate::models::software::SoftwareStatus;
+use crate::models::springboot::AppStatus;
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
-use opx_core::utils::process::hidden;
+use crate::utils::process::hidden;
 
 // 注入通道只在 Windows 需要（Unix 的 SIGTERM 本身就是 JVM 能响应的信号）
 #[cfg(windows)]
@@ -89,13 +89,13 @@ pub async fn start_app(
     // 自动探测到真实物理网卡 IP，则通过 default-ip-address 钉死该 IP（避免服务发现错址）。
     cmd.arg(format!(
         "-Dspring.cloud.inetutils.ignored-interfaces={}",
-        opx_core::utils::local_ip::IGNORED_INTERFACES
+        crate::utils::local_ip::IGNORED_INTERFACES
     ));
     let sb_local_ip = app.local_ip.trim();
     let ip = if !sb_local_ip.is_empty() {
         Some(sb_local_ip.to_string())
     } else {
-        opx_core::utils::local_ip::preferred_local_ip()
+        crate::utils::local_ip::preferred_local_ip()
     };
     if let Some(ip) = ip {
         cmd.arg(format!("-Dspring.cloud.inetutils.default-ip-address={}", ip));

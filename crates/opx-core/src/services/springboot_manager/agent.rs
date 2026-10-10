@@ -25,10 +25,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use opx_core::models::software::InstalledSoftware;
-use opx_core::models::springboot::SpringBootApp;
+use crate::models::software::InstalledSoftware;
+use crate::models::springboot::SpringBootApp;
 use crate::services::software_manager::SoftwareManager;
-use opx_core::utils::{paths, process::hidden};
+use crate::utils::{paths, process::hidden};
 
 /// 内嵌的停止 agent（源码与重建方式见 `resources/opx-stop-src/README.md`）。
 /// 同一条命令既启动它、又把它自己当 agent jar 交给 `loadAgent`。

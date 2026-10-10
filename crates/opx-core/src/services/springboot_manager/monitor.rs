@@ -31,8 +31,8 @@
 //! 间隔约两成。暂不做缓存：按 pid 缓存 Xmx 会在 pid 复用后读到上一个进程的
 //! 堆上限，收益不抵风险。
 
-use opx_core::models::springboot::JvmInfo;
-use opx_core::utils::process::hidden;
+use crate::models::springboot::JvmInfo;
+use crate::utils::process::hidden;
 use std::path::{Path, PathBuf};
 
 /// 采集指定 JVM 进程的指标快照。
