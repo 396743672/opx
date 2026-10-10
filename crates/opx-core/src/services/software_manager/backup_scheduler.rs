@@ -12,9 +12,9 @@ use std::path::PathBuf;
 
 use tokio::time::{Duration, Instant};
 
-use opx_core::models::software::BackupMode;
+use crate::models::software::BackupMode;
 use crate::services::software_manager::{backup, SoftwareManager};
-use opx_core::utils::paths;
+use crate::utils::paths;
 
 /// 调度配置文件名
 const SCHEDULES_FILE: &str = "backup_schedules.json";
@@ -85,7 +85,7 @@ fn should_backup(installed_id: &str, minutes: u64) -> anyhow::Result<bool> {
 /// 后台调度主循环：每 `CHECK_INTERVAL_SECS` 检查一次所有已启用实例
 pub async fn run_scheduler(
     manager: std::sync::Arc<SoftwareManager>,
-    sink: std::sync::Arc<dyn opx_core::event::EventSink>,
+    sink: std::sync::Arc<dyn crate::event::EventSink>,
 ) {
     const CHECK_INTERVAL_SECS: u64 = 60;
     let mut tick = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
@@ -113,7 +113,8 @@ pub async fn run_scheduler(
             // 直接指向 core：原先绕道 `crate::commands::config::read_settings`，
             // 而后者本身只是 `pub use opx_core::utils::settings::read_settings`（壳层 commands/config.rs:23），
             // 属纯重导出，改指后语义逐字节等价，少绕一层跨服务依赖。
-            let max_keep = opx_core::utils::settings::read_settings()
+            // （3.6 注：本模块已整体搬入 core，上文的 opx_core 路径即本 crate，见 git 历史。）
+            let max_keep = crate::utils::settings::read_settings()
                 .unwrap_or_default()
                 .snapshot_keep
                 .max(1) as usize;

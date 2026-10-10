@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 
 use chrono::Local;
 
-use opx_core::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
+use crate::models::software::{BackupMode, SnapshotMeta, SoftwareStatus};
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
-use opx_core::services::software_manager::providers::{all_providers, DataDirContext};
+use crate::services::software_manager::providers::{all_providers, DataDirContext};
 use crate::services::software_manager::SoftwareManager;
-use opx_core::utils::paths;
+use crate::utils::paths;
 
 const SNAPSHOT_FORMAT: &str = "zip";
 
@@ -186,7 +186,7 @@ fn extract_zip_to_data_dirs(
 #[allow(clippy::too_many_arguments)]
 pub fn create_snapshot(
     manager: &SoftwareManager,
-    sink: &std::sync::Arc<dyn opx_core::event::EventSink>,
+    sink: &std::sync::Arc<dyn crate::event::EventSink>,
     installed_id: &str,
     mode: BackupMode,
     name: Option<String>,
@@ -442,7 +442,7 @@ pub fn reset_instance(manager: &SoftwareManager, installed_id: &str) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opx_core::utils::paths::data_dir;
+    use crate::utils::paths::data_dir;
     use std::fs;
     use std::io::Write;
 

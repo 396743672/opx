@@ -10,7 +10,8 @@
 //! | `SoftwareManager` 本体 / `providers` / `catalog` / `log_viewer` | ✅ 在 core | 3A1 / 3A2 |
 //! | `audit` / `audit_log` / `health_check` / `process_monitor` / `netutils` / `lifecycle` | ✅ 在 core | 3A2 |
 //! | `installer` | ✅ 在 core | 3.5 |
-//! | `backup` / `backup_scheduler` / `config_editor` / `log_watcher` | ⏳ 仍在壳层 | 3.6 / 3.7 |
+//! | `backup` / `backup_scheduler` / `config_editor` | ✅ 在 core | 3.6 |
+//! | `log_watcher` | ⏳ 仍在壳层 | 3.7（需新增 notify 依赖，见其文件头说明） |
 //!
 //! ## 🚨 `lifecycle.rs` 是拆分搬迁的产物
 //!
@@ -26,9 +27,6 @@
 //! **编译器不会报错**，路径写错会静默用错实现。故壳层一律用**全路径**
 //! `opx_core::services::software_manager::X` 访问 core 侧符号。
 
-pub mod backup;
-pub mod backup_scheduler;
-pub mod config_editor;
 pub mod lifecycle;
 pub mod log_watcher;
 
@@ -40,6 +38,12 @@ pub mod log_watcher;
 // 自身转出（见该文件的重导出段）。两处都写会形成两条等价路径，徒增歧义。
 pub use opx_core::services::software_manager::audit;
 pub use opx_core::services::software_manager::audit_log;
+// 批次 3.6：backup / backup_scheduler / config_editor 已搬入 core，整模块重导出
+// 使壳层 `commands/software.rs` 的分组 import（含三模块名与 config_editor::FormData）
+// 及 `lib.rs` 的 backup_scheduler::run_scheduler 启动点零改动。
+pub use opx_core::services::software_manager::backup;
+pub use opx_core::services::software_manager::backup_scheduler;
+pub use opx_core::services::software_manager::config_editor;
 // 批次 3.5：installer 已搬入 core，重导出使壳层 `commands/software.rs` 的
 // 分组 `use crate::services::software_manager::{... installer ...}` 及 5 处
 // `installer::X` 调用点零改动。

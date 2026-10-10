@@ -3029,6 +3029,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
  "windows-sys 0.52.0",
  "zip 0.6.6",
 ]

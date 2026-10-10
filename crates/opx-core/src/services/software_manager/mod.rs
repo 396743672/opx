@@ -14,7 +14,10 @@
 
 pub mod audit;
 pub mod audit_log;
+pub mod backup;
+pub mod backup_scheduler;
 pub mod catalog;
+pub mod config_editor;
 pub mod health_check;
 pub mod installer;
 pub mod lifecycle;
