@@ -11,7 +11,7 @@
 //! | `audit` / `audit_log` / `health_check` / `process_monitor` / `netutils` / `lifecycle` | ✅ 在 core | 3A2 |
 //! | `installer` | ✅ 在 core | 3.5 |
 //! | `backup` / `backup_scheduler` / `config_editor` | ✅ 在 core | 3.6 |
-//! | `log_watcher` | ⏳ 仍在壳层（**活代码**：lib.rs:35 启动 init + lib.rs:354-355 注册的两个 command；早期「零调用方」判断有误） | — |
+//! | `log_watcher` | ✅ 壳层职责（前端日志实时查看的活跃支撑，非死代码；详见其文件头） | — |
 //!
 //! ## 🚨 `lifecycle.rs` 已只剩 core 符号重导出
 //!

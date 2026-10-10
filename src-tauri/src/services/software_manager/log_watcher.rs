@@ -3,16 +3,22 @@
 //! ponytail: 使用全局单例 + 后台线程。前端在查看某日志源时注册路径，收到事件即增量读取；
 //! 关闭/切源时注销。轮询仍保留为兜底，监听仅为「即时触发」。
 //!
-//! ## ⚠️ 死代码（阶段 3批次 3A1 确认，保留待清理）
+//! ## ✅ 壳层职责，非死代码（死代码清理轮次更正）
 //!
-//! 本模块**全仓库零调用方**——`grep log_watcher` 只命中 `software_manager/mod.rs`
-//! 里的 `pub mod` 声明，没有任何实际调用点。
+//! ⚠️ 本文件头曾有一段「全仓库零调用方，保留待清理」的声明——**该判断有误**，
+//! 系 3A1 调研时 grep 只查了模块路径形态、漏了 `LogWatcher::` 类型调用形态
+//! 所致。死代码清理轮次（commit `73e542f`）取证推翻后按裁定撤销删除，此处
+//! 更正为实际调用链：
 //!
-//! 因此阶段 3 搬迁时**刻意不搬本文件**：搬它需要给 `opx-core` 新增 `notify` 依赖
-//! 却零收益（无调用方）。故保留在壳层，与同模块下`lifecycle.rs` 的
-//! `auto_start_all` 三段同属「死代码保留待清理」一类。
+//! - `lib.rs:35`（setup 段）：`LogWatcher::init(event_sink)` —— 启动即挂后台监听线程
+//! - `commands/software.rs` 的 `watch_log_file` / `unwatch_log_file` 两个
+//!   `#[tauri::command]`，注册于 `lib.rs` invoke_handler
+//! - 前端 `springboot-manager/LogViewer.vue`、`software-manager/LogViewerDialog.vue`
+//!   共 2 组件 6 处 invoke 调用
 //!
-//! 后续清理轮次可考虑：要么接上前端真正用它，要么整体删除。
+//! **不搬 core**：搬它需给 `opx-core` 新增 `notify` 依赖，而它是壳层 UI 支撑
+//! 逻辑（监听本机日志文件、向前端推事件），与 core 的「平台无关业务逻辑」
+//! 定位不符。保留在壳层是正确的最终归属。
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
