@@ -7,16 +7,16 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use opx_core::event::EventSink;
+use crate::event::EventSink;
 
-use opx_core::models::software::ArchiveFormat;
-use opx_core::models::software::{
+use crate::models::software::ArchiveFormat;
+use crate::models::software::{
     CatalogEntry, CatalogVersion, CustomInstallParams, InstallParams, InstallSource,
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
-use opx_core::services::software_manager::providers::{all_providers, InstallContext};
+use crate::services::software_manager::providers::{all_providers, InstallContext};
 use crate::services::software_manager::SoftwareManager;
-use opx_core::utils::{archive, download, paths};
+use crate::utils::{archive, download, paths};
 use chrono::Utc;
 
 fn compute_sha256(path: &Path) -> Result<String> {
@@ -846,7 +846,7 @@ async fn install_from_builtin(
     let resource_zip: Option<std::path::PathBuf> = match sink.resource_dir() {
         Some(d) => {
             let rel = format!("software/{}/{}.zip", &params.key, &params.version);
-            opx_core::utils::paths::resolve_builtin_resource(&d, &rel)
+            crate::utils::paths::resolve_builtin_resource(&d, &rel)
         }
         None => {
             emit_event(
@@ -1196,7 +1196,7 @@ async fn install_from_builtin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opx_core::models::software::{ArchiveInfo, BuiltinInfo};
+    use crate::models::software::{ArchiveInfo, BuiltinInfo};
 
     fn mirror(name: &str, builtin: bool) -> MirrorSource {
         MirrorSource {

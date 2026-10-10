@@ -9,7 +9,8 @@
 //! |---|---|---|
 //! | `SoftwareManager` 本体 / `providers` / `catalog` / `log_viewer` | ✅ 在 core | 3A1 / 3A2 |
 //! | `audit` / `audit_log` / `health_check` / `process_monitor` / `netutils` / `lifecycle` | ✅ 在 core | 3A2 |
-//! | `installer` / `backup` / `backup_scheduler` / `config_editor` / `log_watcher` | ⏳ 仍在壳层 | 3B / 3.5 |
+//! | `installer` | ✅ 在 core | 3.5 |
+//! | `backup` / `backup_scheduler` / `config_editor` / `log_watcher` | ⏳ 仍在壳层 | 3.6 / 3.7 |
 //!
 //! ## 🚨 `lifecycle.rs` 是拆分搬迁的产物
 //!
@@ -28,7 +29,6 @@
 pub mod backup;
 pub mod backup_scheduler;
 pub mod config_editor;
-pub mod installer;
 pub mod lifecycle;
 pub mod log_watcher;
 
@@ -40,6 +40,10 @@ pub mod log_watcher;
 // 自身转出（见该文件的重导出段）。两处都写会形成两条等价路径，徒增歧义。
 pub use opx_core::services::software_manager::audit;
 pub use opx_core::services::software_manager::audit_log;
+// 批次 3.5：installer 已搬入 core，重导出使壳层 `commands/software.rs` 的
+// 分组 `use crate::services::software_manager::{... installer ...}` 及 5 处
+// `installer::X` 调用点零改动。
+pub use opx_core::services::software_manager::installer;
 pub use opx_core::services::software_manager::health_check;
 pub use opx_core::services::software_manager::netutils;
 pub use opx_core::services::software_manager::process_monitor;

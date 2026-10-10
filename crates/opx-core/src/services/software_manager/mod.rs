@@ -16,6 +16,7 @@ pub mod audit;
 pub mod audit_log;
 pub mod catalog;
 pub mod health_check;
+pub mod installer;
 pub mod lifecycle;
 pub mod log_viewer;
 pub mod netutils;

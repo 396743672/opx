@@ -60,3 +60,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # once_cell —— process_monitor 的 `Lazy<Mutex<System>>`：sysinfo 的 System 初始化
 #             有一定开销，用全局惰性单例跨轮复用。
 once_cell = "1.19"
+
+# —— 阶段 3 批次 3.5：随 installer 迁入 ——
+# sha2 —— installer 的安装包完整性校验：下载完成后计算 SHA-256 摘要，
+#         与 catalog/provider 声明的期望值比对，不匹配即拒装。
+sha2 = "0.10"
