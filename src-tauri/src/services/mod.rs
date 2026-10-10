@@ -1,7 +1,6 @@
 pub mod autostart;
 pub mod lock_screen;
 pub mod software_manager;
-pub mod stack_manager;
 pub mod startup_bootstrap;
 pub mod system_monitor;
 pub mod watchdog;
@@ -22,3 +21,8 @@ pub use opx_core::services::springboot_manager;
 pub use opx_core::services::acme;
 pub use opx_core::services::ddns;
 pub use opx_core::services::dns_account;
+
+// —— 批次 4.1 前置：stack_manager 已搬入 core，整模块重导出 ——
+// commands/stack.rs 的 `use crate::services::stack_manager::StackManager` 与
+// lib.rs 的 `StackManager::new` 引用零改动。
+pub use opx_core::services::stack_manager;

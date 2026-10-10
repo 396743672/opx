@@ -7,10 +7,11 @@
 //! 4. 栈级状态聚合，emit `stack-status-changed` 事件；
 //! 5. 栈的导出 / 导入（R7）。
 //!
-//! 复用现有能力，不重复造轮子：
-//! - 启动 software 成员：`crate::commands::software::do_start_software`（已 `pub`）
-//! - 启动 springboot 成员：`crate::services::springboot_manager::lifecycle::start_app`（已 `pub`）
-//! - 停止 software 成员：`crate::services::software_manager::lifecycle::stop_one` 等（已 `pub`）
+//! 复用现有能力，不重复造轮子（4.1 前置批次自壳层迁入 core，下列路径均为
+//! 本 crate 直调；括号内为 3B/4B 搬迁后的现位置）：
+//! - 启动 software 成员：`crate::services::software_manager::start_stop::do_start_software`（3B 自壳层 commands 迁入）
+//! - 启动 springboot 成员：`crate::services::springboot_manager::lifecycle::start_app`
+//! - 停止 software 成员：`crate::services::software_manager::lifecycle::stop_one` 等
 //! - 停止 springboot 成员：`crate::services::springboot_manager::lifecycle::stop_app`
 //! - 就绪判定：`health_check::is_process_alive` + `is_port_free`
 
@@ -21,12 +22,12 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use futures::future;
-use opx_core::event::{EventSink, EventSinkExt};
+use crate::event::{EventSink, EventSinkExt};
 use uuid::Uuid;
 
-use opx_core::models::software::SoftwareStatus;
-use opx_core::models::springboot::AppStatus;
-use opx_core::models::stack::{
+use crate::models::software::SoftwareStatus;
+use crate::models::springboot::AppStatus;
+use crate::models::stack::{
     CreateStackPayload, Stack, StackItem, StackItemRefType, StackMemberReport, StackMemberRuntime,
     StackMemberStatus, StackRunReport, StackStartPlan, StackStatusEvent, UpdateStackPayload,
 };
@@ -34,7 +35,7 @@ use crate::services::software_manager::lifecycle;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::lifecycle as sb_lifecycle;
 use crate::services::springboot_manager::SpringBootManager;
-use opx_core::utils::paths;
+use crate::utils::paths;
 
 /// 成员启动后等待就绪的超时上限（毫秒）。
 /// software 的 `do_start_software` 内部健康检查最多 60s，这里给足余量。
@@ -650,7 +651,7 @@ impl StackManager {
                     Some(sw) => {
                         let detail = format!("{} ({}, 服务组)", sw.version, sw.id);
                         let r = async {
-                            opx_core::services::software_manager::start_stop::do_start_software(
+                            crate::services::software_manager::start_stop::do_start_software(
                                 &self.software_mgr,
                                 sink,
                                 &item.ref_id,
@@ -661,7 +662,7 @@ impl StackManager {
                             self.wait_ready(item).await
                         }
                         .await;
-                        opx_core::oplog_result!("start", sw.name, detail, r);
+                        crate::oplog_result!("start", sw.name, detail, r);
                         r
                     }
                     None => Err(format!("未找到已装软件: {}", item.ref_id)),
@@ -679,7 +680,7 @@ impl StackManager {
                     )
                     .await
                     .map_err(|e| format!("启动 Spring Boot {} 失败: {}", item.ref_id, e));
-                    opx_core::oplog_result!("springboot_start", target, "服务组", r);
+                    crate::oplog_result!("springboot_start", target, "服务组", r);
                     r
                 }
                 Err(e) => Err(format!("未找到 Spring Boot 应用: {}", e)),
