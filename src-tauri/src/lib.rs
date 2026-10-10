@@ -91,6 +91,7 @@ pub fn run() {
             commands::config::set_autostart,
             commands::config::get_web_token,
             commands::config::reset_web_token,
+            commands::config::get_web_access_urls,
             refresh_tray_menu,
             commands::config::test_alert_webhook,
             commands::config::sync_ddns_now,

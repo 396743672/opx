@@ -82,9 +82,9 @@ export default {
   // Batch 4.4: web-mode access token gate (D3)
   webTokenTitle: 'Access Token',
   webTokenDesc: 'This page connects to the local OPX backend over the web entry. Enter the access token from the desktop app under "Settings → Web Management".',
-  webTokenPlaceholder: '64-character access token',
+  webTokenPlaceholder: 'Access token (10 or 64 chars)',
   webTokenConfirm: 'Connect',
-  webTokenInvalid: 'Invalid token (expected 64 hex characters) or rejected. Please try again.',
+  webTokenInvalid: 'Invalid token (expected a 10-char access code or 64 hex characters) or rejected. Please try again.',
   webTokenRequired: 'Access token missing, please enter it again',
   // Batch 4.5: settings web group extensions
   webLanWarning:
@@ -97,6 +97,12 @@ export default {
   webResetDone: 'Token reset; existing browser sessions are signed out. Reopen the browser with the new token',
   webServerError: 'Web server failed to start: {msg}',
   webDesktopOnlyHint: 'This feature requires the native file picker — please use the desktop app',
+  // Batch 4.6: scan-to-access + paste improvements
+  webScanTitle: 'Scan to Access',
+  webCopyAddress: 'Copy URL',
+  webCopyDone: 'Copied',
+  webPaste: 'Paste',
+  webPasteFailed: 'Failed to read clipboard — please paste manually',
   portConflictBy: 'Port conflict: occupied by PID {pid} ({name})',
   portConflictByPid: 'Port conflict: occupied by PID {pid}',
   portNotListening: 'Port not listening',

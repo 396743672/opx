@@ -83,6 +83,27 @@ pub async fn reset_web_token(app: tauri::AppHandle) -> Result<String, String> {
     Ok(t)
 }
 
+/// 读取 Web 访问入口 URL 列表（批次 4.6，设置页「扫码访问」区用）。
+///
+/// 桌面专属（同 get_web_token：令牌明文不经 HTTP 响应回传）。返回按优先级
+/// 排列的 `#token=` 完整 URL：默认路由出口 IP（多网卡取默认路由，零依赖
+/// UDP connect trick）在前（手机扫码用）、127.0.0.1 兜底在后。
+#[tauri::command]
+pub fn get_web_access_urls() -> Result<Vec<String>, String> {
+    let s = read_settings()?;
+    let token = opx_http::token::load_or_generate().map_err(|e| format!("读取 token 失败: {e}"))?;
+    let port = s.web_port;
+    let mut hosts: Vec<String> = Vec::with_capacity(2);
+    if let Some(ip) = crate::services::web_server::outbound_ip() {
+        hosts.push(ip);
+    }
+    hosts.push("127.0.0.1".to_string());
+    Ok(hosts
+        .into_iter()
+        .map(|ip| format!("http://{ip}:{port}/#token={token}"))
+        .collect())
+}
+
 /// 发送测试通知：构造固定告警事件，按当前设置对启用的渠道真实发送一遍。
 /// 未配置任何渠道时报错提示。
 #[tauri::command]

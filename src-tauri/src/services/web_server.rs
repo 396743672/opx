@@ -57,19 +57,41 @@ impl WebServerState {
     }
 }
 
+/// 出口 IP 探测（批次 4.6，零依赖）：`UdpSocket connect 8.8.8.8` 不发包、
+/// 只让内核选默认路由，`local_addr` 即多网卡场景的默认出口 IP。
+/// 不做全网卡枚举（需要额外依赖，用户裁定先按零依赖做）。
+pub fn outbound_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    let s = UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("8.8.8.8:80").ok()?;
+    Some(s.local_addr().ok()?.ip().to_string())
+}
+
 /// headless 启动横幅（纯函数便于单测钉格式）：完整 URL（含 `#token=`，
-/// fragment 不随请求上送、不入访问日志——D3.1 A+B 组合）+ settings 路径
-/// 提示 + Ctrl-C 退出说明。
-pub fn banner_lines(addr: &str, token: &str, settings_path: &PathBuf) -> Vec<String> {
-    vec![
+/// fragment 不随请求上送、不入访问日志——D3.1 A+B 组合）+ 可选 LAN URL
+///（批次 4.6，移动端扫码/手输用）+ settings 路径提示 + Ctrl-C 退出说明。
+pub fn banner_lines(
+    host: &str,
+    port: u16,
+    token: &str,
+    settings_path: &PathBuf,
+    lan_ip: Option<&str>,
+) -> Vec<String> {
+    let mut lines = vec![
         "==============================================".to_string(),
         "  OPX Web 管理入口已启动".to_string(),
-        format!("  地址: http://{addr}/#token={token}"),
+        format!("  地址: http://{host}:{port}/#token={token}"),
+    ];
+    if let Some(ip) = lan_ip {
+        lines.push(format!("  局域网: http://{ip}:{port}/#token={token}"));
+    }
+    lines.push(
         "  （点击上方链接即自动登录；token 亦可在 settings.json 查看/重置）".to_string(),
-        format!("  配置文件: {}", settings_path.display()),
-        "  按 Ctrl-C 停止服务（将级联停止运行中的软件）".to_string(),
-        "==============================================".to_string(),
-    ]
+    );
+    lines.push(format!("  配置文件: {}", settings_path.display()));
+    lines.push("  按 Ctrl-C 停止服务（将级联停止运行中的软件）".to_string());
+    lines.push("==============================================".to_string());
+    lines
 }
 
 /// 单次对齐：读 settings + token，与已应用状态比对，需要时启停/重启 server。
@@ -152,7 +174,20 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
             }
             Ok((local, serve_fut)) => {
                 let settings_path = opx_core::utils::paths::settings_path();
-                for line in banner_lines(&local.to_string(), &token, &settings_path) {
+                // 0.0.0.0 绑定下 local_addr 是 0.0.0.0，URL 展示用 127.0.0.1，
+                // 并经默认路由探测出口 IP 补一行 LAN URL（批次 4.6）
+                let (host, lan_ip) = if local.ip().is_unspecified() {
+                    ("127.0.0.1".to_string(), outbound_ip())
+                } else {
+                    (local.ip().to_string(), None)
+                };
+                for line in banner_lines(
+                    &host,
+                    local.port(),
+                    &token,
+                    &settings_path,
+                    lan_ip.as_deref(),
+                ) {
                     if headless_flag {
                         println!("{line}");
                     } else {
@@ -219,13 +254,30 @@ mod tests {
     #[test]
     fn banner_contains_token_url_and_hints() {
         let lines = banner_lines(
-            "127.0.0.1:17580",
+            "127.0.0.1",
+            17580,
             "abc123",
             &PathBuf::from("/tmp/settings.json"),
+            None,
         );
         let joined = lines.join("\n");
         assert!(joined.contains("http://127.0.0.1:17580/#token=abc123"));
         assert!(joined.contains("settings.json"));
         assert!(joined.contains("Ctrl-C"));
+        assert!(!joined.contains("局域网"), "无出口 IP 时不打 LAN 行");
+    }
+
+    /// 批次 4.6：有出口 IP 时补 LAN URL 行（移动端扫码/手输）。
+    #[test]
+    fn banner_includes_lan_url_when_available() {
+        let lines = banner_lines(
+            "127.0.0.1",
+            17580,
+            "abc123",
+            &PathBuf::from("/tmp/settings.json"),
+            Some("192.168.1.7"),
+        );
+        let joined = lines.join("\n");
+        assert!(joined.contains("http://192.168.1.7:17580/#token=abc123"));
     }
 }

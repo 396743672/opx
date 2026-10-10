@@ -1072,6 +1072,10 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     reg.register("reset_web_token", |_ctx, _args| {
         Box::pin(async move { Err(ApiError::desktop_only("reset_web_token")) })
     });
+    // 批次 4.6：访问 URL 列表（含令牌明文），同 get_web_token 桌面专属理由
+    reg.register("get_web_access_urls", |_ctx, _args| {
+        Box::pin(async move { Err(ApiError::desktop_only("get_web_access_urls")) })
+    });
 
     reg
 }

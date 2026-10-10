@@ -520,6 +520,24 @@
               </template>
             </div>
           </div>
+          <!-- 扫码访问（批次 4.6）：手机相机扫码直达（#token= 自动登录）。
+               二维码内容为默认路由出口 IP 的 LAN URL（get_web_access_urls）；
+               无出口 IP（离线/单机）时隐藏 -->
+          <div v-if="webQrDataUrl" class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1.5 min-w-0">
+              <span class="text-sm">{{ $t('webScanTitle') }}</span>
+              <div class="text-xs text-muted-foreground break-all font-mono">{{ webLanUrl }}</div>
+              <button class="btn text-xs h-7 px-2 self-start" @click="copyWebUrl">
+                <Icon icon="mdi:content-copy" />
+                {{ $t('webCopyAddress') }}
+              </button>
+            </div>
+            <img
+              :src="webQrDataUrl"
+              :alt="$t('webScanTitle')"
+              class="w-[110px] h-[110px] rounded-lg border border-border flex-shrink-0"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -531,6 +549,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
+import QRCode from 'qrcode'
 import { invoke } from '@/utils/ipc'
 import { listen, isDesktop, type UnlistenFn } from '@/utils/transport'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -616,6 +635,9 @@ const webToken = ref('')
 const webServerErrorMsg = ref('')
 const webResetConfirming = ref(false)
 const webResetting = ref(false)
+// 扫码访问（批次 4.6）
+const webLanUrl = ref('')
+const webQrDataUrl = ref('')
 let unlistenServerError: UnlistenFn | null = null
 
 async function openWebUi() {
@@ -640,6 +662,30 @@ async function resetWebToken() {
   }
 }
 
+/** 扫码地址一键复制（批次 4.6） */
+async function copyWebUrl() {
+  try {
+    await navigator.clipboard.writeText(webLanUrl.value)
+    toast(t('webCopyDone'), 'ok')
+  } catch {
+    toast(t('webPasteFailed'), 'err')
+  }
+}
+
+/** 取访问 URL 列表并渲染 LAN 二维码（批次 4.6；桌面专属命令，Web 模式静默） */
+async function loadAccessUrls() {
+  try {
+    const urls = await invoke<string[]>('get_web_access_urls')
+    const lan = urls.find((u) => !u.includes('//127.0.0.1'))
+    if (lan) {
+      webLanUrl.value = lan
+      webQrDataUrl.value = await QRCode.toDataURL(lan, { width: 220, margin: 1 })
+    }
+  } catch {
+    // 令牌读取失败 / Web 模式 409：扫码区保持隐藏
+  }
+}
+
 onMounted(async () => {
   try {
     autostartValue.value = await invoke<boolean>('get_autostart')
@@ -652,6 +698,7 @@ onMounted(async () => {
     } catch {
       webToken.value = ''
     }
+    await loadAccessUrls()
   }
   // 端口冲突等启动失败 → 后端 emit web-server-error，横幅显示（D6 明确报错）
   unlistenServerError = await listen<string>('web-server-error', (e) => {

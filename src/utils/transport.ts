@@ -134,8 +134,9 @@ class HttpTransport implements Transport {
 
   constructor() {
     // D3：fragment 携带 token → 转存 sessionStorage 并立即从地址栏剥离
-    //（fragment 不随请求上送，但不能停留在 URL/历史记录里）
-    const m = /^#token=([0-9a-fA-F]{64})$/.exec(window.location.hash)
+    //（fragment 不随请求上送，但不能停留在 URL/历史记录里）。
+    // 批次 4.6：接受新 10 位 Crockford Base32 与旧 64 hex 两种形态
+    const m = /^#token=([0-9A-HJKMNP-TV-Za-z]{10}|[0-9a-fA-F]{64})$/.exec(window.location.hash)
     if (m) {
       sessionStorage.setItem(TOKEN_KEY, m[1])
       window.history.replaceState(null, '', window.location.pathname + window.location.search)

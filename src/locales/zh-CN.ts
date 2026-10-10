@@ -82,9 +82,9 @@ export default {
   // 批次 4.4：Web 模式访问令牌输入页（D3）
   webTokenTitle: '访问令牌',
   webTokenDesc: '此页面通过 Web 入口连接本机 OPX 后端，请输入桌面端「设置 → Web 管理」提供的访问令牌',
-  webTokenPlaceholder: '64 位访问令牌',
+  webTokenPlaceholder: '访问令牌（10 位或 64 位）',
   webTokenConfirm: '连接',
-  webTokenInvalid: '令牌格式不正确（应为 64 位十六进制）或已被拒绝，请重新输入',
+  webTokenInvalid: '令牌格式不正确（应为 10 位访问码或 64 位十六进制）或已被拒绝，请重新输入',
   webTokenRequired: '缺少访问令牌，请重新输入',
   // 批次 4.5：设置页 web 组扩展
   webLanWarning:
@@ -97,6 +97,12 @@ export default {
   webResetDone: '令牌已重置，旧浏览器会话已失效；请用新令牌重新打开浏览器',
   webServerError: 'Web 服务启动失败：{msg}',
   webDesktopOnlyHint: '此功能依赖本机文件选择器，请在桌面端操作',
+  // 批次 4.6：扫码访问 + 粘贴优化
+  webScanTitle: '扫码访问',
+  webCopyAddress: '复制地址',
+  webCopyDone: '已复制',
+  webPaste: '粘贴',
+  webPasteFailed: '读取剪贴板失败，请手动粘贴',
   portConflictBy: '端口冲突：被 PID {pid}（{name}）占用',
   portConflictByPid: '端口冲突：被 PID {pid} 占用',
   portNotListening: '端口未监听',
