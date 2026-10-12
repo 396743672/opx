@@ -70,10 +70,26 @@
 | Linux | deb / rpm | 已实现：systemd 单元随包（`/lib/systemd/system/opx.service`，`Environment=OPX_APP_ROOT=/var/lib/opx`）+ 维护脚本（postinst：mkdir + daemon-reload + enable + restart + 打印「首次访问地址见 journalctl -u opx」；prerm：stop/disable；postrm：daemon-reload）。数据根经 `OPX_APP_ROOT` 环境变量重定向，避免写入 /usr/bin |
 | Linux 便携 | AppImage / 容器 | 首启 banner 直出终端 / `docker logs`；可选 `web_open_browser_on_start` |
 
-**P3 已落地资产（tauri.conf `bundle.linux.{deb,rpm}` + `src-tauri/systemd/opx.service` + `src-tauri/deb/{postinst,prerm,postrm}`）**。⚠️ **待 Linux 环境验证**（本机无 WSL）：
-1. `cargo tauri build --bundles deb,rpm` 实际出包；
-2. 容器/裸机装包后 `systemctl status opx` 可见 banner、工作站浏览器直达；
-3. **真无显示服务器上 `--headless` 的 tao 事件循环风险**：tao/GTK 通常需要 DISPLAY，无显示时可能启动失败——兜底方案 `ExecStart=/usr/bin/xvfb-run -a opx --headless`（需加依赖），或按原设计拆分无 tauri 依赖的 `opx-server` bin。容器测试时优先核实此项。
+**P3 已落地并经 WSL2 Ubuntu 26.04 全链路实测**（`bundle.linux.{deb,rpm}` + `src-tauri/systemd/opx.service` + `src-tauri/deb/{postinst,prerm,postrm}` + `src-tauri/linux/opx-svc.sh`）：
+
+| 实测项 | 结果 |
+|---|---|
+| `npx tauri build --bundles deb,rpm` 出包 | ✅ deb + rpm 均产出 |
+| `dpkg -i` 安装 / 升级（同版本覆盖重装） | ✅ postinst 装配 + restart 分支均走通 |
+| `systemctl is-active / is-enabled opx` | ✅ active / enabled |
+| journalctl banner（含 token、LAN IP、`/var/lib/opx` 数据根） | ✅ |
+| SPA `/` 200、未带 token 的 API 401（鉴权生效） | ✅ |
+
+**实测修正的三个关键点**（都是源码级核实/真跑出来的）：
+1. **deb.files 语义**：`{ "目标绝对路径": "源路径" }`，源相对 **src-tauri/（conf 目录）** 解析（v2 与 v1 方向相反的直觉陷阱，连续两次实证确认）。
+2. **无显示环境 `--headless` 必挂**：tao 事件循环 GTK 初始化 panic（exit 101），systemd 按 Restart 循环。兜底落地：`linux/opx-svc.sh` 包装（有 DISPLAY/WAYLAND 直连，无显示 `xvfb-run -a`），deb/rpm `recommends` 携带 xvfb，postinst 补执行位。
+3. **SPA dist 不随 deb 分发**（adjacent 方案只覆盖 NSIS/MSI）：deb.files 增配 `/usr/lib/opx/dist` + unit 加 `Environment=OPX_WEB_DIST=/usr/lib/opx/dist`。
+
+**连带修复的跨平台编译 bug**（Linux 首次编译暴露，Windows 侧一直无感）：
+- `winreg` / `windows-sys` 在两个 Cargo.toml 无条件声明 → 移入 `[target.'cfg(windows)'.dependencies]`（⚠️ Windows-only 依赖必须放 target 段，且该段必须置于文件末尾——插在 [dependencies] 表中间会把后续键全部吞进 Windows 表）。
+- `minio.rs` 的 `SILO_MAX_REMOTE_VERSIONS` / `silo_remote_versions` 残留 `#[cfg(windows)]`（P2-1 运行时选包重构的尾巴，函数本体已按 os 参数化）→ 摘除门控。
+
+**遗留（WSL 环境特性，非 opx 问题）**：Windows → WSL IP 直连不通（NAT/防火墙），WSL 内部已完整验证；rpm 的 xvfb 包名（xorg-x11-server-Xvfb）未在真实 Fedora 验证；updater 签名（TAURI_SIGNING_PRIVATE_KEY）未配，deb/rpm 暂无更新签名产物。
 
 **偏差说明（P2 实现期裁定）**：原设想的「NSIS 完成页显示 URL/token」不可行也不必要——
 1. Tauri v2 的 NSIS `installerHooks` 只在安装 section 内执行，插不了自定义 MUI 完成页（换自定义模板 = 整份 installer.nsi 的长期维护负担）；
@@ -93,7 +109,7 @@
 |---|---|---|
 | P1 ✅ | headless 首启种子（LAN 默认开）+ 端口降级扫描 + setup 页（web 端） | headless 模拟占用 17580 后仍可从工作站进入 setup；改端口后新 URL 可登录 |
 | P2 ✅ | 桌面首启引导（复用 setup 组件，新增「浏览器管理入口」开关 + `get_web_access_urls` URL/token 面板） | 桌面新装首启强制进入引导；开启入口后面板展示含 token 的完整 URL，服务器 2s 内热启动（真机实测通过）。升级不覆盖 settings.json 由「不存在才写」保证（P1 md5 实测） |
-| P3 🔶 | Linux 打包资产：`OPX_APP_ROOT` 数据根覆盖（含纯函数单测）、systemd 单元、deb/rpm 维护脚本 + conf 挂接 | Windows 侧已验证：cargo test 370 全绿、脚本 bash -n 通过、`OPX_APP_ROOT` 实机重定向生效（便携布局 + 种子落覆盖目录）。⚠️ deb/rpm 实际构建与 systemd 行为待 Linux 环境（本机无 WSL），另需核实无显示环境 `--headless` 的 tao 事件循环风险（兜底 xvfb-run，见 §6） |
+| P3 ✅ | Linux 打包资产 + WSL2 全链路实测：`OPX_APP_ROOT` 数据根覆盖（含纯函数单测）、systemd 单元、deb/rpm 维护脚本 + conf 挂接、xvfb 包装、dist 分发 | WSL2 Ubuntu 26.04 实测：deb/rpm 出包、dpkg 安装/升级、systemd active+enabled、journalctl banner、SPA 200 / 未授权 API 401（详见 §6 实测表）。连带修复 winreg/windows-sys 无条件声明与 minio.rs cfg 残留两个跨平台编译 bug |
 
 ## 9. 开放项
 

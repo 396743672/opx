@@ -5,6 +5,8 @@ set -e
 
 if command -v systemctl >/dev/null 2>&1; then
     mkdir -p /var/lib/opx
+    # 自定义文件拷贝不保证保留可执行位，启动前显式补上
+    chmod 755 /usr/bin/opx-svc 2>/dev/null || true
     systemctl daemon-reload
     systemctl enable opx.service
     systemctl restart opx.service

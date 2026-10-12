@@ -47,17 +47,15 @@ fn silo_asset_name(version: &str, os: &str) -> String {
 const MINIO_LEGACY_VERSION: &str = "RELEASE.2025-04-22";
 
 /// 动态版本列表最多展示多少个（SILO 约 2~4 周发一版，10 个约覆盖半年）
-#[cfg(windows)]
 const SILO_MAX_REMOTE_VERSIONS: usize = 10;
 
-/// 从 SILO 官方 GitHub Releases 拉取 Windows amd64 版本。
+/// 从 SILO 官方 GitHub Releases 拉取指定 OS 的 amd64 版本（P2-1 运行时按 OS 选包）。
 ///
 /// ⚠️ 只接受资产名以 `silo_` 开头的版本：SILO 在 2026-08-06 才由 minio 改名，
 /// 此前 release 的 Windows 资产是 `minio_*.tar.gz`（内含 `minio.exe`），而
 /// `start_command` 仅对 `MINIO_LEGACY_VERSION` 使用 `minio.exe` —— 若把改名前的
 /// 版本也列出来，用户装完会「找不到 silo.exe」启动失败。
 /// size / sha256 直接取自 GitHub 资产的 `size` 与 `digest`（形如 `sha256:<hex>`）字段。
-#[cfg(windows)]
 fn silo_remote_versions(os: &str) -> Option<Vec<CatalogVersion>> {
     let url = "https://api.github.com/repos/pgsty/silo/releases?per_page=30";
     let client = reqwest::blocking::Client::builder()
