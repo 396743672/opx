@@ -208,8 +208,22 @@ pub fn run() {
             commands::lock_screen::has_lock_password,
             commands::lock_screen::clear_lock_password,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while starting tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // headless：无窗 web-only 模式，setup 里主动关掉唯一主窗口后，
+            // 触发 tauri「最后一个窗口关闭即退出」的默认行为
+            // （RunEvent::ExitRequested，code=None=用户交互/窗口全关），
+            // web 入口随进程秒退——实测启动后 ~1.4s 自行退出。此处仅拦截
+            // code=None 的退出请求保住事件循环；code=Some 是
+            // AppHandle::exit()/restart() 的主动退出（exit_app、headless 的
+            // Ctrl-C 处理均走 exit(0)），照常放行，不影响正常退出路径。
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if *HEADLESS_MODE.get().unwrap_or(&false) && code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 /// 应用装配（桌面与 headless 共用；差异由 `headless` flag 控制）。
