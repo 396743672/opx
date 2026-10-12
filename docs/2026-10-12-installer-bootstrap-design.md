@@ -66,9 +66,14 @@
 
 | 平台 | 交付物 | 安装器行为 |
 |---|---|---|
-| Windows | NSIS（交互）/ MSI（静默） | 完成页显示 `http://127.0.0.1:17580/#/?token=…` + 「立即打开」勾选；不写任何配置 |
+| Windows | NSIS（交互）/ MSI（静默） | 完成页保持 Tauri 默认（含「运行程序」勾选）；**URL/token 不在安装器展示**（见下方偏差说明） |
 | Linux | deb / rpm | postinst 装 systemd 单元（`ExecStart=opx --headless`，`Restart=on-failure`）并启用；安装输出打印「首次访问 URL 见 `journalctl -u opx`」 |
 | Linux 便携 | AppImage / 容器 | 首启 banner 直出终端 / `docker logs`；可选 `web_open_browser_on_start` |
+
+**偏差说明（P2 实现期裁定）**：原设想的「NSIS 完成页显示 URL/token」不可行也不必要——
+1. Tauri v2 的 NSIS `installerHooks` 只在安装 section 内执行，插不了自定义 MUI 完成页（换自定义模板 = 整份 installer.nsi 的长期维护负担）；
+2. token 首启才生成，安装期不存在（NSIS 里预生成 = 脆弱且与 `token::load_or_generate` 双写竞争）。
+等价 UX：桌面首启引导页开启「浏览器管理入口」→ 完成时经 `get_web_access_urls`（桌面 IPC）展示含 token 的完整 URL 列表（此时端口/令牌才是最终值），服务器由 supervisor ~2s 内热启动。「装完即见入口」由 Tauri 默认的「完成后运行程序」+ 首启引导页承接。
 
 ## 7. 升级幂等与安全红线
 
@@ -81,8 +86,8 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| P1 | headless 首启种子（LAN 默认开）+ 端口降级扫描 + setup 页（web 端） | headless 模拟占用 17580 后仍可从工作站进入 setup；改端口后新 URL 可登录 |
-| P2 | 桌面首启引导窗（复用 setup 组件）+ NSIS 完成页 URL/token | Windows 安装版装完即见入口；升级不覆盖已有 settings.json |
+| P1 ✅ | headless 首启种子（LAN 默认开）+ 端口降级扫描 + setup 页（web 端） | headless 模拟占用 17580 后仍可从工作站进入 setup；改端口后新 URL 可登录 |
+| P2 ✅ | 桌面首启引导（复用 setup 组件，新增「浏览器管理入口」开关 + `get_web_access_urls` URL/token 面板） | 桌面新装首启强制进入引导；开启入口后面板展示含 token 的完整 URL，服务器 2s 内热启动（真机实测通过）。升级不覆盖 settings.json 由「不存在才写」保证（P1 md5 实测） |
 | P3 | deb/rpm + systemd 单元 + postinst 输出 | Linux 容器/裸机装完 `systemctl status opx` 可见 banner，工作站浏览器直达 |
 
 ## 9. 开放项

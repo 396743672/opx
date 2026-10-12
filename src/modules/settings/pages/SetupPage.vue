@@ -29,8 +29,17 @@
         </div>
       </div>
 
-      <!-- 端口 -->
-      <div class="mt-6">
+      <!-- 浏览器管理入口：桌面首启的核心决策（headless 恒开，不显示开关） -->
+      <div v-if="isDesktop" class="mt-6">
+        <div class="flex items-center gap-3">
+          <span class="text-sm font-medium">{{ $t('setupWebEntry') }}</span>
+          <SwitchBtn v-model="webEnabledValue" />
+        </div>
+        <p class="text-xs text-muted-foreground mt-2">{{ $t('webEnabledHint') }}</p>
+      </div>
+
+      <!-- 端口（桌面关闭 web 时无意义，随之隐藏） -->
+      <div v-show="showNet" class="mt-6">
         <div class="text-sm font-medium mb-2">{{ $t('setupPort') }}</div>
         <div class="flex items-center gap-2">
           <input
@@ -56,7 +65,7 @@
       </div>
 
       <!-- 局域网 -->
-      <div class="mt-6">
+      <div v-show="showNet" class="mt-6">
         <div class="flex items-center gap-3">
           <span class="text-sm font-medium">{{ $t('setupLan') }}</span>
           <SwitchBtn v-model="lanValue" />
@@ -75,21 +84,37 @@
         </button>
       </div>
 
-      <!-- 入口地址变更面板：origin 变了，旧页面 sessionStorage 里的 token 不随迁，
-           必须以 #/?token= fragment 把 token 送到新 origin（TokenGate 会收录） -->
-      <div v-if="newUrl" class="mt-6 border border-border rounded-xl bg-muted/40 p-4">
-        <div class="flex items-center gap-2 text-sm font-medium mb-1">
-          <Icon icon="mdi:web-refresh" class="text-primary" />
-          {{ $t('setupNewAddr') }}
+      <!-- 地址面板：桌面=刚开启浏览器入口（后端生成含 token 完整 URL，supervisor
+           ~2s 内热启动）；headless=origin 变化（sessionStorage 不随迁，token 走
+           #/?token= fragment 送到新 origin，TokenGate 会收录） -->
+      <div v-if="newUrls.length" class="mt-6 border border-border rounded-xl bg-muted/40 p-4">
+        <template v-if="webJustEnabled">
+          <div class="flex items-center gap-2 text-sm font-medium mb-1">
+            <Icon icon="mdi:web-check" class="text-primary" />
+            {{ $t('setupWebReady') }}
+          </div>
+          <p class="text-xs text-muted-foreground mb-2">{{ $t('setupWebReadyHint') }}</p>
+        </template>
+        <template v-else>
+          <div class="flex items-center gap-2 text-sm font-medium mb-1">
+            <Icon icon="mdi:web-refresh" class="text-primary" />
+            {{ $t('setupNewAddr') }}
+          </div>
+          <p class="text-xs text-muted-foreground mb-2">{{ $t('setupNewAddrHint') }}</p>
+        </template>
+        <div class="space-y-1.5">
+          <div v-for="u in newUrls" :key="u" class="flex items-center gap-2">
+            <code class="flex-1 text-xs bg-background border border-border rounded-lg px-2.5 py-1.5 truncate">{{ u }}</code>
+          </div>
         </div>
-        <p class="text-xs text-muted-foreground mb-2">{{ $t('setupNewAddrHint') }}</p>
-        <div class="flex items-center gap-2">
-          <code class="flex-1 text-xs bg-background border border-border rounded-lg px-2.5 py-1.5 truncate">{{ newUrl }}</code>
-          <button class="btn" type="button" @click="copyNewUrl">
+        <div class="flex items-center gap-2 mt-2.5">
+          <button class="btn" type="button" @click="copyUrls">
             <Icon :icon="copied ? 'mdi:check' : 'mdi:content-copy'" />
             {{ copied ? $t('setupCopied') : $t('setupCopy') }}
           </button>
-          <a class="btn primary" :href="newUrl">{{ $t('setupOpen') }}</a>
+          <a v-if="newUrls[0]" class="btn primary" :href="newUrls[0]" target="_blank" rel="noopener">
+            {{ $t('setupOpen') }}
+          </a>
         </div>
       </div>
     </div>
@@ -120,16 +145,22 @@ const langs: { value: Language; label: string }[] = [
 const language = computed(() => settingsStore.language)
 const settings = computed(() => settingsStore.settings)
 
-// 初值取自后端（headless 种子已把 lan 置 true；桌面默认 false）
+// 初值取自后端（headless 种子已把 lan 置 true；桌面 web 默认关）
 const portValue = ref(17580)
 const lanValue = ref(false)
+const webEnabledValue = ref(false)
 const origPort = ref(17580)
 const origLan = ref(false)
+const origWebEnabled = ref(false)
+
+// 桌面关闭浏览器入口时，端口/局域网两节无意义，随之隐藏
+const showNet = computed(() => (isDesktop ? webEnabledValue.value : true))
 
 const checking = ref(false)
 const portCheck = ref<'unknown' | 'free' | 'busy'>('unknown')
 const finishing = ref(false)
-const newUrl = ref('')
+const newUrls = ref<string[]>([])
+const webJustEnabled = ref(false)
 const copied = ref(false)
 
 onMounted(() => {
@@ -137,8 +168,10 @@ onMounted(() => {
   if (s) {
     portValue.value = s.web_port ?? 17580
     lanValue.value = s.web_lan_access ?? false
+    webEnabledValue.value = s.web_enabled ?? false
     origPort.value = portValue.value
     origLan.value = lanValue.value
+    origWebEnabled.value = webEnabledValue.value
   }
 })
 
@@ -171,6 +204,7 @@ async function persistDone(): Promise<void> {
   if (!s) return
   s.web_port = normPort()
   s.web_lan_access = lanValue.value
+  s.web_enabled = webEnabledValue.value
   s.first_run_done = true
   await settingsStore.saveSettings()
 }
@@ -179,9 +213,8 @@ async function finish() {
   finishing.value = true
   try {
     const port = normPort()
-    // 当前配置端口即自身入口（必然被自己绑定），视为可用
-    if (port !== (settings.value?.web_port ?? 17580)) {
-      // 保存前预检（安装引导设计 §5：真绑即真知）
+    // 保存前预检（安装引导设计 §5：真绑即真知）。桌面关闭 web 时无网络面，跳过
+    if (showNet.value && port !== (settings.value?.web_port ?? 17580)) {
       const free = await invoke<boolean>('check_port_free', { port, lan: lanValue.value })
       if (!free) {
         portCheck.value = 'busy'
@@ -190,14 +223,28 @@ async function finish() {
       }
     }
     await persistDone()
+
+    // 桌面：刚开启浏览器入口 → 后端生成含 token 的完整 URL 面板
+    if (isDesktop) {
+      if (webEnabledValue.value && !origWebEnabled.value) {
+        newUrls.value = await invoke<string[]>('get_web_access_urls')
+        webJustEnabled.value = true
+      } else {
+        router.replace('/')
+      }
+      return
+    }
+
+    // headless：origin 变化（端口/局域网）→ 新地址接力（sessionStorage 不随迁）
     const changed = port !== origPort.value || lanValue.value !== origLan.value
-    if (isDesktop || !changed) {
+    if (!changed) {
       router.replace('/')
       return
     }
-    // origin 变化：拼新地址（LAN 关闭后远程入口失效，退回 127.0.0.1 并提示隧道）
+    // 局域网关闭后远程入口失效，退回 127.0.0.1 并提示隧道
     const host = lanValue.value ? location.hostname : '127.0.0.1'
-    newUrl.value = `${location.protocol}//${host}:${port}/#/?token=${getStoredToken() ?? ''}`
+    newUrls.value = [`${location.protocol}//${host}:${port}/#/?token=${getStoredToken() ?? ''}`]
+    webJustEnabled.value = false
   } finally {
     finishing.value = false
   }
@@ -208,9 +255,9 @@ async function skip() {
   router.replace('/')
 }
 
-async function copyNewUrl() {
+async function copyUrls() {
   try {
-    await navigator.clipboard.writeText(newUrl.value)
+    await navigator.clipboard.writeText(newUrls.value.join('\n'))
     copied.value = true
     window.setTimeout(() => (copied.value = false), 1500)
   } catch {
