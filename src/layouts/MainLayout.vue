@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-screen w-screen overflow-hidden bg-background">
+  <div class="flex flex-col h-full w-full overflow-hidden bg-background">
     <!-- 顶部导航栏 — 简洁 -->
     <header
       @mousedown="onTitlebarMouseDown"
@@ -84,7 +84,9 @@
     <div class="flex flex-1 overflow-hidden relative">
       <Sidebar :pinned="sidebarPinned" @update:pinned="settingsStore.setSidebarCollapsed(!$event)" />
       <!-- pl-14 为收缩态侧边栏预留空间，pl-52 为固定展开态 -->
-      <main class="flex-1 overflow-auto" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
+      <!-- overflow-x-hidden：纵向照常滚动，横向永不滚动——避免长页/子像素
+           误差在部分浏览器（实测 Edge）触发整页横向滚动条 -->
+      <main class="flex-1 overflow-y-auto overflow-x-hidden" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
         <!-- h-full + flex-col：让需要「内部滚动」的页面（如操作记录）
              拿到确定高度并把表格区做成唯一滚动条；内容更高的页面
              （min-height:auto 不收缩）仍溢出到 main 由全局滚动兜底 -->
