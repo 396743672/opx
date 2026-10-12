@@ -1,11 +1,7 @@
 <template>
-  <div class="page">
-    <div class="page-head">
-      <div>
-        <h1 class="page-title">{{ t('stacks') }}</h1>
-        <p class="page-desc">{{ t('stacksDesc') }}</p>
-      </div>
-      <div class="head-actions">
+  <div class="animate-fade-in">
+    <PageHeader :title="t('stacks')" :subtitle="t('stacksDesc')">
+      <template #actions>
         <div class="tmpl-wrap">
           <button class="btn" @click="showTemplates = !showTemplates">
             <Icon icon="mdi:apps" /> {{ t('stackTemplates') }}
@@ -27,8 +23,8 @@
         <button class="btn primary" @click="openCreate">
           <Icon icon="mdi:plus" /> {{ t('createStack') }}
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div v-if="store.error" class="global-error">{{ store.error }}</div>
 
@@ -132,6 +128,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { isDesktop } from '@/utils/transport'
 import { useStackStore } from '@/stores/stack'
 import type { Stack, StackMemberStatus, StackItem } from '@/models/stack'
+import PageHeader from '@/components/PageHeader.vue'
 import StackEditDialog from './StackEditDialog.vue'
 import StackRunPanel from './StackRunPanel.vue'
 
@@ -347,28 +344,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page {
-  padding: 20px;
-}
-.page-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 16px;
-}
-.page-title {
-  font-size: 20px;
-  font-weight: 700;
-}
-.page-desc {
-  font-size: 13px;
-  color: var(--color-muted-foreground);
-  margin-top: 2px;
-}
-.head-actions {
-  display: flex;
-  gap: 8px;
-}
 .tmpl-wrap {
   position: relative;
 }
