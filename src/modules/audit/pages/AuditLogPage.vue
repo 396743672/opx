@@ -1,6 +1,6 @@
 <template>
-  <div class="animate-fade-in">
-    <PageHeader icon="mdi:history" :title="$t('auditLog')">
+  <div class="animate-fade-in flex-1 min-h-0 flex flex-col">
+    <PageHeader class="shrink-0" icon="mdi:history" :title="$t('auditLog')">
       <template #actions>
         <button class="btn" @click="loadAll" :disabled="loading">
           <Icon icon="mdi:refresh" /> {{ $t('refresh') }}
@@ -12,7 +12,7 @@
     </PageHeader>
 
     <!-- 概览 -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+    <div class="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
       <StatCard :label="$t('auditToday')" :value="String(stats?.today ?? 0)" icon="mdi:calendar-today" accent="primary" />
       <StatCard
         :label="$t('auditTotal')"
@@ -35,7 +35,7 @@
     </div>
 
     <!-- 过滤栏 -->
-    <div class="flex flex-wrap items-center gap-2 mb-3">
+    <div class="shrink-0 flex flex-wrap items-center gap-2 mb-3">
       <select v-model.number="days" class="input" @change="reload">
         <option :value="1">{{ $t('auditRangeToday') }}</option>
         <option :value="3">{{ $t('auditRange3d') }}</option>
@@ -56,35 +56,37 @@
       <button class="btn" @click="reload"><Icon icon="mdi:magnify" /> {{ $t('auditKeyword') }}</button>
     </div>
 
-    <!-- 表格 -->
-    <div v-if="loading" class="py-8 text-center text-sm text-muted-foreground">{{ $t('loading') }}</div>
-    <div v-else-if="entries.length === 0" class="py-8 text-center text-sm text-muted-foreground">{{ $t('auditEmpty') }}</div>
-    <table v-else class="audit-table">
-      <thead>
-        <tr>
-          <th>{{ $t('auditTimeCol') }}</th>
-          <th>{{ $t('auditActionCol') }}</th>
-          <th>{{ $t('auditTargetCol') }}</th>
-          <th>{{ $t('auditDetailCol') }}</th>
-          <th>{{ $t('auditResultCol') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(e, i) in entries" :key="e.ts + i" :class="{ 'row-fail': resultKind(e) === 'fail' }">
-          <td class="tnum">{{ formatTs(e.ts) }}</td>
-          <td><span class="action-chip">{{ e.action }}</span></td>
-          <td class="truncate-cell">{{ e.target }}</td>
-          <td class="truncate-cell">{{ e.detail || '—' }}</td>
-          <td>
-            <span class="result-chip" :class="`result-${resultKind(e)}`">{{ resultLabel(e) }}</span>
-            <span v-if="e.error" class="result-error" :title="e.error">{{ e.error }}</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <!-- 表格（滚动区：本页唯一的滚动条，页面不再整体滚动） -->
+    <div class="flex-1 min-h-0 overflow-auto">
+      <div v-if="loading" class="py-8 text-center text-sm text-muted-foreground">{{ $t('loading') }}</div>
+      <div v-else-if="entries.length === 0" class="py-8 text-center text-sm text-muted-foreground">{{ $t('auditEmpty') }}</div>
+      <table v-else class="audit-table">
+        <thead>
+          <tr>
+            <th>{{ $t('auditTimeCol') }}</th>
+            <th>{{ $t('auditActionCol') }}</th>
+            <th>{{ $t('auditTargetCol') }}</th>
+            <th>{{ $t('auditDetailCol') }}</th>
+            <th>{{ $t('auditResultCol') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(e, i) in entries" :key="e.ts + i" :class="{ 'row-fail': resultKind(e) === 'fail' }">
+            <td class="tnum">{{ formatTs(e.ts) }}</td>
+            <td><span class="action-chip">{{ e.action }}</span></td>
+            <td class="truncate-cell">{{ e.target }}</td>
+            <td class="truncate-cell">{{ e.detail || '—' }}</td>
+            <td>
+              <span class="result-chip" :class="`result-${resultKind(e)}`">{{ resultLabel(e) }}</span>
+              <span v-if="e.error" class="result-error" :title="e.error">{{ e.error }}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- 分页 -->
-    <div v-if="total > 0" class="flex items-center justify-end gap-2 mt-3">
+    <div v-if="total > 0" class="shrink-0 flex items-center justify-end gap-2 mt-3">
       <span class="text-xs text-muted-foreground">{{ $t('perPage') }}</span>
       <select v-model.number="pageSize" class="input w-20" @change="onPageSizeChange">
         <option v-for="n in PAGE_SIZE_OPTIONS" :key="n" :value="n">{{ n }}</option>
@@ -258,8 +260,15 @@ onMounted(loadAll)
 .audit-table {
   width: 100%;
   border-collapse: collapse;
+  /* 固定列宽：长文本按 .truncate-cell 省略号截断，表格不再被内容撑宽
+     （滚动容器内 width:100% 挡不住 min-content，会冒出横向滚动条） */
+  table-layout: fixed;
   font-size: 13px;
 }
+.audit-table th:nth-child(1) { width: 160px; } /* 时间 */
+.audit-table th:nth-child(2) { width: 130px; } /* 操作 */
+.audit-table th:nth-child(3) { width: 180px; } /* 目标 */
+.audit-table th:nth-child(5) { width: 110px; } /* 结果 */
 .audit-table th,
 .audit-table td {
   text-align: left;

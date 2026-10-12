@@ -85,7 +85,10 @@
       <Sidebar :pinned="sidebarPinned" @update:pinned="settingsStore.setSidebarCollapsed(!$event)" />
       <!-- pl-14 为收缩态侧边栏预留空间，pl-52 为固定展开态 -->
       <main class="flex-1 overflow-auto" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
-        <div class="p-6 xl:p-8">
+        <!-- h-full + flex-col：让需要「内部滚动」的页面（如操作记录）
+             拿到确定高度并把表格区做成唯一滚动条；内容更高的页面
+             （min-height:auto 不收缩）仍溢出到 main 由全局滚动兜底 -->
+        <div class="p-6 xl:p-8 h-full flex flex-col">
           <router-view />
         </div>
       </main>
