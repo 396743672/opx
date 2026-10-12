@@ -67,8 +67,13 @@
 | 平台 | 交付物 | 安装器行为 |
 |---|---|---|
 | Windows | NSIS（交互）/ MSI（静默） | 完成页保持 Tauri 默认（含「运行程序」勾选）；**URL/token 不在安装器展示**（见下方偏差说明） |
-| Linux | deb / rpm | postinst 装 systemd 单元（`ExecStart=opx --headless`，`Restart=on-failure`）并启用；安装输出打印「首次访问 URL 见 `journalctl -u opx`」 |
+| Linux | deb / rpm | 已实现：systemd 单元随包（`/lib/systemd/system/opx.service`，`Environment=OPX_APP_ROOT=/var/lib/opx`）+ 维护脚本（postinst：mkdir + daemon-reload + enable + restart + 打印「首次访问地址见 journalctl -u opx」；prerm：stop/disable；postrm：daemon-reload）。数据根经 `OPX_APP_ROOT` 环境变量重定向，避免写入 /usr/bin |
 | Linux 便携 | AppImage / 容器 | 首启 banner 直出终端 / `docker logs`；可选 `web_open_browser_on_start` |
+
+**P3 已落地资产（tauri.conf `bundle.linux.{deb,rpm}` + `src-tauri/systemd/opx.service` + `src-tauri/deb/{postinst,prerm,postrm}`）**。⚠️ **待 Linux 环境验证**（本机无 WSL）：
+1. `cargo tauri build --bundles deb,rpm` 实际出包；
+2. 容器/裸机装包后 `systemctl status opx` 可见 banner、工作站浏览器直达；
+3. **真无显示服务器上 `--headless` 的 tao 事件循环风险**：tao/GTK 通常需要 DISPLAY，无显示时可能启动失败——兜底方案 `ExecStart=/usr/bin/xvfb-run -a opx --headless`（需加依赖），或按原设计拆分无 tauri 依赖的 `opx-server` bin。容器测试时优先核实此项。
 
 **偏差说明（P2 实现期裁定）**：原设想的「NSIS 完成页显示 URL/token」不可行也不必要——
 1. Tauri v2 的 NSIS `installerHooks` 只在安装 section 内执行，插不了自定义 MUI 完成页（换自定义模板 = 整份 installer.nsi 的长期维护负担）；
@@ -88,7 +93,7 @@
 |---|---|---|
 | P1 ✅ | headless 首启种子（LAN 默认开）+ 端口降级扫描 + setup 页（web 端） | headless 模拟占用 17580 后仍可从工作站进入 setup；改端口后新 URL 可登录 |
 | P2 ✅ | 桌面首启引导（复用 setup 组件，新增「浏览器管理入口」开关 + `get_web_access_urls` URL/token 面板） | 桌面新装首启强制进入引导；开启入口后面板展示含 token 的完整 URL，服务器 2s 内热启动（真机实测通过）。升级不覆盖 settings.json 由「不存在才写」保证（P1 md5 实测） |
-| P3 | deb/rpm + systemd 单元 + postinst 输出 | Linux 容器/裸机装完 `systemctl status opx` 可见 banner，工作站浏览器直达 |
+| P3 🔶 | Linux 打包资产：`OPX_APP_ROOT` 数据根覆盖（含纯函数单测）、systemd 单元、deb/rpm 维护脚本 + conf 挂接 | Windows 侧已验证：cargo test 370 全绿、脚本 bash -n 通过、`OPX_APP_ROOT` 实机重定向生效（便携布局 + 种子落覆盖目录）。⚠️ deb/rpm 实际构建与 systemd 行为待 Linux 环境（本机无 WSL），另需核实无显示环境 `--headless` 的 tao 事件循环风险（兜底 xvfb-run，见 §6） |
 
 ## 9. 开放项
 

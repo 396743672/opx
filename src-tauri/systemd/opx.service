@@ -1,0 +1,20 @@
+[Unit]
+Description=OPX headless management service
+Documentation=https://github.com/396743672/opx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 便携布局数据根（安装引导设计 §6）：settings.json / apps/ / config/ / logs/
+# 全部落在 /var/lib/opx，避免写入 /usr/bin（二进制所在目录）
+Environment=OPX_APP_ROOT=/var/lib/opx
+ExecStart=/usr/bin/opx --headless
+# 级联停止（停止被管软件）由进程内 Ctrl-C / SIGTERM 处理器负责
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

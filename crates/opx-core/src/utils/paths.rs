@@ -1,15 +1,35 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 应用根目录 = exe 所在目录。
-/// current_exe 失败回退 current_dir，再失败回退 ".".
+/// 应用根目录 = `OPX_APP_ROOT` 环境变量（若设）> exe 所在目录 > cwd。
+///
+/// 服务化部署（systemd，安装引导设计 §6）：deb/rpm 把二进制装到 `/usr/bin/opx`，
+/// 便携布局会把 `apps/`、`settings.json` 等可变数据写进 exe 同级——即系统目录
+/// `/usr/bin`（FHS 违例且升级丢失）。systemd 单元以 `Environment=OPX_APP_ROOT=
+/// /var/lib/opx` 显式指定数据根；任何 shell 亦可借此覆盖便携目录。
 pub fn app_root() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
+    resolve_app_root(
+        std::env::var("OPX_APP_ROOT").ok(),
+        std::env::current_exe().ok(),
+        std::env::current_dir().ok(),
+    )
+}
+
+/// 纯逻辑拆出便于单测（env 为 Some 但空白时视为未设）。
+fn resolve_app_root(
+    env: Option<String>,
+    exe: Option<PathBuf>,
+    cwd: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(root) = env.filter(|s| !s.trim().is_empty()) {
+        return PathBuf::from(root);
+    }
+    if let Some(exe) = exe {
         if let Some(parent) = exe.parent() {
             return parent.to_path_buf();
         }
     }
-    if let Ok(cwd) = std::env::current_dir() {
+    if let Some(cwd) = cwd {
         return cwd;
     }
     PathBuf::from(".")
@@ -186,6 +206,32 @@ fn clear_readonly_if_windows(_path: &Path) {}
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn app_root_prefers_env_over_exe_dir() {
+        // OPX_APP_ROOT 优先（服务化部署，安装引导设计 §6）
+        let root = resolve_app_root(
+            Some("/var/lib/opx".into()),
+            Some(PathBuf::from("/usr/bin/opx")),
+            Some(PathBuf::from("/tmp")),
+        );
+        assert_eq!(root, PathBuf::from("/var/lib/opx"));
+        // 空白 env 视为未设 → 回落 exe 同级
+        let root = resolve_app_root(
+            Some("   ".into()),
+            Some(PathBuf::from("/usr/bin/opx")),
+            Some(PathBuf::from("/tmp")),
+        );
+        assert_eq!(root, PathBuf::from("/usr/bin"));
+        // 无 env → exe 同级（便携布局原行为）
+        let root = resolve_app_root(None, Some(PathBuf::from("/opt/opx/bin/opx")), None);
+        assert_eq!(root, PathBuf::from("/opt/opx/bin"));
+        // exe 缺失 → cwd 兜底
+        let root = resolve_app_root(None, None, Some(PathBuf::from("/tmp")));
+        assert_eq!(root, PathBuf::from("/tmp"));
+        // 全缺 → "."
+        assert_eq!(resolve_app_root(None, None, None), PathBuf::from("."));
+    }
 
     #[test]
     fn restrict_file_permissions_tightens_access() {

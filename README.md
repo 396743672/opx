@@ -195,6 +195,12 @@ npm run tauri:build
 - Config panels link to official docs.
 - The site dialog uses a fixed header with only the form area scrolling.
 
+### Headless Mode & Linux Service
+- `opx --headless` runs without a window — the browser is the only entry (Web management UI, default port 17580). Ideal for servers without a desktop.
+- First run on a fresh install enables the web entry and LAN access by default and forces a one-time setup page (language / port / LAN toggle with a plaintext-HTTP warning). The full URL with token is printed to the console (`journalctl -u opx` under systemd).
+- Port-conflict self-healing: if the default port (17580) or an auto-picked port is taken, the service retries the next port up to 17599 and persists the resolved one; an explicitly configured port reports an error instead of drifting.
+- Linux packages (deb / rpm) ship a systemd unit with maintainer scripts (`systemctl enable --now opx`). Data lives in `/var/lib/opx` through the `OPX_APP_ROOT` environment override — set it anywhere to relocate the whole portable layout (settings.json / apps / config / logs).
+
 ## Themes
 
 Three theme modes, cycled by clicking the theme icon in the top bar:

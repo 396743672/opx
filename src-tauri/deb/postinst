@@ -1,0 +1,20 @@
+#!/bin/sh
+# deb/rpm post-install（安装引导设计 §6）：装配 systemd 服务并启动。
+# 升级路径同样走这里（restart 覆盖旧进程）；数据根 /var/lib/opx 不会被触碰。
+set -e
+
+if command -v systemctl >/dev/null 2>&1; then
+    mkdir -p /var/lib/opx
+    systemctl daemon-reload
+    systemctl enable opx.service
+    systemctl restart opx.service
+    echo "----------------------------------------------"
+    echo "  opx 服务已启动（Web 管理入口，默认端口 17580）"
+    echo "  首次访问地址与访问令牌请查看:"
+    echo "    journalctl -u opx -n 20 --no-pager"
+    echo "  数据目录: /var/lib/opx"
+    echo "----------------------------------------------"
+else
+    echo "未检测到 systemd，请手动运行:"
+    echo "  OPX_APP_ROOT=/var/lib/opx /usr/bin/opx --headless"
+fi
