@@ -479,6 +479,7 @@
               min="1"
               max="65535"
               class="h-8 px-2 w-24 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+              @input="webPortTouched = true"
             />
           </div>
           <div class="flex items-center justify-between gap-4 py-3">
@@ -631,6 +632,9 @@ const ddnsSyncOk = ref(false)
 const webEnabledValue = ref(false)
 const webPortValue = ref(17580)
 const webLanAccessValue = ref(false)
+// 用户手动改过端口 → 保存时清除 web_port_auto（端口从此视为显式配置，
+// 被占时后端 D6 报错而非继续降级。安装引导设计 §4 契约）
+const webPortTouched = ref(false)
 const webToken = ref('')
 const webServerErrorMsg = ref('')
 const webResetConfirming = ref(false)
@@ -876,6 +880,7 @@ async function save() {
   webPortValue.value = Number(webPortValue.value) >= 1 && Number(webPortValue.value) <= 65535 ? Number(webPortValue.value) : 17580
   settingsStore.settings.web_enabled = webEnabledValue.value
   settingsStore.settings.web_port = webPortValue.value
+  if (webPortTouched.value) settingsStore.settings.web_port_auto = false
   settingsStore.settings.web_lan_access = webLanAccessValue.value
   await settingsStore.saveSettings()
 }

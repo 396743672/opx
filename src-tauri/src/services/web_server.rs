@@ -18,6 +18,10 @@
 //! - 端口冲突（D6，关闭 ADR 开放项 #2）：`bind` 失败 → 桌面 emit
 //!   `web-server-error` 事件（设置页横幅显示），headless 打印控制台；
 //!   **不自动重试、不自动换端口**，由用户改设置。
+//!   **2026-10-12 修订（headless 分治，安装引导设计 §4）**：headless 是唯一
+//!   入口，报错即死路——默认端口（17580）或上次自动挑选端口（`web_port_auto`）
+//!   被占时向上扫描到 17599 换口并回写 settings.json；扫描区间全满或显式端口
+//!   被占时置空 applied 交 supervisor 2s 重试（自愈，不杀进程）。
 //! - LAN 开关：`web_lan_access=true` 绑 `0.0.0.0`（风险提示见设置页）。
 //! - headless：无条件启动（它是唯一入口，`web_enabled=false` 无意义）。
 
@@ -29,6 +33,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use opx_http::{token, AppContext, AppState, TicketStore, WsEventSink};
 
 use crate::commands::http_registry::build_registry;
+
+/// headless 端口降级扫描上界（设计 §4：17580..=17599，共 20 个候选）。
+const PORT_SCAN_MAX: u16 = 17599;
 
 /// 已应用的 server 配置（比对基准）。
 #[derive(Clone, PartialEq, Eq)]
@@ -151,12 +158,37 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
 
     let handle = app.clone();
     let headless_flag = headless;
+    // headless 端口降级（安装引导设计 §4，修订 D6 在 headless 的适用性）：
+    // 默认端口（17580）或上次自动挑选端口（web_port_auto=true）绑定失败时，
+    // 在任务内逐个向上重试到 PORT_SCAN_MAX；实际端口回写 settings.json
+    // （web_port_auto=true 标记「非用户显式配置」，URL 跨重启稳定）。
+    // 用户显式端口被占维持 D6 报错，绝不静默漂移；桌面模式完全不进此分支。
+    // ⚠️ 降级必须发生在**绑定失败之后**（真绑即真知）：预扫描会在 supervisor
+    // 每轮把「自己已绑定的端口」误判为被占，导致端口无限爬升（实测踩坑）。
+    let auto_retry = headless
+        && (settings.web_port == opx_core::models::settings::default_web_port()
+            || settings.web_port_auto);
     let task = tauri::async_runtime::spawn(async move {
-        match opx_http::bind(bind_addr, app_state).await {
-            Err(e) => {
-                // D6：明确报错，不自动重试/换端口。applied 保留为本次目标——
-                // supervisor 不再重试；用户改设置（端口/开关）后自然触发重启。
-                let msg = format!("绑定 {} 失败: {e}（端口被占用？）", bind_addr);
+        let mut port = bind_addr.port();
+        let bound = loop {
+            let addr = std::net::SocketAddr::new(bind_addr.ip(), port);
+            match opx_http::bind(addr, app_state.clone()).await {
+                Ok(res) => break Ok(res),
+                Err(e) => {
+                    if auto_retry && port < PORT_SCAN_MAX {
+                        tracing::warn!("端口 {port} 绑定失败（{e}），尝试 {}", port + 1);
+                        port += 1;
+                        continue;
+                    }
+                    break Err((e, addr));
+                }
+            }
+        };
+        match bound {
+            Err((e, addr)) => {
+                // D6：明确报错。默认/自动挑选端口置空 applied → supervisor 2s 后
+                // 重试（冲突解除自愈）；显式端口 applied 保留，用户改设置触发。
+                let msg = format!("绑定 {} 失败: {e}（端口被占用？）", addr);
                 tracing::error!("{msg}");
                 if headless_flag {
                     eprintln!("[web] {msg}");
@@ -164,15 +196,38 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
                     let _ = handle.emit("web-server-error", msg.clone());
                 }
                 let st = handle.state::<WebServerState>();
-                let want_now = Applied {
-                    enabled: true,
-                    port: bind_addr.port(),
-                    lan: bind_addr.ip().is_unspecified(),
-                    token: token.clone(),
-                };
-                *st.applied.lock().unwrap_or_else(|e| e.into_inner()) = Some(want_now);
+                if auto_retry {
+                    *st.applied.lock().unwrap_or_else(|err| err.into_inner()) = None;
+                } else {
+                    let want_now = Applied {
+                        enabled: true,
+                        port: addr.port(),
+                        lan: addr.ip().is_unspecified(),
+                        token: token.clone(),
+                    };
+                    *st.applied.lock().unwrap_or_else(|err| err.into_inner()) = Some(want_now);
+                }
             }
             Ok((local, serve_fut)) => {
+                // 降级换口成功：实际端口回写 settings.json，applied 同步对齐
+                // （否则 supervisor 下一轮因 settings≠applied 无谓重启一次）
+                if port != bind_addr.port() {
+                    tracing::warn!("端口 {} 被占用，自动改用 {}", bind_addr.port(), port);
+                    let mut s = crate::commands::config::read_settings().unwrap_or_default();
+                    s.web_port = port;
+                    s.web_port_auto = true;
+                    if let Err(e) = opx_core::utils::settings::write_settings_file(&s) {
+                        tracing::warn!(error = %e, "降级端口回写 settings.json 失败（本次仍用 {port}）");
+                    }
+                    let st = handle.state::<WebServerState>();
+                    let applied_now = Applied {
+                        enabled: true,
+                        port,
+                        lan: local.ip().is_unspecified(),
+                        token: token.clone(),
+                    };
+                    *st.applied.lock().unwrap_or_else(|err| err.into_inner()) = Some(applied_now);
+                }
                 let settings_path = opx_core::utils::paths::settings_path();
                 // 0.0.0.0 绑定下 local_addr 是 0.0.0.0，URL 展示用 127.0.0.1，
                 // 并经默认路由探测出口 IP 补一行 LAN URL（批次 4.6）

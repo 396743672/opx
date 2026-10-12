@@ -60,6 +60,15 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
 }
 
+/// 探测端口当前是否可绑定（首启引导页保存前预检，安装引导设计 §5）。
+/// `lan=true` 试绑 0.0.0.0（局域网模式的真实绑定面），否则试绑 127.0.0.1——
+/// 与后端 web_server 降级扫描同一「真绑即真知」语义，不做 connect 类预判。
+#[tauri::command]
+pub fn check_port_free(port: u16, lan: bool) -> bool {
+    let ip = if lan { "0.0.0.0" } else { "127.0.0.1" };
+    std::net::TcpListener::bind((ip, port)).is_ok()
+}
+
 /// 读取当前 Web 访问令牌（设置页展示 + 「打开浏览器」拼 `#token=` URL 用）。
 ///
 /// 桌面专属：HTTP 分发器按 `desktop_only` 注册（409）——令牌明文不得经

@@ -392,3 +392,14 @@ export function listen<T = unknown>(
 
 /** 桌面专属入口（quit/exit/hide/更新器等）按此隐藏 UI */
 export const isDesktop = IS_DESKTOP
+
+/** 读取当前持有的 web token（sessionStorage；桌面模式恒 null）。
+ *  setup 页改端口/局域网后拼新地址 `#/?token=` 用——origin 变化后
+ *  sessionStorage 不随迁，必须以 URL fragment 送token 到新 origin。 */
+export function getStoredToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}

@@ -167,6 +167,19 @@ onMounted(async () => {
   }, 3000)
 
   await settingsStore.loadSettings()
+  // 首启引导（安装引导设计 §5）：新装（first_run_done=false）强制进入 /setup；
+  // 存量安装该字段为 null（升级豁免）。watch 持续兜底，防止引导前手动改路由绕过。
+  if (settingsStore.settings?.first_run_done === false) {
+    router.replace('/setup')
+  }
+  watch(
+    () => settingsStore.settings?.first_run_done,
+    (v) => {
+      if (v === false && router.currentRoute.value.path !== '/setup') {
+        router.replace('/setup')
+      }
+    },
+  )
   // 启动系统数据轮询（首次 fetchAll 完成后 watch 会触发解除遮罩）
   systemStore.startPolling()
 

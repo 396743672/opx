@@ -92,6 +92,7 @@ pub fn run() {
             commands::config::get_web_token,
             commands::config::reset_web_token,
             commands::config::get_web_access_urls,
+            commands::config::check_port_free,
             refresh_tray_menu,
             commands::config::test_alert_webhook,
             commands::config::sync_ddns_now,
@@ -269,13 +270,22 @@ fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::er
         let _ = opx_core::utils::paths::data_dir();
         let _ = opx_core::utils::paths::tmp_dir();
         let _ = opx_core::utils::paths::logs_dir();
-        // settings.json 不存在时写入默认值，确保便携目录有可见配置
+        // settings.json 不存在时建档（安装引导设计 §3/§5；升级绝不覆盖既有配置）：
+        // headless 种子 = 局域网默认开（服务器无浏览器，127.0.0.1 对运维工作站
+        // 无意义）；所有新装 first_run_done=Some(false) 进入首次引导——存量安装
+        // 无此字段（反序列化为 None）自动豁免，不会被强制引导。
         let sp = opx_core::utils::paths::settings_path();
-        if !sp.exists() {
-            let default = opx_core::models::settings::AppSettings::default();
-            if let Ok(json) = serde_json::to_string_pretty(&default) {
-                let _ = std::fs::write(&sp, json);
+        match opx_core::utils::settings::seed_settings_if_absent_at(&sp, |s| {
+            if headless {
+                s.web_lan_access = true;
             }
+            s.first_run_done = Some(false);
+        }) {
+            Ok(true) if headless => {
+                tracing::info!("headless 首启：已建档 settings.json（局域网默认开，等待首次引导）")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "首启建档失败（按默认设置继续）"),
         }
         // 初始化下载代理配置
         if let Ok(content) = std::fs::read_to_string(&sp) {

@@ -59,4 +59,11 @@ export interface AppSettings {
   web_port: number
   /** 局域网访问开关：false 仅绑 127.0.0.1，true 绑 0.0.0.0 */
   web_lan_access: boolean
+  /** 端口是否为后端自动挑选（headless 降级写入）；用户显式改端口时应置 false */
+  web_port_auto: boolean
+  /**
+   * 首次运行引导状态（安装引导设计 §5）：null=存量安装豁免引导；
+   * false=新装待引导（前端强制进入 /setup）；true=已完成
+   */
+  first_run_done: boolean | null
 }

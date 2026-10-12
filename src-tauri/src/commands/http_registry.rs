@@ -461,6 +461,14 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             ok(config::save_settings(settings))
         })
     });
+    // 首启引导页保存前端口预检（安装引导设计 §5）：真绑即真知，无副作用
+    reg.register("check_port_free", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let lan: Option<bool> = arg(&args, "lan")?;
+            val(config::check_port_free(port, lan.unwrap_or(false)))
+        })
+    });
     reg.register("set_autostart", |_ctx, args| {
         Box::pin(async move {
             let enabled: bool = arg(&args, "enabled")?;

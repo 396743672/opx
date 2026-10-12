@@ -112,6 +112,16 @@ pub struct AppSettings {
     /// 局域网访问开关：false 绑定 127.0.0.1（安全底线），true 绑定 0.0.0.0
     #[serde(default)]
     pub web_lan_access: bool,
+    /// 端口是否为自动挑选（headless 降级扫描写入，安装引导设计 §4）。
+    /// true = 非用户显式配置，后续启动若该端口再被占可继续向上扫描；
+    /// false = 用户显式配置，被占时维持 D6 明确报错、绝不静默漂移。
+    #[serde(default)]
+    pub web_port_auto: bool,
+    /// 首次运行引导状态（安装引导设计 §5）。
+    /// None = 老安装/升级（字段缺席反序列化为 None，豁免引导，避免存量安装被强制引导）；
+    /// Some(false) = 新装待引导；Some(true) = 已完成。
+    #[serde(default)]
+    pub first_run_done: Option<bool>,
 }
 
 fn default_ninety() -> u32 {
@@ -138,7 +148,9 @@ fn default_smtp_port() -> u16 {
     465
 }
 
-fn default_web_port() -> u16 {
+/// Web 入口默认端口（ADR §7 #2：已避开被管软件全部端口）。
+/// pub 供壳层 web_server 的端口降级扫描判断「当前是否默认端口」使用。
+pub fn default_web_port() -> u16 {
     17580
 }
 
@@ -187,6 +199,8 @@ impl Default for AppSettings {
             web_enabled: false,
             web_port: default_web_port(),
             web_lan_access: false,
+            web_port_auto: false,
+            first_run_done: None,
         }
     }
 }
