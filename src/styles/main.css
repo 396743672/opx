@@ -426,6 +426,43 @@ main:hover {
   color: var(--color-destructive-foreground);
 }
 
+/* 软件分类图标底色 — 全局唯一定义
+   同一软件在「软件仓库」与「软件管理」两处出现，此前两处各自定义底色：
+   仓库卡片（.sw-icon）一律用 primary 蓝，已安装实例卡片（.card-icon）按分类着色，
+   于是 Redis / JRE 等在同一界面里颜色对不上。现按 data-category（取值即
+   SoftwareCategory 枚举名，自定义软件用 "Custom"）统一取色，两处共用：
+   组件只负责尺寸/圆角，颜色一律走这里（组件不得再自带副本——scoped 规则带
+   [data-v-*] 特异性更高，会覆盖此处并使全局定义失效）。 */
+.icon-chip {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+/* 数据库 / 时序数据库 */
+.icon-chip[data-category="Database"],
+.icon-chip[data-category="TimeSeries"] {
+  background: color-mix(in oklch, var(--color-info) 14%, transparent);
+  color: var(--color-info);
+}
+/* 运行时 / 对象存储 / 自定义上传 */
+.icon-chip[data-category="Runtime"],
+.icon-chip[data-category="Storage"],
+.icon-chip[data-category="Custom"] {
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+/* 缓存 */
+.icon-chip[data-category="Cache"] {
+  background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
+  color: var(--color-destructive);
+}
+/* Web 服务器 / 搜索 */
+.icon-chip[data-category="WebServer"],
+.icon-chip[data-category="Search"] {
+  background: color-mix(in oklch, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+/* 注册中心 / 消息队列：沿用 .icon-chip 基色（primary） */
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

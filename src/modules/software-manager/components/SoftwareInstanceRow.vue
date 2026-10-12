@@ -2,7 +2,8 @@
   <div class="instance-card" :class="{ 'has-error': software.status === SoftwareStatus.Error }">
     <div class="card-head">
       <div class="card-title">
-        <div class="card-icon" :class="categoryClass">
+        <!-- 底色与图标色由全局 .icon-chip[data-category] 提供（与「软件仓库」卡片一致） -->
+        <div class="card-icon icon-chip" :data-category="software.category ?? 'Custom'">
           <Icon :icon="categoryIcon" />
         </div>
         <div>
@@ -146,20 +147,6 @@ defineEmits<{
   rollback: []
   deps: []
 }>()
-
-const CATEGORY_CLASS: Record<string, string> = {
-  Database: 'database',
-  Runtime: 'runtime',
-  Cache: 'cache',
-  WebServer: 'webserver',
-  Storage: 'storage',
-  Registry: 'registry',
-  MessageQueue: 'messagequeue',
-  Search: 'search',
-  TimeSeries: 'timeseries',
-}
-
-const categoryClass = computed(() => CATEGORY_CLASS[props.software.category ?? ''] ?? 'custom')
 
 // 图标：优先 catalog 软件专属图标（与软件仓库一致）；自定义软件回退为上传图标
 const categoryIcon = computed(() => props.software.icon || 'mdi:upload')
@@ -369,48 +356,8 @@ const uninstallHint = computed(() => (canUninstall.value ? '' : '请先停止后
   justify-content: center;
   font-size: 20px;
   flex-shrink: 0;
-  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
-  color: var(--color-primary);
-}
-.card-icon.database {
-  background: color-mix(in oklch, var(--color-info) 14%, transparent);
-  color: var(--color-info);
-}
-.card-icon.runtime {
-  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
-  color: var(--color-warning);
-}
-.card-icon.cache {
-  background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
-  color: var(--color-destructive);
-}
-.card-icon.webserver {
-  background: color-mix(in oklch, var(--color-success) 14%, transparent);
-  color: var(--color-success);
-}
-.card-icon.storage {
-  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
-  color: var(--color-warning);
-}
-.card-icon.custom {
-  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
-  color: var(--color-warning);
-}
-.card-icon.registry {
-  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
-  color: var(--color-primary);
-}
-.card-icon.messagequeue {
-  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
-  color: var(--color-primary);
-}
-.card-icon.search {
-  background: color-mix(in oklch, var(--color-success) 14%, transparent);
-  color: var(--color-success);
-}
-.card-icon.timeseries {
-  background: color-mix(in oklch, var(--color-info) 14%, transparent);
-  color: var(--color-info);
+  /* 底色 / 图标色来自全局 .icon-chip[data-category] —— 此处不得再定义，
+     否则 scoped 的 [data-v-*] 特异性会覆盖全局定义，重新造成两处颜色不一致 */
 }
 .name {
   font-size: 14px;
