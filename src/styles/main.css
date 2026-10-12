@@ -174,7 +174,11 @@
   box-shadow: 3px 0 12px oklch(0 0 0 / 0.3);
 }
 .warm .glass-sidebar {
-  background: oklch(0.83 0.05 70 / 0.82);
+  /* 与浅色主题同构：侧栏是「更亮的面板」。
+     此前用 0.83，低于暖色背景 0.85，叠加后侧栏比主区更暗、彩度更低显灰，
+     与主区/顶栏（均为 --color-background）割裂——用户反馈「菜单看起来比较暗」。
+     改对齐暖色 --color-card(0.88)（卡片面板色），叠加后略亮于背景，观感统一。 */
+  background: oklch(0.88 0.05 72 / 0.82);
   border-right: 1px solid oklch(0.4 0.04 65 / 0.3);
 }
 
