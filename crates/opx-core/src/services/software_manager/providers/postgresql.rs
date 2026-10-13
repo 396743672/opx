@@ -131,6 +131,9 @@ impl SoftwareProvider for PostgreSqlProvider {
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁。
         let os = crate::utils::platform::current_os();
+        // `builder` 在 Windows 分支被重新赋值为 no_proxy（line 143），故需 mut；
+        // Linux 下该分支不编译，mut 多余 —— 仅非 Windows 允许 unused_mut。
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut builder = reqwest::blocking::Client::builder()
             // blocking builder 无 read_timeout，timeout 是「连接→读体完成」的总 deadline：
             // 标签列表约 48 KB 虽小，但同一类失败（读体中途被掐断、报成 decoding 错误）
@@ -403,9 +406,15 @@ mod tests {
     #[test]
     fn catalog_builtin_version_uses_same_url_rule() {
         let entry = PostgreSqlProvider::new().catalog_entry();
+        #[cfg(windows)]
+        let os = "windows";
+        #[cfg(target_os = "linux")]
+        let os = "linux";
+        #[cfg(target_os = "macos")]
+        let os = "macos";
         assert_eq!(
             entry.versions[0].mirrors[0].url,
-            archive_url_for("16.4", "windows").0
+            archive_url_for("16.4", os).0
         );
     }
 }

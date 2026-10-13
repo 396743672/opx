@@ -506,7 +506,9 @@ mod tests {
         // 模拟 ES 发行版自带完整 JDK（<install>/jdk，含 jdk.attach 模块）
         let bundled_bin = PathBuf::from(&install_path).join("jdk").join("bin");
         std::fs::create_dir_all(&bundled_bin).unwrap();
-        std::fs::write(bundled_bin.join("java.exe"), "").unwrap();
+        // 自带 JDK 的可执行名按平台：Windows 是 java.exe，Unix 是 java
+        let java_name = if cfg!(windows) { "java.exe" } else { "java" };
+        std::fs::write(bundled_bin.join(java_name), "").unwrap();
 
         let ctx = StartContext {
             installed_id: "es-1".to_string(),

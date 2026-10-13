@@ -10,6 +10,7 @@
 //!   用于直接让框架跳过虚拟网卡做自探测。
 
 /// 需排除的虚拟/隧道网卡名称关键字（大小写不敏感，子串匹配）。
+#[cfg(windows)]
 const VIRTUAL_ADAPTER_HINTS: &[&str] = &[
     "vmware",
     "virtualbox",
@@ -96,6 +97,7 @@ fn fallback_ipconfig() -> Option<String> {
 }
 
 /// 从一行中提取首个 IPv4 地址（兼容中英文行尾标点）。
+#[cfg(windows)]
 fn extract_ipv4(line: &str) -> Option<String> {
     line.split_whitespace()
         .find(|tok| tok.trim_end_matches(',').parse::<std::net::Ipv4Addr>().is_ok())
@@ -103,6 +105,7 @@ fn extract_ipv4(line: &str) -> Option<String> {
 }
 
 /// 判断网卡名是否命中虚拟/隧道网卡关键字。
+#[cfg(windows)]
 fn is_virtual_adapter(name: &str) -> bool {
     let n = name.to_lowercase();
     VIRTUAL_ADAPTER_HINTS.iter().any(|h| n.contains(h))
@@ -115,6 +118,7 @@ pub const IGNORED_INTERFACES: &str = "VMware.*,VirtualBox.*,vEthernet.*,.*Hyper-
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn virtual_adapter_names_are_detected() {
         assert!(is_virtual_adapter(
@@ -126,6 +130,7 @@ mod tests {
         assert!(!is_virtual_adapter("Wi-Fi"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn extracts_ipv4_from_line() {
         assert_eq!(

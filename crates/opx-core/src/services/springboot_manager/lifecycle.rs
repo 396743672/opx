@@ -265,6 +265,8 @@ fn stop_outcome(
 /// Unix 上 `kill -TERM` 本身就是 JVM 能响应的信号，无需再注入。
 ///
 /// 返回的 [`StopOutcome`] 只描述「是否走完了优雅流程」；应用真的没停掉才算 `Err`。
+// `software_mgr` 仅在 Windows 优雅停止分支（注入 agent）使用，Linux 下未使用。
+#[cfg_attr(not(windows), allow(unused_variables))]
 pub async fn stop_app(
     app_id: &str,
     springboot_mgr: &SpringBootManager,
@@ -390,11 +392,13 @@ fn force_kill(pid: u32) {
             .args(["/PID", &pid.to_string(), "/F"])
             .output();
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output();
+        // 直接 syscall 发 SIGKILL，不依赖 PATH 上的 `kill` 二进制——
+        // 精简/沙箱环境下 `kill` 可能不在 PATH，导致静默失败、进程残留。
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
     }
 }
 
@@ -505,6 +509,9 @@ mod tests {
         let mut dead = false;
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
+            // 先回收（reap）僵尸：SIGKILL 后子进程在父进程 wait 前是 zombie，
+            // is_pid_alive（sysinfo）仍会把它判为「存活」，必须 try_wait 让它退出。
+            let _ = child.try_wait();
             if !super::is_pid_alive(pid) {
                 dead = true;
                 break;

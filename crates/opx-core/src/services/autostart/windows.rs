@@ -4,7 +4,12 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+// `Result` 别名需常驻：`impl Autostart for WindowsAutostart` 跨平台编译（Linux 上退化为 no-op 桩），
+// 其 `enable`/`disable` 签名 `-> Result<()>` 在所有平台都解析为 `anyhow::Result`。
+// `anyhow!` 宏只用于 Windows 分支体，按 cfg 门控避免 Linux 下的 unused-import 警告。
+use anyhow::Result;
+#[cfg(windows)]
+use anyhow::anyhow;
 
 use super::Autostart;
 

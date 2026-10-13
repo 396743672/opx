@@ -415,7 +415,10 @@ mod tests {
     #[test]
     fn start_command_dev_mode_by_default() {
         let cmd = provider().start_command(&start_ctx(serde_json::json!({}))).unwrap();
+        #[cfg(windows)]
         assert_eq!(cmd.program, "consul.exe");
+        #[cfg(not(windows))]
+        assert_eq!(cmd.program, "consul");
         assert!(cmd.args.iter().any(|a| a == "agent"));
         assert!(cmd.args.iter().any(|a| a == "-dev"));
         assert!(cmd.args.iter().any(|a| a == "-http-port=8500"));

@@ -97,3 +97,8 @@ lettre = { version = "0.11.23", features = ["aws-lc-rs", "builder", "hostname", 
 winreg = "0.52"
 # lock_screen_win.rs —— 凭据库 CRED_*（Win32_Security_Credentials）
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_Security_Credentials"] }
+
+[target.'cfg(unix)'.dependencies]
+# lifecycle.rs force_kill —— Unix 下直接 syscall 发 SIGKILL，不依赖 PATH 上的 `kill` 二进制
+# （精简/沙箱环境可能 PATH 不含 /usr/bin，导致 `Command::new("kill")` 找不到文件被静默吞掉）。
+libc = "0.2"
