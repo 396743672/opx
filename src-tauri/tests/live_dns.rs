@@ -16,7 +16,7 @@
 //! 2. 签名/请求头/端点组合能过腾讯云鉴权（失败典型：AuthFailure.SignatureFailure）
 //! 3. 写-读-删闭环（记录名 `_acme-challenge.<domain>` 的拼装与清理）
 
-use opx_lib::models::dns_account::DnsAccount;
+use opx_core::models::dns_account::DnsAccount;
 use opx_lib::services::acme::dns::provider_for_account;
 
 fn env(name: &str) -> String {

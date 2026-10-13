@@ -1,26 +1,35 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Local;
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 
-use crate::models::software::{
+use opx_http::AppContext;
+use opx_core::event::{EventSink, EventSinkExt};
+
+use opx_core::models::software::{
     BackupMode, Catalog, CatalogEntry, ConfigFieldType, ConfigSchema, CustomInstallParams,
     CustomStartCommand, InstallParams, InstalledSoftware, JreUsageReport, LogChunk, LogSource,
     SnapshotMeta, SoftwareStatus, UninstallSafetyReport,
 };
 use crate::services::software_manager::config_editor::FormData;
-use crate::services::software_manager::providers::custom_templates;
-use crate::services::software_manager::providers::{
-    ConfigContext, DataDirContext, HealthContext, StartContext,
-};
+use opx_core::services::software_manager::providers::custom_templates;
+use opx_core::services::software_manager::providers::{ConfigContext, DataDirContext};
 use crate::services::software_manager::{
-    backup, backup_scheduler, catalog, config_editor, health_check, installer, lifecycle,
-    log_viewer, providers, uninstall_guard, SoftwareManager,
+    backup, backup_scheduler, config_editor, health_check, installer, lifecycle,
+    uninstall_guard, SoftwareManager,
 };
-use crate::utils::topo::topo_layers;
-use crate::{audited_async, oplog_begin, oplog_fail, oplog_result};
+use opx_core::services::software_manager::{catalog, log_viewer, providers};
+// 阶段 3 批次 3B：`start_stop.rs` 的 13 个函数已搬入 core，本文件只留三个
+// `#[tauri::command]` 薄封装（参数接收 + 错误转字符串）。下列 4 个符号在本文件
+// 仍有调用点，故重导出保持原路径可写；其余 9 个只在 core 内部使用，
+// 不重导出以收窄壳层可见面。沿用批次 3A2 在 `lifecycle.rs` 上验证过的
+// 「同名模块用 pub use 转发消歧」手法——写错路径会编译失败而非静默用错实现。
+pub use opx_core::services::software_manager::start_stop::{
+    collect_configured_ports, do_start_software, ensure_dependencies, graceful_stop_software,
+    wait_dependency_ready,
+};
+use opx_core::{audited_async, oplog_begin, oplog_fail, oplog_result};
 
 /// 获取可安装软件列表（catalog）
 #[tauri::command]
@@ -40,17 +49,17 @@ pub async fn list_available_software(
 #[tauri::command]
 pub async fn refresh_catalog(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
 ) -> Result<Vec<CatalogEntry>, String> {
     let builtin = catalog::build_builtin_catalog();
 
     // 从 settings 读取 mirror_url（远程 catalog.json，可选）
     let mirror_url = {
-        let sp = crate::utils::paths::settings_path();
+        let sp = opx_core::utils::paths::settings_path();
         if sp.exists() {
             std::fs::read_to_string(&sp)
                 .ok()
-                .and_then(|c| serde_json::from_str::<crate::models::settings::AppSettings>(&c).ok())
+                .and_then(|c| serde_json::from_str::<opx_core::models::settings::AppSettings>(&c).ok())
                 .map(|s| s.mirror_url)
                 .unwrap_or_else(|| "https://mirrors.aliyun.com".to_string())
         } else {
@@ -63,7 +72,7 @@ pub async fn refresh_catalog(
     merged.updated_at = Some(chrono::Local::now().to_rfc3339());
     manager.set_catalog(merged.clone());
     catalog::save_catalog_cache(&merged); // ponytail: 缓存到文件
-    let _ = app.emit("catalog-refreshed", merged.entries.clone());
+    ctx.sink.clone().emit_ser("catalog-refreshed", merged.entries.clone());
     Ok(merged.entries)
 }
 
@@ -140,7 +149,7 @@ pub async fn list_installed_software(
 #[tauri::command]
 pub async fn install_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     params: InstallParams,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -148,8 +157,9 @@ pub async fn install_software(
     installer::register_install_audit(&install_id, "install", &params.key, &params.version);
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
-        installer::install_software(app, manager_arc, params, install_id_for_task).await;
+        installer::install_software(sink, manager_arc, params, install_id_for_task).await;
     });
     Ok(install_id)
 }
@@ -159,7 +169,7 @@ pub async fn install_software(
 #[tauri::command]
 pub async fn upgrade_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -171,18 +181,20 @@ pub async fn upgrade_software(
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
     let install_id_for_task = install_id.clone();
+    // spawn 需 'static：先构造owned 的事件通道再move 进去。
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
         let audit_target_for_task = audit_target.clone();
         let r = do_upgrade(
             &manager_arc,
-            &app,
+            &sink,
             &installed_id_for_task,
             &install_id_for_task,
         )
         .await;
         oplog_result!("upgrade", &audit_target_for_task, "", r);
         if let Err(ref e) = r {
-            let _ = app.emit(
+            sink.emit_ser(
                 "install-progress",
                 serde_json::json!({
                     "install_id": install_id_for_task,
@@ -199,7 +211,7 @@ pub async fn upgrade_software(
 /// 替换式升级核心流程（供 upgrade_software 后台任务执行）
 async fn do_upgrade(
     manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     installed_id: &str,
     install_id: &str,
 ) -> anyhow::Result<()> {
@@ -262,7 +274,7 @@ async fn do_upgrade(
     }
 
     // 2. 备份源：旧安装目录（不 rename，装完压缩为 {old_ver}.bak.zip 省磁盘）
-    let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+    let old_install_path = opx_core::utils::paths::resolve_install_path(&software.install_path);
     let bak_zip_path = old_install_path.with_file_name(format!(
         "{}.bak.zip",
         old_install_path
@@ -272,7 +284,7 @@ async fn do_upgrade(
     ));
 
     // 2.5 把新版本父目录建好（download_and_extract 解压时落到新目录）
-    let new_install_path = crate::utils::paths::apps_dir()
+    let new_install_path = opx_core::utils::paths::apps_dir()
         .join(&software.key)
         .join(&target_version);
     std::fs::create_dir_all(&new_install_path)
@@ -309,7 +321,7 @@ async fn do_upgrade(
     installer::download_with_mirror_fallback(
         &params,
         &new_install_path,
-        app,
+        sink.clone(),
         install_id,
         version_info,
         preferred_index,
@@ -394,7 +406,7 @@ async fn do_upgrade(
     })?;
 
     // 7. emit completed（install_id 由前端 createTask 给定）
-    let _ = app.emit(
+    sink.emit_ser(
         "install-progress",
         serde_json::json!({
             "install_id": install_id,
@@ -516,7 +528,7 @@ fn unzip_to(zip_path: &std::path::Path, dst_dir: &std::path::Path) -> std::io::R
 #[tauri::command]
 pub async fn install_custom(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     params: CustomInstallParams,
 ) -> Result<String, String> {
     let install_id = uuid::Uuid::new_v4().to_string();
@@ -524,8 +536,9 @@ pub async fn install_custom(
     installer::register_install_audit(&install_id, "install_custom", &params.name, "");
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let install_id_for_task = install_id.clone();
+    let sink = ctx.sink.clone();
     tauri::async_runtime::spawn(async move {
-        installer::install_custom(app, manager_arc, params, install_id_for_task).await;
+        installer::install_custom(sink, manager_arc, params, install_id_for_task).await;
     });
     Ok(install_id)
 }
@@ -540,7 +553,7 @@ pub async fn install_custom(
 #[tauri::command]
 pub async fn uninstall_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<bool, String> {
     let software = manager
@@ -580,7 +593,7 @@ pub async fn uninstall_software(
             .map_err(|e| format!("卸载线程异常: {}", e))?
             .map_err(|e| e.to_string())?;
 
-        let _ = app.emit("software-uninstalled", &installed_id);
+        ctx.sink.clone().emit_ser("software-uninstalled", &installed_id);
         Ok(true)
     })
 }
@@ -595,7 +608,7 @@ pub async fn uninstall_software(
 #[tauri::command]
 pub async fn start_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
@@ -606,12 +619,7 @@ pub async fn start_software(
     let audit_detail = format!("{} ({})", software.version, software.id);
     oplog_begin!("start", &audit_target, &audit_detail);
 
-    if let Err(e) = lifecycle::validate_start_transition(software.status) {
-        oplog_fail!("start", &audit_target, &audit_detail, &e);
-        return Err(e.to_string());
-    }
-
-    // PID 残留校验：旧 PID 仍存活则拒绝启动
+    // PID 残留校验：旧 PID 仍存活则拒绝启动（纯读，先于任何状态变更）
     if let Some(pid) = software.pid {
         if health_check::is_process_alive(pid) {
             let msg = format!("进程 {} 仍在运行，请先停止", pid);
@@ -620,16 +628,26 @@ pub async fn start_software(
         }
     }
 
+    // P1-2 启动竞态修复：原子「校验 + 占位 Starting」。
+    // 历史上校验在命令入口、置 Starting 在 spawn 后的异步任务里（do_start_software
+    // 之前还要跑依赖编排 + 首次初始化，最长 180s），间隙内并发第二次 start 可通过
+    // 校验 → 双进程/端口冲突。现在写锁内一次完成，重复启动被 Starting 状态拒绝。
+    if let Err(e) = manager.try_reserve_start(&installed_id) {
+        oplog_fail!("start", &audit_target, &audit_detail, &e);
+        return Err(e.to_string());
+    }
+
     let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
     let installed_id_for_task = installed_id.clone();
-    let app_handle = app.clone();
+    // spawn 需 'static：先构造 owned 的事件通道再 move 进去。
+    let sink = ctx.sink.clone();
     let audit_target_task = audit_target.clone();
     let audit_detail_task = audit_detail.clone();
 
     // 异步执行启动流程，命令本身立即返回
     tauri::async_runtime::spawn(async move {
         // 依赖编排：先按拓扑序拉起未运行的依赖，再启动自身
-        if let Err(e) = ensure_dependencies(&manager_arc, &app_handle, &installed_id_for_task).await
+        if let Err(e) = ensure_dependencies(&manager_arc, &sink, &installed_id_for_task).await
         {
             let msg = format!("依赖编排失败：{}", e);
             oplog_fail!("start", &audit_target_task, &audit_detail_task, &msg);
@@ -643,7 +661,7 @@ pub async fn start_software(
                 Some(msg.clone()),
             );
             lifecycle::emit_status_changed(
-                &app_handle,
+                &sink,
                 &installed_id_for_task,
                 SoftwareStatus::Error,
                 None,
@@ -653,7 +671,7 @@ pub async fn start_software(
         }
         let result = do_start_software(
             &manager_arc,
-            &app_handle,
+            &sink,
             &installed_id_for_task,
             init_password,
         )
@@ -669,7 +687,7 @@ pub async fn start_software(
                 Some(format!("启动失败：{}", e)),
             );
             lifecycle::emit_status_changed(
-                &app_handle,
+                &sink,
                 &installed_id_for_task,
                 SoftwareStatus::Error,
                 None,
@@ -731,7 +749,7 @@ pub async fn resolve_software_deps(
             stack.push(dep);
         }
     }
-    let plan = crate::utils::topo::topo_layers(&visited, deps, &tiebreak);
+    let plan = opx_core::utils::topo::topo_layers(&visited, deps, &tiebreak);
     let missing: Vec<String> = visited
         .iter()
         .filter(|id| id.as_str() != installed_id && manager_arc.find_installed(id).is_none())
@@ -820,738 +838,11 @@ pub async fn get_software_port_report(
     })
 }
 
-/// 收集软件启动将监听的端口，用于启动前占用校验。
-/// 标准软件：取 config_schema 中 field_type=Port 的字段，从 config 读端口值（缺失回退字段默认值）。
-/// 自定义软件：从 custom_start_command 的健康检查规格推导（Tcp 端口 / Http url 端口）。
-fn collect_configured_ports(
-    software: &InstalledSoftware,
-    provider: Option<&dyn providers::SoftwareProvider>,
-) -> Vec<u16> {
-    use crate::models::software::{ConfigFieldType, CustomHealthSpec};
-    let mut ports = Vec::new();
-    if software.is_custom {
-        if let Some(c) = &software.custom_start_command {
-            match &c.health_check {
-                CustomHealthSpec::Tcp { port } => ports.push(*port),
-                CustomHealthSpec::Http { url, .. } => {
-                    if let Some(p) = reqwest::Url::parse(url)
-                        .ok()
-                        .and_then(|u| u.port_or_known_default())
-                    {
-                        ports.push(p);
-                    }
-                }
-                CustomHealthSpec::None => {}
-            }
-        }
-    } else if let Some(schema) = provider.and_then(|p| p.config_schema()) {
-        for field in &schema.fields {
-            if matches!(field.field_type, ConfigFieldType::Port) {
-                let v = software
-                    .config
-                    .get(&field.key)
-                    .unwrap_or(&field.default_value);
-                if let Some(p) = v.as_u64() {
-                    if (1..=65535).contains(&p) {
-                        ports.push(p as u16);
-                    }
-                }
-            }
-        }
-    }
-    ports
-}
-
-/// 找已安装 JDK/JRE 的 install_path（供 Nacos 等 Java 软件启动拼 java 命令）。
-/// 解析启动用的 JDK/JRE install_path：
-/// 优先用软件配置里选的 jdk（存 installed_id，来自表单选择，与 SpringBoot 一致），
-/// 其次自动找已装 JDK/JRE（优先 JDK 其次 JRE）。找不到返回 None。
-fn find_installed_jdk(
-    manager: &Arc<SoftwareManager>,
-    config: &serde_json::Value,
-) -> Option<String> {
-    let installed = manager.get_installed();
-    // 1. 配置里显式选了 JDK（installed_id）→ 按 id 解析路径
-    if let Some(id) = config
-        .get("jdk")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        if let Some(sw) = installed.iter().find(|s| s.id == id) {
-            return Some(
-                crate::utils::paths::resolve_install_path(&sw.install_path)
-                    .to_string_lossy()
-                    .to_string(),
-            );
-        }
-    }
-    // 2. 回退：自动找第一个 JDK/JRE
-    installed
-        .iter()
-        .filter(|s| s.key == "jdk" || s.key == "jre")
-        .min_by_key(|s| if s.key == "jdk" { 0 } else { 1 })
-        .map(|s| {
-            crate::utils::paths::resolve_install_path(&s.install_path)
-                .to_string_lossy()
-                .to_string()
-        })
-}
-
-/// 找已安装 MySQL 的 install_path（Nacos 选 MySQL 数据库模式时建库建表用）。
-/// 返回 None 表示未装 MySQL。
-fn find_installed_mysql(manager: &Arc<SoftwareManager>) -> Option<String> {
-    manager
-        .get_installed()
-        .iter()
-        .find(|s| s.key == "mysql")
-        .map(|s| {
-            crate::utils::paths::resolve_install_path(&s.install_path)
-                .to_string_lossy()
-                .to_string()
-        })
-}
-
-/// 幂等探针判定：响应体与 marker 各自去掉全部空白后做子串匹配。
-///
-/// InfluxDB 的 `/api/v2/setup` 会带缩进换行返回（实测 `{\n\t"allowed": false\n}`），
-/// 若 marker 写成 `"allowed":false` 直接 `contains` 必然漏判（冒号后有空格），
-/// 表现为「每次启动都重复 POST 一次初始化」。规范化空白后比较与 JSON 排版无关。
-fn probe_reports_done(body: &str, marker: &str) -> bool {
-    let normalize = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
-    let marker = normalize(marker);
-    !marker.is_empty() && normalize(body).contains(&marker)
-}
-
-/// 重复初始化判定：该响应是否表示「已经初始化过」而非真失败。
-///
-/// InfluxDB 2.x 对重复 onboarding 返回 **422** 且 body 为
-/// `{"code":"conflict","message":"onboarding has already been completed"}`
-/// （实测 2.9.1；部分版本为 409）。两者均视为幂等跳过，避免每次启动刷 error 日志。
-fn post_init_already_done(status: u16, body: &str) -> bool {
-    status == 409 || (status == 422 && body.to_lowercase().contains("conflict"))
-}
-
-/// 执行 post-start HTTP 初始化（如 InfluxDB 2 onboarding）。
-/// 返回 Ok(true) 表示本次执行完成；Ok(false) 表示状态已满足无需执行（幂等跳过）。
-/// 探针：先 GET probe_url，响应包含 probe_done_marker 则已初始化，跳过；否则 POST body。
-fn run_post_start_http_init(ps: &providers::PostStartHttpInit) -> anyhow::Result<bool> {
-    let client = reqwest::blocking::Client::builder()
-        // 该初始化打的是 127.0.0.1 本机端口，环境代理（ALL_PROXY 等）必然劫持并失败，
-        // 这里显式关掉环境变量探测；无需支持用户代理，故不引 utils::http
-        .no_proxy()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| anyhow::anyhow!("HTTP client 构建失败: {}", e))?;
-
-    // 1. 幂等探测
-    if let Some(probe_url) = &ps.probe_url {
-        if let Ok(resp) = client.get(probe_url).header("User-Agent", "OPX").send() {
-            if resp.status().is_success() {
-                if let Ok(text) = resp.text() {
-                    if probe_reports_done(&text, &ps.probe_done_marker) {
-                        return Ok(false); // 已初始化，跳过
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. 执行初始化
-    let resp = client
-        .post(&ps.url)
-        .header("User-Agent", "OPX")
-        .header("Content-Type", "application/json")
-        .json(&ps.body)
-        .send()
-        .map_err(|e| anyhow::anyhow!("post-start init 请求失败: {}", e))?;
-    // 2xx（包含 201 Onboarding 完成）视为成功；冲突（已 onboarding）视为跳过。
-    // 注意：status() 为 &self、text() 消费 resp，故先取状态码再取 body。
-    let status = resp.status();
-    if status.is_success() {
-        return Ok(true);
-    }
-    let code = status.as_u16();
-    let body = resp.text().unwrap_or_default();
-    if post_init_already_done(code, &body) {
-        return Ok(false); // InfluxDB: onboarding already completed (409/422 conflict)
-    }
-    anyhow::bail!("post-start init 返回 {}: {}", status, body)
-}
-
-/// 解析并拉起目标软件的依赖（拓扑序，最底层依赖先启动）。
-///
-/// 语义（与设计文档一致）：
-/// - 依赖须处于运行态：未运行（Stopped/Unknown/Error）则先自动启动；已运行跳过；
-/// - 依赖未安装 → 报错并列出缺失项；
-/// - 依赖成环 → 报错并返回环路径；
-/// - 依赖启动失败 → 中止本次启动链，已拉起的依赖保留运行（不回滚，避免误杀共享依赖）。
-///
-/// 返回本次已拉起的依赖 id 列表。
-async fn ensure_dependencies(
-    manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
-    target_id: &str,
-) -> anyhow::Result<Vec<String>> {
-    // 1. DFS 展开依赖闭包（含 target，用于环检测；visited 防环无限递归）
-    let mut visited: Vec<String> = Vec::new();
-    let mut stack: Vec<String> = vec![target_id.to_string()];
-    while let Some(id) = stack.pop() {
-        if visited.contains(&id) {
-            continue;
-        }
-        visited.push(id.clone());
-        if let Some(sw) = manager.find_installed(&id) {
-            for dep in &sw.depends_on {
-                stack.push(dep.clone());
-            }
-        }
-    }
-
-    // 2. 拓扑分层 + 环检测（target 也纳入，确保 target→依赖成环能检出）
-    let deps = |n: &str| -> Vec<String> {
-        manager
-            .find_installed(n)
-            .map(|sw| sw.depends_on)
-            .unwrap_or_default()
-    };
-    let tiebreak: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let plan = topo_layers(&visited, deps, &tiebreak);
-    if let Some(cycle) = plan.cycle {
-        return Err(anyhow::anyhow!("检测到依赖环：{}", cycle.join(" -> ")));
-    }
-
-    // 3. 校验依赖均已安装
-    let mut missing: Vec<String> = Vec::new();
-    for id in &visited {
-        if id.as_str() == target_id {
-            continue;
-        }
-        if manager.find_installed(id).is_none() {
-            missing.push(id.clone());
-        }
-    }
-    if !missing.is_empty() {
-        return Err(anyhow::anyhow!("依赖未安装：{}", missing.join(", ")));
-    }
-
-    // 4. 逐层拉起未运行的依赖（layers[0] 为最底层）
-    let mut started: Vec<String> = Vec::new();
-    for layer in &plan.layers {
-        for dep_id in layer {
-            if dep_id.as_str() == target_id {
-                continue;
-            }
-            let sw = manager
-                .find_installed(dep_id)
-                .ok_or_else(|| anyhow::anyhow!("依赖不存在：{}", dep_id))?;
-            if sw.status == SoftwareStatus::Running {
-                continue; // 已在运行，跳过
-            }
-            // 拉起依赖（递归，依赖的依赖也按自身 depends_on 编排）。
-            // 必须等到健康检查把状态翻成 Running 才能放行：
-            // do_start_software 在 spawn 后即返回，不等的话依赖端口尚未监听，
-            // 依赖方（如 Nacos 连 MySQL）会在依赖就绪前启动而报错。
-            let dep_name = sw.name.clone();
-            let dep_detail = format!("{} ({}, 依赖编排)", sw.version, sw.id);
-            let outcome = match do_start_software(manager, app, dep_id, None).await {
-                Ok(()) => wait_dependency_ready(manager, dep_id).await,
-                Err(e) => Err(e),
-            };
-            // 被拉起的依赖也是用户可见的启动动作，补记操作结果（否则操作记录缺失）
-            oplog_result!("start", dep_name, dep_detail, outcome);
-            outcome?;
-            started.push(dep_id.clone());
-        }
-    }
-
-    Ok(started)
-}
-
-/// 等待依赖编排拉起的软件就绪（健康检查把状态翻成 Running）。
-/// do_start_software 返回时状态为 Starting，健康检查在游离任务中异步完成；
-/// 轮询状态直到 Running / Error / 超时。健康检查本身最多 60s，这里给 90s 余量。
-async fn wait_dependency_ready(manager: &Arc<SoftwareManager>, dep_id: &str) -> anyhow::Result<()> {
-    for _ in 0..90 {
-        let sw = manager
-            .find_installed(dep_id)
-            .ok_or_else(|| anyhow::anyhow!("依赖记录消失：{}", dep_id))?;
-        match sw.status {
-            SoftwareStatus::Running => return Ok(()),
-            SoftwareStatus::Error => {
-                let msg = sw.last_error.unwrap_or_else(|| "未知原因".to_string());
-                return Err(anyhow::anyhow!("依赖 [{}] 启动失败：{}", sw.name, msg));
-            }
-            _ => {}
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    let name = manager
-        .find_installed(dep_id)
-        .map(|s| s.name)
-        .unwrap_or_else(|| dep_id.to_string());
-    Err(anyhow::anyhow!(
-        "依赖 [{}] 未在 90s 内就绪，请检查其日志",
-        name
-    ))
-}
-
-/// 启动软件内部实现（供 start_software / restart_software / auto_start 复用）
-pub async fn do_start_software(
-    manager: &Arc<SoftwareManager>,
-    app: &AppHandle,
-    installed_id: &str,
-    init_password: Option<String>,
-) -> anyhow::Result<()> {
-    let software = manager
-        .find_installed(installed_id)
-        .ok_or_else(|| anyhow::anyhow!("未找到安装记录: {}", installed_id))?;
-
-    let providers_list = providers::all_providers();
-    let provider = providers_list
-        .iter()
-        .find(|p| p.key() == software.key)
-        .ok_or_else(|| anyhow::anyhow!("未找到 provider: {}", software.key))?;
-
-    // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
-    // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
-    for port in collect_configured_ports(&software, Some(&**provider)) {
-        if !health_check::is_port_free(port) {
-            return Err(anyhow::anyhow!(
-                "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",
-                port
-            ));
-        }
-    }
-
-    let start_ctx = StartContext {
-        installed_id: software.id.clone(),
-        install_path: software.install_path.clone(),
-        version: software.version.clone(),
-        config: software.config.clone(),
-        custom_start_command: software.custom_start_command.clone(),
-        init_password: init_password.clone(),
-        // 需要 JDK 的软件（如 Nacos）：优先用配置里选的 JDK（installed_id），
-        // 回退自动找。解析出的 install_path 供 start_command 拼 java 命令。
-        jdk_install_path: find_installed_jdk(manager, &software.config),
-        // Nacos 选 MySQL 数据库模式时，用已装 MySQL 的 mysql.exe 建库建表
-        mysql_install_path: find_installed_mysql(manager),
-    };
-
-    // 构造 StartCommand（自定义软件走 build_custom_command，否则用 provider）
-    let mut cmd = if software.is_custom {
-        let custom = software
-            .custom_start_command
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("自定义软件未配置启动命令"))?;
-        lifecycle::build_custom_command(&software.install_path, custom)?
-    } else {
-        provider.start_command(&start_ctx)?
-    };
-
-    // 捕获首次初始化通过 --init-file 注入的临时 SQL 文件路径（MySQL 设置 root 密码用）。
-    // RC4 修复：不在 do_start_software 返回时立即删除（InitSqlGuard 竞态），
-    // 而是延迟到健康检查完成后删除——此时 mysqld 已启动并必然读取过 --init-file。
-    // spawn_process 失败时在此处立即清理。
-    let init_sql_path: Option<PathBuf> = cmd
-        .args
-        .iter()
-        .find_map(|a| a.strip_prefix("--init-file="))
-        .map(std::path::PathBuf::from);
-
-    // 捕获 PostgreSQL initdb 通过 --pwfile 注入的临时明文密码文件路径。
-    // PG 的 initdb 是短命进程：run_first_run_init 同步阻塞等它退出后 pwfile 必已读取，
-    // 返回后立即删除即可（不复用 MySQL 的延迟删除时机）。
-    let init_pwfile_path: Option<PathBuf> = cmd
-        .first_run_init
-        .as_ref()
-        .and_then(|fri| {
-            fri.init_command
-                .args
-                .iter()
-                .find_map(|a| a.strip_prefix("--pwfile="))
-        })
-        .map(std::path::PathBuf::from);
-    let cleanup_pwfile = || {
-        if let Some(ref p) = init_pwfile_path {
-            let _ = std::fs::remove_file(p);
-        }
-    };
-
-    // 首次初始化（如 mysqld --initialize-insecure）
-    // 用 take() 取出所有权，避免后续 spawn_process(cmd) 时 cmd 仍被借用
-    if let Some(fri) = cmd.first_run_init.take() {
-        let initialized = software
-            .config
-            .get("initialized")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let data_dir = fri.init_command.working_dir.join("data");
-        if initialized {
-            // 已成功初始化过（config.initialized == true），直接跳过
-            tracing::info!(
-                installed_id = %installed_id,
-                data_dir = %data_dir.display(),
-                "already initialized, skipping first_run_init"
-            );
-            // 防御性清理：已初始化不应再有 PG pwfile 明文残留
-            cleanup_pwfile();
-        } else {
-            // 未初始化：若 data 目录非空（上次 init 超时/kill 残留的半初始化文件，
-            // 即 RC3 链式放大），先彻底清空再重新初始化，避免用损坏的 data 目录
-            // 直接拉起 mysqld 导致卡死/崩溃。
-            let wiped = lifecycle::wipe_data_dir_if_nonempty(&data_dir)?;
-            if wiped {
-                tracing::warn!(
-                    installed_id = %installed_id,
-                    data_dir = %data_dir.display(),
-                    "data dir non-empty but not initialized; wiped before re-init (RC3)"
-                );
-            }
-            // 继续执行下方初始化流程
-            // 打印初始化命令方便诊断
-            tracing::info!(
-                installed_id = %installed_id,
-                program = %fri.init_command.program,
-                args = ?fri.init_command.args,
-                working_dir = %fri.init_command.working_dir.display(),
-                "running first_run_init"
-            );
-
-            // 确保 data 目录存在（MySQL 要求 datadir 存在）
-            let _ = std::fs::create_dir_all(&data_dir);
-            manager.update_runtime_fields(
-                installed_id,
-                SoftwareStatus::Initializing,
-                None,
-                None,
-                None,
-                None,
-            )?;
-            lifecycle::emit_status_changed(
-                app,
-                installed_id,
-                SoftwareStatus::Initializing,
-                None,
-                None,
-            );
-
-            // 用 spawn_blocking 包裹阻塞的 output() 调用
-            // fri 的所有权移入闭包，闭包内 &fri 借用闭包自身拥有的数据，满足 'static
-            let init_result =
-                tokio::task::spawn_blocking(move || lifecycle::run_first_run_init(&fri))
-                    .await
-                    .map_err(|e| anyhow::anyhow!("初始化任务 join 失败: {}", e));
-
-            // 初始化失败时恢复状态为 Error（否则会卡在 Initializing 无法卸载/重启）
-            let output = match init_result {
-                Ok(Ok(output)) => output,
-                Ok(Err(e)) => {
-                    let msg = format!("初始化失败：{}", e);
-                    manager.update_runtime_fields(
-                        installed_id,
-                        SoftwareStatus::Error,
-                        None,
-                        None,
-                        None,
-                        Some(msg.clone()),
-                    )?;
-                    lifecycle::emit_status_changed(
-                        app,
-                        installed_id,
-                        SoftwareStatus::Error,
-                        None,
-                        Some(msg),
-                    );
-                    cleanup_pwfile();
-                    return Err(e);
-                }
-                Err(e) => {
-                    let err = anyhow::anyhow!("初始化任务 join 失败: {}", e);
-                    manager.update_runtime_fields(
-                        installed_id,
-                        SoftwareStatus::Error,
-                        None,
-                        None,
-                        None,
-                        Some(format!("{}", err)),
-                    )?;
-                    cleanup_pwfile();
-                    return Err(err);
-                }
-            };
-            let _ = output; // 暂不使用 stderr 输出（如 MySQL 临时密码），保留接口
-
-            // initdb 已退出（pwfile 必已读取），立即删除临时明文密码文件
-            cleanup_pwfile();
-
-            // 标记 initialized = true
-            let mut new_config = software.config.clone();
-            if let Some(obj) = new_config.as_object_mut() {
-                obj.insert("initialized".to_string(), serde_json::json!(true));
-            } else {
-                new_config = serde_json::json!({ "initialized": true });
-            }
-            manager.update_config(installed_id, new_config)?;
-        }
-    }
-
-    // spawn 子进程（打印完整命令方便诊断启动问题）
-    tracing::info!(
-        installed_id = %installed_id,
-        program = %cmd.program,
-        args = ?cmd.args,
-        working_dir = %cmd.working_dir.display(),
-        env_vars = ?cmd.env_vars,
-        "spawning software"
-    );
-
-    let child = match lifecycle::spawn_process(cmd, installed_id) {
-        Ok(child) => child,
-        Err(e) => {
-            if let Some(ref p) = init_sql_path {
-                let _ = std::fs::remove_file(p);
-            }
-            return Err(e.into());
-        }
-    };
-    let pid = child.id();
-
-    // 更新状态为 Starting，清除旧的 last_error（避免启动成功后仍显示旧错误）
-    manager.update_runtime_fields(
-        installed_id,
-        SoftwareStatus::Starting,
-        Some(pid),
-        Some(Local::now().naive_local()),
-        None,
-        None,
-    )?;
-    let _ = manager.clear_last_error(installed_id);
-
-    // 注册到 lifecycle
-    let kind = format!("{:?}", provider.catalog_entry().category);
-    lifecycle::register(
-        installed_id.to_string(),
-        pid,
-        format!("{} {}", software.name, software.version),
-        software.key.clone(),
-        kind,
-    );
-
-    // emit 时 error 显式传 None（清除前端旧错误）
-    lifecycle::emit_status_changed(app, installed_id, SoftwareStatus::Starting, Some(pid), None);
-    tracing::info!(installed_id = %installed_id, pid = pid, "start_software spawned");
-
-    // 异步健康检查（30 次 × 1s 间隔，最多 30s）
-    let hctx = HealthContext {
-        installed_id: installed_id.to_string(),
-        install_path: software.install_path.clone(),
-        port: software.port,
-        config: software.config.clone(),
-    };
-    let spec = if software.is_custom {
-        // 自定义软件的健康检查从 custom_start_command 推导
-        match &software.custom_start_command {
-            Some(c) => match &c.health_check {
-                crate::models::software::CustomHealthSpec::None => {
-                    crate::models::software::HealthCheckSpec::ProcessOnly
-                }
-                crate::models::software::CustomHealthSpec::Tcp { port } => {
-                    crate::models::software::HealthCheckSpec::Tcp {
-                        port: *port,
-                        timeout_ms: 1000,
-                    }
-                }
-                crate::models::software::CustomHealthSpec::Http {
-                    url,
-                    expected_status,
-                } => crate::models::software::HealthCheckSpec::Http {
-                    url: url.clone(),
-                    expected_status: *expected_status,
-                    timeout_ms: 1000,
-                },
-            },
-            None => crate::models::software::HealthCheckSpec::ProcessOnly,
-        }
-    } else {
-        provider.health_check(&hctx)
-    };
-
-    // post-start 一次性 HTTP 初始化（如 InfluxDB 2 onboarding）。
-    // 在闭包 move 前从 provider 计算好，随闭包传入健康检查通过后执行。
-    let post_start = if software.is_custom {
-        None
-    } else {
-        provider.post_start_http_init(&hctx)
-    };
-
-    let manager_clone = manager.clone();
-    let app_clone = app.clone();
-    let installed_id_clone = installed_id.to_string();
-    let pid_for_check = pid;
-    let init_sql_path_for_cleanup = init_sql_path.clone();
-    let post_start_for_check = post_start;
-    tokio::spawn(async move {
-        // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
-        let pid_alive =
-            tokio::task::spawn_blocking(move || health_check::is_process_alive(pid_for_check))
-                .await
-                .unwrap_or(false);
-        if !pid_alive {
-            let _ = manager_clone.update_runtime_fields(
-                &installed_id_clone,
-                SoftwareStatus::Error,
-                None,
-                None,
-                None,
-                Some("进程意外退出（启动后立即崩溃，请检查端口冲突或 data 目录权限）".to_string()),
-            );
-            lifecycle::emit_status_changed(
-                &app_clone,
-                &installed_id_clone,
-                SoftwareStatus::Error,
-                None,
-                Some("进程意外退出".to_string()),
-            );
-            lifecycle::unregister(&installed_id_clone);
-            tracing::error!(
-                installed_id = %installed_id_clone,
-                pid = pid_for_check,
-                "process exited immediately after spawn"
-            );
-            if let Some(ref p) = init_sql_path_for_cleanup {
-                let _ = std::fs::remove_file(p);
-            }
-            return;
-        }
-        // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
-        let result = health_check::run_health_check(&spec, Some(pid), 60, 1000).await;
-        match result {
-            health_check::HealthCheckResult::Healthy => {
-                let _ = manager_clone.update_runtime_fields(
-                    &installed_id_clone,
-                    SoftwareStatus::Running,
-                    Some(pid),
-                    None,
-                    None,
-                    None,
-                );
-                lifecycle::emit_status_changed(
-                    &app_clone,
-                    &installed_id_clone,
-                    SoftwareStatus::Running,
-                    Some(pid),
-                    None,
-                );
-                tracing::info!(installed_id = %installed_id_clone, "software healthy");
-
-                // post-start 一次性初始化（InfluxDB 2 onboarding 等）：
-                // 健康检查通过 → 服务已就绪 → 执行 HTTP 初始化 → 成功后写 config.initialized=true
-                // 与 config 回写字段（如 admin_token）。幂等依据探针（allowed=false 则跳过）。
-                if let Some(ps) = &post_start_for_check {
-                    let ps = ps.clone();
-                    let config_fields = ps.config_fields.clone();
-                    let manager_ps = manager_clone.clone();
-                    let installed_ps = installed_id_clone.clone();
-                    let onb =
-                        tokio::task::spawn_blocking(move || run_post_start_http_init(&ps)).await;
-                    match onb {
-                        Ok(Ok(true)) => {
-                            // 回写 config（initialized + 额外字段）
-                            let cur_cfg = manager_ps
-                                .find_installed(&installed_ps)
-                                .map(|s| s.config.clone());
-                            if let Some(cfg) = cur_cfg {
-                                let mut new_cfg = cfg;
-                                if let Some(obj) = new_cfg.as_object_mut() {
-                                    obj.insert("initialized".to_string(), serde_json::json!(true));
-                                    for (k, v) in &config_fields {
-                                        obj.insert(k.clone(), v.clone());
-                                    }
-                                }
-                                let _ = manager_ps.update_config(&installed_ps, new_cfg);
-                            }
-                            tracing::info!(
-                                installed_id = %installed_ps,
-                                "post-start init succeeded"
-                            );
-                        }
-                        Ok(Ok(false)) => {
-                            tracing::info!(
-                                installed_id = %installed_ps,
-                                "post-start init skipped (already done)"
-                            );
-                        }
-                        Ok(Err(e)) => {
-                            // 初始化失败不阻塞运行；记录日志，用户可稍后手动处理。
-                            tracing::error!(
-                                installed_id = %installed_ps,
-                                error = %e,
-                                "post-start init failed (non-fatal)"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("post-start init join failed: {}", e);
-                        }
-                    }
-                }
-            }
-            health_check::HealthCheckResult::Timeout => {
-                // 关键：健康检查失败必须清理子进程树，否则残留僵尸软件（如 nginx）累积
-                // 重复占用端口 → 后续健康检查更易失败 → 恶性循环
-                let dead_pid = pid;
-                let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(dead_pid)).await;
-                lifecycle::unregister(&installed_id_clone);
-                let _ = manager_clone.update_runtime_fields(
-                    &installed_id_clone,
-                    SoftwareStatus::Error,
-                    None,
-                    None,
-                    None,
-                    Some("健康检查超时".to_string()),
-                );
-                lifecycle::emit_status_changed(
-                    &app_clone,
-                    &installed_id_clone,
-                    SoftwareStatus::Error,
-                    None,
-                    Some("健康检查超时".to_string()),
-                );
-            }
-            health_check::HealthCheckResult::ProcessExited => {
-                let _ = manager_clone.update_runtime_fields(
-                    &installed_id_clone,
-                    SoftwareStatus::Error,
-                    None,
-                    None,
-                    None,
-                    Some("进程意外退出".to_string()),
-                );
-                lifecycle::emit_status_changed(
-                    &app_clone,
-                    &installed_id_clone,
-                    SoftwareStatus::Error,
-                    None,
-                    Some("进程意外退出".to_string()),
-                );
-                lifecycle::unregister(&installed_id_clone);
-            }
-        }
-        // RC4: 健康检查完成后清理 init SQL 文件。
-        // 此时 mysqld 已经历完整启动序列（或已退出），无论结果如何，
-        // --init-file 都已被读取（或不再需要），可以安全删除明文密码文件。
-        if let Some(ref p) = init_sql_path_for_cleanup {
-            let _ = std::fs::remove_file(p);
-        }
-    });
-
-    Ok(())
-}
-
 /// 停止软件
 #[tauri::command]
 pub async fn stop_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
 ) -> Result<bool, String> {
     let software = manager
@@ -1561,7 +852,8 @@ pub async fn stop_software(
     let detail = format!("{} ({})", software.version, software.id);
 
     audited_async!("stop", target, detail, {
-        lifecycle::validate_stop_transition(software.status).map_err(|e| e.to_string())?;
+        lifecycle::validate_stop_transition(software.status.clone()).map_err(|e| e.to_string())?;
+        let sink = ctx.sink.clone();
 
         // 无 PID（如初始化失败卡住时）：直接设为 Stopped 返回
         let pid = match software.pid {
@@ -1579,7 +871,7 @@ pub async fn stop_software(
                     .map_err(|e| e.to_string())?;
                 lifecycle::unregister(&installed_id);
                 lifecycle::emit_status_changed(
-                    &app,
+                    &sink,
                     &installed_id,
                     SoftwareStatus::Stopped,
                     None,
@@ -1600,13 +892,15 @@ pub async fn stop_software(
                 None,
             )
             .map_err(|e| e.to_string())?;
-        lifecycle::emit_status_changed(&app, &installed_id, SoftwareStatus::Stopping, None, None);
+        lifecycle::emit_status_changed(&sink, &installed_id, SoftwareStatus::Stopping, None, None);
 
         let pid_for_status = pid;
-        // spawn_blocking 执行 stop_one（含 5s 优雅等待 + 强杀），加 15s 超时兜底
+        // P1-3：优先语义化优雅停止（provider 关闭命令），失败/超时回退强杀；
+        // 外层 30s 超时给优雅停止命令（最长 15s）留足余量。
+        let stop_sw = software.clone();
         let result = tokio::time::timeout(
-            Duration::from_secs(15),
-            tokio::task::spawn_blocking(move || lifecycle::stop_one(pid)),
+            Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || graceful_stop_software(&stop_sw, pid)),
         )
         .await;
 
@@ -1620,7 +914,6 @@ pub async fn stop_software(
         };
 
         let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
-        let app_clone = app.clone();
         let installed_id_clone = installed_id.clone();
 
         // 停止成功：置 Stopped。停止失败（进程仍存活）：如实反馈 Error，保留 pid 供下次 stop，
@@ -1638,7 +931,7 @@ pub async fn stop_software(
                 .map_err(|e| e.to_string())?;
             lifecycle::unregister(&installed_id_clone);
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Stopped,
                 None,
@@ -1662,7 +955,7 @@ pub async fn stop_software(
                 )
                 .map_err(|e| e.to_string())?;
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 Some(pid_for_status),
@@ -1678,7 +971,7 @@ pub async fn stop_software(
 #[tauri::command]
 pub async fn restart_software(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     init_password: Option<String>,
 ) -> Result<(), String> {
@@ -1693,7 +986,9 @@ pub async fn restart_software(
             || software.status == SoftwareStatus::Starting;
         if should_stop {
             let pid = software.pid.ok_or_else(|| "无 PID".to_string())?;
-            let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(pid))
+            // P1-3：重启前的停止也走语义化优雅停止，避免强杀数据库
+            let restart_sw = software.clone();
+            let _ = tokio::task::spawn_blocking(move || graceful_stop_software(&restart_sw, pid))
                 .await
                 .map_err(|e| format!("停止失败: {}", e))?;
             manager
@@ -1710,11 +1005,11 @@ pub async fn restart_software(
         }
 
         // 再启动
-        let app_clone = app.clone();
+        let sink = ctx.sink.clone();
         let installed_id_clone = installed_id.clone();
         let manager_arc: Arc<SoftwareManager> = manager.inner().clone();
         if let Err(e) =
-            do_start_software(&manager_arc, &app_clone, &installed_id_clone, init_password).await
+            do_start_software(&manager_arc, &sink, &installed_id_clone, init_password).await
         {
             // 启动失败（如端口占用）：置为 Error 并 emit，让管理页显示失败原因
             let msg = format!("启动失败：{}", e);
@@ -1727,7 +1022,7 @@ pub async fn restart_software(
                 Some(msg.clone()),
             );
             lifecycle::emit_status_changed(
-                &app_clone,
+                &sink,
                 &installed_id_clone,
                 SoftwareStatus::Error,
                 None,
@@ -2035,16 +1330,16 @@ pub async fn write_config_source(
 /// 辅助：按 installed_id 从 installed.json 读单条记录（不依赖 State）
 /// 适用于不需要修改 installed.json 的只读命令（如 get_config_schema、read_config_form）
 fn load_software_for_id(installed_id: &str) -> Result<InstalledSoftware, String> {
-    let path = crate::utils::paths::config_dir().join("installed.json");
+    let path = opx_core::utils::paths::config_dir().join("installed.json");
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let list: crate::models::software::InstalledSoftwareList =
+    let list: opx_core::models::software::InstalledSoftwareList =
         serde_json::from_str(&content).map_err(|e| e.to_string())?;
     let mut sw = list
         .software
         .into_iter()
         .find(|s| s.id == installed_id)
         .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
-    sw.install_path = crate::utils::paths::resolve_install_path(&sw.install_path)
+    sw.install_path = opx_core::utils::paths::resolve_install_path(&sw.install_path)
         .to_string_lossy()
         .to_string();
     Ok(sw)
@@ -2245,7 +1540,10 @@ pub async fn get_log_sources(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<Vec<LogSource>, String> {
-    log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())
 }
 
 /// 读取日志（tail / 增量 / 历史分页 + 关键字/正则/级别过滤）
@@ -2269,9 +1567,11 @@ pub async fn read_log(
     let limit = limit.map(|l| l as usize).unwrap_or(2000);
     let before = before.unwrap_or(false);
     let archive_index = archive_index.unwrap_or(0);
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
     log_viewer::read_log(
-        &manager,
-        &installed_id,
+        &sw,
         source_index,
         offset,
         before,
@@ -2292,8 +1592,10 @@ pub async fn download_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources =
-        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let sources = log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -2308,8 +1610,10 @@ pub async fn export_combined_log(
     source_index: usize,
     dest_path: String,
 ) -> Result<(), String> {
-    let sources =
-        log_viewer::list_log_sources(&manager, &installed_id).map_err(|e| e.to_string())?;
+    let sw = manager
+        .find_installed(&installed_id)
+        .ok_or_else(|| format!("未找到安装记录: {}", installed_id))?;
+    let sources = log_viewer::list_log_sources(&sw).map_err(|e| e.to_string())?;
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -2328,9 +1632,9 @@ pub async fn search_all_logs(
     keyword: String,
     per_source_limit: Option<usize>,
     total_limit: Option<usize>,
-) -> Result<Vec<crate::models::software::LogHit>, String> {
+) -> Result<Vec<opx_core::models::software::LogHit>, String> {
     Ok(log_viewer::search_all(
-        &manager,
+        &manager.get_installed(),
         &keyword,
         per_source_limit.unwrap_or(50),
         total_limit.unwrap_or(200),
@@ -2354,7 +1658,7 @@ pub fn unwatch_log_file(id: u64) {
 #[tauri::command]
 pub async fn create_snapshot(
     manager: State<'_, Arc<SoftwareManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     installed_id: String,
     mode: BackupMode,
     name: Option<String>,
@@ -2362,7 +1666,7 @@ pub async fn create_snapshot(
 ) -> Result<SnapshotMeta, String> {
     backup::create_snapshot(
         &manager,
-        &app,
+        &ctx.sink.clone(),
         &installed_id,
         mode,
         name,
@@ -2422,34 +1726,34 @@ pub async fn reset_instance(
     manager: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<(), String> {
-    backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
+    // 审计目标：软件名 + 版本(id)；查不到则退回 id（不阻断重置本身，由 reset 内部报错）
+    let (target, detail) = manager
+        .find_installed(&installed_id)
+        .map(|s| (s.name.clone(), format!("{} ({})", s.version, s.id)))
+        .unwrap_or_else(|| (installed_id.clone(), installed_id.clone()));
+
+    audited_async!("reset", target, detail, {
+        backup::reset_instance(&manager, &installed_id).map_err(|e| e.to_string())
+    })
 }
 
 /// 数字分段版本比较：5.7.44 < 8.0.36；7.4.9 < 7.10.0；
 /// 任一段含非数字时退化为字符串比较（v1 < v2）。
-/// 升级检测与 provider 的远程版本排序共用同一份语义，故对 crate 内可见。
-pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let ap: Vec<&str> = a.split('.').collect();
-    let bp: Vec<&str> = b.split('.').collect();
-    for i in 0..ap.len().min(bp.len()) {
-        match (ap[i].parse::<u64>(), bp[i].parse::<u64>()) {
-            (Ok(x), Ok(y)) if x != y => return x.cmp(&y),
-            (Ok(_), Ok(_)) => {}
-            _ => return a.cmp(b),
-        }
-    }
-    ap.len().cmp(&bp.len())
-}
+///
+/// 实现已下沉到 `opx-core::utils::semver::compare_versions`——升级检测与各 provider
+/// 的远程版本排序必须共用同一份语义，搬进 core 后 `providers` 也能直接引用而
+/// 无需反向依赖壳层 commands。此处 `pub use` 重导出以保持既有调用方零改动。
+pub use opx_core::utils::semver::compare_versions;
 
 /// 计算已装软件的升级目标：catalog 中高于当前版本的最高版本
 fn compute_upgrades(
     installed: &[InstalledSoftware],
     catalog: &Catalog,
-) -> Vec<crate::models::software::UpgradeInfo> {
-    use crate::models::software::UpgradeInfo;
+) -> Vec<opx_core::models::software::UpgradeInfo> {
+    use opx_core::models::software::UpgradeInfo;
     let mut out = Vec::new();
     for sw in installed {
-        if sw.is_custom || sw.category == Some(crate::models::software::SoftwareCategory::Runtime) {
+        if sw.is_custom || sw.category == Some(opx_core::models::software::SoftwareCategory::Runtime) {
             continue;
         }
         let Some(entry) = catalog.entries.iter().find(|e| e.key == sw.key) else {
@@ -2478,7 +1782,7 @@ fn compute_upgrades(
 #[tauri::command]
 pub fn check_upgrades(
     manager: State<'_, Arc<SoftwareManager>>,
-) -> Vec<crate::models::software::UpgradeInfo> {
+) -> Vec<opx_core::models::software::UpgradeInfo> {
     let catalog = manager.get_catalog();
     let installed = manager.get_installed();
     compute_upgrades(&installed, &catalog)
@@ -2488,7 +1792,7 @@ pub fn check_upgrades(
 /// 返回去 `.bak.zip` 后缀的文件名作为回滚目标版本；无备份返回 None。
 /// 供 check_upgrades 填充 rollback_to（升级后同 key 会保留 <old_ver>.bak.zip）。
 fn scan_rollback_backup(install_path: &str) -> Option<String> {
-    let dir = crate::utils::paths::resolve_install_path(install_path);
+    let dir = opx_core::utils::paths::resolve_install_path(install_path);
     let key_dir = dir.parent()?;
     std::fs::read_dir(key_dir)
         .ok()?
@@ -2518,8 +1822,8 @@ pub async fn rollback_software(
     audited_async!("rollback", target, detail, {
         // 1. 解析 key、当前版本目录与同 key 的 .bak.zip 备份
         let key = software.key.clone();
-        let key_dir = crate::utils::paths::apps_dir().join(&key);
-        let old_install_path = crate::utils::paths::resolve_install_path(&software.install_path);
+        let key_dir = opx_core::utils::paths::apps_dir().join(&key);
+        let old_install_path = opx_core::utils::paths::resolve_install_path(&software.install_path);
 
         let mut baks: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&key_dir)
             .map_err(|e| format!("读取目录失败: {}", e))?
@@ -2607,10 +1911,13 @@ pub async fn rollback_software(
 
 #[cfg(test)]
 mod tests {
-    use super::{compare_versions, post_init_already_done, probe_reports_done};
+    // `post_init_already_done` / `probe_reports_done` 的单测已随函数迁入
+    // `opx_core::services::software_manager::start_stop`（批次 3B）——
+    // 单测与被测函数同处一个 crate，故此处不再引用。
+    use super::compare_versions;
     use std::cmp::Ordering;
 
-    use crate::models::software::{
+    use opx_core::models::software::{
         Catalog, CatalogEntry, CatalogVersion, InstallSource, InstalledSoftware, SoftwareCategory,
         SoftwareStatus,
     };
@@ -2660,8 +1967,8 @@ mod tests {
                     .map(|v| CatalogVersion {
                         version: v.to_string(),
                         mirrors: vec![],
-                        archive: crate::models::software::ArchiveInfo {
-                            format: crate::models::software::ArchiveFormat::Zip,
+                        archive: opx_core::models::software::ArchiveInfo {
+                            format: opx_core::models::software::ArchiveFormat::Zip,
                             size: None,
                             sha256: None,
                         },
@@ -2679,35 +1986,6 @@ mod tests {
         let ups = super::compute_upgrades(&installed, &catalog);
         assert_eq!(ups.len(), 1);
         assert_eq!(ups[0].target_version.as_deref(), Some("8.4.0"));
-    }
-
-    /// 回归：InfluxDB 的 /api/v2/setup 带缩进返回，探针必须与 JSON 排版无关。
-    /// 实测 body 为 `{\n\t"allowed": false\n}`（冒号后有空格），原先直接 contains
-    /// 写死无空格的 marker 会导致幂等探测永不命中 → 每次启动重复初始化。
-    #[test]
-    fn probe_reports_done_ignores_whitespace() {
-        let marker = r#""allowed":false"#;
-        // 未初始化（首次启动）→ 不应命中
-        assert!(!probe_reports_done("{\n\t\"allowed\": true\n}", marker));
-        // 已初始化（实测 InfluxDB 2.9.1 格式）→ 必须命中
-        assert!(probe_reports_done("{\n\t\"allowed\": false\n}", marker));
-        // 紧凑格式同样命中
-        assert!(probe_reports_done(r#"{"allowed":false}"#, marker));
-        // 空 marker 不得误判为已完成
-        assert!(!probe_reports_done("anything", ""));
-    }
-
-    /// 回归：InfluxDB 2.9.1 对重复 onboarding 返回 422 + code=conflict（非 409），
-    /// 原先只认 409 → 每次启动都走 bail 记一条 "post-start init failed" 错误日志。
-    #[test]
-    fn post_init_already_done_accepts_conflict() {
-        let influx_422 = r#"{"code":"conflict","message":"onboarding has already been completed"}"#;
-        assert!(post_init_already_done(422, influx_422));
-        assert!(post_init_already_done(409, "")); // 其他版本用 409
-        // 真失败不得被吞掉
-        assert!(!post_init_already_done(422, r#"{"code":"invalid","message":"password too short"}"#));
-        assert!(!post_init_already_done(500, ""));
-        assert!(!post_init_already_done(404, "not found"));
     }
 
     /// 回归：同一 key 并存多实例时，升级状态必须按实例判定。

@@ -31,7 +31,7 @@
         </div>
         <div class="flex gap-2">
           <input v-model="l.root" class="input flex-1 font-mono" :placeholder="$t('staticRoot')" :readonly="!!l.root && l.source === 'Upload'" :title="l.root && l.source === 'Upload' ? $t('uploadPathReadonly') : ''" />
-          <button v-if="l.source === 'Upload'" class="btn" @click="upload(l)"><Icon icon="mdi:upload" /> {{ $t('uploadZip') }}</button>
+          <button v-if="l.source === 'Upload' && isDesktop" class="btn" @click="upload(l)"><Icon icon="mdi:upload" /> {{ $t('uploadZip') }}</button>
         </div>
       </div>
 
@@ -88,6 +88,7 @@ import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import type { SiteLocation } from '@/models/website'
 
 const props = defineProps<{ modelValue: SiteLocation[]; siteId: string; locked?: boolean }>()

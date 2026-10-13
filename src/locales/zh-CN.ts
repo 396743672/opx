@@ -71,6 +71,62 @@ export default {
   lockKeyringUnavailable: '系统凭据库不可用，锁屏功能无法使用',
   lockPasswordTooShort: '密码至少 6 位',
   lockHashFailed: '密码处理失败',
+
+  // Web 管理入口（批次 4.2：仅存储设置；server 启停/打开浏览器归 4.3/4.5）
+  webGroup: 'Web 管理',
+  webEnabled: '启用浏览器管理入口',
+  webEnabledHint: '开启后可在浏览器访问本机管理界面（同一后端，同一份数据）',
+  webPort: 'HTTP 端口',
+  webLanAccess: '允许局域网访问',
+  webLanAccessHint: '默认仅本机（127.0.0.1）可访问；开启后同一局域网内的设备可访问，请确保网络环境可信',
+  // 批次 4.4：Web 模式访问令牌输入页（D3）
+  webTokenTitle: '访问令牌',
+  webTokenDesc: '此页面通过 Web 入口连接本机 OPX 后端，请输入桌面端「设置 → Web 管理」提供的访问令牌',
+  webTokenPlaceholder: '访问令牌（10 位或 64 位）',
+  webTokenConfirm: '连接',
+  webTokenInvalid: '令牌格式不正确（应为 10 位访问码或 64 位十六进制）或已被拒绝，请重新输入',
+  webTokenRequired: '缺少访问令牌，请重新输入',
+  // 批次 4.5：设置页 web 组扩展
+  webLanWarning:
+    '警告：HTTP 为明文传输，开启局域网访问后令牌可被同网段设备嗅探，请仅在可信网络中开启',
+  webTokenLabel: '访问令牌（web_token）',
+  webOpenBrowser: '打开浏览器',
+  webResetToken: '重置令牌',
+  webResetTokenOk: '确认重置',
+  webResetting: '重置中…',
+  // 首次运行引导（安装引导设计 §5）
+  setup: '初始设置',
+  setupSubtitle: '完成几项基础配置即可开始使用',
+  setupLanguage: '界面语言',
+  setupPort: '管理端口',
+  setupPortHint: '浏览器访问管理界面的 HTTP 端口，保存后立即生效',
+  setupCheck: '检测',
+  setupChecking: '检测中…',
+  setupPortFree: '端口可用',
+  setupPortBusy: '端口被占用，请换一个',
+  setupLan: '允许局域网访问',
+  setupLanRisk: '警告：HTTP 为明文传输，局域网内设备可嗅探令牌，请仅在可信网络中开启',
+  setupLanOffHint: '关闭后仅服务器本机可访问；远程管理可用 SSH 隧道：ssh -L 17580:127.0.0.1:17580 user@server',
+  setupFinish: '完成设置',
+  setupSkip: '跳过，稍后在设置中配置',
+  setupNewAddr: '入口地址已变更',
+  setupNewAddrHint: '请使用新地址重新打开管理界面（当前页面将失效，令牌不变）',
+  setupOpen: '打开新地址',
+  setupCopy: '复制',
+  setupCopied: '已复制',
+  setupCopyFailed: '复制失败，请手动选择复制',
+  setupWebEntry: '浏览器管理入口',
+  setupWebReady: '浏览器入口已就绪',
+  setupWebReadyHint: '点击地址即可在浏览器打开（令牌已附带）；服务启动约需 2 秒，局域网内设备亦可访问',
+  webResetDone: '令牌已重置，旧浏览器会话已失效；请用新令牌重新打开浏览器',
+  webServerError: 'Web 服务启动失败：{msg}',
+  webDesktopOnlyHint: '此功能依赖本机文件选择器，请在桌面端操作',
+  // 批次 4.6：扫码访问 + 粘贴优化
+  webScanTitle: '扫码访问',
+  webCopyAddress: '复制地址',
+  webCopyDone: '已复制',
+  webPaste: '粘贴',
+  webPasteFailed: '读取剪贴板失败，请手动粘贴',
   portConflictBy: '端口冲突：被 PID {pid}（{name}）占用',
   portConflictByPid: '端口冲突：被 PID {pid} 占用',
   portNotListening: '端口未监听',
@@ -189,6 +245,7 @@ export default {
   saveAndRestart: '保存并重启',
   configEditRestartHint: '配置改动需重启软件后生效',
   configRequiredMissing: '请填写必填项：{field}',
+  credsLockedHint: '该实例已完成首次初始化，以下账号密码已固化于数据目录（如 .minio.sys / 系统库），初始化完成后不可在应用内修改。如需更改，请使用实例的「重置」功能清空数据目录，随后重新填写凭据并启动（重置会清空该实例全部数据）。',
   configEditSourceHint: '直接编辑配置文件源码，保存后生效',
 
   // StartupSettingsDialog
@@ -263,8 +320,6 @@ export default {
   kafkaOfficial: 'Apache Kafka 官方',
   nodejsOrg: 'nodejs.org 官方',
   npmmirror: 'npmmirror 镜像',
-  builtinMissing: '内置安装包缺失，请重新安装应用',
-  builtinCorrupted: '内置安装包校验失败，文件可能损坏',
   retry: '重试',
   categoryDatabase: '数据库',
   categoryRuntime: '运行时',
@@ -378,7 +433,6 @@ export default {
   appNameAlreadyExists: '应用名称"{name}"已存在，请更换名称',
   stopFirstBeforeUninstall: '请先停止再卸载',
   confirmDeleteMsgFormatted: '将删除应用配置与数据目录，此操作不可撤销。确定要删除"{name}"？',
-  unknownError: '未知错误',
   fetchJarPortFailed: '读取 JAR 端口失败',
   logPathNotConfigured: '日志路径未配置',
   cannotReadLog: '无法读取日志',
@@ -513,7 +567,7 @@ export default {
   auto: '跟随系统',
   closeWindowAction: '关闭窗口行为',
   autoStartOnBoot: '开机自启',
-  autoStartOnBootDesc: 'Windows 启动时自动运行 OPX',
+  autoStartOnBootDesc: '登录系统后自动运行 OPX（Windows / macOS / Linux）',
   minimizeToTray: '最小化到系统托盘',
   exitDirectly: '直接退出程序',
   about: '关于',
@@ -625,7 +679,6 @@ export default {
   // 配置备份
   configBackups: '配置备份',
   restoreBackup: '还原',
-  restoreBackupConfirm: '确认还原此备份？当前配置将自动备份。',
   noBackups: '暂无备份',
   backupHint: '每次保存配置前自动备份，最多保留 5 份。',
 
@@ -696,9 +749,7 @@ export default {
 
   // 配置编辑
   configDirtyConfirm: '当前改动未保存，切换 tab 会丢失，确定吗？',
-  saveWithoutRestart: '仅保存',
   configSaved: '配置已保存',
-  expectedStatus: '期望状态码',
   confirmRestoreBackup: '确认还原此备份？当前配置将自动备份。',
 
   // 卸载阻止
@@ -706,7 +757,6 @@ export default {
   uninstallBlockedRunning: '软件正在运行',
   uninstallBlockedJreDefault: '这是默认 JRE',
   uninstallBlockedJreDependents: '应用依赖此 JRE',
-  forceUninstall: '强制卸载',
 
   // 配置字段（嵌套对象，后端 label_i18n 用 configField.xxx 格式访问）
   configField: {

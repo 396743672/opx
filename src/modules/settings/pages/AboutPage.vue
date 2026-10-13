@@ -2,7 +2,8 @@
   <div class="animate-fade-in">
     <PageHeader icon="mdi:information-outline" :title="$t('about')">
       <template #actions>
-        <button class="btn" :disabled="checking || installing" @click="runCheck">
+        <!-- 桌面专属（更新器走 Tauri updater）：Web 模式隐藏入口 -->
+        <button v-if="isDesktop" class="btn" :disabled="checking || installing" @click="runCheck">
           <Icon
             :icon="checking ? 'mdi:loading' : 'mdi:update'"
             :class="{ spinning: checking }"
@@ -23,7 +24,9 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2 flex-wrap">
             <h2 class="text-lg font-semibold tracking-tight">OPX</h2>
+            <!-- app_version 为桌面专属命令：Web 模式不展示版本徽标 -->
             <span
+              v-if="isDesktop"
               class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium"
             >v{{ version }}</span>
           </div>
@@ -84,6 +87,7 @@
 import { onMounted, ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
+import { getTransport } from '@/utils/transport'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUpdater } from '@/composables/useUpdater'
@@ -91,12 +95,20 @@ import { useUpdater } from '@/composables/useUpdater'
 const REPO_URL = 'https://github.com/396743672/opx'
 const repoLabel = REPO_URL.replace('https://', '')
 
+// 桌面专属入口隐藏依据（批次 4.4）：更新器 / app_version / 系统打开器
+const isDesktop = getTransport().isDesktop
+
 const version = ref('—')
 
 const { checking, installing, updateInfo, progress, check: runCheck, install: runInstall } =
   useUpdater()
 
 function openRepo() {
+  // Web 模式没有 opener 插件，退化为浏览器新开标签页
+  if (!isDesktop) {
+    window.open(REPO_URL, '_blank', 'noopener')
+    return
+  }
   openUrl(REPO_URL).catch(() => {})
 }
 

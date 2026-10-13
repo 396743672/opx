@@ -22,10 +22,10 @@
               </option>
             </select>
           </label>
-          <button class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
+          <button v-if="isDesktop" class="btn btn-sm" :disabled="!sources.length || downloading" @click="download">
             <Icon icon="mdi:download" /> {{ $t('backupDownload') }}
           </button>
-          <button class="btn btn-sm" :disabled="!sources.length || exporting" @click="exportCombined">
+          <button v-if="isDesktop" class="btn btn-sm" :disabled="!sources.length || exporting" @click="exportCombined">
             <Icon icon="mdi:file-export" /> {{ $t('exportCombined') }}
           </button>
         </div>
@@ -111,10 +111,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
 import { invoke } from '@/utils/ipc'
 import { Icon } from '@iconify/vue'
 import { save } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import { useOpsStore } from '../stores/ops'
 import { formatBytes } from '@/utils/format'

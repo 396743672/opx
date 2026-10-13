@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
+import { getTransport } from '@/utils/transport'
+import { invoke } from '@/utils/ipc'
 import { SoftwareStatus, type SoftwareStatusEvent } from '@/models/software'
 
 /**
@@ -26,6 +28,8 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
   // 仅存在于内存，绝不持久化到磁盘；首次初始化消费一次后（server 起来）清除。
   const initPasswords = ref<Record<string, string>>({})
   let unlisten: UnlistenFn | null = null
+  // WS 重连补偿（D4）：重连成功后全量刷新状态缓存（桌面模式恒不触发）
+  let offResync: UnlistenFn | null = null
 
   function setStatus(
     id: string,
@@ -91,6 +95,20 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
         }
       },
     )
+    // D4 重连补偿：WS 断线期间的状态事件无法补投，重连成功后逐实例重查
+    //（get_software_status 已在 HTTP 注册表挂上）。单实例查询失败静默跳过，
+    // 不拖垮其余实例的补偿。
+    offResync = getTransport().onResync(async () => {
+      const ids = Object.keys(statuses.value)
+      for (const id of ids) {
+        try {
+          const st = await invoke<SoftwareStatus>('get_software_status', { installedId: id })
+          setStatus(id, st)
+        } catch {
+          // 实例可能已被卸载，忽略
+        }
+      }
+    })
   }
 
   function destroyListener() {
@@ -98,6 +116,8 @@ export const useLifecycleStore = defineStore('software-lifecycle', () => {
       unlisten()
       unlisten = null
     }
+    offResync?.()
+    offResync = null
   }
 
   return {

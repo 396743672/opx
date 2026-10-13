@@ -9,7 +9,8 @@
 @theme {
   /* 字体 */
   --font-sans: system-ui, 'Segoe UI', 'Inter', 'PingFang SC',
-    'Microsoft YaHei', sans-serif;
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC',
+    'WenQuanYi Micro Hei', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono',
     'Consolas', monospace;
 
@@ -174,7 +175,11 @@
   box-shadow: 3px 0 12px oklch(0 0 0 / 0.3);
 }
 .warm .glass-sidebar {
-  background: oklch(0.83 0.05 70 / 0.82);
+  /* 与浅色主题同构：侧栏是「更亮的面板」。
+     此前用 0.83，低于暖色背景 0.85，叠加后侧栏比主区更暗、彩度更低显灰，
+     与主区/顶栏（均为 --color-background）割裂——用户反馈「菜单看起来比较暗」。
+     改对齐暖色 --color-card(0.88)（卡片面板色），叠加后略亮于背景，观感统一。 */
+  background: oklch(0.88 0.05 72 / 0.82);
   border-right: 1px solid oklch(0.4 0.04 65 / 0.3);
 }
 
@@ -248,6 +253,22 @@ body {
 }
 *::-webkit-scrollbar-thumb:hover {
   background-color: var(--color-muted-foreground);
+}
+
+/* 主内容滚动区：对齐桌面 WebView2 的 overlay 滚动条观感。
+   ① scrollbar-gutter: stable 预留滚动条槽位——长页（软件仓库/审计）与
+   短页之间切换时内容宽度不再跳变（实测差 10px 的 reflow）；
+   ② 标准属性 scrollbar-color 做静默模式——拇指默认透明、悬停主区域浮现。
+   ⚠️ 必须用标准 scrollbar-color：Chromium 121+ 里 scrollbar-width 一旦
+   非 auto，::-webkit-scrollbar 系伪元素样式整体失效（探针实测）。 */
+main {
+  scrollbar-gutter: stable;
+  scrollbar-color: transparent transparent;
+}
+/* 仅悬停浮现——不加 focus-within：点击页面任意可聚焦元素会触发
+   focus-within，令滚动条「点击就出现」（实测反馈），刷新才消失 */
+main:hover {
+  scrollbar-color: var(--color-border) transparent;
 }
 
 /* 渐入动画 */
@@ -405,6 +426,43 @@ body {
   background: var(--color-destructive);
   color: var(--color-destructive-foreground);
 }
+
+/* 软件分类图标底色 — 全局唯一定义
+   同一软件在「软件仓库」与「软件管理」两处出现，此前两处各自定义底色：
+   仓库卡片（.sw-icon）一律用 primary 蓝，已安装实例卡片（.card-icon）按分类着色，
+   于是 Redis / JRE 等在同一界面里颜色对不上。现按 data-category（取值即
+   SoftwareCategory 枚举名，自定义软件用 "Custom"）统一取色，两处共用：
+   组件只负责尺寸/圆角，颜色一律走这里（组件不得再自带副本——scoped 规则带
+   [data-v-*] 特异性更高，会覆盖此处并使全局定义失效）。 */
+.icon-chip {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+/* 数据库 / 时序数据库 */
+.icon-chip[data-category="Database"],
+.icon-chip[data-category="TimeSeries"] {
+  background: color-mix(in oklch, var(--color-info) 14%, transparent);
+  color: var(--color-info);
+}
+/* 运行时 / 对象存储 / 自定义上传 */
+.icon-chip[data-category="Runtime"],
+.icon-chip[data-category="Storage"],
+.icon-chip[data-category="Custom"] {
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+/* 缓存 */
+.icon-chip[data-category="Cache"] {
+  background: color-mix(in oklch, var(--color-destructive) 14%, transparent);
+  color: var(--color-destructive);
+}
+/* Web 服务器 / 搜索 */
+.icon-chip[data-category="WebServer"],
+.icon-chip[data-category="Search"] {
+  background: color-mix(in oklch, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+/* 注册中心 / 消息队列：沿用 .icon-chip 基色（primary） */
 
 @media (prefers-reduced-motion: reduce) {
   *,

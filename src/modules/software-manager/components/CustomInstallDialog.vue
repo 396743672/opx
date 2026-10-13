@@ -55,8 +55,13 @@
 import { ref, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { invoke } from '@/utils/ipc'
+import { useI18n } from 'vue-i18n'
+import { toast } from '@/composables/useToast'
 import { useInstallStore } from '../stores/install'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   cancel: []
@@ -77,6 +82,10 @@ const installPath = computed(() =>
 )
 
 async function selectFile() {
+  if (!isDesktop) {
+    toast(t('webDesktopOnlyHint'), 'err')
+    return
+  }
   const selected = await open({
     multiple: false,
     filters: [{ name: 'Archives', extensions: ['zip', 'gz', 'tgz'] }],

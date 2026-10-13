@@ -1,0 +1,104 @@
+[package]
+name = "opx-core"
+version = "0.5.1"
+description = "Platform-agnostic core of opx (data models, provider catalog, install/run logic) — free of any Tauri dependency"
+authors = ["opx-dev"]
+license = "MIT"
+repository = "https://github.com/396743672/opx"
+edition = "2021"
+
+[lib]
+name = "opx_core"
+path = "src/lib.rs"
+
+# 依赖方向单向：壳（opx / opx-server）→ opx-core。
+# 本 crate 只允许「平台无关」的依赖；**不得**引入 tauri / tauri-plugin-*。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+tracing = "0.1"
+futures = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "stream"] }
+zip = { version = "0.6", default-features = false, features = ["deflate", "bzip2", "time"] }
+tar = "0.4"
+flate2 = "1.0"
+lzma-rs = "0.3"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+# —— 阶段 3批次 3A1：随 providers / catalog / log_viewer 迁入 ——
+# 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份/类型不匹配。
+# regex —— log_viewer 的行过滤（`LineFilter` 的关键字正则与级别正则）+ providers 的
+#         版本号抓取（elasticsearch / influxdb / influxdb3 / kafka / nacos / nginx）。
+regex = "1.10"
+# encoding_rs —— log_viewer 的日志字节解码：非 UTF-8 时按中文 Windows 的 GBK 解码。
+encoding_rs = "0.8"
+# sysinfo —— providers 的端口占用预检（mysql.rs 启停前探测 3306 是否被占）。
+sysinfo = "0.31.0"
+# base64 —— providers 的 Nacos 认证：随机 32 字节 seed 做 Base64 编码作为 auth token。
+base64 = "0.23.1"
+# rand_core —— 同上，提供 OsRng 随机源填seed 字节。
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# —— 阶段 3 批次 3A2：随 audit_log / process_monitor 迁入 ——
+# 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份。
+# tracing-appender —— audit_log 的按日滚动文件 sink（`rolling::daily`）+ 后台
+#                    非阻塞写入（`non_blocking`），init() 返回 WorkerGuard，
+#                    guard 必须被壳层 lib.rs 持有到进程退出，否则日志停止 flush。
+tracing-appender = "0.2"
+# tracing-subscriber —— audit_log 的 fmt layer + EnvFilter（按 RUST_LOG 过滤），
+#                    组成审计专用的独立 tracing 收集器。
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# once_cell —— process_monitor 的 `Lazy<Mutex<System>>`：sysinfo 的 System 初始化
+#             有一定开销，用全局惰性单例跨轮复用。
+once_cell = "1.19"
+
+# —— 阶段 3 批次 4A：随 acme / ddns 迁入 ——
+# 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份。
+# instant-acme —— ACME 协议客户端（RFC 8555）：acme 证书签发/续期的申请、
+#                 challenge 应答、证书下载。
+instant-acme = "0.8"
+# hmac —— ddns 三个 DNS 服务商的 API 请求签名（HMAC 构造）。
+hmac = "0.12"
+# sha1 —— aliyun DNS API 的 HMAC-SHA1 签名算法（其官方文档指定，无 SHA-256 版）。
+sha1 = "0.10"
+
+# —— 阶段 3 批次 3.6：随 backup 迁入 ——
+# walkdir —— backup 快照前的目录递归遍历（zip 打包时逐文件收集）。
+#          版本抄壳层 src-tauri/Cargo.toml:37，lock 实锁 2.5.0。
+#          ⚠️ 调研遗漏项：backup.rs:102 用全路径 `walkdir::WalkDir` 调用，
+#          不经 `use` 语句，静态清单核对时 grep 不到，编译期才暴露。
+walkdir = "2.0"
+
+# —— 阶段 3 批次 3.5：随 installer 迁入 ——
+# sha2 —— installer 的安装包完整性校验：下载完成后计算 SHA-256 摘要，
+#         与 catalog/provider 声明的期望值比对，不匹配即拒装。
+sha2 = "0.10"
+
+# —— 阶段 1.3：随 lock_screen / autostart 迁入（锁屏 + 开机自启）——
+# keyring —— lock_screen 的 macOS/Linux 凭据库存取（Secret Service / Keychain）
+keyring = "3"
+# argon2 —— lock_screen 的 Argon2id 派生（verifier PHC 字符串）
+argon2 = "0.5"
+# rand_core 已随 Nacos 认证声明于上方，lock_screen 的 OsRng 复用，不重复声明。
+# lettre —— system_monitor/notify.rs 的 SMTP 邮件告警（aws-lc-rs + rustls，无 OpenSSL 依赖）
+lettre = { version = "0.11.23", features = ["aws-lc-rs", "builder", "hostname", "pool", "smtp-transport", "tokio1", "tokio1-rustls", "webpki-roots"], default-features = false }
+
+# —— 仅 Windows 依赖（P3：Windows-only 必须放 target 段，无条件声明会让
+#     deb/rpm 构建直接编译失败）——
+# paths.rs 的 Windows 分支（长路径 / 文件属性）需要；非 Windows 下为 stub。
+# Win32_System_Diagnostics_ToolHelp —— lifecycle.rs 的 Windows 进程枚举
+# （CreateToolhelp32Snapshot / Process32First / TH32CS_SNAPPROCESS / PROCESSENTRY32）。
+# ⚠️ 批次 3B 之前本feature 只在壳层声明，靠 workspace 的 feature 统一化才让 core 编译通过，
+#导致 `cargo check -p opx-core` 单独构建失败（core 无法自包含）。3B 起必须在 core 自己声明。
+[target.'cfg(windows)'.dependencies]
+# autostart/windows.rs —— HKCU Run 注册表项
+winreg = "0.52"
+# lock_screen_win.rs —— 凭据库 CRED_*（Win32_Security_Credentials）
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_Security_Credentials"] }
+
+[target.'cfg(unix)'.dependencies]
+# lifecycle.rs force_kill —— Unix 下直接 syscall 发 SIGKILL，不依赖 PATH 上的 `kill` 二进制
+# （精简/沙箱环境可能 PATH 不含 /usr/bin，导致 `Command::new("kill")` 找不到文件被静默吞掉）。
+libc = "0.2"

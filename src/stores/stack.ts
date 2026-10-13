@@ -4,7 +4,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
+import { getTransport } from '@/utils/transport'
 import type {
   Stack,
   StackItem,
@@ -30,6 +31,8 @@ export const useStackStore = defineStore('stack', () => {
   const springbootApps = ref<SpringBootApp[]>([])
 
   let unlisten: UnlistenFn | null = null
+  // WS 重连补偿（D4）：重连后重拉栈列表（桌面模式恒不触发）
+  let offResync: UnlistenFn | null = null
 
   // ------------------------- 查询 -------------------------
 
@@ -140,6 +143,11 @@ export const useStackStore = defineStore('stack', () => {
         runtimes.value[payload.stack_id] = payload.members
       }
     )
+    // D4 重连补偿：重拉栈列表；成员运行态快照等下一条 stack-status-changed
+    // 或页面操作刷新（后端不补投历史事件，最小改动全量刷新列表级状态）
+    offResync = getTransport().onResync(() => {
+      void loadStacks()
+    })
   }
 
   function unsubscribe() {
@@ -147,6 +155,8 @@ export const useStackStore = defineStore('stack', () => {
       unlisten()
       unlisten = null
     }
+    offResync?.()
+    offResync = null
   }
 
   /** 获取某栈当前运行态；若尚未有事件推送则为空数组 */

@@ -2,6 +2,23 @@
 //!
 //! ponytail: 使用全局单例 + 后台线程。前端在查看某日志源时注册路径，收到事件即增量读取；
 //! 关闭/切源时注销。轮询仍保留为兜底，监听仅为「即时触发」。
+//!
+//! ## ✅ 壳层职责，非死代码（死代码清理轮次更正）
+//!
+//! ⚠️ 本文件头曾有一段「全仓库零调用方，保留待清理」的声明——**该判断有误**，
+//! 系 3A1 调研时 grep 只查了模块路径形态、漏了 `LogWatcher::` 类型调用形态
+//! 所致。死代码清理轮次（commit `73e542f`）取证推翻后按裁定撤销删除，此处
+//! 更正为实际调用链：
+//!
+//! - `lib.rs:35`（setup 段）：`LogWatcher::init(event_sink)` —— 启动即挂后台监听线程
+//! - `commands/software.rs` 的 `watch_log_file` / `unwatch_log_file` 两个
+//!   `#[tauri::command]`，注册于 `lib.rs` invoke_handler
+//! - 前端 `springboot-manager/LogViewer.vue`、`software-manager/LogViewerDialog.vue`
+//!   共 2 组件 6 处 invoke 调用
+//!
+//! **不搬 core**：搬它需给 `opx-core` 新增 `notify` 依赖，而它是壳层 UI 支撑
+//! 逻辑（监听本机日志文件、向前端推事件），与 core 的「平台无关业务逻辑」
+//! 定位不符。保留在壳层是正确的最终归属。
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -9,7 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
+use opx_core::event::EventSink;
 
 enum Cmd {
     Register { path: String, id: u64 },
@@ -35,26 +52,26 @@ impl LogWatcher {
     }
 
     /// 应用启动时初始化后台监听线程（幂等）
-    pub fn init(app: AppHandle) {
+    pub fn init(sink: std::sync::Arc<dyn EventSink>) {
         let w = watcher();
-        let mut guard = w.tx.lock().unwrap();
+        let mut guard = w.tx.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return;
         }
         let (tx, rx) = mpsc::channel();
         *guard = Some(tx);
-        std::thread::spawn(move || run_loop(app, rx));
+        std::thread::spawn(move || run_loop(sink, rx));
     }
 
     pub fn register(path: &str) -> Option<u64> {
         let w = watcher();
         let id = {
-            let mut n = w.next_id.lock().unwrap();
+            let mut n = w.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *n;
             *n += 1;
             id
         };
-        let tx = w.tx.lock().unwrap().as_ref()?.clone();
+        let tx = w.tx.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.clone();
         tx.send(Cmd::Register {
             path: path.to_string(),
             id,
@@ -65,13 +82,13 @@ impl LogWatcher {
 
     pub fn unregister(id: u64) {
         let w = watcher();
-        if let Some(tx) = w.tx.lock().unwrap().as_ref() {
+        if let Some(tx) = w.tx.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             let _ = tx.send(Cmd::Unregister { id });
         }
     }
 }
 
-fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
+fn run_loop(sink: std::sync::Arc<dyn EventSink>, rx: Receiver<Cmd>) {
     let (ev_tx, ev_rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let Ok(mut watcher) = notify::recommended_watcher(move |res| {
         let _ = ev_tx.send(res);
@@ -117,7 +134,7 @@ fn run_loop(app: AppHandle, rx: Receiver<Cmd>) {
                         if due {
                             last_emit.insert(pstr.clone(), Instant::now());
                             let payload = serde_json::json!({ "id": id, "path": pstr });
-                            let _ = app.emit("log-file-changed", payload);
+                            sink.emit("log-file-changed", payload);
                         }
                     }
                 }

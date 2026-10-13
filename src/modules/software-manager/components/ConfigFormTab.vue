@@ -2,19 +2,25 @@
   <div class="form-tab">
     <div v-if="loading" class="loading">{{ $t('loading') }}</div>
     <div v-else-if="!schema" class="empty">{{ $t('noConfigSchema') }}</div>
-    <div v-else class="form-grid">
-      <div
-        v-for="field in visibleFields"
-        :key="field.key"
-        class="field"
-        :class="{ full: isPort(field) || isTextarea(field) }"
-      >
+    <div v-else class="form-wrap">
+      <div v-if="credsLocked" class="creds-locked-hint">
+        <Icon icon="mdi:lock-alert" />
+        <span>{{ $t('credsLockedHint') }}</span>
+      </div>
+      <div class="form-grid">
+        <div
+          v-for="field in visibleFields"
+          :key="field.key"
+          class="field"
+          :class="{ full: isPort(field) || isTextarea(field) }"
+        >
         <label class="form-field-label" :class="{ danger: isEphemeral(field) }">{{ $t(field.label_i18n) }}</label>
         <input
           v-if="isText(field)"
           v-model="formData[field.key]"
           class="input"
           :placeholder="String(field.default_value ?? '')"
+          :disabled="credsLocked && lockedKeys.includes(field.key)"
         />
         <textarea
           v-else-if="isTextarea(field)"
@@ -34,7 +40,7 @@
           v-model="formData[field.key]"
           type="password"
           class="input"
-          :disabled="isEphemeral(field) && isInitialized"
+          :disabled="(isEphemeral(field) && isInitialized) || (credsLocked && lockedKeys.includes(field.key))"
         />
         <select v-else-if="isSelect(field)" v-model="formData[field.key]" class="input">
           <option
@@ -75,12 +81,14 @@
         </div>
         <div v-if="field.description_i18n" class="form-field-desc">{{ $t(field.description_i18n) }}</div>
       </div>
-    </div>
+      </div>
+      </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
 
@@ -175,10 +183,24 @@ function isEphemeral(f: ConfigField): boolean {
   return (props.schema?.ephemeral_keys ?? []).includes(f.key)
 }
 
-// 该实例是否已完成首次初始化（initialized == true）：ephemeral 字段应禁用
-const isInitialized = computed(
-  () => (props.software.config as Record<string, any> | undefined)?.initialized === true,
-)
+// 实例是否已启动过（即已完成首次初始化）：后端 start_software 启动即写 last_started_at，
+// stop 不清空 → 是稳定的「已初始化」判据。ephemeral 凭据字段在已初始化后禁用。
+const isInitialized = computed(() => !!props.software.last_started_at)
+
+// 固化型初始化凭据：首次初始化后写入数据目录/系统库，之后改配置不生效，需锁定禁止修改：
+// - 持久型（每次启动作 env/参数）：minio/rustfs 的 access_key/secret_key、influxdb3 的 admin_token
+// - 一次性 ephemeral 型（仅首启消费）：mysql/pg 的 init_password、influxdb 的 admin_user/admin_password
+// 注意 nacos 的 mysql_password 是连接外部库的凭据（非初始化），不在此列，可随时改。
+const CRED_LOCK: Record<string, string[]> = {
+  minio: ['access_key', 'secret_key'],
+  rustfs: ['access_key', 'secret_key'],
+  mysql: ['init_password'],
+  postgresql: ['init_password'],
+  influxdb: ['admin_user', 'admin_password'],
+  influxdb3: ['admin_token'],
+}
+const lockedKeys = computed(() => CRED_LOCK[props.software.key] ?? [])
+const credsLocked = computed(() => isInitialized.value && lockedKeys.value.length > 0)
 
 // 字段规则：visible_when 满足才显示（如 auth_enabled=false 时隐藏认证字段）
 const visibleFields = computed<ConfigField[]>(() => {
@@ -201,6 +223,9 @@ function validateRequired(): string | null {
     // 隐藏字段不校验（不可见则无需填）
     const field = visibleFields.value.find((f) => f.key === rule.field_key)
     if (!field) continue
+    // 已初始化实例：ephemeral 字段（一次性初始化凭据）已固化、不再消费，回显为空，
+    // 跳过必填校验，避免老实例编辑配置时因该字段为空被卡住。
+    if (isInitialized.value && isEphemeral(field)) continue
     const v = formData.value[field.key]
     if (v === undefined || v === null || v === '') {
       return rule.field_key
@@ -220,6 +245,29 @@ defineExpose({ formData, validateRequired })
 }
 .field.full {
   grid-column: 1 / -1;
+}
+.form-wrap {
+  display: block;
+}
+/* Root 凭据固化警告：MinIO/RustFS 初始化后不可修改 */
+.creds-locked-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in oklch, var(--color-destructive) 35%, transparent);
+  background: color-mix(in oklch, var(--color-destructive) 10%, transparent);
+  color: var(--color-destructive);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+.creds-locked-hint svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 .form-field-label {
   display: block;

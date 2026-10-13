@@ -1,6 +1,7 @@
 export enum ArchiveFormat {
   Zip = 'Zip',
   TarGz = 'TarGz',
+  TarXz = 'TarXz',
   Executable = 'Executable',
 }
 

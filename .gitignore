@@ -40,3 +40,8 @@ src-tauri/resources/software/**/*.zip
 src-tauri/resources/software/**/*.tar.gz
 src-tauri/resources/software/**/*.exe
 src-tauri/resources/software/manifest.json
+
+# Cargo workspace 根产物目录（workspace 化后 target 位于仓库根，
+# src-tauri/.gitignore 的 /target/ 只锚定 src-tauri/target）
+/target/
+

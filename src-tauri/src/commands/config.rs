@@ -1,13 +1,12 @@
-use crate::models::settings::AppSettings;
-use crate::utils::paths;
-use crate::audited;
+use opx_core::models::settings::AppSettings;
+use opx_core::utils::paths;
+use opx_core::audited;
 use std::fs;
-use tauri::AppHandle;
 
 /// 读取设置；文件缺失或解析失败返回默认值。
 /// 路径相对 exe 所在目录（便携布局），不再使用外部 APPDATA。
 #[tauri::command]
-pub fn get_settings(_app: AppHandle) -> AppSettings {
+pub fn get_settings() -> AppSettings {
     let path = paths::settings_path();
     match fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str::<AppSettings>(&content).unwrap_or_default(),
@@ -16,23 +15,15 @@ pub fn get_settings(_app: AppHandle) -> AppSettings {
 }
 
 /// 读取 settings.json；文件缺失或内容损坏时返回默认设置（并记录告警）。
-pub fn read_settings() -> Result<crate::models::settings::AppSettings, String> {
-    let path = crate::utils::paths::settings_path();
-    let Ok(s) = std::fs::read_to_string(&path) else {
-        return Ok(Default::default());
-    };
-    match serde_json::from_str(&s) {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            tracing::warn!(error = %e, path = %path.display(), "settings.json 解析失败，使用默认设置");
-            Ok(Default::default())
-        }
-    }
-}
+///
+/// 实现已下沉到 `opx-core::utils::settings::read_settings`（纯文件读取，零宿主依赖），
+/// 此处 `pub use` 重导出以保持既有 5 处调用方（`renew_scheduler` / `ddns/scheduler` /
+/// `backup_scheduler` / `notify` / `recorder`）零改动。
+pub use opx_core::utils::settings::read_settings;
 
 /// 保存设置（原子写：写 .tmp 再 rename）
 #[tauri::command]
-pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), String> {
+pub fn save_settings(settings: AppSettings) -> Result<(), String> {
     audited!("save_settings", "all", "", {
         let path = paths::settings_path();
         let tmp = path.with_extension("json.tmp");
@@ -40,58 +31,93 @@ pub fn save_settings(_app: AppHandle, settings: AppSettings) -> Result<(), Strin
             serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化失败: {}", e))?;
         fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
         fs::rename(&tmp, &path).map_err(|e| format!("重命名失败: {}", e))?;
-        crate::utils::http::set_global_proxy(&settings.proxy_url);
+        opx_core::utils::http::set_global_proxy(&settings.proxy_url);
         // 立即刷新下载代理配置
-        crate::utils::download::init_download_config(settings.github_proxy_url, settings.proxy_url);
+        opx_core::utils::download::init_download_config(settings.github_proxy_url, settings.proxy_url);
         Ok(())
     })
 }
 
-const RUN_VALUE: &str = "OPX";
-
-fn run_key() -> winreg::RegKey {
-    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
-        )
-        .expect("打开注册表 Run 键失败")
-}
-
-/// 读取当前程序是否已开机自启（注册表 Run 项含 OPX）
+/// 读取当前程序是否已开机自启（跨平台：Linux XDG / macOS LaunchAgent / Windows 注册表）。
 #[tauri::command]
 pub fn get_autostart() -> bool {
-    if !cfg!(windows) {
-        return false;
-    }
-    run_key().get_value::<String, _>(RUN_VALUE).is_ok()
+    opx_core::services::autostart::current().is_enabled()
 }
 
-/// 设置开机自启（写/删注册表 Run 项，直连 WinAPI 无子进程）
+/// 设置开机自启（跨平台**用户级**，无需提权；被管软件不在此范围——由 opx 启动后按各自
+/// `auto_start_on_app_start` 配置拉起，见 `services/startup_bootstrap.rs`）。
 #[tauri::command]
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    if !cfg!(windows) {
+    let backend = opx_core::services::autostart::current();
+    if !backend.is_supported() {
         return Ok(());
     }
-    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
-    let exe_path = exe.to_string_lossy().replace('/', "\\");
-    let key = run_key();
-
     if enabled {
-        let quoted = format!("\"{}\"", exe_path);
-        key.set_value(RUN_VALUE, &quoted)
-            .map_err(|e| format!("写入注册表失败: {}", e))?;
+        let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+        backend.enable(&exe).map_err(|e| e.to_string())
     } else {
-        let _ = key.delete_value(RUN_VALUE);
+        backend.disable().map_err(|e| e.to_string())
     }
-    Ok(())
+}
+
+/// 探测端口当前是否可绑定（首启引导页保存前预检，安装引导设计 §5）。
+/// `lan=true` 试绑 0.0.0.0（局域网模式的真实绑定面），否则试绑 127.0.0.1——
+/// 与后端 web_server 降级扫描同一「真绑即真知」语义，不做 connect 类预判。
+#[tauri::command]
+pub fn check_port_free(port: u16, lan: bool) -> bool {
+    let ip = if lan { "0.0.0.0" } else { "127.0.0.1" };
+    std::net::TcpListener::bind((ip, port)).is_ok()
+}
+
+/// 读取当前 Web 访问令牌（设置页展示 + 「打开浏览器」拼 `#token=` URL 用）。
+///
+/// 桌面专属：HTTP 分发器按 `desktop_only` 注册（409）——令牌明文不得经
+/// HTTP 响应回传，重置/查看只能在桌面端进行（Web 端重置后无法把新令牌
+/// 送回浏览器，等于把所有人锁在门外）。
+#[tauri::command]
+pub fn get_web_token() -> Result<String, String> {
+    opx_http::token::load_or_generate().map_err(|e| format!("读取 token 失败: {e}"))
+}
+
+/// 重置 Web 访问令牌：重生成 → 受限写盘 → 触发 server 重启（若在跑）。
+/// 旧会话的 Bearer 立即失效（重启后的 AppState 持新 token），前端 401 后
+/// 由 TokenGate 引导重新输入。返回新令牌供设置页展示/拼 URL。
+#[tauri::command]
+pub async fn reset_web_token(app: tauri::AppHandle) -> Result<String, String> {
+    let t = opx_http::token::generate();
+    opx_http::token::store(&t).map_err(|e| format!("令牌写盘失败: {e}"))?;
+    // 强制对齐：applied 中的旧 token 与新 token 必然不同 → supervisor 语义
+    // 下 sync 会重启 server；此处直接同步调用拿到确定性的重启结果。
+    crate::services::web_server::sync(&app)?;
+    Ok(t)
+}
+
+/// 读取 Web 访问入口 URL 列表（批次 4.6，设置页「扫码访问」区用）。
+///
+/// 桌面专属（同 get_web_token：令牌明文不经 HTTP 响应回传）。返回按优先级
+/// 排列的 `#token=` 完整 URL：默认路由出口 IP（多网卡取默认路由，零依赖
+/// UDP connect trick）在前（手机扫码用）、127.0.0.1 兜底在后。
+#[tauri::command]
+pub fn get_web_access_urls() -> Result<Vec<String>, String> {
+    let s = read_settings()?;
+    let token = opx_http::token::load_or_generate().map_err(|e| format!("读取 token 失败: {e}"))?;
+    let port = s.web_port;
+    let mut hosts: Vec<String> = Vec::with_capacity(2);
+    if let Some(ip) = crate::services::web_server::outbound_ip() {
+        hosts.push(ip);
+    }
+    hosts.push("127.0.0.1".to_string());
+    Ok(hosts
+        .into_iter()
+        .map(|ip| format!("http://{ip}:{port}/#/?token={token}"))
+        .collect())
 }
 
 /// 发送测试通知：构造固定告警事件，按当前设置对启用的渠道真实发送一遍。
 /// 未配置任何渠道时报错提示。
 #[tauri::command]
 pub async fn test_alert_webhook() -> Result<(), String> {
-    let e = crate::services::system_monitor::notify::AlertEvent {
+    let e = opx_core::services::system_monitor::notify::AlertEvent {
         name: "测试".to_string(),
         metric: "cpu".to_string(),
         value: 95.0,
@@ -100,7 +126,7 @@ pub async fn test_alert_webhook() -> Result<(), String> {
     let s = read_settings()?;
     let mut sent = false;
     if !s.alert_webhook_url.trim().is_empty() {
-        crate::services::system_monitor::notify::send_webhook(
+        opx_core::services::system_monitor::notify::send_webhook(
             &s.alert_webhook_url,
             &s.alert_webhook_format,
             &s.alert_webhook_secret,
@@ -111,7 +137,7 @@ pub async fn test_alert_webhook() -> Result<(), String> {
         sent = true;
     }
     if s.smtp_enabled && !s.smtp_host.trim().is_empty() && !s.smtp_to.trim().is_empty() {
-        crate::services::system_monitor::notify::send_mail(&s, &e)
+        opx_core::services::system_monitor::notify::send_mail(&s, &e)
             .await
             .map_err(|err| format!("邮件发送失败: {:#}", err))?;
         sent = true;

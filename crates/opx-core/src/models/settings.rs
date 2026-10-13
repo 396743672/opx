@@ -1,0 +1,325 @@
+use serde::{Deserialize, Serialize};
+
+/// 关闭窗口时的默认行为
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CloseWindowAction {
+    /// 收起到系统托盘，进程存活
+    CloseToTray,
+    /// 退出程序（级联停止子服务后结束）
+    Exit,
+}
+
+impl Default for CloseWindowAction {
+    fn default() -> Self {
+        Self::CloseToTray
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub theme: String,
+    pub language: String,
+    pub sidebar_collapsed: bool,
+    pub software_root: String,
+    pub config_root: String,
+    pub mirror_url: String,
+    pub auto_check_update: bool,
+    pub close_window_action: CloseWindowAction,
+    /// 关闭窗口时是否每次弹窗询问
+    pub ask_on_close: bool,
+    pub jre_default_id: Option<String>,
+    /// GitHub 下载加速代理前缀。可填多个（换行/逗号/分号分隔）——
+    /// 下载时按顺序尝试，某个前缀重试仍失败则轮换到下一个。空=回退内置默认（ghfast.top）
+    pub github_proxy_url: String,
+    /// 全局下载代理（如 http://127.0.0.1:7890），空=直连
+    pub proxy_url: String,
+    /// 使用 Let's Encrypt 测试环境（staging）
+    #[serde(default)]
+    pub acme_use_staging: bool,
+    /// 告警阈值（百分比）。默认 90。
+    #[serde(default = "default_ninety")]
+    pub alert_system_cpu: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_system_mem: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_process_cpu: u32,
+    #[serde(default = "default_ninety")]
+    pub alert_process_mem: u32,
+    /// 指标历史保留天数（监控趋势曲线）。默认 7。
+    #[serde(default = "default_metrics_retain_days")]
+    pub metrics_retain_days: u32,
+    /// 每实例快照滚动保留数量（备份）。默认 5。
+    #[serde(default = "default_snapshot_keep")]
+    pub snapshot_keep: u32,
+    // --- 告警通知（webhook + SMTP）---
+    /// 告警 webhook URL，空 = 不发送
+    #[serde(default)]
+    pub alert_webhook_url: String,
+    /// "json" | "dingtalk" | "wecom" | "feishu"
+    #[serde(default = "default_webhook_format")]
+    pub alert_webhook_format: String,
+    /// 钉钉加签 secret（仅 dingtalk 生效，空 = 不加签）
+    #[serde(default)]
+    pub alert_webhook_secret: String,
+    #[serde(default)]
+    pub smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    #[serde(default)]
+    pub smtp_user: String,
+    /// SMTP 授权码（明文存储，UI 提示风险）
+    #[serde(default)]
+    pub smtp_pass: String,
+    /// 收件人，逗号分隔多个
+    #[serde(default)]
+    pub smtp_to: String,
+    /// SMTP 总开关：false 时即使填了配置也不发
+    #[serde(default)]
+    pub smtp_enabled: bool,
+    // --- DDNS 动态域名（与证书的 DNS 配置零耦合）---
+    #[serde(default)]
+    pub ddns_enabled: bool,
+    /// "cloudflare" | "aliyun" | "dnspod" | "huawei"
+    #[serde(default = "default_ddns_provider")]
+    pub ddns_provider: String,
+    #[serde(default)]
+    pub ddns_cloudflare_token: String,
+    #[serde(default)]
+    pub ddns_aliyun_access_key_id: String,
+    #[serde(default)]
+    pub ddns_aliyun_access_key_secret: String,
+    #[serde(default)]
+    pub ddns_dnspod_secret_id: String,
+    #[serde(default)]
+    pub ddns_dnspod_secret_key: String,
+    #[serde(default)]
+    pub ddns_huawei_access_key: String,
+    #[serde(default)]
+    pub ddns_huawei_secret_key: String,
+    /// 每行一个完整子域名（如 home.example.com）
+    #[serde(default)]
+    pub ddns_domains: Vec<String>,
+    /// 开启后额外同步 AAAA 记录
+    #[serde(default)]
+    pub ddns_enable_ipv6: bool,
+    // --- Web 管理入口（批次 4.2：仅存字段；server 启停/热生效归 4.3/4.5）---
+    /// 是否启用浏览器管理入口（默认关闭；开启后桌面壳 spawn axum server）
+    #[serde(default)]
+    pub web_enabled: bool,
+    /// HTTP 服务端口（ADR §7 #2 固定默认 17580，可配置；冲突明确报错）
+    #[serde(default = "default_web_port")]
+    pub web_port: u16,
+    /// 局域网访问开关：false 绑定 127.0.0.1（安全底线），true 绑定 0.0.0.0
+    #[serde(default)]
+    pub web_lan_access: bool,
+    /// 端口是否为自动挑选（headless 降级扫描写入，安装引导设计 §4）。
+    /// true = 非用户显式配置，后续启动若该端口再被占可继续向上扫描；
+    /// false = 用户显式配置，被占时维持 D6 明确报错、绝不静默漂移。
+    #[serde(default)]
+    pub web_port_auto: bool,
+    /// 首次运行引导状态（安装引导设计 §5）。
+    /// None = 老安装/升级（字段缺席反序列化为 None，豁免引导，避免存量安装被强制引导）；
+    /// Some(false) = 新装待引导；Some(true) = 已完成。
+    #[serde(default)]
+    pub first_run_done: Option<bool>,
+}
+
+fn default_ninety() -> u32 {
+    90
+}
+
+fn default_metrics_retain_days() -> u32 {
+    7
+}
+
+fn default_snapshot_keep() -> u32 {
+    5
+}
+
+fn default_ddns_provider() -> String {
+    "cloudflare".to_string()
+}
+
+fn default_webhook_format() -> String {
+    "json".to_string()
+}
+
+fn default_smtp_port() -> u16 {
+    465
+}
+
+/// Web 入口默认端口（ADR §7 #2：已避开被管软件全部端口）。
+/// pub 供壳层 web_server 的端口降级扫描判断「当前是否默认端口」使用。
+pub fn default_web_port() -> u16 {
+    17580
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: "auto".to_string(),
+            language: "zh-CN".to_string(),
+            sidebar_collapsed: false,
+            software_root: "apps".to_string(),
+            config_root: "config".to_string(),
+            mirror_url: "https://mirrors.aliyun.com".to_string(),
+            auto_check_update: true,
+            close_window_action: CloseWindowAction::default(),
+            ask_on_close: true,
+            jre_default_id: None,
+            github_proxy_url: "https://ghfast.top".to_string(),
+            proxy_url: String::new(),
+            acme_use_staging: false,
+            alert_system_cpu: default_ninety(),
+            alert_system_mem: default_ninety(),
+            alert_process_cpu: default_ninety(),
+            alert_process_mem: default_ninety(),
+            metrics_retain_days: default_metrics_retain_days(),
+            snapshot_keep: default_snapshot_keep(),
+            alert_webhook_url: String::new(),
+            alert_webhook_format: default_webhook_format(),
+            alert_webhook_secret: String::new(),
+            smtp_host: String::new(),
+            smtp_port: default_smtp_port(),
+            smtp_user: String::new(),
+            smtp_pass: String::new(),
+            smtp_to: String::new(),
+            smtp_enabled: false,
+            ddns_enabled: false,
+            ddns_provider: default_ddns_provider(),
+            ddns_cloudflare_token: String::new(),
+            ddns_aliyun_access_key_id: String::new(),
+            ddns_aliyun_access_key_secret: String::new(),
+            ddns_dnspod_secret_id: String::new(),
+            ddns_dnspod_secret_key: String::new(),
+            ddns_huawei_access_key: String::new(),
+            ddns_huawei_secret_key: String::new(),
+            ddns_domains: Vec::new(),
+            ddns_enable_ipv6: false,
+            web_enabled: false,
+            web_port: default_web_port(),
+            web_lan_access: false,
+            web_port_auto: false,
+            first_run_done: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_deserialize_legacy_json_without_acme_fields() {
+        // 真实旧 settings.json 的形状（不含新增三字段）
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"https://mirrors.aliyun.com",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert!(!s.acme_use_staging);
+    }
+
+    #[test]
+    fn alert_thresholds_default_to_90_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"https://mirrors.aliyun.com",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.alert_system_cpu, 90);
+        assert_eq!(s.alert_system_mem, 90);
+        assert_eq!(s.alert_process_cpu, 90);
+        assert_eq!(s.alert_process_mem, 90);
+        assert_eq!(
+            s.metrics_retain_days, 7,
+            "旧 settings.json 缺字段时回落默认 7 天"
+        );
+    }
+
+    #[test]
+    fn snapshot_keep_defaults_to_5_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.snapshot_keep, 5, "旧 settings.json 缺字段时回落默认 5");
+    }
+
+    #[test]
+    fn notify_fields_default_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert_eq!(s.alert_webhook_url, "");
+        assert_eq!(s.alert_webhook_format, "json");
+        assert_eq!(s.alert_webhook_secret, "");
+        assert_eq!(s.smtp_host, "");
+        assert_eq!(s.smtp_port, 465);
+        assert_eq!(s.smtp_user, "");
+        assert_eq!(s.smtp_pass, "");
+        assert_eq!(s.smtp_to, "");
+        assert!(!s.smtp_enabled);
+    }
+
+    #[test]
+    fn ddns_fields_default_on_legacy_json() {
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert!(!s.ddns_enabled);
+        assert_eq!(s.ddns_provider, "cloudflare");
+        assert!(s.ddns_cloudflare_token.is_empty());
+        assert!(s.ddns_aliyun_access_key_id.is_empty());
+        assert!(s.ddns_aliyun_access_key_secret.is_empty());
+        assert!(s.ddns_dnspod_secret_id.is_empty());
+        assert!(s.ddns_dnspod_secret_key.is_empty());
+        assert!(s.ddns_huawei_access_key.is_empty());
+        assert!(s.ddns_huawei_secret_key.is_empty());
+        assert!(s.ddns_domains.is_empty());
+        assert!(!s.ddns_enable_ipv6);
+    }
+
+    #[test]
+    fn web_fields_default_on_legacy_json() {
+        // 批次 4.2：旧 settings.json 不含 web_* 三字段 → 全部回落安全默认
+        let json = r#"{
+            "theme":"auto","language":"zh-CN","sidebar_collapsed":false,
+            "software_root":"apps","config_root":"config","mirror_url":"",
+            "auto_check_update":true,"close_window_action":"CloseToTray","ask_on_close":true,
+            "jre_default_id":null,"github_proxy_url":"","proxy_url":""
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("legacy settings must load");
+        assert!(!s.web_enabled, "web 入口默认关闭");
+        assert_eq!(s.web_port, 17580, "端口默认 17580（ADR §7 #2）");
+        assert!(!s.web_lan_access, "默认仅绑 127.0.0.1");
+    }
+
+    #[test]
+    fn web_fields_roundtrip_through_json() {
+        let mut s = AppSettings::default();
+        s.web_enabled = true;
+        s.web_port = 18000;
+        s.web_lan_access = true;
+        let json = serde_json::to_string(&s).expect("serialize settings");
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(back.web_enabled);
+        assert_eq!(back.web_port, 18000);
+        assert!(back.web_lan_access);
+    }
+}
