@@ -41,9 +41,10 @@
     ],
     "linux": {
       "deb": {
-        "recommends": [
+        "depends": [
           "xvfb"
         ],
+        "recommends": [],
         "files": {
           "/lib/systemd/system/opx.service": "systemd/opx.service",
           "/usr/bin/opx-svc": "linux/opx-svc.sh",
@@ -54,9 +55,10 @@
         "postRemoveScript": "deb/postrm"
       },
       "rpm": {
-        "recommends": [
+        "depends": [
           "xorg-x11-server-Xvfb"
         ],
+        "recommends": [],
         "files": {
           "/lib/systemd/system/opx.service": "systemd/opx.service",
           "/usr/bin/opx-svc": "linux/opx-svc.sh",

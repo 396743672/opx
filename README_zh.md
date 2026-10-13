@@ -216,8 +216,8 @@ npm run tauri:build
 - `opx --headless` 无窗口运行——浏览器即唯一入口（Web 管理界面，默认端口 17580）。适合无桌面环境的服务器。
 - 全新安装首启默认开启 Web 入口与局域网访问，并强制进入一次性引导页（语言 / 端口 / 局域网开关，含 HTTP 明文风险提示）。含令牌的完整访问地址会打印到控制台（systemd 下 `journalctl -u opx`）。
 - 端口冲突自愈：默认端口（17580）或自动挑选端口被占用时，自动向后重试至 17599 并回写实际端口；用户显式配置的端口被占则明确报错、绝不静默漂移。
-- Linux 包（deb / rpm）内置 systemd 单元与维护脚本（安装即 `systemctl enable --now opx`）。数据根通过 `OPX_APP_ROOT` 环境变量指向 `/var/lib/opx`——该变量可把整套便携布局（settings.json / apps / config / logs）重定向到任意目录。
-- 无显示环境下服务自动经 Xvfb 虚拟显示运行（Tauri 事件循环需要 X server）：deb/rpm 以 recommends 携带 xvfb，并内置服务启动包装脚本（有真实显示时直连）。
+- Linux 包（deb / rpm）内置 systemd 单元与维护脚本（安装即 `systemctl enable --now opx`）。数据根通过 `OPX_APP_ROOT` 环境变量指向 `/var/lib/opx`——该变量可把整套便携布局（settings.json / apps / config / logs）重定向到任意目录。未设置该变量且从系统前缀直接运行（如 `/usr/bin/opx`）时，用户级数据回退到 `$XDG_DATA_HOME/opx`（默认 `~/.local/share/opx`），不再写二进制所在目录。
+- 无显示环境下服务自动经 Xvfb 虚拟显示运行（Tauri 事件循环需要 X server）：deb/rpm 以 depends 硬依赖 xvfb，并内置服务启动包装脚本（有真实显示时直连）。
 
 ## 主题切换
 

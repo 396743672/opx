@@ -199,8 +199,8 @@ npm run tauri:build
 - `opx --headless` runs without a window — the browser is the only entry (Web management UI, default port 17580). Ideal for servers without a desktop.
 - First run on a fresh install enables the web entry and LAN access by default and forces a one-time setup page (language / port / LAN toggle with a plaintext-HTTP warning). The full URL with token is printed to the console (`journalctl -u opx` under systemd).
 - Port-conflict self-healing: if the default port (17580) or an auto-picked port is taken, the service retries the next port up to 17599 and persists the resolved one; an explicitly configured port reports an error instead of drifting.
-- Linux packages (deb / rpm) ship a systemd unit with maintainer scripts (`systemctl enable --now opx`). Data lives in `/var/lib/opx` through the `OPX_APP_ROOT` environment override — set it anywhere to relocate the whole portable layout (settings.json / apps / config / logs).
-- On display-less machines the service runs under Xvfb automatically (the Tauri event loop needs an X server): the packages recommend `xvfb` and ship a service wrapper that picks the real display when present.
+- Linux packages (deb / rpm) ship a systemd unit with maintainer scripts (`systemctl enable --now opx`). Data lives in `/var/lib/opx` through the `OPX_APP_ROOT` environment override — set it anywhere to relocate the whole portable layout (settings.json / apps / config / logs). When the binary is launched directly from a system prefix (e.g. `/usr/bin/opx`) without `OPX_APP_ROOT`, per-user data falls back to `$XDG_DATA_HOME/opx` (default `~/.local/share/opx`) instead of the unwritable binary directory.
+- On display-less machines the service runs under Xvfb automatically (the Tauri event loop needs an X server): the packages depend on `xvfb` and ship a service wrapper that picks the real display when present.
 
 ## Themes
 

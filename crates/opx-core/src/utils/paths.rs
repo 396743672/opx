@@ -12,7 +12,40 @@ pub fn app_root() -> PathBuf {
         std::env::var("OPX_APP_ROOT").ok(),
         std::env::current_exe().ok(),
         std::env::current_dir().ok(),
+        xdg_data_home(),
     )
+}
+
+/// XDG 用户数据根（Unix GUI 回退用）：`$XDG_DATA_HOME` 或 `$HOME/.local/share`。
+#[cfg(unix)]
+fn xdg_data_home() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(d));
+    }
+    std::env::var_os("HOME")
+        .filter(|s| !s.is_empty())
+        .map(|h| PathBuf::from(h).join(".local/share"))
+}
+
+#[cfg(not(unix))]
+fn xdg_data_home() -> Option<PathBuf> {
+    None
+}
+
+/// Unix 上包管理器安装前缀：exe 位于这些目录时，exe 同级目录不可写也不应写
+/// （FHS 规定 /usr 归包管理器），数据必须回退用户 XDG 目录。
+/// Windows 无此概念（恒 false）；/opt 等便携解压区不在列表（保留便携语义）。
+#[cfg(unix)]
+fn is_system_bin_dir(dir: &Path) -> bool {
+    matches!(
+        dir.to_str(),
+        Some("/usr/bin") | Some("/bin") | Some("/sbin") | Some("/usr/sbin") | Some("/usr/local/bin")
+    )
+}
+
+#[cfg(not(unix))]
+fn is_system_bin_dir(_dir: &Path) -> bool {
+    false
 }
 
 /// 纯逻辑拆出便于单测（env 为 Some 但空白时视为未设）。
@@ -20,12 +53,18 @@ fn resolve_app_root(
     env: Option<String>,
     exe: Option<PathBuf>,
     cwd: Option<PathBuf>,
+    xdg_data: Option<PathBuf>,
 ) -> PathBuf {
     if let Some(root) = env.filter(|s| !s.trim().is_empty()) {
         return PathBuf::from(root);
     }
     if let Some(exe) = exe {
         if let Some(parent) = exe.parent() {
+            if is_system_bin_dir(parent) {
+                if let Some(xdg) = xdg_data {
+                    return xdg.join("opx");
+                }
+            }
             return parent.to_path_buf();
         }
     }
@@ -214,23 +253,58 @@ mod tests {
             Some("/var/lib/opx".into()),
             Some(PathBuf::from("/usr/bin/opx")),
             Some(PathBuf::from("/tmp")),
+            None,
         );
         assert_eq!(root, PathBuf::from("/var/lib/opx"));
-        // 空白 env 视为未设 → 回落 exe 同级
+        // 空白 env 视为未设 → 回落 exe 同级（非系统前缀 /opt 保留便携语义）
         let root = resolve_app_root(
             Some("   ".into()),
-            Some(PathBuf::from("/usr/bin/opx")),
+            Some(PathBuf::from("/opt/opx/bin/opx")),
             Some(PathBuf::from("/tmp")),
+            None,
         );
-        assert_eq!(root, PathBuf::from("/usr/bin"));
+        assert_eq!(root, PathBuf::from("/opt/opx/bin"));
         // 无 env → exe 同级（便携布局原行为）
-        let root = resolve_app_root(None, Some(PathBuf::from("/opt/opx/bin/opx")), None);
+        let root = resolve_app_root(None, Some(PathBuf::from("/opt/opx/bin/opx")), None, None);
         assert_eq!(root, PathBuf::from("/opt/opx/bin"));
         // exe 缺失 → cwd 兜底
-        let root = resolve_app_root(None, None, Some(PathBuf::from("/tmp")));
+        let root = resolve_app_root(None, None, Some(PathBuf::from("/tmp")), None);
         assert_eq!(root, PathBuf::from("/tmp"));
         // 全缺 → "."
-        assert_eq!(resolve_app_root(None, None, None), PathBuf::from("."));
+        assert_eq!(resolve_app_root(None, None, None, None), PathBuf::from("."));
+    }
+
+    /// Unix 上 exe 位于包管理器前缀（/usr/bin 等）时，数据回退 XDG 用户目录，
+    /// 不再把可变数据写进 /usr/bin（FHS 违例且普通用户不可写 → 日志初始化 panic）。
+    #[cfg(unix)]
+    #[test]
+    fn app_root_falls_back_to_xdg_for_system_installed_binary() {
+        let xdg = Some(PathBuf::from("/home/u/.local/share"));
+        let root = resolve_app_root(
+            None,
+            Some(PathBuf::from("/usr/bin/opx")),
+            Some(PathBuf::from("/tmp")),
+            xdg.clone(),
+        );
+        assert_eq!(root, PathBuf::from("/home/u/.local/share/opx"));
+        // 其余系统前缀同样回退
+        for bin in ["/bin/x", "/usr/local/bin/x", "/usr/sbin/x", "/sbin/x"] {
+            let root = resolve_app_root(
+                None,
+                Some(PathBuf::from(bin)),
+                Some(PathBuf::from("/tmp")),
+                xdg.clone(),
+            );
+            assert_eq!(root, PathBuf::from("/home/u/.local/share/opx"), "bin={bin}");
+        }
+        // 拿不到 XDG/HOME（None）时维持旧行为兜底，不至于无根可用
+        let root = resolve_app_root(
+            None,
+            Some(PathBuf::from("/usr/bin/opx")),
+            Some(PathBuf::from("/tmp")),
+            None,
+        );
+        assert_eq!(root, PathBuf::from("/usr/bin"));
     }
 
     #[test]
