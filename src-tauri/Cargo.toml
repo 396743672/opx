@@ -54,17 +54,12 @@ notify = "6"
 instant-acme = "0.8"
 hmac = "0.12"
 base64 = "0.23.1"
-lettre = { version = "0.11.23", features = ["aws-lc-rs", "builder", "hostname", "pool", "smtp-transport", "tokio1", "tokio1-rustls", "webpki-roots"], default-features = false }
 sha1 = "0.10"
-keyring = "3"
-argon2 = "0.5"
-rand_core = { version = "0.6", features = ["getrandom"] }
 
 # —— 仅 Windows 依赖（Linux/macOS 打包：无条件声明会让全平台构建直接编译失败）——
 [target.'cfg(windows)'.dependencies]
-# 开机自启注册表后端（autostart/windows.rs，cfg 门控）
-winreg = "0.52"
 # 绕过 keyring 在「非域单机」上 CRED_PERSIST_ENTERPRISE 写后新实例读不回的问题，
-# 改用 CRED_PERSIST_LOCAL_MACHINE（见 lock_screen_win.rs）。版本与 keyring 依赖的 windows-sys 对齐。
+# 改用 CRED_PERSIST_LOCAL_MACHINE（实现随 lock_screen 迁入 opx-core）。windows-sys 仍留壳层：
+# lib.rs attach_console 需要（headless 分配控制台）。
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
 

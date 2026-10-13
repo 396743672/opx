@@ -17,16 +17,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use opx_core::event::{EventSink, EventSinkExt};
+use crate::event::{EventSink, EventSinkExt};
 
-use opx_core::models::startup::{
+use crate::models::startup::{
     KIND_NODE, KIND_SOFTWARE, KIND_STACK, StartupItemReport, StartupItemStatus, StartupReport,
     StartupTarget,
 };
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
 use crate::services::stack_manager::StackManager;
-use opx_core::utils::paths;
+use crate::utils::paths;
 
 /// 启动报告持久化文件名（位于 `<app_data>/`）
 const REPORT_FILE: &str = "startup_report.json";
@@ -197,7 +197,7 @@ impl StartupAction for ManagerStartup {
     fn start<'a>(&'a self, target: &'a StartupTarget) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             match target.kind.as_str() {
-                KIND_SOFTWARE => opx_core::services::software_manager::start_stop::do_start_software(
+                KIND_SOFTWARE => crate::services::software_manager::start_stop::do_start_software(
                     &self.software,
                     &self.sink,
                     &target.id,
@@ -246,7 +246,7 @@ fn stop_software(manager: &SoftwareManager, id: &str) {
             crate::services::software_manager::lifecycle::stop_one(pid);
             let _ = manager.update_runtime_fields(
                 id,
-                opx_core::models::software::SoftwareStatus::Stopped,
+                crate::models::software::SoftwareStatus::Stopped,
                 None,
                 None,
                 None,

@@ -1,7 +1,7 @@
 //! 告警通知：资源告警触发时外送 webhook / SMTP。
 //! 纯函数层（payload/签名/文案）+ 发送层（Task 3 接线）。
 
-use opx_core::models::settings::AppSettings;
+use crate::models::settings::AppSettings;
 use serde_json::json;
 
 /// 一条告警事件（recorder 触发时传入；测试命令构造假值）
@@ -101,7 +101,7 @@ pub fn parse_recipients(to: &str) -> Vec<String> {
 /// 当前唯一调用点是 `recorder::eval`（async 函数）满足此条件；若将来从同步上下文
 /// 调用，会 panic（no reactor running）——届时需改为 `Handle::try_current()` 兜底。
 pub fn dispatch(e: AlertEvent) {
-    let s = crate::commands::config::read_settings().unwrap_or_default();
+    let s = crate::utils::settings::read_settings().unwrap_or_default();
     if !s.alert_webhook_url.trim().is_empty() {
         let url = s.alert_webhook_url.clone();
         let fmt = s.alert_webhook_format.clone();
@@ -110,7 +110,7 @@ pub fn dispatch(e: AlertEvent) {
         tokio::spawn(async move {
             if let Err(err) = send_webhook(&url, &fmt, &sec, &ev).await {
                 tracing::warn!(error = %err, "告警 webhook 发送失败");
-                opx_core::oplog_fail!("webhook_failed", "webhook", "", &format!("{}", err));
+                crate::oplog_fail!("webhook_failed", "webhook", "", &format!("{}", err));
             }
         });
     }
@@ -119,7 +119,7 @@ pub fn dispatch(e: AlertEvent) {
         tokio::spawn(async move {
             if let Err(err) = send_mail(&smtp, &e).await {
                 tracing::warn!(error = %err, "告警邮件发送失败");
-                opx_core::oplog_fail!("webhook_failed", "smtp", "", &format!("{}", err));
+                crate::oplog_fail!("webhook_failed", "smtp", "", &format!("{}", err));
             }
         });
     }
@@ -137,7 +137,7 @@ pub async fn send_webhook(
     let (full_url, body) = build_webhook(format, url, secret, ts, e);
     // 走共享工厂：reqwest 默认读 ALL_PROXY 等环境变量，会把直连可通的 webhook
     // 交给环境里的 HTTP 代理（不支持 CONNECT 到 443）而失败
-    let resp = opx_core::utils::http::builder()
+    let resp = crate::utils::http::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?
         .post(&full_url)

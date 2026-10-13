@@ -8,7 +8,7 @@ use crate::api::Registry;
 use crate::context::AppContext;
 use crate::ticket::TicketStore;
 use crate::token;
-use crate::sinks::WsEventSink;
+use crate::WsEventSink;
 use axum::extract::{Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;

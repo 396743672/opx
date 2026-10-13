@@ -26,7 +26,7 @@ zip = { version = "0.6", default-features = false, features = ["deflate", "bzip2
 tar = "0.4"
 flate2 = "1.0"
 lzma-rs = "0.3"
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 # —— 阶段 3批次 3A1：随 providers / catalog / log_viewer 迁入 ——
 # 版本与壳层 src-tauri/Cargo.toml 逐一对齐，避免 workspace 内出现双份/类型不匹配。
 # regex —— log_viewer 的行过滤（`LineFilter` 的关键字正则与级别正则）+ providers 的
@@ -76,6 +76,15 @@ walkdir = "2.0"
 #         与 catalog/provider 声明的期望值比对，不匹配即拒装。
 sha2 = "0.10"
 
+# —— 阶段 1.3：随 lock_screen / autostart 迁入（锁屏 + 开机自启）——
+# keyring —— lock_screen 的 macOS/Linux 凭据库存取（Secret Service / Keychain）
+keyring = "3"
+# argon2 —— lock_screen 的 Argon2id 派生（verifier PHC 字符串）
+argon2 = "0.5"
+# rand_core 已随 Nacos 认证声明于上方，lock_screen 的 OsRng 复用，不重复声明。
+# lettre —— system_monitor/notify.rs 的 SMTP 邮件告警（aws-lc-rs + rustls，无 OpenSSL 依赖）
+lettre = { version = "0.11.23", features = ["aws-lc-rs", "builder", "hostname", "pool", "smtp-transport", "tokio1", "tokio1-rustls", "webpki-roots"], default-features = false }
+
 # —— 仅 Windows 依赖（P3：Windows-only 必须放 target 段，无条件声明会让
 #     deb/rpm 构建直接编译失败）——
 # paths.rs 的 Windows 分支（长路径 / 文件属性）需要；非 Windows 下为 stub。
@@ -84,4 +93,7 @@ sha2 = "0.10"
 # ⚠️ 批次 3B 之前本feature 只在壳层声明，靠 workspace 的 feature 统一化才让 core 编译通过，
 #导致 `cargo check -p opx-core` 单独构建失败（core 无法自包含）。3B 起必须在 core 自己声明。
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp"] }
+# autostart/windows.rs —— HKCU Run 注册表项
+winreg = "0.52"
+# lock_screen_win.rs —— 凭据库 CRED_*（Win32_Security_Credentials）
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_Security_Credentials"] }

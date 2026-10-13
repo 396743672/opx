@@ -1,4 +1,4 @@
-use crate::services::lock_screen as ls;
+use opx_core::services::lock_screen as ls;
 
 /// 设置或更新锁屏密码（≥6 位）。空锁→开启，已有锁→更换。
 #[tauri::command]

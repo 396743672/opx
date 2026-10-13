@@ -4,9 +4,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use opx_core::event::EventSink;
+use crate::event::EventSink;
 
-use opx_core::models::system::HistoryPoint;
+use crate::models::system::HistoryPoint;
 use crate::services::software_manager::{process_monitor, SoftwareManager};
 use crate::services::springboot_manager::SpringBootManager;
 use crate::services::system_monitor::{alerts, history, info};
@@ -35,7 +35,7 @@ async fn sample_once(
     springboot: &Arc<SpringBootManager>,
     alerting: &mut HashSet<String>,
 ) {
-    let thresholds = crate::commands::config::read_settings().unwrap_or_default();
+    let thresholds = crate::utils::settings::read_settings().unwrap_or_default();
     // 走低频专用实例：增量窗口 = 真实 30s（与实时轮询的 ~1s 窗口隔离，
     // 历史曲线「30s 平均」语义才成立，也才能与任务管理器稳定对照）
     let sys = info::sample_system_slow();
@@ -44,14 +44,14 @@ async fn sample_once(
     // 运行中实例：(显示名, pid)
     let mut targets: Vec<(String, u32)> = Vec::new();
     for sw in software.get_installed() {
-        if sw.status == opx_core::models::software::SoftwareStatus::Running {
+        if sw.status == crate::models::software::SoftwareStatus::Running {
             if let Some(pid) = sw.pid {
                 targets.push((sw.name.clone(), pid));
             }
         }
     }
     for sb in springboot.snapshot_apps() {
-        if sb.status == opx_core::models::springboot::AppStatus::Running {
+        if sb.status == crate::models::springboot::AppStatus::Running {
             if let Some(pid) = sb.pid {
                 targets.push((sb.name.clone(), pid));
             }
@@ -164,7 +164,7 @@ fn eval(
 ) {
     if alerts::should_alert(value, threshold, alerting.contains(key)) {
         alerting.insert(key.to_string());
-        opx_core::oplog!(
+        crate::oplog!(
             "alert_high",
             &format!(
                 "{} {} {}%（阈值 {}%）",
@@ -186,7 +186,7 @@ fn eval(
         });
     } else if alerting.contains(key) && alerts::is_recovered(value, threshold) {
         alerting.remove(key);
-        opx_core::oplog!(
+        crate::oplog!(
             "alert_recovered",
             &format!("{} {} {}%", name, metric, value.round())
         );

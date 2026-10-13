@@ -9,7 +9,7 @@
 //!
 //! ## WS 消息格式定稿（供 4.4 前端 HttpTransport 对接）
 //!
-//! **一帧一条 JSON 文本**，信封形状（与 [`crate::sinks::WsEventSink::emit`]
+//! **一帧一条 JSON 文本**，信封形状（与 [`opx_core::event::sinks::WsEventSink::emit`]
 //! 产出一致，与 Tauri `emit(event, payload)` 语义对齐）：
 //!
 //! ```json
@@ -21,7 +21,7 @@
 //!
 //! ## 生命周期
 //!
-//! 握手成功 → [`crate::sinks::WsEventSink::subscribe`] 取接收端挂进广播组 →
+//! 握手成功 → [`opx_core::event::sinks::WsEventSink::subscribe`] 取接收端挂进广播组 →
 //! 循环转发（per-client bounded(64)，慢客户端丢弃不阻塞，R3）→ 客户端断开
 //! → `unsubscribe` 摘除 + channel 关闭。
 

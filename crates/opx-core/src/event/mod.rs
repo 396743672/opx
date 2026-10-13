@@ -3,6 +3,13 @@
 //! core 内部**只依赖本 trait**，不感知宿主壳：桌面壳转发 Tauri 事件总线，
 //! headless 壳（`opx-server`）则广播给 WebSocket 订阅者。这是「同一后端进程 +
 //! 两个 UI 入口」形态能成立的前提。
+//!
+//! 阶段 1.3：`sinks`（FanOutSink 组合广播 / WsEventSink WS 广播）自 opx-http
+//! 下沉至此——它只依赖本 trait + tokio mpsc，零 axum 耦合；下沉让
+//! system_monitor / watchdog / startup_bootstrap 等事件产出方得以整体迁入 core
+//! （此前它们因 WsEventSink 住在 opx-http 而被反向依赖卡住）。
+
+pub mod sinks;
 
 use serde_json::Value;
 use std::path::PathBuf;

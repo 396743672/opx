@@ -3039,7 +3039,6 @@ name = "opx"
 version = "0.5.1"
 dependencies = [
  "anyhow",
- "argon2",
  "base64 0.23.1",
  "chrono",
  "encoding_rs",
@@ -3047,14 +3046,11 @@ dependencies = [
  "futures",
  "hmac",
  "instant-acme",
- "keyring",
- "lettre",
  "lzma-rs",
  "notify",
  "once_cell",
  "opx-core",
  "opx-http",
- "rand_core 0.6.4",
  "rcgen 0.13.2",
  "regex",
  "reqwest",
@@ -3079,7 +3075,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "windows-sys 0.52.0",
- "winreg 0.52.0",
  "zip 0.6.6",
 ]
 
@@ -3088,6 +3083,7 @@ name = "opx-core"
 version = "0.5.1"
 dependencies = [
  "anyhow",
+ "argon2",
  "base64 0.23.1",
  "chrono",
  "encoding_rs",
@@ -3095,6 +3091,8 @@ dependencies = [
  "futures",
  "hmac",
  "instant-acme",
+ "keyring",
+ "lettre",
  "lzma-rs",
  "once_cell",
  "rand_core 0.6.4",
@@ -3113,6 +3111,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "windows-sys 0.52.0",
+ "winreg 0.52.0",
  "zip 0.6.6",
 ]
 

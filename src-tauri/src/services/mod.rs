@@ -1,10 +1,5 @@
-pub mod autostart;
-pub mod lock_screen;
 pub mod web_server;
 pub mod software_manager;
-pub mod startup_bootstrap;
-pub mod system_monitor;
-pub mod watchdog;
 
 // —— 批次 4B：springboot_manager / node_app_manager 已搬入 core，整模块重导出 ——
 // 使 commands/springboot.rs（~15 处全路径）、commands/node_app.rs 及 lib.rs 的

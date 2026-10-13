@@ -6,7 +6,7 @@
 //! - [`WsEventSink`]：把事件广播给 WebSocket 订阅者 —— headless/浏览器侧
 //!   的事件出口；per-client bounded channel 满则丢弃（R3 背压对策）。
 
-use opx_core::event::EventSink;
+use crate::event::EventSink;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -139,7 +139,7 @@ impl EventSink for WsEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opx_core::event::EventSinkExt;
+    use crate::event::EventSinkExt;
 
     /// 简单记录型 sink：验证 FanOut 的转发顺序与逐份投递。
     #[derive(Default)]

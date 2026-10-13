@@ -31,7 +31,6 @@
 pub mod api;
 pub mod auth;
 pub mod context;
-pub mod sinks;
 pub mod static_files;
 pub mod ticket;
 pub mod token;
@@ -44,7 +43,9 @@ use serde_json::json;
 pub use api::{ApiError, Registry};
 pub use auth::AppState;
 pub use context::AppContext;
-pub use sinks::{FanOutSink, WsEventSink};
+// 阶段 1.3：FanOutSink/WsEventSink 下沉 opx-core（零 axum 耦合），此处保留
+// re-export 兼容既有 `opx_http::WsEventSink` 引用（壳层 web_server 等）。
+pub use opx_core::event::sinks::{FanOutSink, WsEventSink};
 pub use ticket::TicketStore;
 
 /// `/api/health`：无业务语义的存活探针（受 Bearer 保护）。

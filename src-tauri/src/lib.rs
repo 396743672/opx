@@ -385,7 +385,7 @@ fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::er
     let node_exe_for_boot = node_exe.clone();
     let boot_sink = ctx_sink.clone();
     tauri::async_runtime::spawn(async move {
-        crate::services::startup_bootstrap::run_bootstrap(
+        opx_core::services::startup_bootstrap::run_bootstrap(
             sw_mgr_arc,
             node_mgr_arc,
             stack_mgr_arc,
@@ -437,7 +437,7 @@ fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::er
     let wd_sink = ctx_sink.clone();
     let wd_node_exe = node_exe.clone();
     tauri::async_runtime::spawn(async move {
-        crate::services::watchdog::run_watchdog(
+        opx_core::services::watchdog::run_watchdog(
             wd_software,
             wd_springboot,
             wd_node,
@@ -460,7 +460,7 @@ fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::er
         .inner()
         .clone();
     tauri::async_runtime::spawn(async move {
-        crate::services::system_monitor::recorder::run_recorder(rec_sink, rec_sw, rec_sb)
+        opx_core::services::system_monitor::recorder::run_recorder(rec_sink, rec_sw, rec_sb)
             .await;
     });
 

@@ -41,14 +41,14 @@ pub fn save_settings(settings: AppSettings) -> Result<(), String> {
 /// 读取当前程序是否已开机自启（跨平台：Linux XDG / macOS LaunchAgent / Windows 注册表）。
 #[tauri::command]
 pub fn get_autostart() -> bool {
-    crate::services::autostart::current().is_enabled()
+    opx_core::services::autostart::current().is_enabled()
 }
 
 /// 设置开机自启（跨平台**用户级**，无需提权；被管软件不在此范围——由 opx 启动后按各自
 /// `auto_start_on_app_start` 配置拉起，见 `services/startup_bootstrap.rs`）。
 #[tauri::command]
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    let backend = crate::services::autostart::current();
+    let backend = opx_core::services::autostart::current();
     if !backend.is_supported() {
         return Ok(());
     }
@@ -117,7 +117,7 @@ pub fn get_web_access_urls() -> Result<Vec<String>, String> {
 /// 未配置任何渠道时报错提示。
 #[tauri::command]
 pub async fn test_alert_webhook() -> Result<(), String> {
-    let e = crate::services::system_monitor::notify::AlertEvent {
+    let e = opx_core::services::system_monitor::notify::AlertEvent {
         name: "测试".to_string(),
         metric: "cpu".to_string(),
         value: 95.0,
@@ -126,7 +126,7 @@ pub async fn test_alert_webhook() -> Result<(), String> {
     let s = read_settings()?;
     let mut sent = false;
     if !s.alert_webhook_url.trim().is_empty() {
-        crate::services::system_monitor::notify::send_webhook(
+        opx_core::services::system_monitor::notify::send_webhook(
             &s.alert_webhook_url,
             &s.alert_webhook_format,
             &s.alert_webhook_secret,
@@ -137,7 +137,7 @@ pub async fn test_alert_webhook() -> Result<(), String> {
         sent = true;
     }
     if s.smtp_enabled && !s.smtp_host.trim().is_empty() && !s.smtp_to.trim().is_empty() {
-        crate::services::system_monitor::notify::send_mail(&s, &e)
+        opx_core::services::system_monitor::notify::send_mail(&s, &e)
             .await
             .map_err(|err| format!("邮件发送失败: {:#}", err))?;
         sent = true;
