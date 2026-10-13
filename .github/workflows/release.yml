@@ -182,7 +182,7 @@ jobs:
           Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item "bundle-dist/$zip").Length)
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bundles-${{ matrix.label }}
           path: bundle-dist/
@@ -206,7 +206,7 @@ jobs:
           node-version: 22
 
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: bundle-dist
           pattern: bundles-*
