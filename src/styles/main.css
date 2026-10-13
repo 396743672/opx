@@ -9,7 +9,8 @@
 @theme {
   /* 字体 */
   --font-sans: system-ui, 'Segoe UI', 'Inter', 'PingFang SC',
-    'Microsoft YaHei', sans-serif;
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC',
+    'WenQuanYi Micro Hei', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono',
     'Consolas', monospace;
 

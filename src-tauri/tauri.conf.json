@@ -44,7 +44,9 @@
         "depends": [
           "xvfb"
         ],
-        "recommends": [],
+        "recommends": [
+          "fonts-noto-cjk"
+        ],
         "files": {
           "/lib/systemd/system/opx.service": "systemd/opx.service",
           "/usr/bin/opx-svc": "linux/opx-svc.sh",
@@ -58,7 +60,9 @@
         "depends": [
           "xorg-x11-server-Xvfb"
         ],
-        "recommends": [],
+        "recommends": [
+          "google-noto-sans-cjk-fonts"
+        ],
         "files": {
           "/lib/systemd/system/opx.service": "systemd/opx.service",
           "/usr/bin/opx-svc": "linux/opx-svc.sh",

@@ -218,6 +218,7 @@ npm run tauri:build
 - 端口冲突自愈：默认端口（17580）或自动挑选端口被占用时，自动向后重试至 17599 并回写实际端口；用户显式配置的端口被占则明确报错、绝不静默漂移。
 - Linux 包（deb / rpm）内置 systemd 单元与维护脚本（安装即 `systemctl enable --now opx`）。数据根通过 `OPX_APP_ROOT` 环境变量指向 `/var/lib/opx`——该变量可把整套便携布局（settings.json / apps / config / logs）重定向到任意目录。未设置该变量且从系统前缀直接运行（如 `/usr/bin/opx`）时，用户级数据回退到 `$XDG_DATA_HOME/opx`（默认 `~/.local/share/opx`），不再写二进制所在目录。
 - 无显示环境下服务自动经 Xvfb 虚拟显示运行（Tauri 事件循环需要 X server）：deb/rpm 以 depends 硬依赖 xvfb，并内置服务启动包装脚本（有真实显示时直连）。
+- 中文界面依赖系统 CJK 字体：deb/rpm 以 recommends 推荐中文字体（Debian/Ubuntu 为 `fonts-noto-cjk`，Fedora/openSUSE 为 `google-noto-sans-cjk-fonts`），`apt`/`dnf` 默认随之安装。最小化系统（如精简服务器、WSL 全新镜像）若未装任何中文字体，界面中文会显示为方框 —— 属**缺字形**，非编码问题，手动 `apt install fonts-noto-cjk` 即可。
 
 ## 主题切换
 
