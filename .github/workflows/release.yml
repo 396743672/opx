@@ -5,6 +5,12 @@ name: Release
 # 版本号取自 src-tauri/tauri.conf.json：若 v<版本> 这个 tag 已存在，说明该版本发过，直接跳过，
 # 因此日常往 master 合并「不该发版的改动」也不会重复发布；要发版就把版本号改大。
 # 另保留 workflow_dispatch，必要时可在 Actions 页面手动触发。
+#
+# 三平台构建（matrix，任一平台失败则整体不发布，避免发布残缺版本）：
+#   Windows  → nsis + msi + portable zip（updater 用 nsis，见 merge-latest.mjs）
+#   Linux    → deb + rpm + AppImage（deb/rpm 供包管理器安装；AppImage 供自动更新）
+#   macOS    → universal dmg（Intel + Apple Silicon 一条构建；无签名证书，首次打开需右键）
+# 各平台产物先存 artifact，再由 publish job 统一创建 Release 并合并多平台 latest.json。
 on:
   push:
     branches: [master]
@@ -20,7 +26,7 @@ concurrency:
 
 jobs:
   # 先解析版本号并判断是否已发布。这一步很轻（ubuntu + 几十秒），
-  # 版本没变时 release job 整条被跳过，不用白等 20 多分钟的 Windows 构建。
+  # 版本没变时整条发版流水线被跳过，不用白等各平台构建。
   version:
     name: Resolve version
     runs-on: ubuntu-latest
@@ -47,13 +53,32 @@ jobs:
             echo "::notice::将发布 v$VERSION"
           fi
 
-  release:
-    name: Build and publish
+  build:
+    name: Build (${{ matrix.label }})
     needs: version
     if: needs.version.outputs.skip != 'true'
-    runs-on: windows-latest
+    strategy:
+      # 不 fail-fast：一个平台挂掉时其他平台照常构建完，日志集中好定位；
+      # 但 publish 依赖全部 build 成功，残缺版本不会被发布。
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows
+            os: windows-latest
+            bundles: nsis,msi
+          - label: linux
+            os: ubuntu-latest
+            bundles: deb,rpm,appimage
+          - label: macos
+            os: macos-latest
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      # 私钥为空密码密钥：必须显式提供空密码环境变量，
+      # 否则 tauri-cli 在打包尾声交互式索要密码，CI 无 TTY 将直接失败。
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -67,18 +92,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install frontend deps
-        run: npm ci
-
       # 快速失败：先用密钥签一个临时文件。若 Secret 缺失/名字写错，这里 10 秒内报错，
-      # 不必等 25 分钟的 release 构建跑完才发现签名不可用。
-      # 注意：私钥为「空密码」密钥，必须显式提供 TAURI_SIGNING_PRIVATE_KEY_PASSWORD；
-      # tauri-cli 在密码环境变量缺失时会转而交互式索要密码，CI 无 TTY 将直接失败。
+      # 不必等 20 多分钟的构建跑完才发现签名不可用。
       - name: Preflight - verify updater signing key
         shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: |
           set -e
           echo "TAURI_SIGNING_PRIVATE_KEY length: ${#TAURI_SIGNING_PRIVATE_KEY}"
@@ -91,62 +108,153 @@ jobs:
           rm -f ./.preflight.bin ./.preflight.bin.sig
           echo "signing key OK"
 
-      # 产出三种资产：setup.exe(NSIS) + .msi(WiX) + 各自的 .sig，以及 latest.json。
-      # ⚠️ updaterJsonPreferNsis 必须为 true：该 input 默认 false，而同时存在 nsis 与 msi 时，
-      # 默认行为会让 latest.json 的 windows-x86_64 指向 .msi —— 老用户是 NSIS 装的，
-      # 更新时会被 msiexec 再装一遍，造成双份安装。置 true 后 windows-x86_64 仍指向 setup.exe。
-      - name: Build, sign and publish release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        with:
-          projectPath: ./src-tauri
-          tagName: 'v__VERSION__'
-          releaseName: 'opx v__VERSION__'
-          # releaseBody 同样支持 __VERSION__ 占位（tauri-action 以 info.version 全局替换，
-          # 见 index.ts 中 tagName/releaseName/body 三处 replace）。资产名形如
-          # opx_0.5.0_x64-setup.exe，故模板写 opx___VERSION___x64-…（前后各一个下划线）。
-          releaseBody: |
-            自动构建的 Windows 发布包（v__VERSION__），按需选择：
+      - name: Install frontend deps
+        run: npm ci
 
-            - `opx___VERSION___x64-setup.exe` — NSIS 安装版，推荐；已安装用户可在应用内「设置 → 应用更新」一键升级
-            - `opx___VERSION___x64_en-US.msi` — WiX/MSI 安装版，适合企业批量部署与静默安装
-            - `opx___VERSION___x64-portable.zip` — 免安装便携版，解压即用；不含自动更新，新版需手动下载
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
-          args: --bundles nsis,msi
+      # Linux 构建依赖（Tauri v2）：webkit2gtk 4.1 + gtk3 + appindicator + rsvg；
+      # rpm 打包需要 rpmbuild（rpm 包）。AppImage 打包不需要 fuse（运行才需要）。
+      - name: Install Linux build dependencies
+        if: matrix.label == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm
+
+      # macOS universal：一条构建同时覆盖 Intel(x86_64) 与 Apple Silicon(aarch64)，
+      # 产物 opx_universal.app.tar.gz / opx_<v>_universal.dmg，
+      # latest.json 的 darwin 两个平台键都指向同一产物（见 merge-latest.mjs）。
+      # universal target 要求两个 rust target 已安装。
+      - name: Add macOS rust targets
+        if: matrix.label == 'macos'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Build bundles (macOS universal)
+        if: matrix.label == 'macos'
+        working-directory: src-tauri
+        run: npx tauri build --bundles ${{ matrix.bundles }} --target universal-apple-darwin
+
+      - name: Build bundles (Windows / Linux)
+        if: matrix.label != 'macos'
+        working-directory: src-tauri
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      # 收集本平台全部产物：安装包/压缩包、.sig 签名、updater tar.gz。
+      # macOS universal target 的产物在 target/universal-apple-darwin/release 下。
+      - name: Collect bundle artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "${{ matrix.label }}" = "macos" ]; then
+            base="src-tauri/target/universal-apple-darwin/release/bundle"
+          else
+            base="src-tauri/target/release/bundle"
+          fi
+          find "$base" -type f \( \
+            -name '*.exe' -o -name '*.msi' -o -name '*.zip' -o -name '*.tar.gz' \
+            -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \
+            -o -name '*.sig' \) -exec cp {} dist/ \;
+          echo "=== collected ($(ls dist/ | wc -l) files) ==="
+          ls -la dist/
 
       # 便携版：Tauri 的 bundle target 里没有 zip（合法值只有 nsis/msi/app/dmg/deb/rpm/appimage），
-      # 所以这里自行把编译产物 opx.exe 打成 zip 并补传到同一个 Release。
-      # 路径 target/release/opx.exe 由 tauri-action 的 projectPath=./src-tauri 决定。
+      # 自行把编译产物 opx.exe 打成 zip，与安装包一并发布。
       - name: Package portable (no-install) zip
+        if: matrix.label == 'windows'
         shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           $exe = 'src-tauri/target/release/opx.exe'
           if (-not (Test-Path $exe)) { throw "未找到便携版二进制: $exe" }
           $zip = "opx_${env:VERSION}_x64-portable.zip"
           Compress-Archive -LiteralPath $exe -DestinationPath $zip -Force
-          Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item $zip).Length)
-          gh release upload "v$env:VERSION" $zip --clobber
+          Move-Item $zip dist/ -Force
+          Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item "dist/$zip").Length)
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.label }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [version, build]
+    if: needs.version.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: bundles-*
+          merge-multiple: true
+
+      # 发布说明写在仓库根目录（勿入 dist，否则会被当作资产上传）
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          自动构建的跨平台发布包，按需选择：
+
+          **Windows**
+          - `opx___VERSION___x64-setup.exe` — NSIS 安装版，推荐；已安装用户可在应用内「设置 → 应用更新」一键升级
+          - `opx___VERSION___x64_en-US.msi` — WiX/MSI 安装版，适合企业批量部署与静默安装
+          - `opx___VERSION___x64-portable.zip` — 免安装便携版，解压即用；不含自动更新，新版需手动下载
+
+          **Linux**
+          - `opx___VERSION___amd64.deb` — Debian/Ubuntu（dpkg/apt；自动带 xvfb 依赖，建议另装 `fonts-noto-cjk` 以显示中文）
+          - `opx___VERSION___x86_64.rpm` — Fedora/RHEL/openSUSE
+          - `opx___VERSION___amd64.AppImage` — 免安装，解压赋权即用（需 fuse2）；AppImage 用户可走应用内自动更新
+          - deb/rpm 安装由系统包管理器负责升级，不参与应用内自动更新
+
+          **macOS**
+          - `opx___VERSION___universal.dmg` — Intel + Apple Silicon 通用包；未签名，首次打开请右键「打开」
+          - macOS 自动更新可能受未签名限制，如失败请手动下载新版 dmg 覆盖
+
+          ---
+          版本内容见提交历史。
+          EOF
+          sed -i "s/__VERSION__/$VERSION/g" release-notes.md
+          echo "=== release-notes.md ==="
+          cat release-notes.md
+
+      # 汇总三平台产物为一份多平台 latest.json（updater 端点只认这一个文件）
+      - name: Merge multi-platform latest.json
+        run: |
+          node scripts/merge-latest.mjs dist "v$VERSION" dist/latest.json release-notes.md
 
       # 生成 ghfast.top 镜像版 latest.json（内部安装包 url 也走镜像），与原始 latest.json 一并发布，
       # 使国内用户在无 VPN、未配全局代理时也能经 GitHub 加速镜像完成更新。
       - name: Publish ghfast.top mirror latest.json
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          node scripts/make-ghproxy-latest.mjs dist/latest.json
+
+      - name: Create release and upload assets
+        shell: bash
+        run: |
+          set -euo pipefail
           TAG="v$VERSION"
-          echo "release tag: $TAG"
-          mkdir -p dist-updater
-          gh release download "$TAG" -p 'latest.json' --dir dist-updater --clobber
-          node scripts/make-ghproxy-latest.mjs dist-updater/latest.json
-          gh release upload "$TAG" dist-updater/latest-ghproxy.json --clobber
+          gh release create "$TAG" dist/* \
+            --title "opx $VERSION" \
+            --notes-file release-notes.md
+          echo "=== release $TAG created ==="
+          gh release view "$TAG" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes"'
