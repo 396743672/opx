@@ -92,6 +92,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # 先装前端依赖再跑预检：tauri cli 来自 devDependencies 的 @tauri-apps/cli，
+      # npx 依赖 node_modules 已就位（曾因预检前置在 npm ci 之前导致三平台全挂）。
+      - name: Install frontend deps
+        run: npm ci
+
       # 快速失败：先用密钥签一个临时文件。若 Secret 缺失/名字写错，这里 10 秒内报错，
       # 不必等 20 多分钟的构建跑完才发现签名不可用。
       - name: Preflight - verify updater signing key
@@ -107,9 +112,6 @@ jobs:
           npx tauri signer sign ./.preflight.bin
           rm -f ./.preflight.bin ./.preflight.bin.sig
           echo "signing key OK"
-
-      - name: Install frontend deps
-        run: npm ci
 
       # Linux 构建依赖（Tauri v2）：webkit2gtk 4.1 + gtk3 + appindicator + rsvg；
       # rpm 打包需要 rpmbuild（rpm 包）。AppImage 打包不需要 fuse（运行才需要）。
