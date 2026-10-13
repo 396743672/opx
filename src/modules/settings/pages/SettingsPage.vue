@@ -450,16 +450,111 @@
             </div>
           </div>
         </div>
+
+        <!-- Web 管理入口（批次 4.5：server 生命周期由后端 supervisor 热生效，
+             本组补 token 查看/重置 + 打开浏览器 + LAN 强提示 + 启动失败横幅） -->
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('webGroup') }}</h3>
+        </div>
+        <div
+          v-if="webServerErrorMsg"
+          class="mx-5 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-start gap-2"
+        >
+          <Icon icon="mdi:alert-circle-outline" class="text-base flex-shrink-0" />
+          <span>{{ $t('webServerError', { msg: webServerErrorMsg }) }}</span>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1">
+              <span class="text-sm">{{ $t('webEnabled') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('webEnabledHint') }}</div>
+            </div>
+            <SwitchBtn v-model="webEnabledValue" />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <span class="text-sm">{{ $t('webPort') }}</span>
+            <input
+              v-model.number="webPortValue"
+              type="number"
+              min="1"
+              max="65535"
+              class="h-8 px-2 w-24 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+              @input="webPortTouched = true"
+            />
+          </div>
+          <div class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1">
+              <span class="text-sm">{{ $t('webLanAccess') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('webLanAccessHint') }}</div>
+            </div>
+            <SwitchBtn v-model="webLanAccessValue" />
+          </div>
+          <!-- LAN 强提示（D6/风险对策：HTTP 明文，同网段可嗅探 token） -->
+          <div v-if="webLanAccessValue" class="flex items-start gap-2 py-3 text-xs text-destructive">
+            <Icon icon="mdi:alert-outline" class="text-base flex-shrink-0" />
+            <span>{{ $t('webLanWarning') }}</span>
+          </div>
+          <!-- token 查看/重置 + 打开浏览器：桌面专属（token 明文不经 HTTP 回传，
+               Web 端重置后新令牌无法送回浏览器） -->
+          <div v-if="isDesktop" class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-sm">{{ $t('webTokenLabel') }}</span>
+              <div class="text-xs text-muted-foreground font-mono break-all">{{ webToken || '—' }}</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <button class="btn text-xs h-7 px-2" :disabled="!webToken" @click="openWebUi">
+                <Icon icon="mdi:open-in-new" />
+                {{ $t('webOpenBrowser') }}
+              </button>
+              <template v-if="!webResetConfirming">
+                <button class="btn text-xs h-7 px-2" @click="webResetConfirming = true">
+                  {{ $t('webResetToken') }}
+                </button>
+              </template>
+              <template v-else>
+                <button class="btn text-xs h-7 px-2" :disabled="webResetting" @click="resetWebToken">
+                  {{ webResetting ? $t('webResetting') : $t('webResetTokenOk') }}
+                </button>
+                <button class="btn text-xs h-7 px-2" @click="webResetConfirming = false">
+                  {{ $t('lockCancel') }}
+                </button>
+              </template>
+            </div>
+          </div>
+          <!-- 扫码访问（批次 4.6）：手机相机扫码直达（#token= 自动登录）。
+               二维码内容为默认路由出口 IP 的 LAN URL（get_web_access_urls）；
+               无出口 IP（离线/单机）时隐藏 -->
+          <div v-if="webQrDataUrl" class="flex items-center justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1.5 min-w-0">
+              <span class="text-sm">{{ $t('webScanTitle') }}</span>
+              <div class="text-xs text-muted-foreground break-all font-mono">{{ webLanUrl }}</div>
+              <button class="btn text-xs h-7 px-2 self-start" @click="copyWebUrl">
+                <Icon icon="mdi:content-copy" />
+                {{ $t('webCopyAddress') }}
+              </button>
+            </div>
+            <img
+              :src="webQrDataUrl"
+              :alt="$t('webScanTitle')"
+              class="w-[110px] h-[110px] rounded-lg border border-border flex-shrink-0"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { Icon } from '@iconify/vue'
+import QRCode from 'qrcode'
 import { invoke } from '@/utils/ipc'
+import { listen, isDesktop, type UnlistenFn } from '@/utils/transport'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { toast } from '@/composables/useToast'
 import { useSettingsStore } from '@/stores/settings'
 import { useLockStore } from '@/stores/lock'
 import { CloseWindowAction, type ThemeMode, type Language } from '@/models/settings'
@@ -533,6 +628,68 @@ const ddnsIpv6Value = ref(false)
 const ddnsSyncing = ref(false)
 const ddnsSyncResult = ref('')
 const ddnsSyncOk = ref(false)
+// Web 管理入口（批次 4.2：仅存储字段；批次 4.5：token/打开浏览器/错误横幅）
+const webEnabledValue = ref(false)
+const webPortValue = ref(17580)
+const webLanAccessValue = ref(false)
+// 用户手动改过端口 → 保存时清除 web_port_auto（端口从此视为显式配置，
+// 被占时后端 D6 报错而非继续降级。安装引导设计 §4 契约）
+const webPortTouched = ref(false)
+const webToken = ref('')
+const webServerErrorMsg = ref('')
+const webResetConfirming = ref(false)
+const webResetting = ref(false)
+// 扫码访问（批次 4.6）
+const webLanUrl = ref('')
+const webQrDataUrl = ref('')
+let unlistenServerError: UnlistenFn | null = null
+
+async function openWebUi() {
+  if (!webToken.value) return
+  const port = webPortValue.value || 17580
+  // fragment 传 token：不随请求上送、不入访问日志（设计 D3 / ADR §3.4）。
+  // router 兼容形态 `#/?token=`：裸 `#token=` 会被 hash 路由当路径改写销毁
+  const url = `http://127.0.0.1:${port}/#/?token=${webToken.value}`
+  openUrl(url).catch(() => {})
+}
+
+async function resetWebToken() {
+  webResetting.value = true
+  try {
+    await invoke('reset_web_token')
+    webToken.value = await invoke<string>('get_web_token')
+    webResetConfirming.value = false
+    toast(t('webResetDone'), 'ok')
+  } catch (e) {
+    toast(typeof e === 'string' ? e : String((e as Error)?.message ?? e), 'err')
+  } finally {
+    webResetting.value = false
+  }
+}
+
+/** 扫码地址一键复制（批次 4.6） */
+async function copyWebUrl() {
+  try {
+    await navigator.clipboard.writeText(webLanUrl.value)
+    toast(t('webCopyDone'), 'ok')
+  } catch {
+    toast(t('webPasteFailed'), 'err')
+  }
+}
+
+/** 取访问 URL 列表并渲染 LAN 二维码（批次 4.6；桌面专属命令，Web 模式静默） */
+async function loadAccessUrls() {
+  try {
+    const urls = await invoke<string[]>('get_web_access_urls')
+    const lan = urls.find((u) => !u.includes('//127.0.0.1'))
+    if (lan) {
+      webLanUrl.value = lan
+      webQrDataUrl.value = await QRCode.toDataURL(lan, { width: 220, margin: 1 })
+    }
+  } catch {
+    // 令牌读取失败 / Web 模式 409：扫码区保持隐藏
+  }
+}
 
 onMounted(async () => {
   try {
@@ -540,6 +697,23 @@ onMounted(async () => {
   } catch {
     autostartValue.value = false
   }
+  if (isDesktop) {
+    try {
+      webToken.value = await invoke<string>('get_web_token')
+    } catch {
+      webToken.value = ''
+    }
+    await loadAccessUrls()
+  }
+  // 端口冲突等启动失败 → 后端 emit web-server-error，横幅显示（D6 明确报错）
+  unlistenServerError = await listen<string>('web-server-error', (e) => {
+    webServerErrorMsg.value = e.payload ?? ''
+  })
+})
+
+onUnmounted(() => {
+  unlistenServerError?.()
+  unlistenServerError = null
 })
 
 async function onToggleAutostart(v: boolean) {
@@ -622,6 +796,9 @@ watch(
       ddnsHuaweiSecretValue.value = s.ddns_huawei_secret_key || ''
       ddnsDomainsText.value = (s.ddns_domains || []).join('\n')
       ddnsIpv6Value.value = s.ddns_enable_ipv6
+      webEnabledValue.value = s.web_enabled ?? false
+      webPortValue.value = s.web_port ?? 17580
+      webLanAccessValue.value = s.web_lan_access ?? false
     }
   },
   { immediate: true }
@@ -638,7 +815,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value, webEnabledValue, webPortValue, webLanAccessValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -699,6 +876,12 @@ async function save() {
   settingsStore.settings.ddns_domains = ddnsDomainsText.value.split('\n')
     .map((x) => x.trim()).filter(Boolean)
   settingsStore.settings.ddns_enable_ipv6 = ddnsIpv6Value.value
+  // Web 端口输入清空时 v-model.number 给 ''，归一回落 17580（同 smtp_port 兜底逻辑）
+  webPortValue.value = Number(webPortValue.value) >= 1 && Number(webPortValue.value) <= 65535 ? Number(webPortValue.value) : 17580
+  settingsStore.settings.web_enabled = webEnabledValue.value
+  settingsStore.settings.web_port = webPortValue.value
+  if (webPortTouched.value) settingsStore.settings.web_port_auto = false
+  settingsStore.settings.web_lan_access = webLanAccessValue.value
   await settingsStore.saveSettings()
 }
 

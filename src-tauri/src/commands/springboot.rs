@@ -2,10 +2,13 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 
-use crate::models::software::{LogChunk, LogSource};
-use crate::models::springboot::{
+use opx_http::AppContext;
+use opx_core::event::EventSinkExt;
+
+use opx_core::models::software::{LogChunk, LogSource};
+use opx_core::models::springboot::{
     AppGroup, CreateAppParams, JarInfo, JvmInfo, JvmOptsTemplate, ReplaceResult, SpringBootApp,
     UpdateAppParams,
 };
@@ -13,7 +16,7 @@ use crate::services::software_manager::SoftwareManager;
 use crate::services::springboot_manager::jvm_opts;
 use crate::services::springboot_manager::lifecycle::StopOutcome;
 use crate::services::springboot_manager::SpringBootManager;
-use crate::{audited_async, oplog_result};
+use opx_core::{audited_async, oplog_result};
 
 #[tauri::command]
 pub async fn list_springboot_apps(
@@ -69,7 +72,7 @@ pub async fn delete_springboot_app(
 pub async fn start_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<(), String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -78,7 +81,7 @@ pub async fn start_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &app_handle,
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_start", target, "", r);
@@ -89,7 +92,7 @@ pub async fn start_springboot_app(
 pub async fn stop_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -98,7 +101,7 @@ pub async fn stop_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &app_handle,
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_stop", target, "", r);
@@ -109,7 +112,7 @@ pub async fn stop_springboot_app(
 pub async fn restart_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StopOutcome, String> {
     let name = manager.find_app(&id).map(|a| a.name).unwrap_or_default();
@@ -118,7 +121,7 @@ pub async fn restart_springboot_app(
         &id,
         &manager,
         &software_mgr,
-        &app_handle,
+        &ctx.sink.clone(),
     )
     .await;
     oplog_result!("springboot_restart", target, "", r);
@@ -134,7 +137,7 @@ pub async fn replace_springboot_jar(
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     let target = format!("{} ({})", app.name, id);
     audited_async!("springboot_replace_jar", target, "", {
-        if app.status == crate::models::springboot::AppStatus::Running {
+        if app.status == opx_core::models::springboot::AppStatus::Running {
             return Err("运行中的应用不可换包".to_string());
         }
         let old_jar = std::path::PathBuf::from(&app.jar_path);
@@ -156,14 +159,14 @@ pub async fn replace_springboot_jar(
 pub async fn replace_springboot_jar_and_restart(
     manager: State<'_, Arc<SpringBootManager>>,
     software_mgr: State<'_, Arc<SoftwareManager>>,
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
     new_jar_path: String,
 ) -> Result<ReplaceResult, String> {
     let app = manager.find_app(&id).map_err(|e| e.to_string())?;
     let target = format!("{} ({})", app.name, id);
     audited_async!("springboot_replace_restart", target, "", {
-        use crate::models::springboot::AppStatus;
+        use opx_core::models::springboot::AppStatus;
 
         // 运行中/错误态先停（优雅），停止态直接换包。
         // 停止成功但走了强杀时只记日志：换包流程必须继续往下走。
@@ -172,7 +175,7 @@ pub async fn replace_springboot_jar_and_restart(
                 &id,
                 &manager,
                 &software_mgr,
-                &app_handle,
+                &ctx.sink.clone(),
             )
             .await?;
             if let Some(w) = stop.message {
@@ -193,7 +196,7 @@ pub async fn replace_springboot_jar_and_restart(
             &id,
             &manager,
             &software_mgr,
-            &app_handle,
+            &ctx.sink.clone(),
         )
         .await?;
 
@@ -222,7 +225,7 @@ fn replace_jar_file(
     }
 
     // 备份：{data_dir}/backups/{app_name}/{jar}.{timestamp}.bak
-    let backup_dir = crate::utils::paths::data_dir()
+    let backup_dir = opx_core::utils::paths::data_dir()
         .join("backups")
         .join(app_name);
     std::fs::create_dir_all(&backup_dir).map_err(|e| anyhow::anyhow!("创建备份目录失败: {}", e))?;
@@ -319,7 +322,7 @@ pub async fn get_recommended_jvm_opts(
 #[tauri::command]
 pub async fn list_springboot_dependency_candidates(
     software_mgr: State<'_, Arc<SoftwareManager>>,
-) -> Result<Vec<crate::models::software::InstalledSoftware>, String> {
+) -> Result<Vec<opx_core::models::software::InstalledSoftware>, String> {
     // ponytail: inlined deps::list_dependency_candidates
     let managed_keys = ["mysql", "redis", "nginx", "minio"];
     Ok(software_mgr
@@ -371,13 +374,13 @@ pub async fn list_springboot_log_sources(
     app_id: String,
 ) -> Result<Vec<LogSource>, String> {
     let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
-    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let abs = opx_core::utils::paths::resolve_data_path(&app.log_path);
     let dir = if abs.is_file() {
         abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
     } else {
         abs
     };
-    Ok(crate::services::software_manager::log_viewer::collect_springboot_sources(&dir))
+    Ok(opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir))
 }
 
 /// 读取应用日志（tail / 增量 / 历史分页 + 关键字过滤 + 归档无缝续接）
@@ -396,20 +399,20 @@ pub async fn read_springboot_log(
     level: Option<String>,
 ) -> Result<LogChunk, String> {
     let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
-    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let abs = opx_core::utils::paths::resolve_data_path(&app.log_path);
     let dir = if abs.is_file() {
         abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
     } else {
         abs
     };
-    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let sources = opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir);
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
     let archive_index = archive_index.unwrap_or(0);
     let limit = limit.map(|l| l as usize).unwrap_or(2000);
     let before = before.unwrap_or(false);
-    crate::services::software_manager::log_viewer::read_springboot_chunk(
+    opx_core::services::software_manager::log_viewer::read_springboot_chunk(
         std::path::Path::new(&source.path),
         &source.archives,
         archive_index,
@@ -432,13 +435,13 @@ pub async fn download_springboot_log(
     dest_path: String,
 ) -> Result<(), String> {
     let app = manager.find_app(&app_id).map_err(|e| e.to_string())?;
-    let abs = crate::utils::paths::resolve_data_path(&app.log_path);
+    let abs = opx_core::utils::paths::resolve_data_path(&app.log_path);
     let dir = if abs.is_file() {
         abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
     } else {
         abs
     };
-    let sources = crate::services::software_manager::log_viewer::collect_springboot_sources(&dir);
+    let sources = opx_core::services::software_manager::log_viewer::collect_springboot_sources(&dir);
     let source = sources
         .get(source_index)
         .ok_or_else(|| format!("日志源索引越界: {}", source_index))?;
@@ -462,7 +465,7 @@ pub struct ExportSummary {
 /// `group_names` 为 None 时导出全部应用。
 #[tauri::command]
 pub async fn export_springboot_config(
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
     group_names: Option<Vec<String>>,
@@ -515,13 +518,13 @@ pub async fn export_springboot_config(
     let mut warnings: Vec<String> = Vec::new();
 
     for (i, app) in apps.iter().enumerate() {
-        let _ = app_handle.emit(
+        ctx.sink.clone().emit_ser(
             "export-progress",
             serde_json::json!({ "current": i + 1, "total": total, "name": app.name }),
         );
 
         // jar_path 兼容相对（springboot/<name>/app.jar）与绝对两种历史写法
-        let jar = crate::utils::paths::resolve_data_path(&app.jar_path);
+        let jar = opx_core::utils::paths::resolve_data_path(&app.jar_path);
         if !jar.exists() {
             // 不静默跳过：JAR 缺失时明确告知，否则用户解压后只看到一份 manifest.json
             warnings.push(format!("{}: JAR 文件缺失，已跳过", app.name));
@@ -534,7 +537,7 @@ pub async fn export_springboot_config(
         // 否则按进程 CWD 判断必然不存在 → 排除失效、日志被打包。
         // 取 log_path 的父目录（logs/）以排除整个日志目录；并加护栏避免把应用根目录整个排除。
         let log_canonical = {
-            let lp = crate::utils::paths::resolve_data_path(&app.log_path);
+            let lp = opx_core::utils::paths::resolve_data_path(&app.log_path);
             let dir = if lp.is_dir() {
                 Some(lp)
             } else {
@@ -569,7 +572,7 @@ pub async fn export_springboot_config(
         tracing::warn!(error = %e, "导出：导出包落盘失败");
         "i18n:exportWriteFailed".to_string()
     })?;
-    let _ = app_handle.emit("export-progress", serde_json::json!({ "done": true }));
+    ctx.sink.clone().emit_ser("export-progress", serde_json::json!({ "done": true }));
     Ok(ExportSummary {
         apps: exported,
         files,
@@ -589,11 +592,11 @@ pub struct ImportSummary {
 /// 从 zip 文件导入应用（含 JAR 与应用目录）与全局配置
 #[tauri::command]
 pub async fn import_springboot_config(
-    app_handle: AppHandle,
+    ctx: State<'_, AppContext>,
     manager: State<'_, Arc<SpringBootManager>>,
     file_path: String,
 ) -> Result<ImportSummary, String> {
-    let _ = app_handle.emit(
+    ctx.sink.clone().emit_ser(
         "import-progress",
         serde_json::json!({ "phase": "extracting" }),
     );
@@ -647,7 +650,7 @@ pub async fn import_springboot_config(
         }
     }
 
-    let _ = app_handle.emit("import-progress", serde_json::json!({ "phase": "config" }));
+    ctx.sink.clone().emit_ser("import-progress", serde_json::json!({ "phase": "config" }));
     let manifest_content = std::fs::read_to_string(&tmp_dir.join("manifest.json")).map_err(|e| {
         tracing::warn!(error = %e, "导入：读取 manifest.json 失败");
         "i18n:importManifestMissing".to_string()
@@ -671,7 +674,7 @@ pub async fn import_springboot_config(
             // 恢复到本机数据目录 <data_dir>/springboot/<name>/。
             // 不信任 manifest 里导出机的绝对路径（跨机器必然失效，会把文件写到错误位置）。
             let app_data_dir = tmp_dir.join("apps").join(sanitize_name(&imported.name));
-            let local_dir = crate::utils::paths::data_dir()
+            let local_dir = opx_core::utils::paths::data_dir()
                 .join("springboot")
                 .join(&imported.name);
             let has_jar = app_data_dir.join("app.jar").exists();
@@ -780,7 +783,7 @@ pub async fn import_springboot_config(
     }
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    let _ = app_handle.emit("import-progress", serde_json::json!({ "done": true }));
+    ctx.sink.clone().emit_ser("import-progress", serde_json::json!({ "done": true }));
     Ok(ImportSummary {
         apps: imported_count,
         warnings,
@@ -936,7 +939,7 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
         let _ = std::fs::remove_dir_all(
-            crate::utils::paths::data_dir()
+            opx_core::utils::paths::data_dir()
                 .join("backups")
                 .join("test-app"),
         );
@@ -959,7 +962,7 @@ mod tests {
         assert!(replace_jar_file("t", &old2, &new).is_err());
 
         std::fs::remove_dir_all(&dir).unwrap();
-        let _ = std::fs::remove_dir_all(crate::utils::paths::data_dir().join("backups").join("t"));
+        let _ = std::fs::remove_dir_all(opx_core::utils::paths::data_dir().join("backups").join("t"));
     }
 
     /// MANIFEST 的 `Spring-Boot-Version` 由 repackage 自动写入，2.x/3.x/4.x 都有，

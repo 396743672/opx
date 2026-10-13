@@ -71,6 +71,62 @@ export default {
   lockKeyringUnavailable: 'OS credential store unavailable; lock screen cannot be used',
   lockPasswordTooShort: 'Password must be at least 6 characters',
   lockHashFailed: 'Failed to process password',
+
+  // Web management entry (batch 4.2: settings only; server start/stop & open-browser belong to 4.3/4.5)
+  webGroup: 'Web Management',
+  webEnabled: 'Enable browser management',
+  webEnabledHint: 'When enabled, the management UI is also available in a browser (same backend, same data)',
+  webPort: 'HTTP Port',
+  webLanAccess: 'Allow LAN access',
+  webLanAccessHint: 'Only this machine (127.0.0.1) can access by default; when enabled, devices on the same LAN can access — make sure your network is trusted',
+  // Batch 4.4: web-mode access token gate (D3)
+  webTokenTitle: 'Access Token',
+  webTokenDesc: 'This page connects to the local OPX backend over the web entry. Enter the access token from the desktop app under "Settings → Web Management".',
+  webTokenPlaceholder: 'Access token (10 or 64 chars)',
+  webTokenConfirm: 'Connect',
+  webTokenInvalid: 'Invalid token (expected a 10-char access code or 64 hex characters) or rejected. Please try again.',
+  webTokenRequired: 'Access token missing, please enter it again',
+  // Batch 4.5: settings web group extensions
+  webLanWarning:
+    'Warning: HTTP is transmitted in plaintext. With LAN access enabled, the token can be sniffed by devices on the same network — enable only on trusted networks',
+  webTokenLabel: 'Access token (web_token)',
+  webOpenBrowser: 'Open Browser',
+  webResetToken: 'Reset Token',
+  webResetTokenOk: 'Confirm Reset',
+  webResetting: 'Resetting…',
+  // First-run setup (installer bootstrap design §5)
+  setup: 'Initial Setup',
+  setupSubtitle: 'A few basics and you are ready to go',
+  setupLanguage: 'Language',
+  setupPort: 'Management port',
+  setupPortHint: 'HTTP port of the web entry; takes effect immediately after saving',
+  setupCheck: 'Check',
+  setupChecking: 'Checking…',
+  setupPortFree: 'Port is available',
+  setupPortBusy: 'Port is in use, pick another one',
+  setupLan: 'Allow LAN access',
+  setupLanRisk: 'Warning: HTTP is plaintext — devices on the LAN can sniff the token. Enable only on trusted networks',
+  setupLanOffHint: 'When off, only the server itself can access; for remote management use an SSH tunnel: ssh -L 17580:127.0.0.1:17580 user@server',
+  setupFinish: 'Finish setup',
+  setupSkip: 'Skip, configure later in Settings',
+  setupNewAddr: 'Entry address changed',
+  setupNewAddrHint: 'Reopen the management UI with the new address (this page will become stale; the token is unchanged)',
+  setupOpen: 'Open new address',
+  setupCopy: 'Copy',
+  setupCopied: 'Copied',
+  setupCopyFailed: 'Copy failed, please copy manually',
+  setupWebEntry: 'Browser management entry',
+  setupWebReady: 'Browser entry is ready',
+  setupWebReadyHint: 'Click an address to open the UI in a browser (token included). The server takes about 2 seconds to start; devices on the LAN can also access it',
+  webResetDone: 'Token reset; existing browser sessions are signed out. Reopen the browser with the new token',
+  webServerError: 'Web server failed to start: {msg}',
+  webDesktopOnlyHint: 'This feature requires the native file picker — please use the desktop app',
+  // Batch 4.6: scan-to-access + paste improvements
+  webScanTitle: 'Scan to Access',
+  webCopyAddress: 'Copy URL',
+  webCopyDone: 'Copied',
+  webPaste: 'Paste',
+  webPasteFailed: 'Failed to read clipboard — please paste manually',
   portConflictBy: 'Port conflict: occupied by PID {pid} ({name})',
   portConflictByPid: 'Port conflict: occupied by PID {pid}',
   portNotListening: 'Port not listening',
@@ -189,6 +245,7 @@ export default {
   saveAndRestart: 'Save & Restart',
   configEditRestartHint: 'Config changes take effect after restart',
   configRequiredMissing: 'Please fill in required field: {field}',
+  credsLockedHint: 'This instance has completed first initialization; the account/password below are now fixed in the data directory (e.g. .minio.sys / the system database) and cannot be changed within the app. To change them, use the instance’s “Reset” action to wipe its data directory, then re-enter the credentials and start (reset clears all data of the instance).',
   configEditSourceHint: 'Edit config file source directly, takes effect after save',
 
   // StartupSettingsDialog
@@ -263,8 +320,6 @@ export default {
   kafkaOfficial: 'Apache Kafka Official',
   nodejsOrg: 'nodejs.org Official',
   npmmirror: 'npmmirror Mirror',
-  builtinMissing: 'Builtin package missing, please reinstall the app',
-  builtinCorrupted: 'Builtin package verification failed, file may be corrupted',
   retry: 'Retry',
   categoryDatabase: 'Database',
   categoryRuntime: 'Runtime',
@@ -378,7 +433,6 @@ export default {
   appNameAlreadyExists: 'App name "{name}" already exists',
   stopFirstBeforeUninstall: 'Stop the software first before uninstalling',
   confirmDeleteMsgFormatted: 'This will delete the app config and data directory. This cannot be undone. Are you sure you want to delete "{name}"?',
-  unknownError: 'Unknown error',
   fetchJarPortFailed: 'Failed to read JAR port',
   logPathNotConfigured: 'Log path not configured',
   cannotReadLog: 'Cannot read log',
@@ -513,7 +567,7 @@ export default {
   auto: 'Auto',
   closeWindowAction: 'Close Window Action',
   autoStartOnBoot: 'Start on Boot',
-  autoStartOnBootDesc: 'Launch OPX automatically when Windows starts',
+  autoStartOnBootDesc: 'Launch OPX automatically at login (Windows / macOS / Linux)',
   minimizeToTray: 'Minimize to system tray',
   exitDirectly: 'Exit directly',
   about: 'About',
@@ -625,7 +679,6 @@ export default {
   // config backups
   configBackups: 'Config Backups',
   restoreBackup: 'Restore',
-  restoreBackupConfirm: 'Restore this backup? Current config will be auto-backed up first.',
   noBackups: 'No backups available',
   backupHint: 'A backup is created before each config save. Max 5 kept.',
 
@@ -696,9 +749,7 @@ export default {
 
   // Config edit
   configDirtyConfirm: 'Unsaved changes will be lost when switching tabs. Continue?',
-  saveWithoutRestart: 'Save',
   configSaved: 'Configuration saved',
-  expectedStatus: 'Expected Status',
   confirmRestoreBackup: 'Restore this backup? The current config will be auto-backed up first.',
 
   // Uninstall blocked
@@ -706,7 +757,6 @@ export default {
   uninstallBlockedRunning: 'Software is running',
   uninstallBlockedJreDefault: 'This is the default JRE',
   uninstallBlockedJreDependents: 'Applications depend on this JRE',
-  forceUninstall: 'Force Uninstall',
 
   // Config fields (nested object, backend label_i18n uses configField.xxx format)
   configField: {

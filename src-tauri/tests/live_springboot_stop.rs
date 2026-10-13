@@ -90,7 +90,7 @@ fn assert_real_app_stops_gracefully(jar_name: &str, sb_ver: &str, runtime_rel: &
     cmd.env_remove("SERVER_PORT");
     cmd.env_remove("SERVER__PORT");
     cmd.env_remove("SERVER__HOST");
-    opx_lib::utils::process::hide_console(&mut cmd);
+    opx_core::utils::process::hide_console(&mut cmd);
     let mut child = cmd.spawn().unwrap_or_else(|e| panic!("{jar_name}: 无法启动: {e}"));
     let pid = child.id();
 

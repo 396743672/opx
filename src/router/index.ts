@@ -84,6 +84,13 @@ const routes = [
     component: () => import('@/modules/settings/pages/LockScreen.vue'),
     meta: { title: 'lockScreen' },
   },
+  {
+    // 首次运行引导（安装引导设计 §5）：新装（first_run_done=false）由 App.vue 重定向进入
+    path: '/setup',
+    name: 'setup',
+    component: () => import('@/modules/settings/pages/SetupPage.vue'),
+    meta: { title: 'setup' },
+  },
 ]
 
 const router = createRouter({

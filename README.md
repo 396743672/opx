@@ -26,6 +26,8 @@ OPX is a Windows desktop application for managing infrastructure software and se
 
 ## System Architecture
 
+The backend is a Cargo workspace with two crates: **`opx`** (the Tauri shell — Tauri command layer, system integration and lifecycle orchestration) and **`opx-core`** (platform-agnostic business logic — all services, data models and utilities, zero Tauri dependency, independently buildable via `cargo check -p opx-core`).
+
 ```
 ┌─────────────────────────────────────────────┐
 │            Frontend (Vue 3 + TypeScript)      │
@@ -34,21 +36,25 @@ OPX is a Windows desktop application for managing infrastructure software and se
 ├─────────────────────────────────────────────┤
 │              Tauri IPC (invoke)              │
 ├─────────────────────────────────────────────┤
-│                 Backend (Rust)               │
-│  ├─ commands/      — Tauri command layer     │
-│  ├─ services/      — business logic          │
+│         opx  (Tauri shell, src-tauri/)       │
+│  ├─ commands/       — Tauri command layer    │
+│  ├─ event_sink.rs   — EventSink impl         │
+│  └─ services/       — shell-side orchestration
+│  │   (stack_manager / watchdog / system_monitor /
+│  │    startup_bootstrap / autostart / lock_screen …)
+├─────────────────────────────────────────────┤
+│      opx-core  (crates/opx-core/, no Tauri)  │
+│  ├─ services/       — business logic         │
 │  │  ├─ software_manager/  — software lifecycle│
 │  │  ├─ springboot_manager/ — SpringBoot mgmt │
 │  │  ├─ node_app_manager/   — Node app mgmt   │
-│  │  ├─ stack_manager/     — Stack orchestr.  │
 │  │  ├─ website_manager/   — website mgmt     │
 │  │  ├─ dns_account/       — DNS credential   │
 │  │  ├─ acme/              — cert automation  │
-│  │  ├─ ddns/              — dynamic DNS      │
-│  │  ├─ watchdog/          — crash self-heal  │
-│  │  └─ system_monitor/    — metrics/alert    │
-│  ├─ models/        — data models            │
-│  └─ utils/         — utilities              │
+│  │  └─ ddns/              — dynamic DNS      │
+│  ├─ models/         — data models            │
+│  ├─ utils/          — utilities              │
+│  └─ event.rs        — EventSink trait        │
 ├─────────────────────────────────────────────┤
 │          Local Storage (JSON files)          │
 │  apps.json │ node-apps.json │ installed.json │
@@ -177,7 +183,8 @@ npm run tauri:build
 - The Nacos console link differs by version (3.x omits `/nacos`); the DB field reflects `storage` live.
 
 ### Settings Tabs
-- Three tabs: General / Monitor & Alert / Domain & DNS. The selected tab is recorded in the URL (`?tab=`, preserved on refresh and deep-link; illegal values fall back to General).
+- Four tabs: General / Monitor & Alert / Domain & DNS / Security. The selected tab is recorded in the URL (`?tab=`, preserved on refresh and deep-link; illegal values fall back to General).
+- **Start on Boot**: opt-in from Settings — OPX launches automatically at **user login**. User-level on all three platforms (no administrator rights needed): Windows writes `HKCU\...\Run`; macOS writes a LaunchAgent (`~/Library/LaunchAgents/com.opx.app.plist`); Linux writes an XDG autostart entry (`~/.config/autostart/opx.desktop`).
 
 ### Lock Screen
 - On/off switch: setting a password enables the lock; clearing it disables it — an empty lock never auto-locks.
@@ -187,6 +194,14 @@ npm run tauri:build
 - Migration note: the verifier lives in the OS store, not in app data, so moving the app to another machine leaves the lock off (re-set there); copied data on a different machine is usable without the password (acceptable for a UI lock).
 - Config panels link to official docs.
 - The site dialog uses a fixed header with only the form area scrolling.
+
+### Headless Mode & Linux Service
+- `opx --headless` runs without a window — the browser is the only entry (Web management UI, default port 17580). Ideal for servers without a desktop.
+- First run on a fresh install enables the web entry and LAN access by default and forces a one-time setup page (language / port / LAN toggle with a plaintext-HTTP warning). The full URL with token is printed to the console (`journalctl -u opx` under systemd).
+- Port-conflict self-healing: if the default port (17580) or an auto-picked port is taken, the service retries the next port up to 17599 and persists the resolved one; an explicitly configured port reports an error instead of drifting.
+- Linux packages (deb / rpm) ship a systemd unit with maintainer scripts (`systemctl enable --now opx`). Data lives in `/var/lib/opx` through the `OPX_APP_ROOT` environment override — set it anywhere to relocate the whole portable layout (settings.json / apps / config / logs). When the binary is launched directly from a system prefix (e.g. `/usr/bin/opx`) without `OPX_APP_ROOT`, per-user data falls back to `$XDG_DATA_HOME/opx` (default `~/.local/share/opx`) instead of the unwritable binary directory.
+- On display-less machines the service runs under Xvfb automatically (the Tauri event loop needs an X server): the packages depend on `xvfb` and ship a service wrapper that picks the real display when present.
+- The Chinese UI relies on a system CJK font: the packages recommend one (`fonts-noto-cjk` on Debian/Ubuntu, `google-noto-sans-cjk-fonts` on Fedora/openSUSE), installed by default with `apt`/`dnf`. On a minimal system (a bare server, a fresh WSL image) with no CJK font installed, Chinese renders as tofu boxes — a **missing-glyph** issue, not an encoding one; install the font manually to fix it.
 
 ## Themes
 

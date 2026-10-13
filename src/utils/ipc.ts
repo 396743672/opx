@@ -8,13 +8,20 @@
 //
 // 注意：只覆盖 invoke 的 reject。来自事件 payload（如 ACME 进度）或前端本地拼装的错误串
 // 不经过这里，仍需在显示点用 translateError 兜底。
-import { invoke as tauriInvoke, type InvokeArgs } from '@tauri-apps/api/core'
+//
+// 批次 4.4：invoke 底层改走 transport 双通道（运行时探测 `__TAURI_INTERNALS__`：
+// 桌面 → Tauri IPC，浏览器 → HTTP fetch）。对外签名不变，54 个调用点零改动；
+// HTTP 通道的错误信封 message（含 `i18n:key`）同样以字符串抛出、在此统一转译。
+import { getTransport } from './transport'
 import { i18n } from './i18n'
 import { translateError } from './i18nError'
 
-export async function invoke<T = unknown>(cmd: string, args?: InvokeArgs): Promise<T> {
+export async function invoke<T = unknown>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   try {
-    return await tauriInvoke<T>(cmd, args)
+    return await getTransport().invoke<T>(cmd, args)
   } catch (e) {
     const raw = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)
     throw translateError(

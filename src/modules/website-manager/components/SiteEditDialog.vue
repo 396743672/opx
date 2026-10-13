@@ -174,7 +174,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
-import { listen } from '@tauri-apps/api/event'
+import { listen } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
 import { translateError } from '@/utils/i18nError'

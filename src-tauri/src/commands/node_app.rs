@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::models::node_app::{
+use opx_core::models::node_app::{
     CreateNodeAppParams, NodeApp, UpdateNodeAppParams,
 };
 use crate::services::node_app_manager::NodeAppManager;
@@ -18,7 +18,7 @@ pub fn resolve_node_exe(sw_mgr: &SoftwareManager, node_id: Option<&str>) -> Opti
                     continue;
                 }
             }
-            let abs = crate::utils::paths::resolve_install_path(&sw.install_path);
+            let abs = opx_core::utils::paths::resolve_install_path(&sw.install_path);
             let exe = abs.join(if cfg!(windows) { "node.exe" } else { "node" });
             if exe.exists() {
                 return Some(exe);
@@ -88,7 +88,7 @@ pub async fn read_node_app_log(
     id: String,
 ) -> Result<Vec<String>, String> {
     let app = manager.get(&id).ok_or_else(|| "未找到应用".to_string())?;
-    let p = crate::utils::paths::resolve_data_path(&app.log_path);
+    let p = opx_core::utils::paths::resolve_data_path(&app.log_path);
     if app.log_path.is_empty() || !p.exists() {
         return Ok(vec![]);
     }

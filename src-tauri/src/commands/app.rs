@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Manager};
-use crate::oplog;
+use opx_core::oplog;
 
 /// 触发退出流程：级联停止所有已注册子服务（逐个 emit stop-progress，完成后 emit stop-complete）。
 /// ponytail: async + spawn_blocking，避免同步命令阻塞主线程（多服务逐个 taskkill 可能长达数秒）。
@@ -8,7 +8,10 @@ pub async fn quit_app(app: AppHandle) -> Result<(), String> {
     oplog!("quit_app", "all");
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::services::software_manager::lifecycle::stop_all_on_exit(&app2);
+        // spawn_blocking 要求 'static，故在闭包内部构造 sink（AppHandle 本身已是 owned）。
+        let sink: std::sync::Arc<dyn crate::event_sink::EventSink> =
+            std::sync::Arc::new(crate::event_sink::TauriEventSink::new(app2.clone()));
+        crate::services::software_manager::lifecycle::stop_all_on_exit(&sink);
     });
     Ok(())
 }

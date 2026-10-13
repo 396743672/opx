@@ -12,7 +12,8 @@
       <Icon v-if="selected" icon="mdi:check" />
     </div>
     <div class="sw-card-top">
-      <div class="sw-icon">
+      <!-- 底色与图标色由全局 .icon-chip[data-category] 提供（与「软件管理」实例卡一致） -->
+      <div class="sw-icon icon-chip" :data-category="entry.category">
         <Icon :icon="entry.icon" />
       </div>
       <div class="sw-meta">
@@ -133,9 +134,9 @@ const isInstalling = computed(() => installStore.hasActiveTask(props.entry.key))
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
-  color: var(--color-primary);
   font-size: 22px;
+  /* 底色 / 图标色来自全局 .icon-chip[data-category] —— 此处不得再定义，
+     否则 scoped 的 [data-v-*] 特异性会覆盖全局定义，重新造成两处颜色不一致 */
 }
 .sw-meta {
   flex: 1;

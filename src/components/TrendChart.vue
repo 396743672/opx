@@ -15,6 +15,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import Chart from 'chart.js/auto'
 import type { ChartConfiguration } from 'chart.js'
 import { useI18n } from 'vue-i18n'
+import { useSettingsStore } from '@/stores/settings'
 import type { HistoryPoint } from '@/models/system'
 
 const { t } = useI18n()
@@ -35,6 +36,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
+const settingsStore = useSettingsStore()
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement)
@@ -147,6 +149,17 @@ watch(
   () => props.points,
   () => update(),
   { deep: true }
+)
+
+// 主题 class（dark/warm，见 settings.ts applyTheme）应用后再重读 CSS 变量
+// 重绘——修复刷新竞态：首渲早于主题 class 应用时 getComputedStyle 取到
+// 默认主题的蓝/紫（实测多次刷新图表颜色漂移）。auto 主题随系统切换也要跟随。
+watch(
+  () => [settingsStore.theme, settingsStore.systemPrefersDark] as const,
+  async () => {
+    await nextTick()
+    update()
+  },
 )
 
 onUnmounted(() => {

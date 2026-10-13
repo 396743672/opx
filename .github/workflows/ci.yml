@@ -57,4 +57,8 @@ jobs:
 
       - name: Run backend tests (cargo test)
         working-directory: src-tauri
+        # 门禁：把 rustc warning（含 dead_code / unused）视为失败——防止死代码与未用项再次累积。
+        # 依赖 crate 受 cargo 的 cap-lints 保护，其 warning 不受影响。
+        env:
+          RUSTFLAGS: '-Dwarnings'
         run: cargo test

@@ -1,6 +1,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@/utils/transport'
+import { getTransport } from '@/utils/transport'
 import { useSpringBootStore } from '@/modules/springboot-manager/stores/springboot'
 import { useLifecycleStore } from '@/modules/software-manager/stores/lifecycle'
 import type { InstalledSoftware } from '@/models/software'
@@ -19,6 +20,8 @@ export function useRunningSoftware() {
   const installedSoftware = ref<InstalledSoftware[]>([])
   const runningApps = ref<SpringBootApp[]>([])
   let unlistenSb: UnlistenFn | null = null
+  // WS 重连补偿（D4）：重连后重拉应用列表（桌面模式恒不触发）
+  let offResync: UnlistenFn | null = null
   let unmounted = false
 
   const runningSoftware = computed(() =>
@@ -41,11 +44,17 @@ export function useRunningSoftware() {
     // 卸载发生在 await 期间时立即注销，否则监听器泄漏（两页共用后暴露面翻倍）
     if (unmounted) unlisten()
     else unlistenSb = unlisten
+    // D4 重连补偿：springboot 列表是事件驱动缓存，重连后全量重拉
+    offResync = getTransport().onResync(() => {
+      void refreshApps()
+    })
   })
 
   onUnmounted(() => {
     unmounted = true
     unlistenSb?.()
+    offResync?.()
+    offResync = null
   })
 
   return { installedSoftware, runningSoftware, runningApps }

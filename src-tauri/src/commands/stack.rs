@@ -10,9 +10,11 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::State;
 
-use crate::models::stack::{
+use opx_http::AppContext;
+
+use opx_core::models::stack::{
     CreateStackPayload, Stack, StackStartPlan, UpdateStackPayload,
 };
 use crate::services::stack_manager::StackManager;
@@ -69,30 +71,30 @@ pub async fn delete_stack(
 #[tauri::command]
 pub async fn start_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StackStartPlan, String> {
-    manager.start(&app, &id).await.map_err(|e| e.to_string())
+    manager.start(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 一键停止栈（逆序优雅停止）
 #[tauri::command]
 pub async fn stop_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<(), String> {
-    manager.stop(&app, &id).await.map_err(|e| e.to_string())
+    manager.stop(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 一键重启栈（先停后起，返回新启动计划）
 #[tauri::command]
 pub async fn restart_stack(
     manager: State<'_, Arc<StackManager>>,
-    app: AppHandle,
+    ctx: State<'_, AppContext>,
     id: String,
 ) -> Result<StackStartPlan, String> {
-    manager.restart(&app, &id).await.map_err(|e| e.to_string())
+    manager.restart(&ctx.sink.clone(), &id).await.map_err(|e| e.to_string())
 }
 
 /// 导出栈为 JSON 文件（R7，含 items / depends_on，供团队分享）

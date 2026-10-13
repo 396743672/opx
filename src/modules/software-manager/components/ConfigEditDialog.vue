@@ -108,7 +108,10 @@ import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { isDesktop } from '@/utils/transport'
 import { useI18n } from 'vue-i18n'
+import { confirmAsync } from '@/composables/useConfirm'
+import { toast } from '@/composables/useToast'
 import ConfigFormTab from './ConfigFormTab.vue'
 import ConfigSourceTab from './ConfigSourceTab.vue'
 import { useLifecycleStore } from '../stores/lifecycle'
@@ -142,7 +145,10 @@ const DOC_URLS: Record<string, string> = {
 }
 const docUrl = computed(() => DOC_URLS[props.software.key] ?? null)
 function openDoc() {
-  if (docUrl.value) openUrl(docUrl.value).catch(() => {})
+  if (!docUrl.value) return
+  // Web 模式无 opener 插件：退化为浏览器新开标签页
+  if (isDesktop) openUrl(docUrl.value).catch(() => {})
+  else window.open(docUrl.value, '_blank', 'noopener')
 }
 
 const tab = ref<'form' | 'source' | 'backups'>('form')
@@ -199,10 +205,10 @@ onMounted(async () => {
   }
 })
 
-function switchTab(tabName: 'form' | 'source' | 'backups') {
+async function switchTab(tabName: 'form' | 'source' | 'backups') {
   if (tab.value === tabName) return
   if (dirty.value) {
-    if (!confirm(t('configDirtyConfirm'))) return
+    if (!(await confirmAsync(t('configDirtyConfirm')))) return
   }
   tab.value = tabName
   dirty.value = false
@@ -224,7 +230,7 @@ async function onSave(closeAfter?: boolean) {
       // 必填校验（field_rules.required）：缺失则中止并提示
       const missing = (formTabRef.value as any).validateRequired?.() ?? null
       if (missing) {
-        alert(t('configRequiredMissing', { field: t(fieldLabel(missing)) }))
+        toast(t('configRequiredMissing', { field: t(fieldLabel(missing)) }), 'err')
         return
       }
       await invoke('write_config_form', {
@@ -288,7 +294,7 @@ async function loadBackups() {
 }
 
 async function onRestore(backupName: string) {
-  if (!confirm(t('confirmRestoreBackup'))) return
+  if (!(await confirmAsync(t('confirmRestoreBackup')))) return
   try {
     await invoke('restore_config_backup', {
       installedId: props.software.id,
@@ -311,7 +317,7 @@ async function onSaveAndRestart() {
       // 必填校验（field_rules.required）：缺失则中止并提示
       const missing = (formTabRef.value as any).validateRequired?.() ?? null
       if (missing) {
-        alert(t('configRequiredMissing', { field: t(fieldLabel(missing)) }))
+        toast(t('configRequiredMissing', { field: t(fieldLabel(missing)) }), 'err')
         return
       }
       await invoke('write_config_form', {

@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-screen w-screen overflow-hidden bg-background">
+  <div class="flex flex-col h-full w-full overflow-hidden bg-background">
     <!-- 顶部导航栏 — 简洁 -->
     <header
       @mousedown="onTitlebarMouseDown"
@@ -21,7 +21,11 @@
           </div>
         </div>
         <div v-show="sidebarPinned" class="h-4 w-px bg-border/60 flex-shrink-0 transition-all duration-300"></div>
-        <span class="text-sm text-muted-foreground/80 px-3">{{ $t(currentTitle) }}</span>
+        <!-- 当前页：图标 + 名称（图标与侧边栏同源 navGroups，批次 4.7 页面头部精简） -->
+        <span class="text-sm text-muted-foreground/80 px-3 flex items-center gap-1.5">
+          <Icon v-if="currentIcon" :icon="currentIcon" class="text-base text-primary" />
+          {{ $t(currentTitle) }}
+        </span>
       </div>
 
       <div class="flex items-center gap-1">
@@ -80,8 +84,13 @@
     <div class="flex flex-1 overflow-hidden relative">
       <Sidebar :pinned="sidebarPinned" @update:pinned="settingsStore.setSidebarCollapsed(!$event)" />
       <!-- pl-14 为收缩态侧边栏预留空间，pl-52 为固定展开态 -->
-      <main class="flex-1 overflow-auto" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
-        <div class="p-6 xl:p-8">
+      <!-- overflow-x-hidden：纵向照常滚动，横向永不滚动——避免长页/子像素
+           误差在部分浏览器（实测 Edge）触发整页横向滚动条 -->
+      <main class="flex-1 overflow-y-auto overflow-x-hidden" :class="sidebarPinned ? 'pl-52' : 'pl-14'">
+        <!-- h-full + flex-col：让需要「内部滚动」的页面（如操作记录）
+             拿到确定高度并把表格区做成唯一滚动条；内容更高的页面
+             （min-height:auto 不收缩）仍溢出到 main 由全局滚动兜底 -->
+        <div class="p-6 xl:p-8 h-full flex flex-col">
           <router-view />
         </div>
       </main>
@@ -90,12 +99,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useSystemStore } from '@/stores/system'
 import { useLockStore } from '@/stores/lock'
 import type { ThemeMode } from '@/models/settings'
-import Sidebar from './Sidebar.vue'
+import Sidebar, { navGroups } from './Sidebar.vue'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
@@ -110,6 +119,27 @@ const lockStore = useLockStore()
 const sidebarPinned = computed(() => !settingsStore.sidebarCollapsed)
 
 const currentTitle = computed(() => (route.meta.title as string) || 'systemMonitor')
+// 批次 4.7：自动登录后剥离 URL 里的 token——transport 虽已转存 sessionStorage
+// 并 replaceState，但 router 的根路由 redirect 会把 query 原样带回，需在
+// 路由层再清一次（设计 D3：token 不得停留在地址栏/历史记录）
+watch(
+  () => route.query.token,
+  (t) => {
+    if (!t) return
+    const q = { ...route.query }
+    delete q.token
+    router.replace({ query: q }).catch(() => {})
+  },
+  { immediate: true },
+)
+// 当前路由图标：与侧边栏菜单同一来源（navGroups），标题栏随页面切换
+const currentIcon = computed(() => {
+  for (const g of navGroups) {
+    const hit = g.items.find((i) => i.path === route.path)
+    if (hit) return hit.icon
+  }
+  return ''
+})
 
 /* —— 主题切换（auto → light → warm → dark 循环）—— */
 const themeOrder: ThemeMode[] = ['auto', 'light', 'warm', 'dark']

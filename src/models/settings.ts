@@ -52,4 +52,18 @@ export interface AppSettings {
   ddns_domains: string[]
   /** 开启后额外同步 AAAA 记录 */
   ddns_enable_ipv6: boolean
+  // --- Web 管理入口（批次 4.2：仅存字段；server 启停/热生效归 4.3/4.5）---
+  /** 是否启用浏览器管理入口，默认关闭 */
+  web_enabled: boolean
+  /** HTTP 服务端口，默认 17580 */
+  web_port: number
+  /** 局域网访问开关：false 仅绑 127.0.0.1，true 绑 0.0.0.0 */
+  web_lan_access: boolean
+  /** 端口是否为后端自动挑选（headless 降级写入）；用户显式改端口时应置 false */
+  web_port_auto: boolean
+  /**
+   * 首次运行引导状态（安装引导设计 §5）：null=存量安装豁免引导；
+   * false=新装待引导（前端强制进入 /setup）；true=已完成
+   */
+  first_run_done: boolean | null
 }
