@@ -56,8 +56,9 @@ if (windows) platforms['windows-x86_64'] = windows
 const linux = entry(/^opx_.+_amd64\.AppImage\.tar\.gz$/, 'linux-x86_64')
 if (linux) platforms['linux-x86_64'] = linux
 
-// universal 构建：Intel 与 Apple Silicon 同一产物，两个平台键都指向它
-const darwin = entry(/^opx_universal\.app\.tar\.gz$/, 'darwin')
+// universal 构建：Intel 与 Apple Silicon 同一产物，两个平台键都指向它。
+// 实际产物名是 opx.app.tar.gz（bundler 对 bundle/macos/opx.app 直接加 .tar.gz，无版本号）
+const darwin = entry(/^opx.*\.app\.tar\.gz$/, 'darwin')
 if (darwin) {
   platforms['darwin-x86_64'] = darwin
   platforms['darwin-aarch64'] = darwin
