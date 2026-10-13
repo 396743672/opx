@@ -148,11 +148,13 @@ jobs:
       # 收集本平台全部产物：安装包/压缩包、.sig 签名、updater tar.gz。
       # ⚠️ 本项目是 cargo workspace，target 目录在仓库根而非 src-tauri/ 下；
       # macOS universal 的 bundle 在 target/universal-apple-darwin/release/bundle。
+      # ⚠️ 收集目录用 bundle-dist 而非 dist：仓库根的 dist/ 是 vite 前端输出
+      # （frontendDist），混入后 gh release create 会因 assets 子目录而失败。
       - name: Collect bundle artifacts
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
+          mkdir -p bundle-dist
           if [ "${{ matrix.label }}" = "macos" ]; then
             base="target/universal-apple-darwin/release/bundle"
           else
@@ -161,9 +163,9 @@ jobs:
           find "$base" -type f \( \
             -name '*.exe' -o -name '*.msi' -o -name '*.zip' -o -name '*.tar.gz' \
             -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \
-            -o -name '*.sig' \) -exec cp {} dist/ \;
-          echo "=== collected ($(ls dist/ | wc -l) files) ==="
-          ls -la dist/
+            -o -name '*.sig' \) -exec cp {} bundle-dist/ \;
+          echo "=== collected ($(ls bundle-dist/ | wc -l) files) ==="
+          ls -la bundle-dist/
 
       # 便携版：Tauri 的 bundle target 里没有 zip（合法值只有 nsis/msi/app/dmg/deb/rpm/appimage），
       # 自行把编译产物 opx.exe 打成 zip，与安装包一并发布。
@@ -176,14 +178,14 @@ jobs:
           if (-not (Test-Path $exe)) { throw "未找到便携版二进制: $exe" }
           $zip = "opx_${env:VERSION}_x64-portable.zip"
           Compress-Archive -LiteralPath $exe -DestinationPath $zip -Force
-          Move-Item $zip dist/ -Force
-          Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item "dist/$zip").Length)
+          Move-Item $zip bundle-dist/ -Force
+          Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item "bundle-dist/$zip").Length)
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.label }}
-          path: dist/
+          path: bundle-dist/
           if-no-files-found: error
 
   publish:
@@ -206,11 +208,11 @@ jobs:
       - name: Download all platform artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: bundle-dist
           pattern: bundles-*
           merge-multiple: true
 
-      # 发布说明写在仓库根目录（勿入 dist，否则会被当作资产上传）
+      # 发布说明写在仓库根目录（勿入 bundle-dist，否则会被当作资产上传）
       - name: Write release notes
         shell: bash
         run: |
@@ -242,20 +244,20 @@ jobs:
       # 汇总三平台产物为一份多平台 latest.json（updater 端点只认这一个文件）
       - name: Merge multi-platform latest.json
         run: |
-          node scripts/merge-latest.mjs dist "v$VERSION" dist/latest.json release-notes.md
+          node scripts/merge-latest.mjs bundle-dist "v$VERSION" bundle-dist/latest.json release-notes.md
 
       # 生成 ghfast.top 镜像版 latest.json（内部安装包 url 也走镜像），与原始 latest.json 一并发布，
       # 使国内用户在无 VPN、未配全局代理时也能经 GitHub 加速镜像完成更新。
       - name: Publish ghfast.top mirror latest.json
         run: |
-          node scripts/make-ghproxy-latest.mjs dist/latest.json
+          node scripts/make-ghproxy-latest.mjs bundle-dist/latest.json
 
       - name: Create release and upload assets
         shell: bash
         run: |
           set -euo pipefail
           TAG="v$VERSION"
-          gh release create "$TAG" dist/* \
+          gh release create "$TAG" bundle-dist/* \
             --title "opx $VERSION" \
             --notes-file release-notes.md
           echo "=== release $TAG created ==="
