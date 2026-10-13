@@ -9,7 +9,7 @@ name: Release
 # 三平台构建（matrix，任一平台失败则整体不发布，避免发布残缺版本）：
 #   Windows  → nsis + msi + portable zip（updater 用 nsis，见 merge-latest.mjs）
 #   Linux    → deb + rpm + AppImage（deb/rpm 供包管理器安装；AppImage 供自动更新）
-#   macOS    → universal dmg（Intel + Apple Silicon 一条构建；无签名证书，首次打开需右键）
+#   macOS    → universal dmg + app（app 供 updater 产 opx.app.tar.gz + .sig；无签名证书，首次打开需右键）
 # 各平台产物先存 artifact，再由 publish job 统一创建 Release 并合并多平台 latest.json。
 on:
   push:
@@ -71,7 +71,7 @@ jobs:
             bundles: deb,rpm,appimage
           - label: macos
             os: macos-latest
-            bundles: dmg
+            bundles: dmg,app
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -127,9 +127,9 @@ jobs:
             patchelf \
             rpm
 
-      # macOS universal：一条构建同时覆盖 Intel(x86_64) 与 Apple Silicon(aarch64)，
-      # 产物 opx_universal.app.tar.gz / opx_<v>_universal.dmg，
-      # latest.json 的 darwin 两个平台键都指向同一产物（见 merge-latest.mjs）。
+      # macOS universal：一条构建同时覆盖 Intel(x86_64) 与 Apple Silicon(aarch64)。
+      # app 是 updater-enabled target（产 opx.app → opx.app.tar.gz + .sig），dmg 不是——
+      # 只建 dmg 会有 "no updater-enabled targets" 告警且无签名产物，故矩阵里为 dmg,app。
       # universal target 要求两个 rust target 已安装。
       - name: Add macOS rust targets
         if: matrix.label == 'macos'
@@ -146,16 +146,17 @@ jobs:
         run: npx tauri build --bundles ${{ matrix.bundles }}
 
       # 收集本平台全部产物：安装包/压缩包、.sig 签名、updater tar.gz。
-      # macOS universal target 的产物在 target/universal-apple-darwin/release 下。
+      # ⚠️ 本项目是 cargo workspace，target 目录在仓库根而非 src-tauri/ 下；
+      # macOS universal 的 bundle 在 target/universal-apple-darwin/release/bundle。
       - name: Collect bundle artifacts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           if [ "${{ matrix.label }}" = "macos" ]; then
-            base="src-tauri/target/universal-apple-darwin/release/bundle"
+            base="target/universal-apple-darwin/release/bundle"
           else
-            base="src-tauri/target/release/bundle"
+            base="target/release/bundle"
           fi
           find "$base" -type f \( \
             -name '*.exe' -o -name '*.msi' -o -name '*.zip' -o -name '*.tar.gz' \
@@ -171,7 +172,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = 'src-tauri/target/release/opx.exe'
+          $exe = 'target/release/opx.exe'
           if (-not (Test-Path $exe)) { throw "未找到便携版二进制: $exe" }
           $zip = "opx_${env:VERSION}_x64-portable.zip"
           Compress-Archive -LiteralPath $exe -DestinationPath $zip -Force
