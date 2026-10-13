@@ -224,7 +224,19 @@ Proxy changes take effect immediately, no restart needed.
 
 ## Build & Package
 
-OPX is packaged with Tauri v2. `package.json` defines the `tauri` script; `tauri.conf.json` sets `build.beforeBuildCommand = "npm run build"`, which runs the frontend build (vue-tsc type-check + vite build) before packaging, and `bundle.targets = ["nsis"]` produces a `.exe` installer on Windows.
+OPX is packaged with Tauri v2. `package.json` defines the `tauri` script; `tauri.conf.json` sets `build.beforeBuildCommand = "npm run build"`, which runs the frontend build (vue-tsc type-check + vite build) before packaging. `bundle.targets = "all"` lets each platform produce its native bundles (Windows: NSIS + MSI; Linux: deb + rpm + AppImage; macOS: dmg).
+
+### Cross-platform release (CI)
+
+Merges to `master` trigger the **Release** workflow (`.github/workflows/release.yml`), a three-platform matrix build:
+
+| Platform | Runner | Artifacts |
+|---|---|---|
+| Windows | `windows-latest` | `opx_<v>_x64-setup.exe` (NSIS), `opx_<v>_x64_en-US.msi` (WiX), `opx_<v>_x64-portable.zip` |
+| Linux | `ubuntu-latest` | `opx_<v>_amd64.deb`, `opx_<v>_x86_64.rpm`, `opx_<v>_amd64.AppImage` |
+| macOS | `macos-latest` | `opx_<v>_universal.dmg` (Intel + Apple Silicon, unsigned — right-click to open on first launch) |
+
+All artifacts are published to [GitHub Releases](https://github.com/396743672/opx/releases). The workflow reads the version from `tauri.conf.json` and **skips if tag `v<version>` already exists** — to cut a new release, bump the version first. The publish job also merges a multi-platform `latest.json` (updater manifest) plus a `ghfast.top` mirror variant.
 
 ### Prerequisites (Windows)
 - **Rust toolchain**: install via `rustup` (https://rustup.rs/); `cargo --version` available.
@@ -249,16 +261,16 @@ npm run tauri:info          # environment info
 
 > **Important**: the portable exe (`target/release/opx.exe`) produced by `tauri build` has frontend assets **embedded** and runs standalone. Do **not** use `cargo build --release` to produce the portable exe — it skips Tauri's asset-embedding step and yields a blank page.
 
-### Artifacts
-Under `src-tauri/target/release/bundle/`:
-- `msi/opx_0.5.0_x64_zh-CN.msi` — MSI installer (enterprise / GPO-friendly)
-- `nsis/opx_0.5.0_x64-setup.exe` — NSIS installer (recommended for end users)
+### Artifacts (local build)
+Under `src-tauri/target/release/bundle/` (Windows shown; Linux/macOS produce deb/rpm/AppImage/dmg in their platform-specific subdirectories):
+- `msi/opx_<v>_x64_en-US.msi` — MSI installer (enterprise / GPO-friendly)
+- `nsis/opx_<v>_x64-setup.exe` — NSIS installer (recommended for end users)
 - `src-tauri/target/release/opx.exe` — portable exe (requires WebView2 on the target machine)
 
 MSI/NSIS installers embed the WebView2 Bootstrapper; the portable exe does not.
 
 ### Versioning
-The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.0`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync.
+The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.2`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
 
 ## Contributing
 
