@@ -104,16 +104,26 @@
 
 ### 检测设计（与初版计划的差异）
 - **主信号 = `portable.mode` 标记**（CI 便携 zip 内置），覆盖今后所有便携下载。
-- **兜底 = Windows 安装痕迹**：`HKCU/HKLM\Software\tauri-app\opx` 注册表键、同目录 `uninstall.exe`。覆盖「历史便携版」与用户按临时规避方案**只覆盖 opx.exe** 的场景（该目录无标记）。
+- **兜底 = 与「当前 exe 同目录」强绑定的安装痕迹**：同目录 `uninstall.exe`（NSIS 落点必有）、exe 位于已知安装目录（`%LOCALAPPDATA%\opx` / `%PROGRAMFILES%\opx`）。覆盖「历史便携版」与用户按临时规避方案**只覆盖 opx.exe** 的场景（该目录无标记、无卸载程序）。
+- **⚠️ 初版曾用 NSIS 注册表键 `Software\tauri-app\opx` 作兜底，已剔除**：注册表键由安装器写入、与具体 exe 解耦——便携版与安装版可同机共存，同机存在安装记录**不代表「当前运行这份是安装版」**。实测原始 bug 那次点击更新已在 `AppData\Local\opx` 写过该键，会把桌面手动解压的便携 0.5.2 误判为已安装 → 更新不拦截 → 复现丢数据（回归实测发现）。改用上述与 exe 同目录强绑定的信号。
 - **`bundle_type()` 未用作信号**：dev 构建也为 `None`，会误伤开发态更新流程验证；且 CI 打标行为有不确定性。
 - 仅 Windows 有意义（CI 只对 windows 打便携 zip）；`debug_assertions` 构建恒非便携，保证 dev 可验证。
 - 未引入方案 2/3（in-place 更新 / 数据根解耦），按计划留作后续。
 
-### 验证
+### 验证（初版）
 - `cargo check --workspace` 通过；`cargo test --lib` **连跑 3 次全绿**（338 + 24 + 10 passed，0 failed），含 2 个新增 `resolve_portable` 单测。
 - `npx vue-tsc --noEmit` 零错误。
 - 后端 `i18n:` key 与两套词条表一致性检查通过（15 键齐全）；新用图标均在离线子集内（无新增图标）。
 - `release.yml` YAML 结构核对无误（改动均在既有 block scalar 内）。
+
+### 回归修正（2026-10-14 续）—— 剔除注册表兜底
+- **问题**：初版 `has_installer_evidence()` 含 `nsis_registry_installed()`（查 `HKCU/HKLM\Software\tauri-app\opx`）。桌面 `Desktop\opx` 是手动解压的便携 0.5.2（无 `portable.mode`、无 `uninstall.exe`），但原始 bug 那次点击更新已在该机写入上述注册表键 → `is_portable()` 误返 `false` → 点更新仍触发 NSIS、复现丢数据。回归实测前于逻辑层发现。
+- **修复**（`crates/opx-core/src/utils/paths.rs`）：
+  - 删 `nsis_registry_installed()` 与 `NSIS_INSTALL_REG_KEY` 常量；`has_installer_evidence()` 仅看 `uninstall.exe` 同目录存在 + `is_in_known_install_dir()`（`%LOCALAPPDATA%\opx` / `%PROGRAMFILES%\opx` / `%PROGRAMFILES(X86)%\opx`）。
+  - `is_portable()` 的 dev 守卫改为「仅当未显式设 `OPX_APP_ROOT` 时才恒非便携」，使测试可绕过守卫走真实判定。
+  - 新增单测 `is_portable_detection_end_to_end`：设 `OPX_APP_ROOT` 指向「无标记、无 uninstall.exe、非安装目录」的临时目录 → 断言 `is_portable()==true`（即手动解压便携版必判便携）；再指「带 uninstall.exe」目录 → 断言 `false`。
+- **重验**：`cargo test --lib` **连跑 3 次全绿**（339 + 24 + 10 passed，0 failed，新增 1 个端到端用例）；`is_portable_detection_end_to_end` / `resolve_portable_*` 均通过。
+- 部署：`target/release/opx.exe`（release 构建，含前端）覆盖到 `Desktop\opx`（保留 `apps/config/data/cache` 与 mysql），并写入 `portable.mode`；验证 `Desktop\opx` 无 `uninstall.exe` + 有 `portable.mode` → 运行时 `is_portable()==true`。
 
 ### 待办（下次）
 - 实机回归：打便携 zip → 解压 → 关于页应显「便携版」徽标 + 点更新被拦并给下载引导；NSIS 安装版点更新仍走原 updater 流程。
