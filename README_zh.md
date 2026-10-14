@@ -279,6 +279,8 @@ ___
 
 全部产物发布到 [GitHub Releases](https://github.com/396743672/opx/releases)。工作流从 `tauri.conf.json` 读版本号，**若 `v<版本>` tag 已存在则整条跳过**——要发新版先把版本号改大。publish 阶段还会合并出多平台 `latest.json`（自动更新清单）及 `ghfast.top` 镜像版本。
 
+> **便携版与自动更新**：便携 zip 内含 `portable.mode` 标记，opx 据此判定「便携版」并**阻断应用内更新**——Tauri updater 只能交付 NSIS/MSI 安装器，便携 `opx.exe` 不会被原位替换，反而会在 `%LOCALAPPDATA%\opx` 装出第二份副本且数据不随迁。便携版升级方式：下载新版 `opx_<v>_x64-portable.zip`，解压后**直接覆盖 `opx.exe`**，`apps/`、`config/`、`data/` 等数据目录原样保留。安装版（NSIS/MSI）不受影响，仍可在「关于」页一键更新。
+
 ### 环境前置条件（Windows）
 - **Rust 工具链**：`rustup` 安装（https://rustup.rs/），`cargo --version` 可用
 - **Visual Studio Build Tools**：含「使用 C++ 的桌面开发」工作负载（MSVC + Windows SDK），首次打包需编译全部 Rust 依赖，耗时较长

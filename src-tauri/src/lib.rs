@@ -204,6 +204,7 @@ pub fn run() {
             commands::stack::import_stack,
             commands::update::check_app_update,
             commands::update::install_app_update,
+            commands::update::is_portable_build,
             commands::lock_screen::set_lock_password,
             commands::lock_screen::verify_lock_password,
             commands::lock_screen::has_lock_password,

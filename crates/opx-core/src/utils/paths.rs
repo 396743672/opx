@@ -162,6 +162,77 @@ pub fn resolve_data_path(rel_or_abs: &str) -> PathBuf {
     }
 }
 
+/// 便携版标记文件名。CI 打便携 zip 时与 `opx.exe` 一同放入；
+/// 解压即用的便携布局以此为「未经安装器安装」的权威信号。
+pub const PORTABLE_MARKER: &str = "portable.mode";
+
+/// Windows 安装器（Tauri NSIS）安装记录键，默认值即安装目录。
+/// 见 tauri-bundler NSIS 模板：`WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR`，
+/// 其中 `MANUPRODUCTKEY = Software\{MANUFACTURER}\{PRODUCTNAME}`（本仓库 `Software\tauri-app\opx`）。
+#[cfg(windows)]
+const NSIS_INSTALL_REG_KEY: &str = r"Software\tauri-app\opx";
+
+/// 是否为便携版（解压即用、未经安装器安装）。
+///
+/// 便携版**不能**走应用内更新：Tauri updater 只能交付安装器型产物（NSIS/MSI），
+/// 便携 `opx.exe` 不会被原位替换，反而会在 `%LOCALAPPDATA%\opx` 装出第二份副本，
+/// 用户数据（`apps/`、`config/`、`data/`）不随迁——即「更新后已装软件丢失」的根因。
+/// 调用方（应用内更新器）应据此阻断更新并引导手动下载便携包。
+///
+/// 判定优先级（命中即定）：
+/// 1. `app_root()/portable.mode` 存在 → 便携（CI 便携 zip 内置标记，最可靠）
+/// 2. Windows 有安装痕迹（NSIS 注册表记录 / 同目录 `uninstall.exe`）→ 非便携
+/// 3. 其余（含历史便携版：无标记、无安装痕迹）→ 便携
+///
+/// 说明：
+/// - 仅 Windows 有便携分发（CI 只对 windows 打 portable zip）；Linux/macOS 恒为非便携。
+/// - 开发/调试构建恒为非便携，保证 dev 下应用内更新流程可正常验证。
+pub fn is_portable() -> bool {
+    #[cfg(windows)]
+    {
+        if cfg!(debug_assertions) {
+            return false;
+        }
+        resolve_portable(
+            app_root().join(PORTABLE_MARKER).exists(),
+            has_installer_evidence(),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// 纯判定逻辑（拆出便于单测）：标记优先，其次看安装痕迹。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn resolve_portable(marker_exists: bool, installer_evidence: bool) -> bool {
+    if marker_exists {
+        return true;
+    }
+    !installer_evidence
+}
+
+/// Windows 安装痕迹探测（非 Windows 无安装器概念，恒 false）。
+#[cfg(windows)]
+fn has_installer_evidence() -> bool {
+    nsis_registry_installed() || app_root().join("uninstall.exe").exists()
+}
+
+/// Tauri NSIS 安装器会在 `HKCU/HKLM\Software\tauri-app\opx` 写入安装目录。
+/// perUser 安装（默认，`RequestExecutionLevel user`）写 HKCU；perMachine 写 HKLM，两处都查。
+#[cfg(windows)]
+fn nsis_registry_installed() -> bool {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+        .iter()
+        .any(|root| {
+            winreg::RegKey::predef(*root)
+                .open_subkey(NSIS_INSTALL_REG_KEY)
+                .is_ok()
+        })
+}
+
 /// 落盘敏感文件后收紧权限，缓解「权限不当可被读」（P2-6 明文凭据持久化）。
 ///
 /// - Unix/macOS：设为 `0600`（仅 owner 可读写，group/other 无任何权限）。
@@ -305,6 +376,22 @@ mod tests {
             None,
         );
         assert_eq!(root, PathBuf::from("/usr/bin"));
+    }
+
+    #[test]
+    fn resolve_portable_marker_takes_priority() {
+        // 有 portable.mode 标记 → 便携（即使同机存在安装记录，也可能是便携/安装双份并存，
+        // 以「当前运行的这一份」为准）
+        assert!(resolve_portable(true, true));
+        assert!(resolve_portable(true, false));
+    }
+
+    #[test]
+    fn resolve_portable_falls_back_to_installer_evidence() {
+        // 无标记：有安装痕迹 → 安装版（应用内更新可用）；无任何痕迹 → 便携。
+        // 后者覆盖「历史便携版」：旧 zip 无标记、也从未经安装器注册。
+        assert!(!resolve_portable(false, true));
+        assert!(resolve_portable(false, false));
     }
 
     #[test]

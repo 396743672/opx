@@ -24,6 +24,9 @@ pub struct UpdateCheckResult {
     pub version: Option<String>,
     pub notes: Option<String>,
     pub current_version: String,
+    /// 是否便携版。便携版应用内更新不可用（updater 只能交付 NSIS/MSI 安装器，
+    /// 便携 exe 不会被原位替换，反而会装出第二份副本），前端据此改显手动下载引导。
+    pub portable: bool,
 }
 
 /// 下载进度事件（`update-progress`），前端累加 `chunk` 计算百分比
@@ -106,6 +109,7 @@ async fn direct_reachable() -> bool {
 /// 检查更新，返回结构化结果
 pub async fn check_for_update(app: &AppHandle) -> Result<UpdateCheckResult> {
     let current = app.package_info().version.to_string();
+    let portable = opx_core::utils::paths::is_portable();
     let updater = build_updater(app).await?;
     match updater.check().await {
         Ok(Some(update)) => Ok(UpdateCheckResult {
@@ -113,12 +117,14 @@ pub async fn check_for_update(app: &AppHandle) -> Result<UpdateCheckResult> {
             version: Some(update.version),
             notes: update.body,
             current_version: current,
+            portable,
         }),
         Ok(None) => Ok(UpdateCheckResult {
             available: false,
             version: None,
             notes: None,
             current_version: current,
+            portable,
         }),
         Err(e) => Err(e).context("检查更新失败"),
     }
@@ -126,7 +132,17 @@ pub async fn check_for_update(app: &AppHandle) -> Result<UpdateCheckResult> {
 
 /// 检查并下载安装更新，进度通过 `update-progress` 事件推给前端。
 /// Windows 上 NSIS 安装器会在安装步骤自动退出进程。
+///
+/// 🚨 便携版必须在下载前阻断：updater 只能交付安装器型产物（NSIS/MSI），
+/// 便携 `opx.exe` 不会被原位替换，`ShellExecuteW` 运行 NSIS 后会在
+/// `%LOCALAPPDATA%\opx` 装出**第二份副本**，用户数据（apps/、config/、data/）
+/// 不随迁——表现为「更新后已装软件全部丢失」。故便携版直接返回 i18n 错误，
+/// 由前端引导用户手动下载便携包覆盖 opx.exe（数据目录原样保留）。
 pub async fn install_update(app: &AppHandle) -> Result<()> {
+    if opx_core::utils::paths::is_portable() {
+        tracing::info!("portable build detected: in-app update blocked, user must overwrite opx.exe manually");
+        anyhow::bail!("i18n:portableUpdateBlocked");
+    }
     let updater = build_updater(app).await?;
     let update = updater
         .check()

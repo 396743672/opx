@@ -1069,6 +1069,9 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     reg.register("install_app_update", |_ctx, _args| {
         Box::pin(async move { Err(ApiError::desktop_only("install_app_update")) })
     });
+    reg.register("is_portable_build", |_ctx, _args| {
+        Box::pin(async move { Err(ApiError::desktop_only("is_portable_build")) })
+    });
     reg.register("auto_check", |_ctx, _args| {
         Box::pin(async move { Err(ApiError::desktop_only("auto_check")) })
     });

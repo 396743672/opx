@@ -11,6 +11,8 @@ interface UpdateCheckResult {
   version: string | null
   notes: string | null
   current_version: string
+  /** 便携版：应用内更新不可用，需手动下载便携包覆盖 opx.exe */
+  portable: boolean
 }
 
 interface UpdateProgress {
@@ -24,8 +26,19 @@ export function useUpdater() {
   const checking = ref(false)
   const installing = ref(false)
   const updateInfo = ref<{ version: string; notes: string | null } | null>(null)
+  const portable = ref(false)
   const progress = ref(0) // 0-100
   const error = ref('')
+
+  // 便携标识与网络无关（后端读 exe 同级 portable.mode 标记 / 安装痕迹），
+  // 页面挂载即取，离线也能正确显示「便携版」徽标与手动下载引导。
+  async function loadPortable() {
+    try {
+      portable.value = await invoke<boolean>('is_portable_build')
+    } catch {
+      // Web 模式无此命令（桌面专属），保持 false
+    }
+  }
 
   async function check() {
     checking.value = true
@@ -33,6 +46,7 @@ export function useUpdater() {
     updateInfo.value = null
     try {
       const r = await invoke<UpdateCheckResult>('check_app_update')
+      portable.value = r.portable ?? false
       if (r.available && r.version) {
         updateInfo.value = { version: r.version, notes: r.notes }
       } else {
@@ -49,6 +63,9 @@ export function useUpdater() {
 
   async function install() {
     if (!updateInfo.value || installing.value) return
+    // 便携版不触发安装：updater 只能交付 NSIS/MSI，会在 %LOCALAPPDATA%\opx
+    // 装出第二份副本且数据不随迁。UI 已改显手动下载引导，这里双保险。
+    if (portable.value) return
     installing.value = true
     progress.value = 0
     error.value = ''
@@ -81,5 +98,5 @@ export function useUpdater() {
     }
   }
 
-  return { checking, installing, updateInfo, progress, error, check, install }
+  return { checking, installing, updateInfo, portable, progress, error, check, install, loadPortable }
 }
