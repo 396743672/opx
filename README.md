@@ -272,7 +272,7 @@ Under `src-tauri/target/release/bundle/` (Windows shown; Linux/macOS produce deb
 MSI/NSIS installers embed the WebView2 Bootstrapper; the portable exe does not.
 
 ### Versioning
-The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.2`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
+The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.3`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
 
 ## Contributing
 
