@@ -86,7 +86,7 @@
 - `install_inner`(Windows)：`extract()` 识别 exe → `WindowsUpdaterType::Nsis` → `ShellExecuteW` 运行安装器 → **`process::exit(0)`**；便携 exe 不会被原位替换（坐实根因 A）。
 - `get_urls`：便携 exe 的 `bundle_type()` 为 `None` → 目标键只有 `windows-x86_64` → 命中 `latest.json` 的 NSIS 条目。
 - **实测本仓 `target/release/opx.exe` 的 bundle-type 标记为 `UNK`**（`grep -a -o`）——即便携 zip 内的 exe 未被打标，记忆「便携版被标 msi」在当前工具链下不成立；安装器内的 exe 才带标记。
-- NSIS 默认 `InstallDir = $LOCALAPPDATA\opx`（installer.nsi:504），安装记录写 `HKCU/HKLM\Software\tauri-app\opx`（nsi:652，默认值 = INSTDIR）——第二份副本落点 + 便携检测的兜底信号。
+- NSIS 默认 `InstallDir = $LOCALAPPDATA\opx`（installer.nsi:504），安装记录写 `HKCU/HKLM\Software\tauri-app\opx`（nsi:652，默认值 = INSTDIR）——即第二份副本的安装落点。**该注册表键由安装器写入、与具体 exe 解耦，已确认不可用作便携检测信号（见下方「回归修正」）。**
 
 ### 改动清单
 | 文件 | 改动 |
