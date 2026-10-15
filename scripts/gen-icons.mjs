@@ -1,5 +1,6 @@
 // 从完整 MDI 图标集提取应用实际使用的图标，生成精简离线子集。
-// 自动扫描 src/ 和 src-tauri/src/（后端 catalog 图标）中的 "mdi:xxx" 用法。
+// 自动扫描 src/（前端）、src-tauri/src/（Tauri 层）与 crates/（后端 provider 图标）中的 "mdi:xxx" 用法。
+// ⚠️ 后端 provider 的 icon 字段只写在 crates/ 里，漏扫会导致这些图标（如 cloud/elephant）被静默剔除、离线渲染空白。
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -21,7 +22,10 @@ function walk(dir) {
 // 扫描源码里的 icon 用法：icon="mdi:xxx"、:icon="'mdi:xxx'"、icon: "mdi:xxx"、catalog 里的 icon 字段
 const iconRe = /mdi:([\w-]+)/g
 const USED_ICONS = [...new Set(
-  walk(resolve(root, 'src')).concat(walk(resolve(root, 'src-tauri/src'))).flatMap((f) => {
+  walk(resolve(root, 'src'))
+    .concat(walk(resolve(root, 'src-tauri/src')))
+    .concat(walk(resolve(root, 'crates'))) // 后端 provider 图标（如 PostgreSQL/MinIO/RustFS）仅靠此处纳入子集
+    .flatMap((f) => {
     const text = readFileSync(f, 'utf8')
     const found = []
     let m
