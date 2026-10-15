@@ -1030,4 +1030,11 @@ export default {
   updateInstallFailed: 'Update failed: {msg}',
   updateDownloadProgress: 'Downloading update {percent}%',
   updateInstalled: 'Update complete, restarting',
+  portableBadge: 'Portable',
+  updateAvailablePortable: 'New version v{version} available (portable build: update manually)',
+  portableUpdateHint:
+    'This is a portable build; in-app update is unavailable. Download the new portable package and overwrite opx.exe directly — your apps/, config/ and data/ folders are kept as-is.',
+  portableUpdateBlocked:
+    'In-app update is not supported on the portable build. Download the new portable package and overwrite opx.exe.',
+  downloadPortable: 'Download Portable Build',
 }

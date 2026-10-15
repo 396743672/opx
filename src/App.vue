@@ -231,11 +231,21 @@ onMounted(async () => {
     },
   )
 
-  // 启动自动检查到可用更新：toast 提示（手动「立即更新」在设置页进行）
-  unlistenUpdateAvailable = await listen<{ version: string | null }>('update-available', (e) => {
-    const v = e.payload?.version
-    if (v) toast(t('updateAvailable', { version: v }), 'info')
-  })
+  // 启动自动检查到可用更新：toast 提示（手动「立即更新」在关于页进行）
+  unlistenUpdateAvailable = await listen<{ version: string | null; portable?: boolean }>(
+    'update-available',
+    (e) => {
+      const v = e.payload?.version
+      if (!v) return
+      // 便携版应用内更新不可用（详见关于页引导），换文案避免误导
+      toast(
+        e.payload?.portable
+          ? t('updateAvailablePortable', { version: v })
+          : t('updateAvailable', { version: v }),
+        'info',
+      )
+    },
+  )
 
   window.clearTimeout(bootTimeout)
 })

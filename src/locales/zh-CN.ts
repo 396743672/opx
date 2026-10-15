@@ -1030,4 +1030,10 @@ export default {
   updateInstallFailed: '更新失败：{msg}',
   updateDownloadProgress: '下载更新 {percent}%',
   updateInstalled: '更新完成，即将重启',
+  portableBadge: '便携版',
+  updateAvailablePortable: '发现新版本 v{version}（便携版请手动下载更新）',
+  portableUpdateHint:
+    '当前为便携版，应用内更新不可用：请下载新版便携包，解压后直接覆盖 opx.exe 即可，apps、config、data 等数据目录会原样保留。',
+  portableUpdateBlocked: '便携版不支持应用内更新，请下载新版便携包后覆盖 opx.exe',
+  downloadPortable: '下载便携版',
 }

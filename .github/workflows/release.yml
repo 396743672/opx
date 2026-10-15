@@ -169,6 +169,9 @@ jobs:
 
       # 便携版：Tauri 的 bundle target 里没有 zip（合法值只有 nsis/msi/app/dmg/deb/rpm/appimage），
       # 自行把编译产物 opx.exe 打成 zip，与安装包一并发布。
+      # ⚠️ 必须同包打入 portable.mode 标记：opx 据此判定「便携版」并阻断应用内更新——
+      # Tauri updater 只能交付 NSIS/MSI 安装器，便携 exe 不会被原位替换，反而会在
+      # %LOCALAPPDATA%\opx 装出第二份副本且用户数据不随迁（见 paths::is_portable）。
       - name: Package portable (no-install) zip
         if: matrix.label == 'windows'
         shell: pwsh
@@ -177,7 +180,10 @@ jobs:
           $exe = 'target/release/opx.exe'
           if (-not (Test-Path $exe)) { throw "未找到便携版二进制: $exe" }
           $zip = "opx_${env:VERSION}_x64-portable.zip"
-          Compress-Archive -LiteralPath $exe -DestinationPath $zip -Force
+          $marker = 'portable.mode'
+          New-Item -ItemType File -Path $marker -Force | Out-Null
+          Compress-Archive -LiteralPath $exe, $marker -DestinationPath $zip -Force
+          Remove-Item $marker -Force
           Move-Item $zip bundle-dist/ -Force
           Write-Host ("便携版 {0}（{1:N0} 字节）" -f $zip, (Get-Item "bundle-dist/$zip").Length)
 
@@ -222,7 +228,7 @@ jobs:
           **Windows**
           - `opx___VERSION___x64-setup.exe` — NSIS 安装版，推荐；已安装用户可在应用内「设置 → 应用更新」一键升级
           - `opx___VERSION___x64_en-US.msi` — WiX/MSI 安装版，适合企业批量部署与静默安装
-          - `opx___VERSION___x64-portable.zip` — 免安装便携版，解压即用；不含自动更新，新版需手动下载
+          - `opx___VERSION___x64-portable.zip` — 免安装便携版，解压即用；不含应用内自动更新，新版请下载后直接覆盖 opx.exe（apps/config/data 等数据目录会原样保留）
 
           **Linux**
           - `opx___VERSION___amd64.deb` — Debian/Ubuntu（dpkg/apt；自动带 xvfb 依赖，建议另装 `fonts-noto-cjk` 以显示中文）
