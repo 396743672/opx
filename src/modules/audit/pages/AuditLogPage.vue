@@ -275,6 +275,10 @@ onMounted(loadAll)
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
 }
+/* 固定列宽下必须裁切：否则超长内容（如错误信息）会越出单元格/表格边界 */
+.audit-table td {
+  overflow: hidden;
+}
 .audit-table th {
   font-size: 11px;
   text-transform: uppercase;
@@ -322,13 +326,12 @@ onMounted(loadAll)
   color: var(--color-muted-foreground);
 }
 .result-error {
-  display: inline-block;
-  max-width: 260px;
-  margin-left: 6px;
+  /* 独立成行并限制在列宽内，用省略号收尾（完整信息走 title 悬浮提示） */
+  display: block;
+  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: bottom;
   font-size: 11px;
   color: var(--color-destructive);
 }
