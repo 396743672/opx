@@ -238,6 +238,8 @@ Merges to `master` trigger the **Release** workflow (`.github/workflows/release.
 
 All artifacts are published to [GitHub Releases](https://github.com/396743672/opx/releases). The workflow reads the version from `tauri.conf.json` and **skips if tag `v<version>` already exists** — to cut a new release, bump the version first. The publish job also merges a multi-platform `latest.json` (updater manifest) plus a `ghfast.top` mirror variant.
 
+> **Portable builds and auto-update**: the portable zip contains a `portable.mode` marker, which makes opx treat the copy as "portable" and **block in-app updates** — the Tauri updater can only deliver NSIS/MSI installers, so a portable `opx.exe` is never replaced in place; instead a second copy gets installed under `%LOCALAPPDATA%\opx` without your data. To upgrade a portable build: download the new `opx_<v>_x64-portable.zip` and **overwrite `opx.exe` directly** — `apps/`, `config/`, `data/` and other data folders are kept as-is. Installed (NSIS/MSI) builds are unaffected and keep one-click updates from the About page.
+
 ### Prerequisites (Windows)
 - **Rust toolchain**: install via `rustup` (https://rustup.rs/); `cargo --version` available.
 - **Visual Studio Build Tools**: "Desktop development with C++" workload (MSVC + Windows SDK). First build compiles all Rust deps and is slow.
@@ -270,7 +272,7 @@ Under `src-tauri/target/release/bundle/` (Windows shown; Linux/macOS produce deb
 MSI/NSIS installers embed the WebView2 Bootstrapper; the portable exe does not.
 
 ### Versioning
-The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.2`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
+The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.3`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
 
 ## Contributing
 

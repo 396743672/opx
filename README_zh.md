@@ -279,6 +279,8 @@ ___
 
 全部产物发布到 [GitHub Releases](https://github.com/396743672/opx/releases)。工作流从 `tauri.conf.json` 读版本号，**若 `v<版本>` tag 已存在则整条跳过**——要发新版先把版本号改大。publish 阶段还会合并出多平台 `latest.json`（自动更新清单）及 `ghfast.top` 镜像版本。
 
+> **便携版与自动更新**：便携 zip 内含 `portable.mode` 标记，opx 据此判定「便携版」并**阻断应用内更新**——Tauri updater 只能交付 NSIS/MSI 安装器，便携 `opx.exe` 不会被原位替换，反而会在 `%LOCALAPPDATA%\opx` 装出第二份副本且数据不随迁。便携版升级方式：下载新版 `opx_<v>_x64-portable.zip`，解压后**直接覆盖 `opx.exe`**，`apps/`、`config/`、`data/` 等数据目录原样保留。安装版（NSIS/MSI）不受影响，仍可在「关于」页一键更新。
+
 ### 环境前置条件（Windows）
 - **Rust 工具链**：`rustup` 安装（https://rustup.rs/），`cargo --version` 可用
 - **Visual Studio Build Tools**：含「使用 C++ 的桌面开发」工作负载（MSVC + Windows SDK），首次打包需编译全部 Rust 依赖，耗时较长
@@ -342,8 +344,8 @@ rm -rf dist
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
 | `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
-| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.2_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.2_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.3_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.3_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -369,7 +371,7 @@ rm -rf dist
 6. 发版前确认 `git status` 干净、已提交推送
 
 ### 版本号管理
-打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.2`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.3`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
 
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装

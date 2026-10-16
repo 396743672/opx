@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures::TryStreamExt;
 use reqwest;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
@@ -11,9 +12,9 @@ use std::time::Duration;
 pub const DEFAULT_GITHUB_PROXY: &str = "https://ghfast.top";
 
 /// 单个加速前缀的尝试次数（含首次）。
-/// 实测失败多为「首连抖动」（如 ghfast.top 首连 22.7s 超时、紧接着重试即成功），
-/// 故同源重试比换源更对症。
-const MAX_ATTEMPTS_PER_MIRROR: u32 = 3;
+/// 实测失败多为「首连抖动」或「大文件传输中途断流」（如 GitHub/CloudFront 经代理下载），
+/// 配合断点续传，同源重试比换源更对症——续传会在断点处继续，而非从头重下。
+const MAX_ATTEMPTS_PER_MIRROR: u32 = 5;
 
 /// 仅连接阶段的超时
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -121,6 +122,11 @@ where
 
     let mut last_err: Option<anyhow::Error> = None;
     for (idx, candidate) in candidates.iter().enumerate() {
+        // 换用下一个镜像时，丢弃旧分片从头下载（避免用 A 镜像的半截拼 B 镜像）。
+        // 同一镜像内多次重试则保留分片，由 fetch_to_file 走断点续传。
+        if idx > 0 {
+            let _ = std::fs::remove_file(destination);
+        }
         for attempt in 1..=MAX_ATTEMPTS_PER_MIRROR {
             match fetch_to_file(&client, candidate, destination, &mut on_progress).await {
                 Ok(()) => return Ok(()),
@@ -154,7 +160,13 @@ where
     }))
 }
 
-/// 单次下载尝试：盖写目标文件（失败重试时由 `File::create` 截断残留）。
+/// 单次下载尝试：支持**断点续传**（HTTP Range）。
+///
+/// - 目标文件已存在且非空 → 带 `Range: bytes=<n>-` 续传；服务器回 `206` 则追加写入，
+///   回 `200`（不支持 Range）则从头覆盖。
+/// - 断流后上层会按镜像重试，本函数保留分片继续，进度条不会回零。
+/// - 完整下载后做大小校验：最终字节数必须匹配（`content_length` 或 `Content-Range` 推导的总长），
+///   否则判为截断，由上层重试/续传，全部失败则由 installer 删除缓存。
 async fn fetch_to_file<F>(
     client: &reqwest::Client,
     url: &str,
@@ -164,32 +176,62 @@ async fn fetch_to_file<F>(
 where
     F: FnMut(u64, Option<u64>),
 {
-    let response = client
-        .get(url)
+    // 已有分片大小——支持的镜像会据此续传；不支持的会回 200 让我们从头覆盖。
+    let mut resume_from: u64 = std::fs::metadata(destination).map(|m| m.len()).unwrap_or(0);
+
+    let mut request = client.get(url);
+    if resume_from > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("下载失败 (url={}): {}", url, e))?
         .error_for_status()
         .map_err(|e| anyhow::anyhow!("服务器返回错误 (url={}): {}", url, e))?;
 
-    let total_size = response.content_length();
-    let mut file = File::create(destination)?;
-    let mut downloaded: u64 = 0;
-    on_progress(0, total_size);
+    let status = response.status();
+    // 416 = 请求区间越界，通常意味本地分片已达到/超过服务器文件大小 → 视为已完成，
+    // 交由上层归档头校验 + SHA 校验判真伪（不一致会被删除并重下），不在此报错。
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && resume_from > 0 {
+        return Ok(());
+    }
+    // 已带 Range 但服务器不支持（回 200 全量）→ 从头覆盖；其余非 2xx → 报错。
+    if !status.is_success() {
+        return Err(anyhow::anyhow!("服务器返回错误 (url={}): {}", url, status));
+    }
+    if resume_from > 0 && status != reqwest::StatusCode::PARTIAL_CONTENT {
+        resume_from = 0;
+    }
+
+    // 206 时 content_length 是「本次剩余」，总长 = 已存在 + 剩余（S3/CloudFront 均返回）。
+    let total_size = response.content_length().map(|len| len + resume_from);
+
+    let mut file = if resume_from > 0 {
+        OpenOptions::new().create(true).append(true).open(destination)?
+    } else {
+        File::create(destination)?
+    };
+
+    let mut downloaded: u64 = resume_from;
+    on_progress(downloaded, total_size);
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.try_next().await? {
+    while let Some(chunk) = stream
+        .try_next()
+        .await
+        .map_err(|e| anyhow::anyhow!("下载被中断（连接重置/代理丢流）：{}", e))?
+    {
         file.write_all(&chunk)?;
         downloaded += chunk.len() as u64;
         on_progress(downloaded, total_size);
     }
     file.flush()?;
 
-    // 完整性校验（核心修复）：若服务器返回了 content-length，必须与实际写入字节一致。
+    // 完整性校验（核心修复）：若拿到总长，最终字节数必须一致。
     // 否则「截断下载」会被误判为成功——大文件（如 212MB 的 nacos zip）经代理/GitHub
     // 传输中途断流时，stream 提前结束返回 Ok(())，opx 误以为下载成功，
     // 后续解压报 `invalid Zip archive: Could not find central directory end`。
-    // 校验失败返回 Err，由上层重试该镜像；全部重试失败则删除缓存（installer 负责）。
     if let Some(expected) = total_size {
         if downloaded != expected {
             return Err(anyhow::anyhow!(
@@ -252,6 +294,103 @@ mod tests {
         assert_eq!(
             resolve_candidates("https://nginx.org/download/n.zip", &plain),
             vec!["https://nginx.org/download/n.zip"]
+        );
+    }
+
+    /// 极简 HTTP/1.1 测试服务器处理器：
+    /// - 无 Range 的首请求 → 回 `200` 但只发前半段即断开（模拟「传输中途连接重置」）
+    /// - 带 `Range: bytes=N-` 的续传请求 → 回 `206` 补齐剩余字节后正常关闭
+    async fn serve_half_then_resume(mut sock: tokio::net::TcpStream, content: Vec<u8>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = [0u8; 4096];
+        let mut headers = Vec::new();
+        loop {
+            let n = match sock.read(&mut buf).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            headers.extend_from_slice(&buf[..n]);
+            if headers.windows(4).any(|w| w == b"\r\n\r\n") || headers.len() > 16 * 1024 {
+                break;
+            }
+        }
+        let header_text = String::from_utf8_lossy(&headers);
+        let start = header_text
+            .lines()
+            .find_map(|line| {
+                let l = line.trim();
+                if l.to_ascii_lowercase().starts_with("range:") {
+                    let spec = l["range:".len()..].trim();
+                    if let Some(rest) = spec.strip_prefix("bytes=") {
+                        return rest
+                            .split('-')
+                            .next()
+                            .unwrap_or("0")
+                            .trim()
+                            .parse::<usize>()
+                            .ok();
+                    }
+                }
+                None
+            })
+            .unwrap_or(0);
+
+        let total = content.len();
+        let (status, len_hdr, body) = if start == 0 {
+            (
+                "HTTP/1.1 200 OK\r\n",
+                format!("Content-Length: {}\r\n", total),
+                &content[..total / 2],
+            )
+        } else {
+            (
+                "HTTP/1.1 206 Partial Content\r\n",
+                format!("Content-Range: bytes {}-{}/{}\r\n", start, total - 1, total),
+                &content[start..],
+            )
+        };
+        let head = format!("{}{}Connection: close\r\n\r\n", status, len_hdr);
+        let _ = sock.write_all(head.as_bytes()).await;
+        let _ = sock.write_all(body).await;
+        let _ = sock.flush().await;
+    }
+
+    #[tokio::test]
+    async fn download_resumes_after_midstream_reset() {
+        let total: usize = 100_000;
+        let content: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let srv_content = content.clone();
+        let srv = tokio::spawn(async move {
+            loop {
+                let (sock, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let c = srv_content.clone();
+                tokio::spawn(serve_half_then_resume(sock, c));
+            }
+        });
+
+        let dest = std::env::temp_dir().join(format!("opx_dl_resume_{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&dest);
+        // 清空全局代理，确保直连本地服务器（不受系统代理影响）
+        init_download_config(String::new(), String::new());
+
+        let url = format!("http://{}/test.bin", addr);
+        let result = download_with_progress(&url, &dest, |_, _| {}).await;
+
+        let got = std::fs::read(&dest);
+        let _ = std::fs::remove_file(&dest);
+        srv.abort();
+
+        result.expect("传输中途断流后应通过断点续传成功完成下载");
+        assert_eq!(
+            got.expect("目标文件应已写出"),
+            content,
+            "续传后文件内容应与原始一致"
         );
     }
 }

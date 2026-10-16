@@ -29,6 +29,11 @@
               v-if="isDesktop"
               class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium"
             >v{{ version }}</span>
+            <!-- 便携版徽标：应用内更新不可用（updater 只能交付安装器，会装出第二份副本） -->
+            <span
+              v-if="isDesktop && portable"
+              class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium"
+            >{{ $t('portableBadge') }}</span>
           </div>
           <p class="text-sm text-muted-foreground mt-1.5 leading-relaxed">
             {{ $t('aboutDescription') }}
@@ -36,16 +41,42 @@
         </div>
       </div>
 
+      <!-- 便携版常驻提示：无新版时也告知「应用内更新不可用」，避免用户白点 -->
+      <div
+        v-if="isDesktop && portable && !updateInfo"
+        class="rounded-xl border border-border bg-card p-5"
+      >
+        <div class="flex items-start gap-3">
+          <Icon icon="mdi:package-variant-closed" class="text-lg mt-0.5 flex-shrink-0 text-muted-foreground" />
+          <p class="text-xs text-muted-foreground leading-relaxed">{{ $t('portableUpdateHint') }}</p>
+        </div>
+      </div>
+
       <!-- 可用更新 -->
       <div v-if="updateInfo" class="rounded-xl border border-border bg-card p-5 space-y-3">
-        <div class="text-sm font-medium text-success">
-          {{ $t('updateAvailable', { version: updateInfo.version }) }}
+        <div class="text-sm font-medium" :class="portable ? 'text-foreground' : 'text-success'">
+          {{
+            portable
+              ? $t('updateAvailablePortable', { version: updateInfo.version })
+              : $t('updateAvailable', { version: updateInfo.version })
+          }}
         </div>
         <p
           v-if="updateInfo.notes"
           class="text-xs text-muted-foreground whitespace-pre-line"
         >{{ updateInfo.notes }}</p>
-        <div class="flex items-center gap-3">
+
+        <!-- 便携版：不触发应用内安装，引导手动下载便携包覆盖 opx.exe -->
+        <template v-if="portable">
+          <p class="text-xs text-muted-foreground leading-relaxed">{{ $t('portableUpdateHint') }}</p>
+          <button class="btn primary" @click="openPortableDownload">
+            <Icon icon="mdi:download" />
+            {{ $t('downloadPortable') }}
+          </button>
+        </template>
+
+        <!-- 安装版：走 Tauri updater -->
+        <div v-else class="flex items-center gap-3">
           <button class="btn primary" :disabled="installing" @click="runInstall">
             <Icon
               :icon="installing ? 'mdi:loading' : 'mdi:download'"
@@ -94,14 +125,24 @@ import { useUpdater } from '@/composables/useUpdater'
 
 const REPO_URL = 'https://github.com/396743672/opx'
 const repoLabel = REPO_URL.replace('https://', '')
+// 便携版手动更新入口： Releases 页列出自便携 zip 在内的全部产物
+const PORTABLE_DOWNLOAD_URL = 'https://github.com/396743672/opx/releases/latest'
 
 // 桌面专属入口隐藏依据（批次 4.4）：更新器 / app_version / 系统打开器
 const isDesktop = getTransport().isDesktop
 
 const version = ref('—')
 
-const { checking, installing, updateInfo, progress, check: runCheck, install: runInstall } =
-  useUpdater()
+const {
+  checking,
+  installing,
+  updateInfo,
+  portable,
+  progress,
+  check: runCheck,
+  install: runInstall,
+  loadPortable,
+} = useUpdater()
 
 function openRepo() {
   // Web 模式没有 opener 插件，退化为浏览器新开标签页
@@ -112,7 +153,17 @@ function openRepo() {
   openUrl(REPO_URL).catch(() => {})
 }
 
+function openPortableDownload() {
+  if (!isDesktop) {
+    window.open(PORTABLE_DOWNLOAD_URL, '_blank', 'noopener')
+    return
+  }
+  openUrl(PORTABLE_DOWNLOAD_URL).catch(() => {})
+}
+
 onMounted(async () => {
+  // 便携标识与网络无关，先取（决定徽标与更新区形态）
+  loadPortable()
   try {
     version.value = await invoke<string>('app_version')
   } catch {
