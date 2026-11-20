@@ -12,7 +12,90 @@
 
 use std::path::PathBuf;
 
+use axum::http::{header, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use include_dir::{include_dir, Dir};
 use tower_http::services::{ServeDir, ServeFile};
+
+/// 编译期内嵌的前端产物（仓库根 dist/，路径相对本 crate 的 Cargo.toml）。
+///
+/// 这是 Web 管理入口自包含的核心：dist 被编进二进制，解压版/安装版/Linux
+/// headless 即使磁盘上没有 dist 目录，Web 页面依然可用。build.rs 保证编译期
+/// 该目录始终存在（全新 clone 未跑 npm build 时建最小占位）。
+static EMBEDDED_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../dist");
+
+/// 内嵌的 index.html 字节（SPA 入口 + 深链接回落目标）。
+pub fn embedded_index() -> Option<&'static [u8]> {
+    EMBEDDED_DIST.get_file("index.html").map(|f| f.contents())
+}
+
+/// 按路径取内嵌资源字节；路径为相对 dist 根（如 `assets/foo.js`）。
+pub fn embedded_asset(path: &str) -> Option<&'static [u8]> {
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        return embedded_index();
+    }
+    EMBEDDED_DIST
+        .get_file(path)
+        .map(|f| f.contents())
+}
+
+/// 递归列出某个子目录下的所有文件路径（相对 dist 根），供诊断/测试。
+pub fn embedded_file(prefix: &str) -> Option<Vec<String>> {
+    let prefix = prefix.trim_end_matches('/');
+    let dir = if prefix.is_empty() {
+        Some(&EMBEDDED_DIST)
+    } else {
+        EMBEDDED_DIST.get_dir(prefix)
+    }?;
+    let mut out = Vec::new();
+    fn walk(dir: &Dir<'_>, out: &mut Vec<String>) {
+        for f in dir.files() {
+            out.push(f.path().to_string_lossy().replace('\\', "/"));
+        }
+        for d in dir.dirs() {
+            walk(d, out);
+        }
+    }
+    walk(dir, &mut out);
+    Some(out)
+}
+
+/// 按扩展名推断 Content-Type；未知类型回落 `application/octet-stream`。
+pub fn embedded_mime(path: &str) -> String {
+    mime_guess::from_path(path)
+        .first()
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| "application/octet-stream".to_string())
+}
+
+/// 内嵌 dist 的 SPA fallback handler：命中真实文件则返回（带正确 MIME），
+/// 其余路径（含 SPA 深链接）回落 index.html。
+///
+/// 与磁盘版 [`spa_service`] 行为一致，但资源来自二进制而非文件系统——
+/// 这就是「Web 入口不依赖外部 dist 目录」的实现。
+pub async fn embedded_fallback(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    if let Some(bytes) = embedded_asset(path) {
+        let mime = embedded_mime(path);
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, mime.as_str())],
+            bytes.to_vec(),
+        )
+            .into_response();
+    }
+    // SPA 回落：未知路径一律给 index.html（200），让前端路由自行处理
+    match embedded_index() {
+        Some(html) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html.to_vec(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
 
 /// 依序探测 dist 目录；返回第一个含 `index.html` 的候选。
 pub fn resolve_dist_dir() -> Option<PathBuf> {
@@ -169,5 +252,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ===== 内嵌 dist（include_dir!）回归 =====
+
+    /// 内嵌产物必须含 index.html（build.rs 保证全新 clone 也有最小占位）。
+    /// 这是「Web 入口自包含、不依赖外部 dist 目录」的核心不变量。
+    #[test]
+    fn embedded_dist_has_index_html() {
+        let idx = super::embedded_index().expect("内嵌 dist 必须含 index.html");
+        let html = String::from_utf8_lossy(idx);
+        assert!(
+            html.to_lowercase().contains("<html") || html.to_lowercase().contains("<!doctype"),
+            "index.html 应是 HTML，实际前 80 字节: {}",
+            &html[..html.len().min(80)]
+        );
+    }
+
+    /// 内嵌资源可被路径检索（取一个真实存在的 assets 文件）。
+    #[test]
+    fn embedded_dist_serves_asset_by_path() {
+        let asset = super::embedded_file("assets/").expect("内嵌 dist 应含 assets/");
+        assert!(
+            asset.iter().any(|p| p.ends_with(".js") || p.ends_with(".css")),
+            "assets/ 下应有 js/css 产物，实际: {:?}",
+            asset.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+
+    /// MIME 推断：.js -> javascript，.html -> text/html，未知 -> octet-stream。
+    #[test]
+    fn embedded_mime_guess() {
+        assert!(super::embedded_mime("main.js").starts_with("text/javascript")
+            || super::embedded_mime("main.js").starts_with("application/javascript"));
+        assert!(super::embedded_mime("index.html").starts_with("text/html"));
+        assert_eq!(super::embedded_mime("file.unknownext"), "application/octet-stream");
+    }
+
+    /// 内嵌 fallback 路由：请求页面路径返回内嵌 index.html（200），
+    /// 证明无外部 dist 目录时 Web 入口仍可用——这正是解压版/安装版/Linux 所需。
+    #[tokio::test]
+    async fn embedded_fallback_serves_spa_without_disk_dist() {
+        let app = crate::router_embedded(test_state());
+        let res = app
+            .clone()
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "内嵌 index 应 200");
+        let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.to_lowercase().contains("<html") || html.to_lowercase().contains("<!doctype"));
+
+        // SPA 深链接也回落到内嵌 index.html
+        let res = app
+            .oneshot(Request::get("/settings/web").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "内嵌 SPA 深链接应回落 index");
+    }
+
+    /// API 路由优先级：内嵌 fallback 不能吞掉 /api/*。
+    #[tokio::test]
+    async fn embedded_router_keeps_api_routes() {
+        let app = crate::router_embedded(test_state());
+        // /api/health 无 token → 401（说明命中了 API 路由而非静态 fallback）
+        let res = app
+            .oneshot(Request::get("/api/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "/api/* 应优先于静态 fallback");
     }
 }

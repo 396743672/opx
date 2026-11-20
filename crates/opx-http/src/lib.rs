@@ -56,18 +56,48 @@ async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
 }
 
-/// 装配 axum 路由。
+/// 装配 axum 路由（生产入口，内嵌优先）。
 ///
 /// 分两组：`/api/health`、`/api/{cmd}`、`/api/ws-ticket` 经 Bearer 中间件；
 /// `/api/events/ws` **不**经 Bearer（浏览器 WS 无法设 Authorization 头，
 /// 由一次性 ticket 鉴权替代，D3.2）。
 ///
-/// 静态 SPA（批次 4.5）：若 [`static_files::resolve_dist_dir`] 找到前端产物，
-/// 挂为 fallback 服务（未匹配路径 → 静态文件 → SPA 回落 index.html）；
-/// 找不到则保持纯 API 模式（未知路径 404）。
+/// 静态 SPA：优先用编译期 `include_dir!` 内嵌的 dist（自包含，解压版/安装版/
+/// Linux headless 均无外部 dist 目录也能用）。仅当运行时 `OPX_WEB_DIST`
+/// 显式指向一个更新的磁盘 dist 时才改用磁盘版（开发态热更），否则纯内嵌。
 pub fn router(state: AppState) -> Router {
-    let dist = static_files::resolve_dist_dir();
-    router_with_dist(state, dist)
+    // 显式环境变量指向磁盘 dist 时优先用它（开发热更）；否则内嵌产物。
+    if let Some(dir) = std::env::var("OPX_WEB_DIST")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.join("index.html").is_file())
+    {
+        return router_with_dist(state, Some(dir));
+    }
+    router_embedded(state)
+}
+
+/// 仅用内嵌 dist 装配路由（自包含形态，不碰磁盘）。
+///
+/// 桌面/headless 的默认生产形态：`/` → 内嵌 index.html，深链接 SPA 回落，
+/// API 路由不受影响（fallback 只在无匹配路由时触发）。
+pub fn router_embedded(state: AppState) -> Router {
+    let protected = Router::new()
+        .route("/api/health", get(health))
+        .route("/api/{cmd}", post(api::dispatch))
+        .route("/api/ws-ticket", post(ws::issue_ticket))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer,
+        ));
+    let public = Router::new().route("/api/events/ws", get(ws::events_ws));
+
+    Router::new()
+        .merge(protected)
+        .merge(public)
+        .with_state(state)
+        .fallback(static_files::embedded_fallback)
 }
 
 /// [`router`] 的可注入形态（测试用）：dist 由调用方给定，不碰环境探测。
