@@ -26,11 +26,11 @@
 //! - headless：无条件启动（它是唯一入口，`web_enabled=false` 无意义）。
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use opx_http::{token, AppContext, AppState, TicketStore, WsEventSink};
+use opx_http::{static_files, token, AppContext, AppState, TicketStore, WsEventSink};
 
 use crate::commands::http_registry::build_registry;
 
@@ -156,6 +156,19 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
         std::sync::Arc::new(TicketStore::new()),
     );
 
+    // 内嵌资源 provider：从 Tauri asset_resolver 读编译期嵌入的 frontendDist。
+    // portable zip 只有 exe、无外部 dist，这是页面可访问的唯一来源；
+    // dev 模式下 Tauri 自身会回退读 frontendDist 文件系统，行为自动兼容。
+    // 闭包持有 AssetResolver（Clone + Send + Sync），零 tauri 依赖泄漏到 opx-http。
+    let resolver = app.asset_resolver();
+    let provider: static_files::AssetProvider = Arc::new(move |path: &str| {
+        let key = format!("/{path}");
+        resolver.get(key).map(|asset| static_files::EmbeddedAsset {
+            bytes: asset.bytes,
+            mime_type: asset.mime_type,
+        })
+    });
+
     let handle = app.clone();
     let headless_flag = headless;
     // headless 端口降级（安装引导设计 §4，修订 D6 在 headless 的适用性）：
@@ -172,7 +185,7 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
         let mut port = bind_addr.port();
         let bound = loop {
             let addr = std::net::SocketAddr::new(bind_addr.ip(), port);
-            match opx_http::bind(addr, app_state.clone()).await {
+            match opx_http::bind_with_provider(addr, app_state.clone(), Some(provider.clone())).await {
                 Ok(res) => break Ok(res),
                 Err(e) => {
                     if auto_retry && port < PORT_SCAN_MAX {

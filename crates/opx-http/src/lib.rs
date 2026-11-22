@@ -67,11 +67,24 @@ async fn health() -> Json<serde_json::Value> {
 /// 找不到则保持纯 API 模式（未知路径 404）。
 pub fn router(state: AppState) -> Router {
     let dist = static_files::resolve_dist_dir();
-    router_with_dist(state, dist)
+    router_with_assets(state, dist, None)
 }
 
 /// [`router`] 的可注入形态（测试用）：dist 由调用方给定，不碰环境探测。
 pub fn router_with_dist(state: AppState, dist: Option<std::path::PathBuf>) -> Router {
+    router_with_assets(state, dist, None)
+}
+
+/// 完整可注入形态：内嵌资源优先、文件系统 dist 回退。
+///
+/// `provider` 由宿主注入（桌面壳传 Tauri `AppHandle::asset_resolver()` 的闭包，
+/// 读到编译期嵌入 `frontendDist` 的字节）；opx-http 自身零 tauri 依赖。
+/// 命中顺序：provider → 文件系统 dist；两者皆无则纯 API 模式（未知路径 404）。
+pub fn router_with_assets(
+    state: AppState,
+    dist: Option<std::path::PathBuf>,
+    provider: Option<static_files::AssetProvider>,
+) -> Router {
     let protected = Router::new()
         .route("/api/health", get(health))
         .route("/api/{cmd}", post(api::dispatch))
@@ -87,10 +100,7 @@ pub fn router_with_dist(state: AppState, dist: Option<std::path::PathBuf>) -> Ro
         .merge(public)
         .with_state(state);
 
-    match dist {
-        Some(dir) => app.fallback_service(static_files::spa_service(&dir)),
-        None => app,
-    }
+    static_files::mount_fallback(app, dist, provider)
 }
 
 /// 在给定 listener 上启动 server（薄封装 `axum::serve`）。
@@ -112,9 +122,18 @@ pub async fn bind(
     addr: std::net::SocketAddr,
     state: AppState,
 ) -> std::io::Result<(std::net::SocketAddr, std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>)> {
+    bind_with_provider(addr, state, None).await
+}
+
+/// [`bind`] 的可注入形态：宿主传入内嵌资源提供者（Tauri asset resolver 闭包）。
+pub async fn bind_with_provider(
+    addr: std::net::SocketAddr,
+    state: AppState,
+    provider: Option<static_files::AssetProvider>,
+) -> std::io::Result<(std::net::SocketAddr, std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>)> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local = listener.local_addr()?;
-    let app = router(state);
+    let app = router_with_assets(state, static_files::resolve_dist_dir(), provider);
     Ok((local, Box::pin(serve(listener, app))))
 }
 

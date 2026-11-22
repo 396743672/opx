@@ -3122,6 +3122,7 @@ version = "0.5.1"
 dependencies = [
  "axum",
  "futures-util",
+ "mime_guess",
  "opx-core",
  "rand_core 0.6.4",
  "reqwest",
