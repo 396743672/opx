@@ -54,24 +54,53 @@ pub async fn start_app(
         (app_id.to_string(), "Starting", None::<u32>, None::<String>),
     );
 
+    // 失败统一出口：写入 Starting 之后的任何失败都必须把状态回滚为 Error 并带上原因，
+    // 否则应用永久卡在「启动中」——编辑/删除/换包按钮全灰，只能重启 opx 恢复。
+    // 这正是便携版目录迁移后旧 JDK 记录失效时用户遇到的现象。
+    let fail = |msg: String| -> String {
+        let _ = springboot_mgr.update_status(
+            app_id,
+            AppStatus::Error,
+            None,
+            Some(msg.clone()),
+        );
+        sink.emit_ser(
+            "springboot-status-changed",
+            (app_id.to_string(), "Error", None::<u32>, Some(msg.clone())),
+        );
+        msg
+    };
+
     // 获取 JDK 路径
-    let jdk = software_mgr
-        .find_installed(&app.jdk_installed_id)
-        .ok_or("所选 JDK 未找到，请重新选择")?;
+    let jdk = match software_mgr.find_installed(&app.jdk_installed_id) {
+        Some(j) => j,
+        None => return Err(fail(format!(
+            "所选 JDK 未找到（记录 {}），请重新选择 JDK 后再启动",
+            app.jdk_installed_id
+        ))),
+    };
     let java_home = std::path::Path::new(&jdk.install_path);
     let java_bin = if cfg!(windows) {
         let p = java_home.join("bin").join("java.exe");
         if p.exists() {
             p
         } else {
-            return Err("java.exe 未找到".to_string());
+            return Err(fail(format!(
+                "JDK [{}] 的 java.exe 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
+                jdk.name,
+                p.display()
+            )));
         }
     } else {
         let p = java_home.join("bin").join("java");
         if p.exists() {
             p
         } else {
-            return Err("java 未找到".to_string());
+            return Err(fail(format!(
+                "JDK [{}] 的 java 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
+                jdk.name,
+                p.display()
+            )));
         }
     };
 
@@ -117,13 +146,13 @@ pub async fn start_app(
 
     // ponytail: stdout/stderr → console.log，Spring Boot 自己的日志（info.log 等）不受影响
     let console = std::fs::File::create(log_dir.join("console.log"))
-        .map_err(|e| format!("无法创建控制台日志: {}", e))?;
+        .map_err(|e| fail(format!("无法创建控制台日志: {}", e)))?;
     let console_clone = console.try_clone()
-        .map_err(|e| format!("无法克隆句柄: {}", e))?;
+        .map_err(|e| fail(format!("无法克隆句柄: {}", e)))?;
     cmd.stdout(std::process::Stdio::from(console));
     cmd.stderr(std::process::Stdio::from(console_clone));
 
-    let child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+    let child = cmd.spawn().map_err(|e| fail(format!("启动失败: {}", e)))?;
     let pid = child.id();
 
     // 注册到全局进程注册表
@@ -420,8 +449,12 @@ pub async fn restart_app(
 
 #[cfg(test)]
 mod tests {
-    use super::{stop_outcome, StopOutcome};
+    use super::{stop_outcome, StopOutcome, AppStatus, SpringBootManager, SoftwareManager, Arc, EventSink};
+    use crate::models::springboot::{CreateAppParams, SpringBootStore};
     use std::time::Duration;
+
+    // OPX_APP_ROOT 是全局环境变量；并行测试会互相覆盖导致污染，统一串行化。
+    static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 应用自行退出＝真正的优雅停止，不应带任何警告
     #[test]
@@ -522,5 +555,147 @@ mod tests {
 
         // 进程确实没了 → 结论必须是「成功但未优雅」，而不是 Err
         assert!(!stop_outcome(pid, false, false, 0, None).graceful);
+    }
+
+    /// 复现：启动前校验失败（JDK 记录找不到）后，状态绝不能停在 `Starting`。
+    ///
+    /// 用户把便携版从 Desktop\opx 移到 d:/opx 后，旧 JRE 目录已不存在，
+    /// 启动时 `find_installed` 拿到的记录指向无效目录 → java.exe 检查失败。
+    /// 旧代码在写入 Starting 之后直接 `return Err`，没有回滚，导致应用永久
+    /// 卡在「启动中」、所有按钮灰化，只能重启 opx 恢复。本测试钉死回滚行为。
+    #[tokio::test]
+    async fn start_failure_rolls_back_status_from_starting() {
+        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Noop sink：只关心状态持久化，不校验事件广播
+        struct NoopSink;
+        impl EventSink for NoopSink {
+            fn emit(&self, _event: &str, _payload: serde_json::Value) {}
+        }
+
+        let root = std::env::temp_dir().join(format!("opx-sb-rollback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建测试根目录");
+        std::env::set_var("OPX_APP_ROOT", &root);
+        // create_app 会校验源 JAR 存在并复制到 data 目录；造一个占位文件即可。
+        // 真正 spawn 之前就会因 JDK 记录不存在而失败，JAR 内容不会被解析。
+        let dummy_jar = root.join("dummy-source.jar");
+        std::fs::write(&dummy_jar, b"placeholder").expect("写占位 JAR");
+
+        let sb = SpringBootManager::new();
+        let sw = SoftwareManager::new();
+        let sink: Arc<dyn EventSink> = Arc::new(NoopSink);
+
+        // 造一个指向不存在 JDK 记录的应用，避免真的 spawn java 进程。
+        // start_app 在 find_installed 失败处返回，须把状态写回 Error/Stopped。
+        let app = sb.create_app(CreateAppParams {
+            jar_path: dummy_jar.to_string_lossy().to_string(),
+            name: "rollback-probe".to_string(),
+            jdk_installed_id: "nonexistent-jdk-id".to_string(),
+            jvm_opts: vec![],
+            program_args: vec![],
+            profile: String::new(),
+            env_vars: vec![],
+            port: Some(18080),
+            log_path: String::new(),
+            dependencies: vec![],
+            auto_start: false,
+            startup_order: 0,
+            auto_restart: false,
+            group: None,
+            jdk_type: "jdk".to_string(),
+            stop_timeout_secs: 30,
+            local_ip: String::new(),
+        }).expect("创建测试应用");
+
+        let result = super::start_app(&app.id, &sb, &sw, &sink).await;
+        assert!(result.is_err(), "JDK 不存在时启动必须失败");
+
+        // 核心断言：失败后状态绝不能是 Starting（否则 UI 永久卡死）
+        let after = sb.find_app(&app.id).expect("应用应仍在列表中");
+        assert_ne!(
+            after.status,
+            AppStatus::Starting,
+            "启动失败后状态必须从 Starting 回滚，实际={:?}",
+            after.status
+        );
+        assert_eq!(after.pid, None, "失败后不应残留 PID");
+        assert!(
+            after.last_error.as_deref().unwrap_or("").contains("JDK"),
+            "失败原因应写入 last_error 供 UI 展示，实际={:?}",
+            after.last_error
+        );
+
+        std::env::remove_var("OPX_APP_ROOT");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 复现：存量的「卡在 Starting 且 pid=null」应用在 list_apps 时必须自愈为 Stopped。
+    ///
+    /// 用户当前 apps.json 里 demo-jdk21 正是 status=Starting、pid=null。
+    /// 旧兜底逻辑 `if let Some(pid)` 在 pid 为 null 时整段跳过，导致 UI 永久灰化，
+    /// 不重启 opx 就无法恢复。本测试钉死自愈行为。
+    #[test]
+    fn list_apps_self_heals_stuck_starting_without_pid() {
+        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join(format!("opx-sb-stuck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建测试根目录");
+        std::env::set_var("OPX_APP_ROOT", &root);
+
+        // 直接落一份「卡在 Starting、无 pid」的存量数据
+        let store_dir = root.join("data").join("springboot");
+        std::fs::create_dir_all(&store_dir).expect("建 store 目录");
+        let json = r#"{
+            "applications": [{
+                "id": "stuck-1", "name": "stuck", "jar_path": "springboot/stuck/app.jar",
+                "version": "1.0", "jvm_opts": [], "program_args": [], "profile": "",
+                "env_vars": [], "status": "Starting", "pid": null, "port": 8080,
+                "log_path": "springboot/stuck/logs/console.log", "start_time": null,
+                "last_error": null, "dependencies": [], "auto_start": false,
+                "startup_order": 0, "auto_restart": false, "group": null,
+                "jdk_type": "jre", "stop_timeout_secs": 30, "local_ip": "",
+                "jdk_installed_id": "", "spring_boot_version": null
+            }],
+            "groups": [], "global_env_vars": []
+        }"#;
+        std::fs::write(store_dir.join("apps.json"), json).expect("写存量 apps.json");
+
+        let sb = SpringBootManager::new();
+        let apps = sb.list_apps();
+        assert_eq!(apps.len(), 1, "应用不应丢失");
+        assert_eq!(
+            apps[0].status,
+            AppStatus::Stopped,
+            "卡在 Starting 且无 pid 的存量应用须自愈为 Stopped，实际={:?}",
+            apps[0].status
+        );
+
+        std::env::remove_var("OPX_APP_ROOT");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 复现：apps.json 缺 `jdk_installed_id` 字段时仍须能反序列化。
+    ///
+    /// 用户为排查手动删掉该字段。若无 `#[serde(default)]`，整个 store
+    /// 反序列化失败 → load_store().unwrap_or_default() → 应用列表被清空。
+    #[test]
+    fn apps_json_without_jdk_installed_id_deserializes() {
+        let json = r#"{
+            "applications": [{
+                "id": "x1", "name": "demo", "jar_path": "springboot/demo/app.jar",
+                "version": "1.0", "jvm_opts": [], "program_args": [], "profile": "",
+                "env_vars": [], "status": "Stopped", "pid": null, "port": 8080,
+                "log_path": "springboot/demo/logs/console.log", "start_time": null,
+                "last_error": null, "dependencies": [], "auto_start": false,
+                "startup_order": 0, "auto_restart": false, "group": null,
+                "jdk_type": "jre", "stop_timeout_secs": 30, "local_ip": "",
+                "spring_boot_version": null
+            }],
+            "groups": [], "global_env_vars": []
+        }"#;
+        let store: SpringBootStore = serde_json::from_str(json)
+            .expect("缺 jdk_installed_id 字段的 apps.json 仍须能反序列化");
+        assert_eq!(store.applications.len(), 1, "缺字段不应清空整个应用列表");
+        assert_eq!(store.applications[0].jdk_installed_id, "", "缺失字段应回退为空串");
     }
 }

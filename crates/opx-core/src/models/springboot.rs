@@ -29,6 +29,9 @@ pub struct SpringBootApp {
     /// 用途：显示真实框架版本，并据此提示该 jar 需要的最低 JDK。
     #[serde(default)]
     pub spring_boot_version: Option<String>,
+    /// 所选 JDK/JRE 的安装记录 id。加 serde(default) 兼容旧数据/手工编辑缺字段——
+    /// 否则一条记录缺字段会让整个 apps.json 反序列化失败，应用列表被清空。
+    #[serde(default)]
     pub jdk_installed_id: String,
     /// 自动生成的优化 JVM 参数 + 用户手动修改后的合并结果
     pub jvm_opts: Vec<String>,
