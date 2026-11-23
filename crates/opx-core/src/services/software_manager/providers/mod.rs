@@ -64,9 +64,20 @@ pub(crate) fn run_build_steps(
                 )
             })?;
         if !out.status.success() {
-            let tail = String::from_utf8_lossy(&out.stderr);
-            let tail = tail.lines().rev().take(8).collect::<Vec<_>>();
-            let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+            // 合并 stdout + stderr 取尾部：autoconf 系（nginx `./configure`）把失败原因
+            // 写在 **stdout**，只看 stderr 会得到一条没有任何信息的「退出码 Some(1)」
+            // ——实测 nginx 缺 PCRE 时用户只看到「退出码 Some(1)」，无法自救。
+            let mut merged = String::from_utf8_lossy(&out.stdout).into_owned();
+            merged.push_str(&String::from_utf8_lossy(&out.stderr));
+            let tail = merged
+                .lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(anyhow::anyhow!(
                 "{what} 源码构建失败：`{program}` 退出码 {:?}\n{}",
                 out.status.code(),
@@ -466,6 +477,31 @@ mod tests {
         assert!(
             p.graceful_stop_command(&ctx).is_none(),
             "无密码时应返回 None（回退强杀）"
+        );
+    }
+
+    /// 回归：构建步骤失败时，报错必须带上 **stdout** 尾部。
+    ///
+    /// `./configure`（autoconf 系）把失败原因写 stdout，此前只取 stderr，
+    /// 用户拿到的错误是「`./configure` 退出码 Some(1)」后面什么都没有——
+    /// 实测 nginx 缺 PCRE 时就是这样，完全无法自救。
+    #[test]
+    fn build_step_failure_reports_stdout_tail() {
+        let dir = std::env::temp_dir();
+        #[cfg(unix)]
+        let steps: &[(&str, &[&str])] =
+            &[("sh", &["-c", "echo 'the HTTP rewrite module requires PCRE'; exit 1"])];
+        #[cfg(windows)]
+        let steps: &[(&str, &[&str])] = &[(
+            "cmd",
+            &["/C", "echo the HTTP rewrite module requires PCRE && exit 1"],
+        )];
+        let err = super::run_build_steps(&dir, "Nginx", steps)
+            .expect_err("退出码非 0 必须报错")
+            .to_string();
+        assert!(
+            err.contains("PCRE"),
+            "报错应包含 stdout 中的失败原因，实际：{err}"
         );
     }
 }

@@ -17,6 +17,32 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(not(windows))]
 const CREATE_NO_WINDOW: u32 = 0;
 
+/// nginx 源码构建的前置依赖预检：PCRE / PCRE2 头文件缺失时返回可照抄的修复提示。
+///
+/// 为什么单查头文件就够：`./configure` 找不到 PCRE 时报的是
+/// `the HTTP rewrite module requires the PCRE library`，而 nginx 三种解法里
+/// 「装系统库」是唯一适合托管工具自动判断的；缺 zlib/OpenSSL 的情况实测不会
+/// 出现在最小安装上（两者是常见基础依赖），故不做过度预检。
+fn missing_pcre_hint() -> Option<String> {
+    const HEADERS: &[&str] = &[
+        "/usr/include/pcre2.h",
+        "/usr/local/include/pcre2.h",
+        "/usr/include/pcre.h",
+        "/usr/local/include/pcre.h",
+    ];
+    if HEADERS.iter().any(|p| std::path::Path::new(p).exists()) {
+        return None;
+    }
+    Some(
+        "Nginx 源码构建缺少 PCRE 开发库（HTTP rewrite 模块必需）。\n\
+         请先安装后重试：\n  \
+         Debian/Ubuntu: apt install -y libpcre2-dev build-essential\n  \
+         RHEL/CentOS:   dnf install -y pcre2-devel gcc make\n  \
+         Alpine:        apk add pcre2-dev build-base"
+            .to_string(),
+    )
+}
+
 /// Nginx 官方**源码** tar.gz URL（P2-1：*nix 无预编译二进制，安装后 `./configure && make` 构建）。
 fn nginx_source_url(version: &str) -> String {
     format!("https://nginx.org/download/nginx-{version}.tar.gz")
@@ -181,13 +207,40 @@ impl SoftwareProvider for NginxProvider {
         // P2-1：非 Windows 走官方源码包 → 配置 + 编译 + 安装到 <install>
         // （产出 <install>/sbin/nginx 与 <install>/conf/nginx.conf）。依赖目标机 gcc/make 及 PCRE/zlib/OpenSSL 开发库。
         if crate::utils::platform::current_os() != "windows" {
+            // 前置依赖预检：nginx 的 HTTP rewrite 模块强依赖 PCRE(2) 开发库，
+            // 最小化 Debian/Ubuntu/RHEL 安装默认不带它，configure 会直接失败。
+            // 不预检只能拿到「退出码 1」，用户无从下手（实测 Debian 13 即如此）。
+            if let Some(hint) = missing_pcre_hint() {
+                anyhow::bail!(hint);
+            }
             let prefix = format!("--prefix={}", ctx.install_path);
             let steps: &[(&str, &[&str])] = &[
                 ("./configure", &[prefix.as_str()]),
                 ("make", &[]),
-                ("make", &["install"]),
             ];
             super::run_build_steps(ctx.install_dir(), "Nginx", steps)?;
+            // 不跑 `make install`：源码是直接解到安装根的（`install_dir == install_path`），
+            // prefix 指向同一目录，install 阶段 `cp conf/koi-win <prefix>/conf/koi-win`
+            // 会以「同一文件」报错并中断整个安装（实测 Debian 13 + nginx 1.31.9）。
+            // 手动放置与 install 等价的产物即可：objs/nginx → sbin/nginx + logs/ 目录；
+            // conf/ 与 html/ 本来就在安装根，无需再拷。
+            let root = Path::new(&ctx.install_path);
+            let built = root.join("objs").join("nginx");
+            if !built.is_file() {
+                anyhow::bail!(
+                    "Nginx 构建产物缺失：{}（`make` 未产出可执行文件）",
+                    built.display()
+                );
+            }
+            std::fs::create_dir_all(root.join("sbin"))?;
+            let target = root.join("sbin").join("nginx");
+            std::fs::copy(&built, &target)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+            }
+            std::fs::create_dir_all(root.join("logs"))?;
         }
         // 创建 nginx 运行所需的 temp/ 临时目录，避免启动时 [emerg] CreateDirectory failed
         Self::ensure_temp_dirs(Path::new(&ctx.install_path))?;

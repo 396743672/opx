@@ -1,0 +1,15 @@
+# 打包与系统集成脚本必须是 LF。
+# CRLF 会让 Linux 把 `#!/bin/sh\r` 当成不存在的解释器，dpkg 报
+# 「无法执行 post-installation 脚本：没有那个文件或目录」（2026-11-23 实测踩到）。
+*.sh text eol=lf
+*.service text eol=lf
+src-tauri/deb/postinst text eol=lf
+src-tauri/deb/prerm text eol=lf
+src-tauri/deb/postrm text eol=lf
+
+# 二进制资产不做换行归一
+*.png binary
+*.ico binary
+*.icns binary
+*.jar binary
+*.deb binary
