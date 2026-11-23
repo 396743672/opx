@@ -246,9 +246,15 @@ impl SoftwareProvider for NacosProvider {
         // jdk_install_path 由命令层解析（优先表单选择的 JDK，回退自动找），此处直接用。
         let jdk = ctx.jdk_install_path.as_deref()
             .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动 Nacos"))?;
-        let java = std::path::Path::new(&jdk)
-            .join("bin")
-            .join(if cfg!(windows) { "java.exe" } else { "java" });
+        // 不能直接拼 `<jdk>/bin/java`：存量 JDK 安装可能多一层目录
+        // （`apps/jdk/<ver>/jdk-<ver>/bin/java`），拼死路径会以 `os error 2` 失败。
+        // 解析不到时退回旧路径（启动阶段会以更具体的报错暴露问题，不影响既有测试/用法）。
+        let java = crate::utils::exec::resolve_bin(std::path::Path::new(&jdk), "java")
+            .unwrap_or_else(|| {
+                std::path::Path::new(&jdk)
+                    .join("bin")
+                    .join(if cfg!(windows) { "java.exe" } else { "java" })
+            });
         let jar = std::path::Path::new(&ctx.install_path)
             .join("target").join("nacos-server.jar");
         let working_dir = PathBuf::from(&ctx.install_path);

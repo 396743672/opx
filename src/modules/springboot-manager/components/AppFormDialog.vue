@@ -269,6 +269,7 @@ import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isDesktop } from '@/utils/transport'
 import { invoke } from '@/utils/ipc'
+import { fileToBase64 } from '@/utils/file'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption, GcUnsupportedReason } from '@/models/springboot'
@@ -682,14 +683,7 @@ async function onWebJarSelected(e: Event) {
   jarUploadError.value = ''
   jarUploading.value = true
   try {
-    const buf = await file.arrayBuffer()
-    const bytes = new Uint8Array(buf)
-    let binary = ''
-    const CHUNK = 0x8000 // 分块拼接避免大文件栈溢出
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-    }
-    const dataBase64 = btoa(binary)
+    const dataBase64 = await fileToBase64(file)
     const savedPath = await invoke<string>('upload_jar_file', { name: file.name, dataBase64 })
     await applyJarPath(savedPath, file.name)
   } catch (err) {

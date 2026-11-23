@@ -962,6 +962,18 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
         })
     });
     let h = handle.clone();
+    reg.register("upload_site_bundle_data", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let id: String = arg(&args, "id")?;
+            let loc_path: String = arg(&args, "loc_path")?;
+            let file_name: String = arg(&args, "file_name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(website::upload_site_bundle_data(sm, id, loc_path, file_name, data_base64))
+        })
+    });
+    let h = handle.clone();
     reg.register("generate_self_signed_cert", move |_ctx, args| {
         let h = h.clone();
         Box::pin(async move {
@@ -1005,6 +1017,14 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     });
 
     // ===== node_app 写命令（5；NodeApp 模块写操作，前端会调）=====
+    // Web 端没有本机文件路径，入口 js 由浏览器读成 base64 传上来先落盘
+    reg.register("upload_node_entry", |_ctx, args| {
+        Box::pin(async move {
+            let name: String = arg(&args, "name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            ok(node_app::upload_node_entry(name, data_base64).await)
+        })
+    });
     let h = handle.clone();
     reg.register("add_node_app", move |_ctx, args| {
         let h = h.clone();

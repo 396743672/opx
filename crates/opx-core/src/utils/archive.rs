@@ -5,6 +5,23 @@ use std::path::Path;
 
 use crate::models::software::ArchiveFormat;
 
+/// 解包后恢复归档里记录的 unix 权限位（`0` / 无记录时保持系统默认）。
+///
+/// 为什么必须做：`File::create` 一律落 0644，Linux 官方包里的 `bin/java`、`bin/node`、
+/// `sbin/nginx` 等可执行文件会失去执行位，启动直接 `权限不够 (os error 13)`。
+/// 反过来，站点静态包又不能带执行位/不可读位——那由 [`normalize_public_mode`] 收口。
+#[cfg(unix)]
+fn apply_unix_mode(path: &Path, mode: Option<u32>) {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(bits) = mode.filter(|m| *m != 0) else {
+        return;
+    };
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(bits & 0o7777));
+}
+
+#[cfg(not(unix))]
+fn apply_unix_mode(_path: &Path, _mode: Option<u32>) {}
+
 /// 解压进度回调：(已解压字节数, 总字节数)。
 /// 约定与 installer.rs 内「下载进度回调」一致：由调用方在闭包里节流后 emit install-progress 事件
 /// （phase/percent 字段对齐下载），便于前端统一处理。extract 已知总量故省去 Option。
@@ -40,6 +57,10 @@ where
                 }
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
+            // 回归：zip 也记录 unix 权限（`external_attributes` 高位），旧实现只 `File::create`
+            // 一律落成 0644，Linux 包里 bin/ 下的可执行文件就丢了执行位 → `os error 13`。
+            // Windows 打的 zip 通常没有 unix 模式，返回 None 时保持默认。
+            apply_unix_mode(&outpath, file.unix_mode());
         }
         extracted += size;
         on_progress(extracted, total);
@@ -139,13 +160,7 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
                     outfile.flush()?;
                 }
                 #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mode = entry_mode & 0o7777;
-                    if mode != 0 {
-                        fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
-                    }
-                }
+                apply_unix_mode(&outpath, Some(entry_mode));
                 #[cfg(not(unix))]
                 let _ = entry_mode;
             }
@@ -260,10 +275,51 @@ where
                 }
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
+            apply_unix_mode(&outpath, file.unix_mode());
         }
         extracted += size;
         on_progress(extracted, total);
     }
+    Ok(())
+}
+
+/// 把静态站点目录统一成「Web 服务器可读」的权限：目录 `0755`、文件 `0644`。
+///
+/// 站点内容由 nginx worker 读取，而 worker 往往不是 opx 的运行用户（Linux 上通常是
+/// `nobody` / `nginx`）。若上传包是按 `0600` 落盘的（或进程 umask 是 `077`），
+/// 文件属主之外的读请求会被拒，浏览器端表现为 **403 Forbidden**，日志里是
+/// `Permission denied`——排查时很难联想到「上传权限」。
+///
+/// 静态站点不需要任何执行位，故这里**收回**执行位而不保留：带着 `0755` 的 HTML
+/// 只是噪声，更重要的是避免上传包里的脚本被误执行。
+#[cfg(unix)]
+pub fn normalize_public_mode(root: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn walk(dir: &Path) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ft = entry.file_type()?;
+            if ft.is_dir() {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o755));
+                walk(&path)?;
+            } else if ft.is_file() {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o644));
+            }
+            // 软链保持原样：改权限会作用到目标文件，可能影响站点目录之外的内容
+        }
+        Ok(())
+    }
+
+    walk(root)?;
+    // 根目录本身也要可被 worker 进入（否则其下所有文件都 403）
+    let _ = fs::set_permissions(root, fs::Permissions::from_mode(0o755));
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn normalize_public_mode(_root: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -453,6 +509,64 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o755, "解压后应保留 tar 内的可执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：zip 也记录 unix 权限（`external_attributes` 高位）。旧实现只 `File::create`，
+    /// 解出来一律 0644 —— Linux 软件若以 zip 分发，`bin/` 下的可执行文件就会 `os error 13`。
+    #[test]
+    #[cfg(unix)]
+    fn extract_zip_preserves_executable_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_zip_mode_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("app.zip");
+        {
+            let f = std::fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(0o755);
+            zw.start_file("bin/node", opts).unwrap();
+            zw.write_all(b"#!/bin/sh\n").unwrap();
+            zw.finish().unwrap();
+        }
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_zip(&zip_path, &out, |_, _| {}).unwrap();
+        let mode = std::fs::metadata(out.join("bin").join("node"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "解压后应保留 zip 内的可执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 站点静态包要「nginx worker 可读」：目录 0755 / 文件 0644，且收回执行位。
+    #[test]
+    #[cfg(unix)]
+    fn normalize_public_mode_makes_site_files_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_site_mode_{}", uuid::Uuid::new_v4()));
+        let sub = dir.join("assets");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("index.html"), b"<h1>hi</h1>").unwrap();
+        std::fs::write(sub.join("app.js"), b"//").unwrap();
+        // 模拟 umask 077 / 只读包：先全设成 0600/0700
+        for p in [dir.clone(), sub.clone()] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        for p in [dir.join("index.html"), sub.join("app.js")] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        normalize_public_mode(&dir).unwrap();
+
+        let mode_of = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_of(&dir), 0o755, "站点根目录必须可进入");
+        assert_eq!(mode_of(&sub), 0o755, "子目录必须可进入");
+        assert_eq!(mode_of(&dir.join("index.html")), 0o644, "文件必须可读");
+        assert_eq!(mode_of(&sub.join("app.js")), 0o644, "文件必须可读且不带执行位");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

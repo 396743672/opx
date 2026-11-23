@@ -239,10 +239,16 @@ impl SoftwareProvider for KafkaProvider {
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         // Kafka 是 Java 应用：需要已安装 JDK，脚本前台启动。
-        let jdk = ctx
+        let jdk_path = ctx
             .jdk_install_path
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("请先安装 JDK/JRE 并在配置中选择后再启动"))?;
+        // JAVA_HOME 必须是「含 bin/java 的目录」。存量 JDK 安装可能多一层
+        // （`apps/jdk/<ver>/jdk-<ver>/bin/java`），此时直接传上层目录会让
+        // kafka-run-class.sh 找不到 java；解析不到再退回原值（保持旧行为）。
+        let jdk = crate::utils::exec::resolve_home(std::path::Path::new(jdk_path), "java")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| jdk_path.to_string());
 
         let port = config_u64(&ctx.config, "port", 9092);
         let heap = config_str(&ctx.config, "heap", "1g");

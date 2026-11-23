@@ -23,27 +23,17 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
 
 /// 定位 JDK/JRE 里的 `java` 可执行文件。
 ///
-/// 先按正常安装取 `<根>/bin/java[e]`；找不到时**再扫描一层子目录**兜底。
-/// 为什么需要兜底：官方 Linux 包（Adoptium）是「顶层目录 + 内容」结构，历史版本
-/// 的 tar 解压没有剥这层，装出来是 `apps/jdk/<ver>/jdk-<ver>/bin/java`——直接拼
-/// `bin/java` 必然报「java 不存在」。安装侧已在 `utils::archive::flatten_single_root`
-/// 修好新装，这里负责让**存量装坏的实例不重装也能跑**。
+/// 走 [`crate::utils::exec::resolve_bin`]：正常安装是 `<根>/bin/java[e]`，但存量安装
+/// 可能多一层（`apps/jdk/<ver>/jdk-<ver>/bin/java`，历史 tar 解压没剥顶层目录），
+/// 直接拼 `bin/java` 必然报「java 不存在」。安装侧已在
+/// `utils::archive::flatten_single_root` 修好新装，这里负责让**存量装坏的实例不重装也能跑**。
+///
+/// 找到后顺手补齐执行位（存量的 `bin/java` 可能是 0644 → `os error 13`）。
 fn resolve_java_bin(root: &std::path::Path) -> Option<std::path::PathBuf> {
     let exec = if cfg!(windows) { "java.exe" } else { "java" };
-    let direct = root.join("bin").join(exec);
-    if direct.exists() {
-        return Some(direct);
-    }
-    for entry in std::fs::read_dir(root).ok()?.flatten() {
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let candidate = entry.path().join("bin").join(exec);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    let found = crate::utils::exec::resolve_bin(root, exec)?;
+    crate::utils::exec::ensure_executable(&found);
+    Some(found)
 }
 
 /// 启动 Spring Boot 应用

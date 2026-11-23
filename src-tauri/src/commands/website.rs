@@ -80,6 +80,10 @@ fn resolve_pending_zips(site: &mut Site, install_path: &Path) -> anyhow::Result<
         let _ = std::fs::remove_dir_all(&dest);
         std::fs::create_dir_all(&dest)?;
         archive::extract_zip_flatten(&staged, &dest, |_, _| {})?;
+        // 站点由 nginx worker 读取，而 worker 通常不是 opx 的运行用户：
+        // 若上游包（或进程 umask）让文件落在 0600，浏览器端会直接 403。
+        // 统一成「目录 0755 / 文件 0644」，同时收回静态资源不需要的执行位。
+        archive::normalize_public_mode(&dest)?;
         let _ = std::fs::remove_file(&staged);
         // ponytail: 存相对路径 sites-data/{name}/{path}，nginx 配置生成时再解析为绝对路径
         loc.root = Some(format!("sites-data/{}/{}", name_seg, path_seg));
@@ -166,7 +170,8 @@ pub fn set_website_enabled(
     })
 }
 
-/// 上传静态包：将 zip 暂存到 <nginx>/sites-data/.pending/，返回标记路径供保存时解压
+/// 上传静态包（桌面端）：把本机 zip 暂存到 `<nginx>/sites-data/.pending/`，
+/// 返回标记路径供保存站点时解压。
 #[tauri::command]
 pub fn upload_site_bundle(
     sm: State<'_, Arc<SoftwareManager>>,
@@ -175,16 +180,61 @@ pub fn upload_site_bundle(
     zip_path: String,
 ) -> Result<String, String> {
     let nginx = resolve_nginx(&sm)?;
-    let pending_dir = PathBuf::from(&nginx.install_path)
-        .join("sites-data")
-        .join(".pending");
+    let bytes = std::fs::read(&zip_path).map_err(|e| format!("读取 zip 失败: {e}"))?;
+    stage_site_bundle(Path::new(&nginx.install_path), &id, &loc_path, &bytes)
+}
+
+/// 上传静态包（Web 端）：浏览器把文件读成 base64 传过来，落点与桌面端完全一致。
+///
+/// 为什么需要单独一条：`upload_site_bundle` 收的是**本机路径**，浏览器给不出路径，
+/// 于是 Web 模式下「上传 zip」按钮点了没反应（按钮被 `isDesktop` 隐藏）。
+/// 这里只负责「字节 → 暂存文件 → 同一个 `_pending_/` 标记」，后续解压/换 root/
+/// 归一权限仍由 `save_website` 的 `resolve_pending_zips` 统一处理，两条路径不会漂移。
+#[tauri::command]
+pub fn upload_site_bundle_data(
+    sm: State<'_, Arc<SoftwareManager>>,
+    id: String,
+    loc_path: String,
+    file_name: String,
+    data_base64: String,
+) -> Result<String, String> {
+    use base64::Engine as _;
+
+    if !file_name.to_ascii_lowercase().ends_with(".zip") {
+        return Err("只支持 .zip 静态包".to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("文件数据 base64 解码失败: {e}"))?;
+    // 与 JAR 上传同一量级上限（前端一次读入内存，再大没有意义）
+    const MAX: usize = 200 * 1024 * 1024;
+    if bytes.len() > MAX {
+        return Err(format!("压缩包超过 {} MB 上限", MAX / 1024 / 1024));
+    }
+    let nginx = resolve_nginx(&sm)?;
+    stage_site_bundle(Path::new(&nginx.install_path), &id, &loc_path, &bytes)
+}
+
+/// 把 zip 字节写入 `.pending/`，返回 `_pending_/<文件名>` 标记。
+///
+/// 文件名由「站点 id + location 路径」派生：同一站点同一路由重新上传时**覆盖**，
+/// 不会堆积孤儿文件；`sanitize_seg` 保证两者都不含路径分隔符，避免穿越。
+fn stage_site_bundle(
+    nginx_install: &Path,
+    id: &str,
+    loc_path: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let pending_dir = nginx_install.join("sites-data").join(".pending");
     std::fs::create_dir_all(&pending_dir).map_err(|e| e.to_string())?;
-    let sub = sanitize_seg(&loc_path);
-    let staged = pending_dir.join(format!("{}_{}.zip", id, sub));
-    // 覆盖式复制：重新上传时替换旧文件
-    std::fs::copy(&zip_path, &staged).map_err(|e| e.to_string())?;
-    // 返回标记路径，格式：_pending_/{id}/{path}.zip
-    Ok(format!("_pending_/{}_{}.zip", id, sub))
+    let id_seg = sanitize_seg(id);
+    let sub = sanitize_seg(loc_path);
+    let file_name = format!("{}_{}.zip", id_seg, sub);
+    let staged = pending_dir.join(&file_name);
+    // 覆盖前清只读位：上一次的暂存件不该阻断这一次上传（Windows 尤其）
+    opx_core::utils::paths::relax_file_permissions(&staged);
+    std::fs::write(&staged, bytes).map_err(|e| format!("写入暂存 zip 失败: {e}"))?;
+    Ok(format!("_pending_/{}", file_name))
 }
 
 /// 把 location path 转成安全目录段："/" -> "root"，其余非字母数字转 '_'

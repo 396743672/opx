@@ -215,6 +215,8 @@ npm run tauri:build
 ### 无头模式与 Linux 服务
 - `opx --headless` 无窗口运行——浏览器即唯一入口（Web 管理界面，默认端口 17580）。适合无桌面环境的服务器。
 - 浏览器里同样能注册 Spring Boot 应用：无头/Web 模式把「浏览」换成上传按钮，JAR 直接传到服务器 `data/uploads/`（上限 200 MB），无需先通过 shell 把文件放到服务器上。
+- 另外两处上传同理：站点的静态包（站点路由里选「上传」）与 Node 应用入口文件，在 Web 模式下都由浏览器直接选文件上传——站点 zip 暂存到 `<nginx>/sites-data/.pending/`、保存站点时解压；Node 入口落到 `data/uploads/node/`、保存时复制进 `node-apps/<应用名>/`，与桌面端落点完全一致。
+- 部署产物会归一权限，保证「后续还能覆盖、非 root 的 Web 服务也能读」：上传的 JAR / Node 入口为 0644（Windows 清只读位，否则下次换包覆盖会 Permission denied）；解压出的站点目录统一为目录 0755 / 文件 0644（nginx worker 往往不是 opx 的运行用户，0600 会直接变成 HTTP 403）。
 - 全新安装首启默认开启 Web 入口与局域网访问，并强制进入一次性引导页（语言 / 端口 / 局域网开关，含 HTTP 明文风险提示）。含令牌的完整访问地址会打印到控制台（systemd 下 `journalctl -u opx`）。
 - 端口冲突自愈：默认端口（17580）或自动挑选端口被占用时，自动向后重试至 17599 并回写实际端口；用户显式配置的端口被占则明确报错、绝不静默漂移。
 - Linux 包（deb / rpm）内置 systemd 单元与维护脚本（安装即 `systemctl enable --now opx`）。数据根通过 `OPX_APP_ROOT` 环境变量指向 `/var/lib/opx`——该变量可把整套便携布局（settings.json / apps / config / logs）重定向到任意目录。未设置该变量且从系统前缀直接运行（如 `/usr/bin/opx`）时，用户级数据回退到 `$XDG_DATA_HOME/opx`（默认 `~/.local/share/opx`），不再写二进制所在目录。
@@ -345,8 +347,8 @@ rm -rf dist
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
 | `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
-| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.7_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.7_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.8_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.8_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -372,7 +374,7 @@ rm -rf dist
 6. 发版前确认 `git status` 干净、已提交推送
 
 ### 版本号管理
-打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.7`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.8`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
 
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装

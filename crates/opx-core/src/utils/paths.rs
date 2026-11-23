@@ -282,6 +282,30 @@ fn restrict_file_permissions_inner(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 放开**部署产物**的权限，让「同机其他进程可读、可覆盖」。
+///
+/// 与 [`restrict_file_permissions`] 相反，用于上传/部署产生的非敏感文件
+/// （上传的 jar、Node 入口 js、站点静态文件）。两个必须做放开的原因：
+///
+/// 1. **可覆盖**：`std::fs::copy` 会把源文件的权限位带到目标文件。上传暂存用的是
+///    [`write_file_restricted`]（Unix 0600 / Windows 只读位），若不做归一，
+///    `app.jar` 会继承只读位 → 下次「换包」覆盖时直接 `Permission denied`。
+/// 2. **可读取**：站点静态文件由 nginx worker（往往不是 opx 的运行用户）读取，
+///    0600 会让浏览器端拿到 403。
+///
+/// 失败静默：权限是加固项，不应阻断部署主流程。
+pub fn relax_file_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o644));
+    }
+    #[cfg(windows)]
+    clear_readonly_if_windows(path);
+    #[cfg(not(any(unix, windows)))]
+    let _ = path;
+}
+
 /// 写敏感文件并「落盘即收紧权限」，且**支持重写**（修复 P2-6 只读位阻断覆盖写）。
 ///
 /// 顺序（关键）：

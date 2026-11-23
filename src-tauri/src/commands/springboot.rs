@@ -75,6 +75,9 @@ pub async fn upload_jar_file(name: String, data_base64: String) -> Result<String
     let path = dir.join(&file_name);
     opx_core::utils::paths::write_file_restricted(&path, &bytes)
         .map_err(|e| format!("写入上传文件失败: {e}"))?;
+    // 上传的 jar 不是敏感文件：放开成 0644（Windows 清只读位）。
+    // 否则 `create_app` 用 `fs::copy` 会把这套权限带到 `app.jar`，下次换包覆盖就失败。
+    opx_core::utils::paths::relax_file_permissions(&path);
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -82,7 +85,10 @@ pub async fn upload_jar_file(name: String, data_base64: String) -> Result<String
 ///
 /// 不依赖 `Path`：Windows 的反斜杠在 Unix 上不是分隔符，会整串留下（实测同一输入
 /// 两侧结果不同）。这里显式按 `/` 与 `\` 两种分隔符取 basename，行为与平台无关。
-fn safe_upload_name(name: &str) -> String {
+///
+/// `pub(crate)`：Node 入口上传（`upload_node_entry`）复用同一套净化规则，
+/// 避免两处各自实现后行为漂移。
+pub(crate) fn safe_upload_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
     base.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
@@ -281,7 +287,12 @@ fn replace_jar_file(
     let backup_path = backup_dir.join(format!("{}.{}.bak", fname.to_string_lossy(), timestamp));
 
     std::fs::copy(old_jar, &backup_path).map_err(|e| anyhow::anyhow!("备份失败: {}", e))?;
+    // 覆盖前先放开旧 jar 的权限：`fs::copy` 会继承源权限位，若之前是从上传包
+    // 复制来的只读文件（Windows 只读属性 / Unix 0444），这里会直接 Permission denied。
+    opx_core::utils::paths::relax_file_permissions(old_jar);
     std::fs::copy(new_jar, old_jar).map_err(|e| anyhow::anyhow!("替换 JAR 失败: {}", e))?;
+    // 换包后同样归一，保证下一次换包仍可覆盖
+    opx_core::utils::paths::relax_file_permissions(old_jar);
 
     let new_version =
         crate::services::springboot_manager::read_jar_version(new_jar.to_str().unwrap_or(""))
@@ -358,7 +369,14 @@ pub async fn get_recommended_jvm_opts(
     let jdk = software_mgr
         .find_installed(&jdk_installed_id)
         .ok_or("所选 JDK 未找到")?;
-    let version = jvm_opts::detect_jdk_version(&jdk.install_path).ok_or("无法检测 JDK 版本")?;
+    // 首选跑一次 `java -version`（最可靠：能识别 1.8.0_xxx 这类写法）。
+    // 跑不起来（目录被移动 / 缺执行位 / 存量安装多一层目录）时退回**已记录的版本号**，
+    // 让 GC 下拉框的「推荐」标注仍然可用——这比整块参数拿不到、只能吃默认目录强。
+    let version = jvm_opts::detect_jdk_version(&jdk.install_path)
+        .or_else(|| {
+            crate::services::springboot_manager::parse_java_major(&jdk.version)
+        })
+        .ok_or("无法检测 JDK 版本")?;
     // 厂商只影响 GC 目录里 Shenandoah 的可用性：Oracle 的任何版本都不含它，
     // 选中会在启动时 `Unrecognized VM option` 直接失败（OpenJDK wiki 明文）。
     let oracle = jvm_opts::is_oracle_runtime(std::path::Path::new(&jdk.install_path));

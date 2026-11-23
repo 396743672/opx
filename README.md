@@ -198,6 +198,8 @@ npm run tauri:build
 ### Headless Mode & Linux Service
 - `opx --headless` runs without a window — the browser is the only entry (Web management UI, default port 17580). Ideal for servers without a desktop.
 - Registering a Spring Boot app also works from the browser: in headless/Web mode the file picker becomes an upload control that transfers the JAR to `<data dir>/data/uploads/` on the server (200 MB cap), so no shell access is needed to stage a path.
+- The same applies to the other two upload flows: a site's static bundle (`Upload` source in a website location) and a Node app entry file accept browser uploads in Web mode. The site zip is staged under `<nginx>/sites-data/.pending/` and unpacked on save; the Node entry lands in `<data dir>/data/uploads/node/` and is copied into `node-apps/<name>/` on save — identical behavior to the desktop path.
+- Deployed artifacts get normalized permissions so a later replacement or a non-root web server worker can still read them: uploaded JARs / Node entries are readable and overwritable (0644, read-only bit cleared on Windows), and unpacked site bundles are forced to directory 0755 / file 0644 (nginx workers usually run as another user — 0600 would surface as HTTP 403).
 - First run on a fresh install enables the web entry and LAN access by default and forces a one-time setup page (language / port / LAN toggle with a plaintext-HTTP warning). The full URL with token is printed to the console (`journalctl -u opx` under systemd).
 - Port-conflict self-healing: if the default port (17580) or an auto-picked port is taken, the service retries the next port up to 17599 and persists the resolved one; an explicitly configured port reports an error instead of drifting.
 - Linux packages (deb / rpm) ship a systemd unit with maintainer scripts (`systemctl enable --now opx`). Data lives in `/var/lib/opx` through the `OPX_APP_ROOT` environment override — set it anywhere to relocate the whole portable layout (settings.json / apps / config / logs). When the binary is launched directly from a system prefix (e.g. `/usr/bin/opx`) without `OPX_APP_ROOT`, per-user data falls back to `$XDG_DATA_HOME/opx` (default `~/.local/share/opx`) instead of the unwritable binary directory.
@@ -273,7 +275,7 @@ Under `src-tauri/target/release/bundle/` (Windows shown; Linux/macOS produce deb
 MSI/NSIS installers embed the WebView2 Bootstrapper; the portable exe does not.
 
 ### Versioning
-The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.7`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
+The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.8`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
 
 ## Contributing
 
