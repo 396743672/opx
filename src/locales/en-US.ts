@@ -273,6 +273,7 @@ export default {
   httpUrl: 'HTTP URL',
   customConfigFile: 'Config file (relative path, optional)',
   browse: 'Browse',
+  uploading: 'Uploading…',
   saveAndStart: 'Save & Start',
 
   // UninstallBlockedDialog

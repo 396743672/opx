@@ -110,17 +110,51 @@ pub fn is_port_free(port: u16) -> bool {
     lo_free && any_free
 }
 
+/// 进程是否仍在真正运行。
+///
+/// 关键：sysinfo 会把 **zombie（Z，已退出但父进程未 wait 回收）** 也列入
+/// `sys.process(pid)`。被管软件由 opx 直接 spawn，若某轮 stop 后子进程退出成为
+/// zombie（父进程未 wait），旧实现据此判「仍存活」→ 强杀对 zombie 无效 → UI 永远
+/// 报「PID 未能停止」（实测 Linux 上 MySQL/MinIO 均中招，进程实际是 Z 状态）。
+/// Unix 下显式排除 Zombie；Windows 无该状态，保留原判断。
 pub fn is_process_alive(pid: u32) -> bool {
     let mut sys = sysinfo::System::new();
     // 单 PID 刷新，比 refresh_processes(All) 快 10-50 倍
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]));
-    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+    match sys.process(sysinfo::Pid::from_u32(pid)) {
+        Some(p) => !is_zombie(p.status()),
+        None => false,
+    }
+}
+
+/// 把「zombie 视为已死」的判断抽成纯函数，便于跨平台单测（见 tests）。
+#[cfg(unix)]
+fn is_zombie(status: sysinfo::ProcessStatus) -> bool {
+    matches!(status, sysinfo::ProcessStatus::Zombie)
+}
+
+#[cfg(not(unix))]
+fn is_zombie(_status: sysinfo::ProcessStatus) -> bool {
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// 回归：zombie 进程必须被视为「已死」，否则 opx spawn 的子进程退出后
+    /// 未 wait 回收变成 Z 状态时，stop 会误判「PID 未能停止」并永远卡在 Error。
+    #[cfg(unix)]
+    #[test]
+    fn zombie_status_is_treated_as_dead() {
+        use sysinfo::ProcessStatus;
+        assert!(is_zombie(ProcessStatus::Zombie));
+        // 正常态不能被误判为已死
+        assert!(!is_zombie(ProcessStatus::Run));
+        assert!(!is_zombie(ProcessStatus::Sleep));
+        assert!(!is_zombie(ProcessStatus::Idle));
+    }
 
     #[test]
     fn is_port_free_detects_any_interface_listener() {

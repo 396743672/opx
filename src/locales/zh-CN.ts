@@ -273,6 +273,7 @@ export default {
   httpUrl: 'HTTP URL',
   customConfigFile: '配置文件（相对路径，可选）',
   browse: '浏览',
+  uploading: '上传中…',
   saveAndStart: '保存并启动',
 
   // UninstallBlockedDialog

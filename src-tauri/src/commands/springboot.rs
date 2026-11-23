@@ -43,6 +43,52 @@ pub async fn create_springboot_app(
     })
 }
 
+/// Web 端上传 JAR：接收 base64 字节，写到 data_dir/uploads/，返回绝对路径供注册表单使用。
+///
+/// 桌面端走 Tauri dialog 选本地文件（selectJar）；Web 浏览器无法访问服务器文件系统，
+/// 故经此命令把浏览器选中的文件传到服务器落盘。文件名严格 sanitize 防路径穿越，
+/// 单次上限 200MB（base64 解码后），超限拒绝避免内存/磁盘打满。
+#[tauri::command]
+pub async fn upload_jar_file(name: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine as _;
+
+    let safe = safe_upload_name(&name);
+    if safe.is_empty() {
+        return Err("文件名不合法（仅支持字母、数字、点、下划线、连字符）".to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("文件数据 base64 解码失败: {e}"))?;
+    const MAX: usize = 200 * 1024 * 1024;
+    if bytes.len() > MAX {
+        return Err(format!("文件超过 {} MB 上限", MAX / 1024 / 1024));
+    }
+
+    let dir = opx_core::utils::paths::data_dir().join("uploads");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建上传目录失败: {e}"))?;
+    // 加时间戳前缀避免同名覆盖，同时保留 .jar 后缀供 jar 解析
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let file_name = format!("{ts}_{safe}");
+    let path = dir.join(&file_name);
+    opx_core::utils::paths::write_file_restricted(&path, &bytes)
+        .map_err(|e| format!("写入上传文件失败: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// 上传文件名白名单：只保留 basename 与 `[A-Za-z0-9._-]`，杜绝 `../` 穿越。
+///
+/// 不依赖 `Path`：Windows 的反斜杠在 Unix 上不是分隔符，会整串留下（实测同一输入
+/// 两侧结果不同）。这里显式按 `/` 与 `\` 两种分隔符取 basename，行为与平台无关。
+fn safe_upload_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    base.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+        .collect()
+}
+
 #[tauri::command]
 pub async fn update_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
@@ -1139,5 +1185,18 @@ mod tests {
         assert_eq!(info.max_jdk, Some(21));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 回归：Web 上传文件名必须剥离路径、过滤危险字符，杜绝 `../` 穿越写盘。
+    #[test]
+    fn safe_upload_name_strips_path_and_dangerous_chars() {
+        assert_eq!(super::safe_upload_name("app.jar"), "app.jar");
+        assert_eq!(super::safe_upload_name("my-app_v2.1.jar"), "my-app_v2.1.jar");
+        // 路径穿越：只取 basename
+        assert_eq!(super::safe_upload_name("../../etc/passwd"), "passwd");
+        assert_eq!(super::safe_upload_name("C:\\secret\\evil$(id).jar"), "evilid.jar");
+        // 纯危险字符 → 空（调用方拒绝）
+        assert_eq!(super::safe_upload_name("../"), "");
+        assert_eq!(super::safe_upload_name("..."), "...");
     }
 }

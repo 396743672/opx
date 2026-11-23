@@ -163,6 +163,7 @@ pub fn run() {
             commands::dns_account::delete_dns_account,
             commands::dns_account::test_dns_account,
             commands::springboot::list_springboot_apps,
+            commands::springboot::upload_jar_file,
             commands::springboot::create_springboot_app,
             commands::springboot::update_springboot_app,
             commands::springboot::delete_springboot_app,

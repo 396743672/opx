@@ -346,6 +346,15 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             ok(springboot::list_springboot_dependency_candidates(sw).await)
         })
     });
+    // Web 端 JAR 上传：浏览器选中文件后读为 base64 传入，后端落盘到 data_dir/uploads。
+    // 桌面端走 Tauri dialog（selectJar），不经此命令。
+    reg.register("upload_jar_file", |_ctx, args| {
+        Box::pin(async move {
+            let name: String = arg(&args, "name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            ok(springboot::upload_jar_file(name, data_base64).await)
+        })
+    });
     reg.register("read_jar_info", |_ctx, args| {
         Box::pin(async move {
             let jar_path: String = arg(&args, "jar_path")?;

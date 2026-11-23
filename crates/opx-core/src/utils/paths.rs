@@ -401,6 +401,9 @@ mod tests {
         assert!(resolve_portable(false, false));
     }
 
+    /// 仅 Windows：`is_portable()` 在非 Windows 上按设计恒 false（Linux 走 deb/系统安装，
+    /// 无便携版概念），在 Linux 跑该断言必然失败——CI 只在 Linux 构建，故此前未暴露。
+    #[cfg(windows)]
     #[test]
     fn is_portable_detection_end_to_end() {
         // 端到端覆盖真实场景（需绕过 dev 默认「已安装」守卫：设 OPX_APP_ROOT 即走真实判定）。
