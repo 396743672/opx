@@ -451,6 +451,7 @@ pub async fn install_custom(
             archive::extract_zip(archive_path, &install_path, on_progress)?;
         } else {
             archive::extract_tar_gz(archive_path, &install_path, on_progress)?;
+            archive::flatten_single_root(&install_path)?;
         }
 
         emit_event(
@@ -689,10 +690,13 @@ pub async fn download_and_extract(
                 archive::extract_zip_flatten(&cache_path2, &install_path2, on_progress)
             }
             ArchiveFormat::TarGz => {
-                archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
+                archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)?;
+                // 官方 Linux 包多为「顶层目录 + 内容」，tar 流无法预扫描，只能解完再拍平
+                archive::flatten_single_root(&install_path2)
             }
             ArchiveFormat::TarXz => {
-                archive::extract_tar_xz(&cache_path2, &install_path2, on_progress)
+                archive::extract_tar_xz(&cache_path2, &install_path2, on_progress)?;
+                archive::flatten_single_root(&install_path2)
             }
             ArchiveFormat::Executable => {
                 let dest_file = install_path2.join(

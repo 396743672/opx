@@ -21,6 +21,31 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
     crate::services::software_manager::health_check::is_process_alive(pid)
 }
 
+/// 定位 JDK/JRE 里的 `java` 可执行文件。
+///
+/// 先按正常安装取 `<根>/bin/java[e]`；找不到时**再扫描一层子目录**兜底。
+/// 为什么需要兜底：官方 Linux 包（Adoptium）是「顶层目录 + 内容」结构，历史版本
+/// 的 tar 解压没有剥这层，装出来是 `apps/jdk/<ver>/jdk-<ver>/bin/java`——直接拼
+/// `bin/java` 必然报「java 不存在」。安装侧已在 `utils::archive::flatten_single_root`
+/// 修好新装，这里负责让**存量装坏的实例不重装也能跑**。
+fn resolve_java_bin(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let exec = if cfg!(windows) { "java.exe" } else { "java" };
+    let direct = root.join("bin").join(exec);
+    if direct.exists() {
+        return Some(direct);
+    }
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let candidate = entry.path().join("bin").join(exec);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// 启动 Spring Boot 应用
 pub async fn start_app(
     app_id: &str,
@@ -80,26 +105,16 @@ pub async fn start_app(
         ))),
     };
     let java_home = std::path::Path::new(&jdk.install_path);
-    let java_bin = if cfg!(windows) {
-        let p = java_home.join("bin").join("java.exe");
-        if p.exists() {
-            p
-        } else {
+    let java_exec = if cfg!(windows) { "java.exe" } else { "java" };
+    let java_bin = match resolve_java_bin(java_home) {
+        Some(p) => p,
+        None => {
+            let expected = java_home.join("bin").join(java_exec);
             return Err(fail(format!(
-                "JDK [{}] 的 java.exe 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
+                "JDK [{}] 的 {} 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
                 jdk.name,
-                p.display()
-            )));
-        }
-    } else {
-        let p = java_home.join("bin").join("java");
-        if p.exists() {
-            p
-        } else {
-            return Err(fail(format!(
-                "JDK [{}] 的 java 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
-                jdk.name,
-                p.display()
+                java_exec,
+                expected.display()
             )));
         }
     };
@@ -697,5 +712,37 @@ mod tests {
             .expect("缺 jdk_installed_id 字段的 apps.json 仍须能反序列化");
         assert_eq!(store.applications.len(), 1, "缺字段不应清空整个应用列表");
         assert_eq!(store.applications[0].jdk_installed_id, "", "缺失字段应回退为空串");
+    }
+
+    /// 回归：存量安装把官方包多解了一层（`<ver>/jdk-<ver>/bin/java`），
+    /// 解析必须能兜底找到，否则用户不重装就永远起不来。
+    #[test]
+    fn resolve_java_bin_finds_nested_layout() {
+        let exec = if cfg!(windows) { "java.exe" } else { "java" };
+        let root = std::env::temp_dir().join(format!("opx_jdk_{}", uuid::Uuid::new_v4()));
+
+        // 正常结构：<root>/bin/java
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin").join(exec), b"x").unwrap();
+        assert_eq!(
+            super::resolve_java_bin(&root).unwrap(),
+            root.join("bin").join(exec)
+        );
+
+        // 多一层结构：<root>/jdk-25/bin/java
+        std::fs::remove_dir_all(root.join("bin")).unwrap();
+        let nested = root.join("jdk-25.0.5.1+2");
+        std::fs::create_dir_all(nested.join("bin")).unwrap();
+        std::fs::write(nested.join("bin").join(exec), b"x").unwrap();
+        assert_eq!(
+            super::resolve_java_bin(&root).unwrap(),
+            nested.join("bin").join(exec)
+        );
+
+        // 找不到就返回 None（让上层给出明确报错，而不是静默用错路径）
+        std::fs::remove_dir_all(&nested).unwrap();
+        assert!(super::resolve_java_bin(&root).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

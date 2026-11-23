@@ -158,6 +158,37 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
     Ok(())
 }
 
+/// tar 解包后把「唯一的顶层目录」内容上提到 `dest_dir` 根。
+///
+/// 为什么不能像 zip 那样边解边剥：tar.gz / tar.xz 是**不可回退的流**，解压前无法
+/// 预扫描条目路径判断是否存在公共顶层目录。故采用「先按原样解，再拍平」：
+/// 若 `dest_dir` 下只有一个目录、没有其它条目，就把它的子项逐个 `rename` 上来并删掉
+/// 该空目录（同盘 rename 是元数据操作，代价可忽略）。
+///
+/// 必须做的原因：官方 Linux 包都是「顶层目录 + 内容」结构——
+/// Adoptium `jdk-25.0.5.1+2/bin/java`、nginx `nginx-1.27.x/sbin/nginx`、
+/// PostgreSQL 源码包 `configure`。不拍平则 `bin/java`、`configure` 都找不到，
+/// 实测表现为应用卡片报「JDK 的 java 不存在：…/apps/jdk/<ver>/bin/java」。
+pub fn flatten_single_root(dest_dir: &Path) -> Result<()> {
+    let entries: Vec<_> = fs::read_dir(dest_dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    if entries.len() != 1 || !entries[0].file_type()?.is_dir() {
+        return Ok(());
+    }
+    let root = entries[0].path();
+    let children: Vec<_> = fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
+    // 先全量校验目标名不冲突，再动作：中途发现冲突会留下「拍一半」的畸形目录。
+    for child in &children {
+        if dest_dir.join(child.file_name()).exists() {
+            return Ok(());
+        }
+    }
+    for child in children {
+        fs::rename(child.path(), dest_dir.join(child.file_name()))?;
+    }
+    let _ = fs::remove_dir(&root);
+    Ok(())
+}
+
 /// 检测 zip 内所有条目是否共享同一个顶层目录。
 /// 若是，返回该顶层目录名（用于解压时剥层）；否则返回 None。
 /// 例如所有条目都形如 `mysql-8.4.10-winx64/...` 时返回 Some("mysql-8.4.10-winx64")。
@@ -422,6 +453,54 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o755, "解压后应保留 tar 内的可执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：Adoptium 官方 Linux 包是 `jdk-25.0.5.1+2/bin/java` 单顶层目录结构，
+    /// 不拍平会让 `apps/jdk/<ver>/bin/java` 不存在（应用卡片报「java 不存在」）。
+    #[test]
+    fn flatten_single_root_hoists_single_top_dir() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(out.join("jdk-25.0.5.1+2").join("bin")).unwrap();
+        std::fs::write(out.join("jdk-25.0.5.1+2").join("bin").join("java"), b"#!/bin/sh").unwrap();
+        std::fs::write(out.join("jdk-25.0.5.1+2").join("release"), b"JAVA_VERSION=25").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("bin").join("java").exists(), "bin/java 应被上提到根");
+        assert!(out.join("release").exists(), "release 应被上提到根");
+        assert!(!out.join("jdk-25.0.5.1+2").exists(), "空顶层目录应被删除");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 已经拍平（多个同级条目）的目录不能被误动。
+    #[test]
+    fn flatten_single_root_keeps_multi_entry_dirs() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(out.join("bin")).unwrap();
+        std::fs::write(out.join("bin").join("x"), b"x").unwrap();
+        std::fs::write(out.join("README"), b"r").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("bin").join("x").exists());
+        assert!(out.join("README").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 只有单个「文件」（非目录）时也不能被搬走/吞掉。
+    #[test]
+    fn flatten_single_root_ignores_single_file() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("only.bin"), b"data").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("only.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
