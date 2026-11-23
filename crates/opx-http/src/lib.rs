@@ -56,52 +56,35 @@ async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
 }
 
-/// 装配 axum 路由（生产入口，内嵌优先）。
+/// 装配 axum 路由。
 ///
 /// 分两组：`/api/health`、`/api/{cmd}`、`/api/ws-ticket` 经 Bearer 中间件；
 /// `/api/events/ws` **不**经 Bearer（浏览器 WS 无法设 Authorization 头，
 /// 由一次性 ticket 鉴权替代，D3.2）。
 ///
-/// 静态 SPA：优先用编译期 `include_dir!` 内嵌的 dist（自包含，解压版/安装版/
-/// Linux headless 均无外部 dist 目录也能用）。仅当运行时 `OPX_WEB_DIST`
-/// 显式指向一个更新的磁盘 dist 时才改用磁盘版（开发态热更），否则纯内嵌。
+/// 静态 SPA（批次 4.5）：若 [`static_files::resolve_dist_dir`] 找到前端产物，
+/// 挂为 fallback 服务（未匹配路径 → 静态文件 → SPA 回落 index.html）；
+/// 找不到则保持纯 API 模式（未知路径 404）。
 pub fn router(state: AppState) -> Router {
-    // 显式环境变量指向磁盘 dist 时优先用它（开发热更）；否则内嵌产物。
-    if let Some(dir) = std::env::var("OPX_WEB_DIST")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .filter(|p| p.join("index.html").is_file())
-    {
-        return router_with_dist(state, Some(dir));
-    }
-    router_embedded(state)
-}
-
-/// 仅用内嵌 dist 装配路由（自包含形态，不碰磁盘）。
-///
-/// 桌面/headless 的默认生产形态：`/` → 内嵌 index.html，深链接 SPA 回落，
-/// API 路由不受影响（fallback 只在无匹配路由时触发）。
-pub fn router_embedded(state: AppState) -> Router {
-    let protected = Router::new()
-        .route("/api/health", get(health))
-        .route("/api/{cmd}", post(api::dispatch))
-        .route("/api/ws-ticket", post(ws::issue_ticket))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_bearer,
-        ));
-    let public = Router::new().route("/api/events/ws", get(ws::events_ws));
-
-    Router::new()
-        .merge(protected)
-        .merge(public)
-        .with_state(state)
-        .fallback(static_files::embedded_fallback)
+    let dist = static_files::resolve_dist_dir();
+    router_with_assets(state, dist, None)
 }
 
 /// [`router`] 的可注入形态（测试用）：dist 由调用方给定，不碰环境探测。
 pub fn router_with_dist(state: AppState, dist: Option<std::path::PathBuf>) -> Router {
+    router_with_assets(state, dist, None)
+}
+
+/// 完整可注入形态：内嵌资源优先、文件系统 dist 回退。
+///
+/// `provider` 由宿主注入（桌面壳传 Tauri `AppHandle::asset_resolver()` 的闭包，
+/// 读到编译期嵌入 `frontendDist` 的字节）；opx-http 自身零 tauri 依赖。
+/// 命中顺序：provider → 文件系统 dist；两者皆无则纯 API 模式（未知路径 404）。
+pub fn router_with_assets(
+    state: AppState,
+    dist: Option<std::path::PathBuf>,
+    provider: Option<static_files::AssetProvider>,
+) -> Router {
     let protected = Router::new()
         .route("/api/health", get(health))
         .route("/api/{cmd}", post(api::dispatch))
@@ -117,10 +100,7 @@ pub fn router_with_dist(state: AppState, dist: Option<std::path::PathBuf>) -> Ro
         .merge(public)
         .with_state(state);
 
-    match dist {
-        Some(dir) => app.fallback_service(static_files::spa_service(&dir)),
-        None => app,
-    }
+    static_files::mount_fallback(app, dist, provider)
 }
 
 /// 在给定 listener 上启动 server（薄封装 `axum::serve`）。
@@ -142,9 +122,18 @@ pub async fn bind(
     addr: std::net::SocketAddr,
     state: AppState,
 ) -> std::io::Result<(std::net::SocketAddr, std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>)> {
+    bind_with_provider(addr, state, None).await
+}
+
+/// [`bind`] 的可注入形态：宿主传入内嵌资源提供者（Tauri asset resolver 闭包）。
+pub async fn bind_with_provider(
+    addr: std::net::SocketAddr,
+    state: AppState,
+    provider: Option<static_files::AssetProvider>,
+) -> std::io::Result<(std::net::SocketAddr, std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>>)> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local = listener.local_addr()?;
-    let app = router(state);
+    let app = router_with_assets(state, static_files::resolve_dist_dir(), provider);
     Ok((local, Box::pin(serve(listener, app))))
 }
 
