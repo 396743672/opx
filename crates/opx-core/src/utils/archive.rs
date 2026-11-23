@@ -127,8 +127,23 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
                 if let Some(parent) = outpath.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let mut outfile = std::fs::File::create(&outpath)?;
-                std::io::copy(&mut entry, &mut outfile)?;
+                // 回归：必须恢复 tar 记录的文件模式。旧实现用 File::create（默认 0644），
+                // 导致 Linux 官方包内 bin/mysqld / sbin/nginx 等可执行文件解压后失去执行位，
+                // 启动报 `权限不够 (os error 13)`。
+                {
+                    use std::io::Write;
+                    let mut outfile = std::fs::File::create(&outpath)?;
+                    std::io::copy(&mut entry, &mut outfile)?;
+                    outfile.flush()?;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = header.mode()? & 0o7777;
+                    if mode != 0 {
+                        fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
+                    }
+                }
             }
             // 软/硬链接等其它类型：当前软件包不含，跳过以保证安装流程不中断
             _ => {}
@@ -365,6 +380,44 @@ mod tests {
         extract_tar_xz(&xz_path, &out, |_, _| {}).unwrap();
         let got = std::fs::read_to_string(out.join("sub").join("hello.txt")).unwrap();
         assert_eq!(got, "hello xz");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn extract_tar_gz_preserves_executable_mode() {
+        // 回归：MySQL/Linux 官方 tar.xz 内 bin/mysqld 为 0755，旧实现用 File::create
+        // 解压后变成 0644 → 启动报 `权限不够 (os error 13)`。
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_tar_mode_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tar_path = dir.join("app.tar");
+        {
+            let f = std::fs::File::create(&tar_path).unwrap();
+            let mut tb = tar::Builder::new(f);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(3);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tb.append_data(&mut header, "bin/mysqld", &b"abc"[..]).unwrap();
+            tb.into_inner().unwrap();
+        }
+        let gz_path = dir.join("app.tar.gz");
+        {
+            let mut src = std::io::BufReader::new(std::fs::File::open(&tar_path).unwrap());
+            let gz = std::fs::File::create(&gz_path).unwrap();
+            let mut dst = flate2::write::GzEncoder::new(gz, flate2::Compression::default());
+            std::io::copy(&mut src, &mut dst).unwrap();
+            dst.finish().unwrap();
+        }
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_tar_gz(&gz_path, &out, |_, _| {}).unwrap();
+        let mode = std::fs::metadata(out.join("bin").join("mysqld"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "解压后应保留 tar 内的可执行位");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

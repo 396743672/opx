@@ -84,6 +84,16 @@ fn mysql_bin_dir(install_path: &std::path::Path, version: &str, os: &str) -> Pat
     nested
 }
 
+/// `--basedir` 应指向程序根（bin 的父目录）：errmsg.sys / lib/private 等资源都在该目录下，
+/// 指到 install_path（含 data/ 与 my.cnf 的外层）会导致启动报 "Can't find error-message file"。
+fn mysql_basedir(install_path: &std::path::Path, version: &str, os: &str) -> PathBuf {
+    mysql_bin_dir(install_path, version, os)
+        .parent()
+        .filter(|p| p != &install_path)
+        .unwrap_or(install_path)
+        .to_path_buf()
+}
+
 /// 返回相对 `install_path` 的程序路径（供 `StartCommand.program` 使用，配合 working_dir）。
 fn mysql_program(install_path: &std::path::Path, version: &str, os: &str, base: &str) -> String {
     let bin = mysql_bin_dir(install_path, version, os);
@@ -223,6 +233,8 @@ impl SoftwareProvider for MySqlProvider {
         let thread_cache = cpu_count * 4;
         // io_threads: CPU 核数（最少 4），用于 innodb_read_io_threads / innodb_write_io_threads
         let io_threads = cpu_count.max(4);
+        let (flush_method, lower_case) =
+            mysql_innodb_platform_settings(&crate::utils::platform::current_os());
 
         let mut file = File::create(&my_ini_path)?;
         let content = format!(
@@ -240,12 +252,14 @@ innodb_flush_log_at_trx_commit=1\n\
 innodb_lock_wait_timeout=50\n\
 innodb_read_io_threads={io_threads}\n\
 innodb_write_io_threads={io_threads}\n\
-innodb_flush_method=normal\n\
+innodb_flush_method={flush_method}\n\
 innodb_doublewrite=1\n\
-lower_case_table_names=1\n",
+lower_case_table_names={lower_case}\n",
             thread_cache = thread_cache,
             buffer_pool = buffer_pool_mb,
             io_threads = io_threads,
+            flush_method = flush_method,
+            lower_case = lower_case,
         );
         file.write_all(content.as_bytes())?;
         Ok(())
@@ -258,15 +272,22 @@ lower_case_table_names=1\n",
         let working_dir = PathBuf::from(&ctx.install_path);
         let data_dir = working_dir.join("data");
         let mysqld_program = mysql_program(&working_dir, &ctx.version, &os, "mysqld");
+        let basedir = mysql_basedir(&working_dir, &ctx.version, &os);
+        let run_as = mysql_run_as_user_arg();
+
+        let mut init_args = vec![
+            "--initialize-insecure".to_string(),
+            "--basedir=".to_string() + &basedir.to_string_lossy(),
+            "--datadir=".to_string() + &data_dir.to_string_lossy(),
+            "--log-error=".to_string() + &data_dir.join("mysql-init.err").to_string_lossy(),
+        ];
+        if let Some(user_arg) = &run_as {
+            init_args.push(user_arg.clone());
+        }
 
         let init_command = StartCommand {
             program: mysqld_program.clone(),
-            args: vec![
-                "--initialize-insecure".to_string(),
-                "--basedir=".to_string() + &ctx.install_path,
-                "--datadir=".to_string() + &data_dir.to_string_lossy(),
-                "--log-error=".to_string() + &data_dir.join("mysql-init.err").to_string_lossy(),
-            ],
+            args: init_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
             remove_envs: Vec::new(),
@@ -290,10 +311,13 @@ lower_case_table_names=1\n",
             .unwrap_or(false);
         let mut main_args = vec![
             format!("--defaults-file={}", mysql_config_file_name()),
-            "--basedir=".to_string() + &ctx.install_path,
+            "--basedir=".to_string() + &basedir.to_string_lossy(),
             "--datadir=".to_string() + &working_dir.join("data").to_string_lossy(),
             "--console".to_string(),
         ];
+        if let Some(user_arg) = &run_as {
+            main_args.push(user_arg.clone());
+        }
 
         if initialized {
             // 防御性清理：已初始化不应再有初始化密码临时文件，删除可能残留的明文文件
@@ -474,6 +498,33 @@ lower_case_table_names=1\n",
     }
 }
 
+/// Unix 下 mysqld 拒绝以 root 直接运行（`Fatal error: Please read "Security" section ...
+/// run mysqld as root`），必须显式 `--user=<当前用户>`；root 环境显式指定即被接受。
+/// 返回 None 表示无需添加（Windows）或无法获取用户名（保持原行为）。
+fn mysql_run_as_user_arg() -> Option<String> {
+    if crate::utils::platform::current_os() == "windows" {
+        return None;
+    }
+    std::process::Command::new("whoami")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|u| format!("--user={u}"))
+}
+
+/// InnoDB 平台相关设置（回归：`innodb_flush_method=normal` 是 Windows 专用值，
+/// Linux 启动报 `Error while setting value 'normal' to 'innodb-flush-method'`；
+/// `lower_case_table_names=1` 也是 Windows 默认，Unix 应为 0）。
+fn mysql_innodb_platform_settings(os: &str) -> (&'static str, &'static str) {
+    if os == "windows" {
+        ("normal", "1")
+    } else {
+        ("fsync", "0")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,6 +567,25 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         let dir = mysql_bin_dir(&root, "8.4.11", "linux");
         assert_eq!(dir, nested);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn innodb_platform_settings_are_os_specific() {
+        assert_eq!(mysql_innodb_platform_settings("windows"), ("normal", "1"));
+        // 回归：Linux 不接受 normal，lower_case 也须为 0
+        assert_eq!(mysql_innodb_platform_settings("linux"), ("fsync", "0"));
+        assert_eq!(mysql_innodb_platform_settings("macos"), ("fsync", "0"));
+    }
+
+    #[test]
+    fn basedir_is_program_root_not_install_root() {
+        // 回归：errmsg.sys / lib/private 在顶层子目录，basedir 指错会导致主进程启动即退出
+        let root = temp_root("basedir");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let basedir = mysql_basedir(&root, "8.4.11", "linux");
+        assert_eq!(basedir, root.join("mysql-8.4.11-linux-glibc2.28-x86_64"));
         let _ = fs::remove_dir_all(&root);
     }
 
