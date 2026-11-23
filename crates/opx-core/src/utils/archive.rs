@@ -115,9 +115,11 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
     let mut extracted: u64 = 0;
     for entry in archive.entries()? {
         let mut entry = entry?;
-        let header = entry.header();
-        let entry_size = header.size()?;
-        let entry_type = header.entry_type();
+        // 一次取出 header 里的标量，避免后续 `&mut entry` 与 `header` 借用冲突（E0502）。
+        let (entry_size, entry_type, entry_mode) = {
+            let header = entry.header();
+            (header.size()?, header.entry_type(), header.mode()?)
+        };
         let outpath = dest_dir.join(entry.path()?.to_path_buf());
         match entry_type {
             tar::EntryType::Directory => {
@@ -139,11 +141,13 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let mode = header.mode()? & 0o7777;
+                    let mode = entry_mode & 0o7777;
                     if mode != 0 {
                         fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
                     }
                 }
+                #[cfg(not(unix))]
+                let _ = entry_mode;
             }
             // 软/硬链接等其它类型：当前软件包不含，跳过以保证安装流程不中断
             _ => {}
