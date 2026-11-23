@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
@@ -45,6 +45,54 @@ fn mysql_official_url(version: &str, os: &str) -> String {
         "https://cdn.mysql.com/Downloads/MySQL-{major_minor}/{}",
         mysql_asset(version, os).0
     )
+}
+
+/// 定位 MySQL 程序 bin 目录（回归：`os error 2`）。
+///
+/// 背景：Windows 的 zip 经 `extract_zip_flatten` 剥掉顶层目录，`bin/mysqld.exe`
+/// 直接在安装根；但 Linux/macOS 的 tar.xz/tar.gz **保留顶层目录**
+/// （`mysql-8.4.11-linux-glibc2.28-x86_64/bin/mysqld`），若仍按安装根拼接
+/// `bin/mysqld` 就会触发 `启动失败：没有那个文件或目录 (os error 2)`。
+///
+/// 策略（按优先级）：
+/// 1. 安装根下 `bin/` 存在 → 直接返回（Windows / 已平铺的存量安装）；
+/// 2. 预期顶层目录 `<asset 去扩展名>/bin/` 存在 → 返回；
+/// 3. 扫描安装根下唯一含 `bin/` 的子目录兜底（兼容自定义包名）。
+fn mysql_bin_dir(install_path: &std::path::Path, version: &str, os: &str) -> PathBuf {
+    let direct = install_path.join("bin");
+    if direct.is_dir() {
+        return direct;
+    }
+    let (asset, _) = mysql_asset(version, os);
+    let top = asset
+        .trim_end_matches(".tar.xz")
+        .trim_end_matches(".tar.gz")
+        .trim_end_matches(".zip");
+    let nested = install_path.join(top).join("bin");
+    if nested.is_dir() {
+        return nested;
+    }
+    if let Ok(entries) = std::fs::read_dir(install_path) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join("bin");
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    // 都不存在：返回预期路径，让启动报错依然指向明确位置（而非回退到错误的根 bin）
+    nested
+}
+
+/// 返回相对 `install_path` 的程序路径（供 `StartCommand.program` 使用，配合 working_dir）。
+fn mysql_program(install_path: &std::path::Path, version: &str, os: &str, base: &str) -> String {
+    let bin = mysql_bin_dir(install_path, version, os);
+    let rel = bin
+        .strip_prefix(install_path)
+        .unwrap_or(std::path::Path::new("bin"));
+    rel.join(exe_name(base))
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// MySQL 配置文件名：Windows 用 `my.ini`，Unix 用 `my.cnf`。
@@ -204,13 +252,15 @@ lower_case_table_names=1\n",
     }
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
-        // extract_zip_flatten 已剥掉 zip 顶层目录，install_path 即 MySQL 程序目录根
-        // bin/mysqld.exe 直接在 install_path/bin/ 下
+        // 程序 bin 目录按 OS 定位：Windows zip 已 flatten（install_path/bin），
+        // Linux/macOS tar 保留顶层目录（install_path/mysql-{ver}-{os}/bin）。
+        let os = crate::utils::platform::current_os();
         let working_dir = PathBuf::from(&ctx.install_path);
         let data_dir = working_dir.join("data");
+        let mysqld_program = mysql_program(&working_dir, &ctx.version, &os, "mysqld");
 
         let init_command = StartCommand {
-            program: format!("bin/{}", exe_name("mysqld")),
+            program: mysqld_program.clone(),
             args: vec![
                 "--initialize-insecure".to_string(),
                 "--basedir=".to_string() + &ctx.install_path,
@@ -268,7 +318,7 @@ lower_case_table_names=1\n",
         }
 
         Ok(StartCommand {
-            program: format!("bin/{}", exe_name("mysqld")),
+            program: mysqld_program,
             args: main_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
@@ -305,12 +355,11 @@ lower_case_table_names=1\n",
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 3306 });
         let mut env_vars = std::collections::BTreeMap::new();
         env_vars.insert("MYSQL_PWD".to_string(), password.to_string());
+        // 与 start_command 同：Linux/macOS 的 mysqladmin 在保留的顶层目录 bin/ 下
+        let os = crate::utils::platform::current_os();
+        let bin = mysql_bin_dir(Path::new(&ctx.install_path), &ctx.version, &os);
         Some(GracefulStopCommand {
-            program: PathBuf::from(&ctx.install_path)
-                .join("bin")
-                .join(exe_name("mysqladmin"))
-                .to_string_lossy()
-                .to_string(),
+            program: bin.join(exe_name("mysqladmin")).to_string_lossy().to_string(),
             args: vec![
                 "-h".to_string(),
                 "127.0.0.1".to_string(),
@@ -422,5 +471,64 @@ lower_case_table_names=1\n",
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
         PathBuf::from(&ctx.install_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir()
+            .join(format!("opx_mysql_bin_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn bin_dir_uses_direct_bin_when_flattened() {
+        // Windows zip / 手动平铺的存量安装：bin 直接在安装根
+        let root = temp_root("flat");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "windows");
+        assert_eq!(dir, root.join("bin"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bin_dir_finds_nested_top_level_dir_on_linux() {
+        // 回归：官方 tar.xz 保留顶层目录，mysqld 不在安装根 bin/
+        let root = temp_root("nested");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "linux");
+        assert_eq!(dir, nested);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bin_dir_falls_back_to_scanning_single_subdir() {
+        // 顶层目录名与预期不符时（如自定义包），扫描含 bin/ 的子目录兜底
+        let root = temp_root("scan");
+        let nested = root.join("custom-layout").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "linux");
+        assert_eq!(dir, nested);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn program_is_relative_to_install_root() {
+        let root = temp_root("program");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let prog = mysql_program(&root, "8.4.11", "linux", "mysqld");
+        assert_eq!(
+            prog,
+            format!("mysql-8.4.11-linux-glibc2.28-x86_64/bin/{}", exe_name("mysqld"))
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

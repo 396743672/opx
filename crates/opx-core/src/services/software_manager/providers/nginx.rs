@@ -22,6 +22,50 @@ fn nginx_source_url(version: &str) -> String {
     format!("https://nginx.org/download/nginx-{version}.tar.gz")
 }
 
+/// 远程版本按 OS 构造（回归：Linux 不能用 Windows .zip）。
+///
+/// nginx.org 同时发布 Windows `.zip`（预编译）与 *nix `.tar.gz`（源码，装后编译）。
+/// 此前 `fetch_remote_versions` 正则只匹配 `.zip` 且硬编码 Zip 格式，导致 Linux
+/// 刷新版本后拿到 Windows 包 → 解压出 `nginx.exe` → `sbin/nginx` 找不到。
+/// Windows 保留华为云 + 官网双镜像；*nix 仅官网源码 tar.gz（华为云不镜像源码包）。
+fn nginx_remote_version(version: &str, os: &str) -> CatalogVersion {
+    let (mirrors, format) = if os == "windows" {
+        (
+            vec![
+                MirrorSource {
+                    name: "i18n:huaweiMirror".to_string(),
+                    url: format!("https://mirrors.huaweicloud.com/nginx/nginx-{version}.zip"),
+                    builtin: None,
+                },
+                MirrorSource {
+                    name: "i18n:official".to_string(),
+                    url: format!("https://nginx.org/download/nginx-{version}.zip"),
+                    builtin: None,
+                },
+            ],
+            ArchiveFormat::Zip,
+        )
+    } else {
+        (
+            vec![MirrorSource {
+                name: "i18n:official".to_string(),
+                url: nginx_source_url(version),
+                builtin: None,
+            }],
+            ArchiveFormat::TarGz,
+        )
+    };
+    CatalogVersion {
+        version: version.to_string(),
+        mirrors,
+        archive: ArchiveInfo {
+            format,
+            size: None,
+            sha256: None,
+        },
+    }
+}
+
 /// Nginx 可执行文件绝对路径（P2-1）：Windows 在安装根（`nginx.exe`）；
 /// *nix 源码 `make install` 后位于 `<install>/sbin/nginx`。
 fn nginx_bin_path(install_path: &str) -> String {
@@ -193,9 +237,11 @@ impl SoftwareProvider for NginxProvider {
 
         let html = response.text().ok()?;
         let mut versions = vec![];
+        let os = crate::utils::platform::current_os();
 
-        // 正则匹配 nginx-X.Y.Z.zip（mainline 版本 1.31.x）
-        let re = regex::Regex::new(r"nginx-(\d+\.\d+\.\d+)\.zip").ok()?;
+        // 正则同时匹配 .zip（Windows 包）与 .tar.gz（*nix 源码包）；
+        // 版本构造按 OS 分叉，避免 Linux 拿到 Windows 包。
+        let re = regex::Regex::new(r"nginx-(\d+\.\d+\.\d+)\.(?:zip|tar\.gz)").ok()?;
         let mut seen = std::collections::HashSet::new();
 
         for cap in re.captures_iter(&html) {
@@ -217,29 +263,7 @@ impl SoftwareProvider for NginxProvider {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             if major == 1 && minor == 31 {
-                versions.push(CatalogVersion {
-                    version: version.clone(),
-                    mirrors: vec![
-                        MirrorSource {
-                            name: "i18n:huaweiMirror".to_string(),
-                            url: format!(
-                                "https://mirrors.huaweicloud.com/nginx/nginx-{}.zip",
-                                version
-                            ),
-                            builtin: None,
-                        },
-                        MirrorSource {
-                            name: "i18n:official".to_string(),
-                            url: format!("https://nginx.org/download/nginx-{}.zip", version),
-                            builtin: None,
-                        },
-                    ],
-                    archive: ArchiveInfo {
-                        format: ArchiveFormat::Zip,
-                        size: None,
-                        sha256: None,
-                    },
-                });
+                versions.push(nginx_remote_version(&version, &os));
             }
         }
 
@@ -388,5 +412,35 @@ impl SoftwareProvider for NginxProvider {
             env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 10,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_version_uses_tar_gz_on_linux() {
+        // 回归：Linux 远程版本若拿 Windows .zip，会解出 nginx.exe，sbin/nginx 找不到
+        let v = nginx_remote_version("1.31.3", "linux");
+        assert_eq!(v.version, "1.31.3");
+        assert_eq!(v.archive.format, ArchiveFormat::TarGz);
+        assert!(v.mirrors.iter().all(|m| m.url.ends_with(".tar.gz")));
+        assert!(v.mirrors.iter().all(|m| !m.url.contains("huaweicloud")));
+    }
+
+    #[test]
+    fn remote_version_uses_zip_on_windows() {
+        let v = nginx_remote_version("1.31.3", "windows");
+        assert_eq!(v.archive.format, ArchiveFormat::Zip);
+        assert!(v.mirrors.iter().all(|m| m.url.ends_with(".zip")));
+        assert!(v.mirrors.iter().any(|m| m.url.contains("huaweicloud")));
+    }
+
+    #[test]
+    fn remote_version_macos_uses_source_tar_gz() {
+        let v = nginx_remote_version("1.31.3", "macos");
+        assert_eq!(v.archive.format, ArchiveFormat::TarGz);
+        assert!(v.mirrors.iter().all(|m| m.url.ends_with(".tar.gz")));
     }
 }
