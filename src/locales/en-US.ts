@@ -33,6 +33,8 @@ export default {
   cancel: 'Cancel',
   confirm: 'Confirm',
   close: 'Close',
+  runtimeErrorTitle: 'Runtime error',
+  runtimeErrorUnknown: 'Unknown error',
   install: 'Install',
     batchInstall: 'Batch Install',
     deselect: 'Deselect',

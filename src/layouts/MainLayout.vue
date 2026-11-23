@@ -65,8 +65,8 @@
           <Icon icon="mdi:lock-outline" class="text-lg" />
         </button>
 
-        <!-- 窗口控制 -->
-        <div class="flex items-center ml-2 gap-0.5">
+        <!-- 窗口控制（桌面专属：浏览器里没有窗口 API，点了只会抛错） -->
+        <div v-if="isDesktop" class="flex items-center ml-2 gap-0.5">
           <button @mousedown.stop.prevent="minimize" class="win-btn" title="最小化">
             <Icon icon="mdi:window-minimize" class="text-sm" />
           </button>
@@ -109,6 +109,7 @@ import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { isDesktop } from '@/utils/transport'
 
 useI18n()
 const router = useRouter()
@@ -163,38 +164,54 @@ function onLock() {
 
 const maximized = ref(false)
 
-function win() { return getCurrentWindow() }
+/**
+ * Tauri 窗口句柄；Web 模式返回 null。
+ *
+ * 🚨 `getCurrentWindow()` 读的是 `window.__TAURI_INTERNALS__.metadata`，该对象只在
+ * 桌面壳里存在。Web 端（http://<IP>:17580）无条件调用会在挂载期抛
+ * `Cannot read properties of undefined (reading 'metadata')`，并让标题栏拖拽与
+ * 最小化/最大化/关闭三键全部变成「点了没反应」（2026-11-23 实测）。
+ */
+function win() {
+  return isDesktop ? getCurrentWindow() : null
+}
 
 function onTitlebarMouseDown(e: MouseEvent) {
+  if (!isDesktop) return // 浏览器里没有窗口可拖
   // 左键且非交互元素 → 拖拽窗口
   if (e.buttons === 1 && !(e.target as HTMLElement).closest('button')) {
     if (e.detail === 2) {
       // 双击最大化/还原
-      win().toggleMaximize()
+      win()?.toggleMaximize()
     } else {
       // 单次拖拽
-      win().startDragging()
+      win()?.startDragging()
     }
   }
 }
 
 async function minimize() {
-  try { await win().minimize() } catch (err) { console.error('minimize:', err) }
+  try { await win()?.minimize() } catch (err) { console.error('minimize:', err) }
 }
 async function toggleMaximize() {
+  const w = win()
+  if (!w) return
   try {
-    await win().toggleMaximize()
-    maximized.value = await win().isMaximized()
+    await w.toggleMaximize()
+    maximized.value = await w.isMaximized()
   } catch (err) { console.error('toggleMaximize:', err) }
 }
 async function closeWindow() {
-  try { await win().close() } catch (err) { console.error('close:', err) }
+  try { await win()?.close() } catch (err) { console.error('close:', err) }
 }
 
 onMounted(async () => {
   const w = win()
-  try { maximized.value = await w.isMaximized() } catch {}
-  try { await w.onResized(() => { w.isMaximized().then(v => maximized.value = v) }) } catch {}
+  if (w) {
+    try { maximized.value = await w.isMaximized() } catch {}
+    try { await w.onResized(() => { w.isMaximized().then(v => maximized.value = v) }) } catch {}
+  }
+  // 与窗口无关：Web 端也要跑指标轮询（此前被上面那句抛错挡在这里，永远不启动）
   systemStore.startPolling()
 })
 

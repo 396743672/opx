@@ -33,6 +33,8 @@ export default {
   cancel: '取消',
   confirm: '确认',
   close: '关闭',
+  runtimeErrorTitle: '运行出错',
+  runtimeErrorUnknown: '未知错误',
   install: '安装',
     batchInstall: '批量安装',
     deselect: '取消选择',
