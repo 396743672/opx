@@ -109,6 +109,11 @@ export default {
   setupLan: 'Allow LAN access',
   setupLanRisk: 'Warning: HTTP is plaintext — devices on the LAN can sniff the token. Enable only on trusted networks',
   setupLanOffHint: 'When off, only the server itself can access; for remote management use an SSH tunnel: ssh -L 17580:127.0.0.1:17580 user@server',
+  setupFwAllowed: 'System firewall allows {port}/tcp',
+  setupFwNotAllowed:
+    'System firewall does not allow {port}/tcp yet — allow it from the Ports & Firewall page after finishing',
+  setupFwNoBackend:
+    'No ufw / firewalld detected; if another firewall is active, allow {port}/tcp manually',
   setupFinish: 'Finish setup',
   setupSkip: 'Skip, configure later in Settings',
   setupNewAddr: 'Entry address changed',
@@ -981,6 +986,48 @@ export default {
   templateDevEnv: 'Dev Env (MySQL+Redis+Nginx)',
   templateCacheWeb: 'Cache & Gateway (Redis+Nginx)',
   templateObjectStorage: 'Object Storage (MinIO)',
+
+  // ===== Ports & Firewall =====
+  firewallPorts: 'Ports & Firewall',
+  firewallDesc: 'See every port a service will listen on, and allow or revoke firewall rules',
+  firewallNoServiceHint: 'never starts or stops the firewall service',
+  firewallBackend_ufw: 'ufw detected',
+  firewallBackend_firewalld: 'firewalld detected',
+  firewallBackend_nftables: 'nftables detected',
+  firewallBackend_windows: 'Windows Firewall detected',
+  firewallBackend_none: 'No supported firewall detected',
+  firewallBackendNote_ufw:
+    'opx only maintains port rules and never enables or disables ufw. Rules go to the persistent layer, so they apply whenever ufw is enabled.',
+  firewallBackendNote_firewalld:
+    'opx only maintains port rules and never starts or stops firewalld. Rules are written as permanent and reload is attempted immediately.',
+  firewallBackendNote_nftables:
+    'Only nftables is present (the default since Debian 13). opx keeps allowed ports in a dedicated table `inet opx` without touching existing rules; the table is rebuilt whenever opx starts, and dropping it breaks nothing.',
+  firewallBackendNote_windows:
+    'opx only maintains inbound port rules (prefixed with opx-). Allowing a port requires running opx as administrator.',
+  firewallBackendNote_none:
+    'Neither ufw nor firewalld is present. Allow ports in your system firewall manually; opx will not touch raw iptables/nftables rules, which could break existing networking and lock you out.',
+  firewallGroupOpx: 'opx itself',
+  firewallGroupSoftware: 'Installed software',
+  firewallGroupJar: 'Applications (JAR)',
+  firewallGroupSite: 'Websites',
+  firewallGroupManual: 'Manual',
+  firewallOpxEntry: 'opx web console',
+  firewallAllowed: 'Allowed',
+  firewallDenied: 'Blocked',
+  firewallAddPort: 'Add port',
+  firewallAddPortHint:
+    'For ports that belong to no managed instance, e.g. a database only used by an internal service, or a service started by your own script.',
+  firewallBindLocalOnly: 'listening on {addr} only',
+  firewallFixBind: 'Change to 0.0.0.0',
+  firewallFixBindDone:
+    'Listen address of "{name}" changed to 0.0.0.0. Restart that service for it to take effect.',
+  firewallRiskyPort: 'Database/middleware port: risky on the public internet — restrict source IPs',
+  firewallReadError: 'Failed to read firewall rules',
+  firewallEmpty: 'No ports to allow yet',
+  firewallEmptyDesc: 'Ports appear here automatically once you install software or add a website.',
+  firewallRemoveManualConfirm: 'Remove the manual entry for {port} and revoke its rule?',
+  firewallNodeHint:
+    'Node apps decide their listen port in code, so opx cannot read it in advance — use "Add port" when you need one allowed.',
 
   // ===== Audit Log =====
   auditLog: 'Audit Log',

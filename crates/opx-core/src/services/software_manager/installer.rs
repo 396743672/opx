@@ -15,6 +15,7 @@ use crate::models::software::{
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
 use crate::services::software_manager::providers::{all_providers, InstallContext};
+use crate::services::software_manager::start_stop::collect_configured_ports;
 use crate::services::software_manager::SoftwareManager;
 use crate::utils::{archive, download, paths};
 use chrono::Utc;
@@ -116,6 +117,30 @@ impl ThrottledEmitter {
         } else {
             false
         }
+    }
+}
+
+/// 安装完成后把该实例声明的端口同步到系统防火墙（Linux ufw/firewalld、Windows）。
+///
+/// 只在「内置软件」的两条安装路径调用（在线镜像 / 本地内置资源）。失败只记日志：
+/// 见 `crate::services::firewall` 模块文档第 3 条 —— 放行失败绝不能导致「装不上」。
+///
+/// 此处实例的 config 尚为空，端口取 provider schema 的默认值；用户在配置表单里
+/// 改过端口时，启动路径（`start_stop::do_start_software`）会按实际 config 再校正。
+fn allow_ports_after_install(installed: &InstalledSoftware, key: &str) {
+    let Some(provider) = all_providers().into_iter().find(|p| p.key() == key) else {
+        return;
+    };
+    let ports = collect_configured_ports(installed, Some(&*provider));
+    if ports.is_empty() {
+        return;
+    }
+    let (allowed, errors) = crate::services::firewall::allow_tcp(&ports);
+    if !allowed.is_empty() {
+        eprintln!("[firewall] 安装 {} 后已放行端口: {:?}", key, allowed);
+    }
+    for e in errors {
+        eprintln!("[firewall] 放行 {} 端口失败（不影响安装）: {}", key, e);
     }
 }
 
@@ -287,6 +312,8 @@ pub async fn install_software(
             depends_on: vec![],
             auto_restart: false,
         };
+        // 安装即放行端口（失败不影响安装，见 allow_ports_after_install 文档）
+        allow_ports_after_install(&installed, &params.key);
         manager.add_installed(installed)?;
 
         if params.key == "jre" && params.set_as_default_jre {
@@ -1110,7 +1137,8 @@ async fn install_from_builtin(
         );
 
         // 7. post_install
-        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+        let provider_opt = all_providers().into_iter().find(|p| p.key() == params.key);
+        if let Some(provider) = &provider_opt {
             let ctx = InstallContext::new(
                 params.key.clone(),
                 params.version.clone(),
@@ -1158,6 +1186,8 @@ async fn install_from_builtin(
             depends_on: vec![],
             auto_restart: false,
         };
+        // 安装即放行端口（失败不影响安装，见 allow_ports_after_install 文档）
+        allow_ports_after_install(&installed, &params.key);
         manager.add_installed(installed)?;
 
         if params.key == "jre" && params.set_as_default_jre {

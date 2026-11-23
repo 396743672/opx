@@ -61,6 +61,19 @@ pub async fn start_app(
         }
     }
 
+    // 启动即放行端口：JAR 的端口写在表单/配置里，和内置软件一样会遇到
+    // 「服务起来了但外部连不上」。失败只记日志（见 services::firewall 边界说明），
+    // 绝不阻断启动。
+    if let Some(port) = app.port {
+        let (allowed, errors) = crate::services::firewall::allow_tcp(&[port]);
+        if !allowed.is_empty() {
+            tracing::info!(port, "JAR 启动前已放行端口");
+        }
+        for e in errors {
+            tracing::warn!(port, error = %e, "JAR 端口放行失败（不影响启动）");
+        }
+    }
+
     springboot_mgr
         .update_status(app_id, AppStatus::Starting, None, None)
         .map_err(|e| e.to_string())?;

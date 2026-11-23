@@ -46,6 +46,34 @@ pub fn regenerate(sm: &SoftwareManager, wm: &WebsiteManager, reload: bool) -> Re
     opx_core::services::website_manager::regenerate::regenerate(&sm.get_installed(), wm, reload)
 }
 
+/// 站点需要对外放行的端口：`listen`，以及启用 SSL 时的 443。
+///
+/// 未启用的站点不生成 conf、nginx 不会监听，故不放行 —— 与端口页的展示口径一致。
+fn site_ports(site: &Site) -> Vec<u16> {
+    if !site.enabled {
+        return Vec::new();
+    }
+    let mut ports = vec![site.listen];
+    if site.ssl.enabled && site.listen != 443 {
+        ports.push(443);
+    }
+    ports
+}
+
+/// 放行端口（失败只记日志，绝不影响站点保存/启用的结果）。
+fn allow_ports_quietly(ports: &[u16], what: &str) {
+    if ports.is_empty() {
+        return;
+    }
+    let (allowed, errors) = opx_core::services::firewall::allow_tcp(ports);
+    if !allowed.is_empty() {
+        tracing::info!(?allowed, what, "已放行端口");
+    }
+    for e in errors {
+        tracing::warn!(what, error = %e, "端口放行失败（不影响操作）");
+    }
+}
+
 #[tauri::command]
 pub fn list_websites(wm: State<'_, Arc<WebsiteManager>>) -> Vec<Site> {
     wm.list()
@@ -103,10 +131,15 @@ pub fn save_website(
         let nginx = resolve_nginx(&sm)?;
         resolve_pending_zips(&mut site, &Path::new(&nginx.install_path))
             .map_err(|e| e.to_string())?;
+        // 放行端口要在 site 被 move 进 upsert_mem 之前算好
+        let ports = site_ports(&site);
         // 写入内存（不持久化），regenerate 验证后再持久化
         wm.upsert_mem(site).map_err(|e| e.to_string())?;
         regenerate(&sm, &wm, true)?;
-        wm.persist().map_err(|e| e.to_string())
+        wm.persist().map_err(|e| e.to_string())?;
+        // 站点配好了却打不开，最常见的原因就是 nginx 起来了但防火墙没放行
+        allow_ports_quietly(&ports, "site");
+        Ok(())
     })
 }
 
@@ -166,7 +199,15 @@ pub fn set_website_enabled(
         wm.set_enabled_mem(&id, enabled)
             .map_err(|e| e.to_string())?;
         regenerate(&sm, &wm, true)?;
-        wm.persist().map_err(|e| e.to_string())
+        wm.persist().map_err(|e| e.to_string())?;
+        // 启用时放行该站点的端口（关闭时**不撤销**：同一端口可能还被其它站点
+        // 或用户自建服务使用，撤销会造成别人断服；需要精确收回请到端口页操作）
+        if enabled {
+            if let Some(site) = wm.get(&id) {
+                allow_ports_quietly(&site_ports(&site), "site");
+            }
+        }
+        Ok(())
     })
 }
 

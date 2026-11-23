@@ -46,7 +46,7 @@ use opx_http::AppContext;
 // ApiError 自 opx-http 顶层 re-export（桌面专属命令的 409 信封用）
 use opx_http::ApiError;
 
-use crate::commands::{audit, config, dns_account, lock_screen, node_app, software, springboot, stack, system, website};
+use crate::commands::{audit, config, dns_account, firewall, lock_screen, node_app, software, springboot, stack, system, website};
 use crate::services::dns_account::DnsAccountManager;
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
@@ -450,6 +450,50 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             let id: String = arg(&args, "id")?;
             let m = h.state::<Arc<DnsAccountManager>>();
             ok(dns_account::test_dns_account(m, id).await)
+        })
+    });
+
+    // ===== firewall 端口规则（5；只维护端口规则，不启停防火墙服务）=====
+    // Web 入口是主要使用场景（用户在浏览器里管理远端服务器），必须挂全。
+    let h = handle.clone();
+    reg.register("get_firewall_overview", move |_ctx, _args| {
+        let h = h.clone(); // Fn 闭包按调用克隆（future 须 'static）
+        Box::pin(async move {
+            let sm = h.state::<Arc<SoftwareManager>>();
+            let sb = h.state::<Arc<SpringBootManager>>();
+            let wm = h.state::<Arc<WebsiteManager>>();
+            val(firewall::get_firewall_overview(sm, sb, wm))
+        })
+    });
+    reg.register("set_firewall_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            let allow: bool = arg(&args, "allow")?;
+            ok(firewall::set_firewall_port(port, proto, allow))
+        })
+    });
+    reg.register("add_manual_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            ok(firewall::add_manual_port(port, proto))
+        })
+    });
+    reg.register("remove_manual_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            ok(firewall::remove_manual_port(port, proto))
+        })
+    });
+    let h = handle.clone();
+    reg.register("set_instance_bind_all", move |_ctx, args| {
+        let h = h.clone(); // Fn 闭包按调用克隆（future 须 'static）
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(firewall::set_instance_bind_all(sm, installed_id))
         })
     });
 

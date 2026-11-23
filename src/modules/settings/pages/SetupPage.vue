@@ -73,6 +73,15 @@
         <p class="text-xs text-muted-foreground mt-2">{{ $t('webLanAccessHint') }}</p>
         <p v-if="lanValue" class="text-xs text-destructive mt-1.5">{{ $t('setupLanRisk') }}</p>
         <p v-else class="text-xs text-muted-foreground mt-1.5 mono">{{ $t('setupLanOffHint') }}</p>
+        <!-- 防火墙放行状态：Linux 上「开了局域网访问还是连不上」几乎都卡在这一层 -->
+        <p
+          v-if="lanValue && fwHint"
+          class="text-xs mt-1.5 inline-flex items-center gap-1.5"
+          :class="fwOk ? 'text-success' : 'text-amber-600'"
+        >
+          <Icon :icon="fwOk ? 'mdi:check-circle' : 'mdi:alert-outline'" />
+          {{ fwHint }}
+        </p>
       </div>
 
       <!-- 动作 -->
@@ -122,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -132,6 +141,7 @@ import { invoke } from '@/utils/ipc'
 import { isDesktop, getStoredToken } from '@/utils/transport'
 import { toast } from '@/composables/useToast'
 import type { Language } from '@/models/settings'
+import type { FirewallOverview } from '@/models/firewall'
 
 const settingsStore = useSettingsStore()
 const router = useRouter()
@@ -163,6 +173,29 @@ const newUrls = ref<string[]>([])
 const webJustEnabled = ref(false)
 const copied = ref(false)
 
+// 防火墙放行状态：null = 尚未查到（或查询失败，此时不显示任何提示，避免误报）
+const fwAvailable = ref<boolean | null>(null)
+const fwOk = ref(false)
+
+const fwHint = computed(() => {
+  if (fwAvailable.value === null) return ''
+  const port = normPort()
+  if (!fwAvailable.value) return t('setupFwNoBackend', { port })
+  return fwOk.value ? t('setupFwAllowed', { port }) : t('setupFwNotAllowed', { port })
+})
+
+/** 查当前端口在系统防火墙里的真实状态（幂等只读，失败静默——引导页不该被它挡住） */
+async function refreshFirewall() {
+  try {
+    const ov = await invoke<FirewallOverview>('get_firewall_overview')
+    fwAvailable.value = ov.backend.available
+    const port = normPort()
+    fwOk.value = ov.ports.some((p) => p.source === 'opx' && p.port === port && p.allowed)
+  } catch {
+    fwAvailable.value = null
+  }
+}
+
 onMounted(() => {
   const s = settingsStore.settings
   if (s) {
@@ -173,6 +206,12 @@ onMounted(() => {
     origLan.value = lanValue.value
     origWebEnabled.value = webEnabledValue.value
   }
+  void refreshFirewall()
+})
+
+// 改端口要重新查：默认端口已放行、换成 8080 后状态就变了
+watch(portValue, () => {
+  void refreshFirewall()
 })
 
 function normPort(): number {
@@ -223,6 +262,17 @@ async function finish() {
       }
     }
     await persistDone()
+
+    // 用户在这里显式开了局域网访问 → 顺手把端口放行掉。
+    // 不放行的话「开了局域网还是连不上」是 Linux 上最常见的困惑；
+    // 失败不阻断引导（用户可到「端口与防火墙」页重试）。
+    if (showNet.value && lanValue.value) {
+      try {
+        await invoke('set_firewall_port', { port: normPort(), proto: 'tcp', allow: true })
+      } catch {
+        /* 非致命：跳过 */
+      }
+    }
 
     // 桌面：刚开启浏览器入口 → 后端生成含 token 的完整 URL 面板
     if (isDesktop) {

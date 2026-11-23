@@ -212,6 +212,15 @@ npm run tauri:build
 - 支持拖拽、双击最大化/还原、最小化/最大化/关闭按钮
 - 随主题切换自动更新样式
 
+### 端口与防火墙
+- **一个页面看清所有对外端口**：opx 自身 Web 入口、内置软件、JAR 应用、站点、手动添加，五类来源汇总成一张清单，逐个显示「已放行 / 未放行」，可一键开关。
+- **只维护端口规则，绝不启停防火墙服务**。opx 不会 `ufw enable`、不会 `systemctl start firewalld`——机器该不该开防火墙由你决定，opx 只保证需要的端口是放行状态。规则写入持久配置层，日后启用防火墙时自动生效。
+- **支持 ufw（Debian/Ubuntu 系）、firewalld（RHEL/Fedora/SUSE/openEuler 系）、nftables（Debian 13+ 默认只装这个）与 Windows 防火墙**。nftables 只在系统规则集为空或没有任何 `drop`/`reject` 时接管——此时 opx 新建**独立表 `inet opx`**（`policy accept` + 纯 accept 规则），是纯加法，删掉它也不影响系统；一旦已有拦截规则就只给人工指引，**绝不改 iptables 裸规则、不往别人的链里插规则**——插错位置可能"看着放行了实际仍被 drop"，甚至把 SSH 一起挡掉、机器失联。nftables 规则不写入 `/etc/nftables.conf`，改由 opx 启动时全量重建。
+- **安装即放行**：Linux 上装完软件立刻按 provider 声明的端口放行；启动时再按实际配置校正一次（覆盖你改过端口的情况）。JAR 启动、站点保存/启用同样自动放行。放行失败只记日志，绝不让安装或启动失败。
+- **第二道门会明确提示**：服务 `bind 127.0.0.1` 时，光开防火墙也连不上——清单里会标「仅监听 127.0.0.1」并提供「改为 0.0.0.0」（改完需重启该软件）。
+- **自身端口随包放行**：deb/rpm 的 `postinst` 会自动放行 17580/tcp（可用 `OPX_WEB_PORT` 覆盖），引导页也会显示当前端口的真实放行状态。
+- 数据库类高危端口（3306/5432/6379/27017 等）带风险提示；手动添加的端口支持 TCP/UDP 选择，可随时移除并撤销规则。
+
 ### 无头模式与 Linux 服务
 - `opx --headless` 无窗口运行——浏览器即唯一入口（Web 管理界面，默认端口 17580）。适合无桌面环境的服务器。
 - 浏览器里同样能注册 Spring Boot 应用：无头/Web 模式把「浏览」换成上传按钮，JAR 直接传到服务器 `data/uploads/`（上限 200 MB），无需先通过 shell 把文件放到服务器上。
@@ -347,8 +356,8 @@ rm -rf dist
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
 | `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
-| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.9_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.9_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.10_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.10_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -374,7 +383,7 @@ rm -rf dist
 6. 发版前确认 `git status` 干净、已提交推送
 
 ### 版本号管理
-打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.9`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.10`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
 
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装

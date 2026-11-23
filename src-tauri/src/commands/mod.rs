@@ -2,6 +2,7 @@ pub mod app;
 pub mod audit;
 pub mod config;
 pub mod dns_account;
+pub mod firewall;
 pub mod http_registry;
 pub mod lock_screen;
 pub mod node_app;

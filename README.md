@@ -195,6 +195,15 @@ npm run tauri:build
 - Config panels link to official docs.
 - The site dialog uses a fixed header with only the form area scrolling.
 
+### Ports & Firewall
+- **One page for every externally reachable port**: opx's own web console, managed software, JAR apps, websites and manually added ports are merged into a single list, each showing *Allowed* / *Blocked* with a one-click toggle.
+- **opx only maintains port rules — it never starts or stops your firewall.** No `ufw enable`, no `systemctl start firewalld`: whether the firewall runs is your call, opx only guarantees the ports that need to be open actually are. Rules are written to the persistent layer, so they take effect whenever the firewall is later enabled.
+- **Supported backends: ufw (Debian/Ubuntu), firewalld (RHEL/Fedora/SUSE/openEuler), nftables (the only one shipped on Debian 13+) and Windows Firewall.** opx only takes over nftables when the ruleset is empty or contains no `drop`/`reject` rules — in that case it creates a dedicated `inet opx` table (`policy accept`, accept-only rules) which is purely additive and safe to delete. Once any blocking rule exists it falls back to manual instructions and **never touches raw iptables rules or injects into someone else's chain** — a badly placed rule can "look" allowed while still being dropped, or take SSH down and lock you out. nftables rules are not written to `/etc/nftables.conf`; opx rebuilds them on every start.
+- **Allowed on install**: installing software on Linux immediately allows the ports its provider declares, then the start path re-checks against the real config (covers ports you changed). Starting a JAR and saving/enabling a website allow their ports too. Failures are logged only and never fail the install or the start.
+- **The second gate is called out explicitly**: when a service binds `127.0.0.1`, opening the firewall alone still won't make it reachable — the row is flagged "listening on 127.0.0.1 only" with a one-click *Change to 0.0.0.0* (restart the service to apply).
+- **opx's own port is allowed by the package**: `postinst` in the deb/rpm opens 17580/tcp automatically (override with `OPX_WEB_PORT`), and the setup wizard shows the real allow state of the chosen port.
+- Risky database ports (3306/5432/6379/27017 …) are flagged; manually added ports support TCP/UDP and can be removed together with their rule.
+
 ### Headless Mode & Linux Service
 - `opx --headless` runs without a window — the browser is the only entry (Web management UI, default port 17580). Ideal for servers without a desktop.
 - Registering a Spring Boot app also works from the browser: in headless/Web mode the file picker becomes an upload control that transfers the JAR to `<data dir>/data/uploads/` on the server (200 MB cap), so no shell access is needed to stage a path.
@@ -275,7 +284,7 @@ Under `src-tauri/target/release/bundle/` (Windows shown; Linux/macOS produce deb
 MSI/NSIS installers embed the WebView2 Bootstrapper; the portable exe does not.
 
 ### Versioning
-The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.9`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
+The package version comes from `tauri.conf.json`'s `version` field (currently `0.5.10`). On a new release, keep `tauri.conf.json`, `package.json`, and `Cargo.toml` versions in sync — the CI release only fires when the bumped version has no existing `v<version>` tag.
 
 ## Contributing
 

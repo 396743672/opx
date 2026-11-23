@@ -109,6 +109,9 @@ export default {
   setupLan: '允许局域网访问',
   setupLanRisk: '警告：HTTP 为明文传输，局域网内设备可嗅探令牌，请仅在可信网络中开启',
   setupLanOffHint: '关闭后仅服务器本机可访问；远程管理可用 SSH 隧道：ssh -L 17580:127.0.0.1:17580 user@server',
+  setupFwAllowed: '系统防火墙已放行 {port}/tcp',
+  setupFwNotAllowed: '系统防火墙尚未放行 {port}/tcp，完成后可在「端口与防火墙」页一键放行',
+  setupFwNoBackend: '未检测到 ufw / firewalld；若启用了其它防火墙，请手动放行 {port}/tcp',
   setupFinish: '完成设置',
   setupSkip: '跳过，稍后在设置中配置',
   setupNewAddr: '入口地址已变更',
@@ -981,6 +984,47 @@ export default {
   templateDevEnv: '联调环境（MySQL+Redis+Nginx）',
   templateCacheWeb: '缓存与网关（Redis+Nginx）',
   templateObjectStorage: '对象存储（MinIO）',
+
+  // ===== 端口与防火墙 =====
+  firewallPorts: '端口与防火墙',
+  firewallDesc: '集中查看会监听端口的服务，并放行或撤销系统防火墙规则',
+  firewallNoServiceHint: '不启停防火墙服务',
+  firewallBackend_ufw: '已检测到 ufw',
+  firewallBackend_firewalld: '已检测到 firewalld',
+  firewallBackend_nftables: '已检测到 nftables',
+  firewallBackend_windows: '已检测到 Windows 防火墙',
+  firewallBackend_none: '未检测到受支持的防火墙',
+  firewallBackendNote_ufw:
+    'opx 只维护端口放行规则，不会启用或停用 ufw。规则写入持久配置层，日后启用 ufw 时同样生效。',
+  firewallBackendNote_firewalld:
+    'opx 只维护端口放行规则，不会启动或停止 firewalld。规则写入永久配置并尝试立即 reload。',
+  firewallBackendNote_nftables:
+    '系统只有 nftables（Debian 13 起的默认）。opx 在独立表 inet opx 中维护放行端口，不修改系统现有规则；该表随 opx 启动自动重建，删除它也不会影响现有网络。',
+  firewallBackendNote_windows:
+    'opx 只维护入站端口规则（规则名以 opx- 开头）。放行操作需要以管理员身份运行 opx。',
+  firewallBackendNote_none:
+    '系统里没有 ufw 或 firewalld。请在系统防火墙中手动放行端口；opx 不会改动 iptables/nftables 裸规则，以免误伤现有网络配置导致失联。',
+  firewallGroupOpx: 'opx 自身',
+  firewallGroupSoftware: '已装软件',
+  firewallGroupJar: '应用管理（JAR）',
+  firewallGroupSite: '站点',
+  firewallGroupManual: '手动添加',
+  firewallOpxEntry: 'opx Web 管理入口',
+  firewallAllowed: '已放行',
+  firewallDenied: '未放行',
+  firewallAddPort: '添加端口',
+  firewallAddPortHint:
+    '用于放行不属于任何被管实例的端口，例如只给内网某个服务用的数据库、自建脚本启动的服务。',
+  firewallBindLocalOnly: '仅监听 {addr}',
+  firewallFixBind: '改为 0.0.0.0',
+  firewallFixBindDone: '已把「{name}」的监听地址改为 0.0.0.0，请重启该软件后生效。',
+  firewallRiskyPort: '数据库/中间件端口：对公网开放风险较高，建议限制来源 IP',
+  firewallReadError: '读取防火墙规则失败',
+  firewallEmpty: '还没有需要放行的端口',
+  firewallEmptyDesc: '安装软件或添加站点后，这里会自动列出它们占用的端口。',
+  firewallRemoveManualConfirm: '移除 {port} 的手动放行记录并撤销规则？',
+  firewallNodeHint:
+    'Node 应用的监听端口由应用代码自身决定，opx 无法预先读取；需要放行时请用右上角「添加端口」。',
 
   // ===== 操作记录（审计日志）=====
   auditLog: '操作记录',

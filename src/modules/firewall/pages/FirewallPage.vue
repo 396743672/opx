@@ -1,0 +1,507 @@
+<template>
+  <div class="animate-fade-in">
+    <PageHeader
+      icon="mdi:shield-lock-outline"
+      :title="$t('firewallPorts')"
+      :subtitle="$t('firewallDesc')"
+    >
+      <template #actions>
+        <button class="btn ghost" :disabled="loading" @click="load">
+          <Icon icon="mdi:refresh" /> {{ $t('refresh') }}
+        </button>
+        <button class="btn primary" :disabled="!canManage" @click="openAdd">
+          <Icon icon="mdi:plus" /> {{ $t('firewallAddPort') }}
+        </button>
+      </template>
+    </PageHeader>
+
+    <!-- 后端状态：明确「opx 不改防火墙服务状态」这一边界，避免用户以为能在这里关防火墙 -->
+    <div v-if="overview" class="panel">
+      <div class="flex items-center gap-2 flex-wrap">
+        <Icon :icon="backendIcon" class="text-xl" :class="canManage ? 'text-emerald-500' : 'text-amber-500'" />
+        <span class="font-semibold text-sm">{{ backendTitle }}</span>
+        <span class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+          {{ overview.backend.kind }}
+        </span>
+        <span class="text-[11px] text-muted-foreground">· {{ $t('firewallNoServiceHint') }}</span>
+      </div>
+      <p class="text-xs text-muted-foreground mt-2 leading-relaxed">{{ backendNote }}</p>
+    </div>
+
+    <!-- 规则读取失败（非 root 等）：必须显式展示，否则「全是未放行」会误导用户 -->
+    <div v-if="overview?.error" class="error-bar">
+      <Icon icon="mdi:alert-outline" class="flex-shrink-0" />
+      <span class="min-w-0 break-all">{{ $t('firewallReadError') }}: {{ overview.error }}</span>
+    </div>
+
+    <div v-if="pageError" class="error-bar">
+      <Icon icon="mdi:alert-outline" class="flex-shrink-0" />
+      <span class="min-w-0 break-all">{{ pageError }}</span>
+    </div>
+
+    <div v-if="notice" class="notice-bar">
+      <Icon icon="mdi:check-circle" class="flex-shrink-0" />
+      <span class="min-w-0">{{ notice }}</span>
+    </div>
+
+    <EmptyState
+      v-if="!loading && groups.length === 0"
+      icon="mdi:shield-lock-outline"
+      :title="$t('firewallEmpty')"
+      :description="$t('firewallEmptyDesc')"
+    />
+
+    <section v-for="g in groups" :key="g.source" class="group">
+      <div class="group-head">
+        <Icon :icon="g.icon" class="text-base" />
+        <span class="text-xs font-semibold uppercase tracking-wide">{{ $t(g.titleKey) }}</span>
+        <span class="text-[11px] text-muted-foreground">({{ g.items.length }})</span>
+      </div>
+
+      <div class="rows">
+        <div v-for="p in g.items" :key="portKey(p)" class="row">
+          <div class="port-cell">
+            <span class="port-num">{{ p.port }}</span>
+            <span class="port-proto">{{ p.proto }}</span>
+          </div>
+
+          <div class="name-cell">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="truncate text-sm font-medium">{{ displayName(p) }}</span>
+              <Icon
+                v-if="isRiskyPort(p.port)"
+                icon="mdi:alert-outline"
+                class="text-amber-500 text-sm flex-shrink-0"
+                :title="$t('firewallRiskyPort')"
+              />
+            </div>
+            <div class="text-[11px] text-muted-foreground truncate">
+              {{ p.detail || p.bind || '—' }}
+            </div>
+          </div>
+
+          <!-- 第二道门：只监听回环时，放行防火墙也白搭 -->
+          <div v-if="p.bind_local_only" class="bind-cell">
+            <span class="bind-warn">
+              <Icon icon="mdi:laptop" />
+              {{ $t('firewallBindLocalOnly', { addr: p.bind || '127.0.0.1' }) }}
+            </span>
+            <button
+              v-if="p.instance_id"
+              class="btn ghost tiny"
+              :disabled="pending.has(portKey(p))"
+              @click="fixBind(p)"
+            >
+              {{ $t('firewallFixBind') }}
+            </button>
+          </div>
+
+          <div class="action-cell">
+            <button
+              class="btn tiny"
+              :class="p.allowed ? 'primary' : ''"
+              :disabled="!canManage || pending.has(portKey(p))"
+              @click="toggle(p)"
+            >
+              <Icon :icon="p.allowed ? 'mdi:check' : 'mdi:lock-outline'" />
+              {{ p.allowed ? $t('firewallAllowed') : $t('firewallDenied') }}
+            </button>
+            <button
+              v-if="p.source === 'manual'"
+              class="btn ghost tiny"
+              :disabled="pending.has(portKey(p))"
+              :title="$t('delete')"
+              @click="removeManual(p)"
+            >
+              <Icon icon="mdi:delete" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p v-if="groups.length > 0" class="note">
+      <Icon icon="mdi:information-outline" />
+      {{ $t('firewallNodeHint') }}
+    </p>
+
+    <!-- 移除手动端口确认（用全局 .overlay / .confirm-box，与其它页面一致） -->
+    <Teleport to="body">
+      <div v-if="confirmTarget" class="overlay" @click.self="confirmTarget = null">
+        <div class="confirm-box">
+          <div class="confirm-title">
+            <Icon icon="mdi:alert-circle-outline" /> {{ $t('confirmDelete') }}
+          </div>
+          <p class="confirm-msg">
+            {{ $t('firewallRemoveManualConfirm', { port: confirmTarget.port }) }}
+          </p>
+          <div class="confirm-actions">
+            <button class="btn" @click="confirmTarget = null">{{ $t('cancel') }}</button>
+            <button class="btn danger" @click="doRemoveManual">{{ $t('delete') }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 手动添加 -->
+    <Teleport to="body">
+      <div v-if="addOpen" class="overlay" @click.self="addOpen = false">
+        <div class="confirm-box">
+          <div class="confirm-title">
+            <Icon icon="mdi:plus" /> {{ $t('firewallAddPort') }}
+          </div>
+          <p class="confirm-msg">{{ $t('firewallAddPortHint') }}</p>
+          <div class="flex gap-2 mb-4">
+            <input
+              v-model.number="newPort"
+              type="number"
+              min="1"
+              max="65535"
+              class="field flex-1"
+              :placeholder="$t('port')"
+              @keyup.enter="submitAdd"
+            />
+            <select v-model="newProto" class="field w-24">
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn" @click="addOpen = false">{{ $t('cancel') }}</button>
+            <button class="btn primary" :disabled="addBusy || !validNewPort" @click="submitAdd">
+              {{ $t('confirm') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { Icon } from '@iconify/vue'
+import { useI18n } from 'vue-i18n'
+import { invoke } from '@/utils/ipc'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import { portKey, type FirewallOverview, type FirewallPortEntry, type FirewallPortSource } from '@/models/firewall'
+
+const { t } = useI18n()
+
+const overview = ref<FirewallOverview | null>(null)
+const loading = ref(false)
+const pageError = ref('')
+const pending = ref<Set<string>>(new Set())
+
+const canManage = computed(() => overview.value?.backend.available === true)
+
+const backendIcon = computed(() => (canManage.value ? 'mdi:shield-check' : 'mdi:shield-off-outline'))
+const backendTitle = computed(() => {
+  const kind = overview.value?.backend.kind ?? 'none'
+  return t(`firewallBackend_${kind}`)
+})
+const backendNote = computed(() => {
+  const kind = overview.value?.backend.kind ?? 'none'
+  const key = `firewallBackendNote_${kind}`
+  const text = t(key)
+  // 词条缺失时 vue-i18n 会把 key 原样返回，回落到后端给的兜底说明
+  return text === key ? (overview.value?.backend.note ?? '') : text
+})
+
+const GROUP_META: Record<FirewallPortSource, { icon: string; titleKey: string }> = {
+  opx: { icon: 'mdi:application-cog-outline', titleKey: 'firewallGroupOpx' },
+  software: { icon: 'mdi:package-variant-closed', titleKey: 'firewallGroupSoftware' },
+  jar: { icon: 'mdi:leaf', titleKey: 'firewallGroupJar' },
+  site: { icon: 'mdi:web-box', titleKey: 'firewallGroupSite' },
+  manual: { icon: 'mdi:hand-back-right-outline', titleKey: 'firewallGroupManual' },
+}
+
+const groups = computed(() => {
+  const ports = overview.value?.ports ?? []
+  const order: FirewallPortSource[] = ['opx', 'software', 'jar', 'site', 'manual']
+  return order
+    .map((source) => ({
+      source,
+      ...GROUP_META[source],
+      items: ports.filter((p) => p.source === source),
+    }))
+    .filter((g) => g.items.length > 0)
+})
+
+/** 数据库类端口：放行到公网是勒索/挖矿的头号入口，给个视觉警示（不阻止，用户已明确要求默认放行） */
+function isRiskyPort(port: number): boolean {
+  return [1433, 1521, 27017, 3306, 5432, 6379, 9200, 9300, 2181, 9092].includes(port)
+}
+
+function displayName(p: FirewallPortEntry): string {
+  if (p.source === 'opx') return t('firewallOpxEntry')
+  return p.label || '—'
+}
+
+async function load() {
+  loading.value = true
+  try {
+    overview.value = await invoke<FirewallOverview>('get_firewall_overview')
+  } catch (e) {
+    pageError.value = String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+function withPending(key: string, fn: () => Promise<void>) {
+  if (pending.value.has(key)) return
+  pending.value.add(key)
+  fn().finally(() => pending.value.delete(key))
+}
+
+async function toggle(p: FirewallPortEntry) {
+  const key = portKey(p)
+  const want = !p.allowed
+  pageError.value = ''
+  pending.value.add(key)
+  try {
+    await invoke('set_firewall_port', { port: p.port, proto: p.proto, allow: want })
+    // 以系统为准重新拉取：同端口的其它来源行状态会一起变
+    await load()
+  } catch (e) {
+    pageError.value = String(e)
+  } finally {
+    pending.value.delete(key)
+  }
+}
+
+async function fixBind(p: FirewallPortEntry) {
+  if (!p.instance_id) return
+  const key = portKey(p)
+  pageError.value = ''
+  await withPending(key, async () => {
+    try {
+      await invoke('set_instance_bind_all', { installedId: p.instance_id })
+      showNotice(t('firewallFixBindDone', { name: displayName(p) }))
+      await load()
+    } catch (e) {
+      pageError.value = String(e)
+    }
+  })
+}
+
+// ===== 提示条（替代原生 alert：与全局对话框风格一致，且不阻塞渲染）=====
+const notice = ref('')
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
+
+function showNotice(text: string) {
+  notice.value = text
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    notice.value = ''
+  }, 5000)
+}
+
+// ===== 手动端口移除（确认框走模板里的 overlay，不用 window.confirm）=====
+const confirmTarget = ref<FirewallPortEntry | null>(null)
+
+function removeManual(p: FirewallPortEntry) {
+  confirmTarget.value = p
+}
+
+async function doRemoveManual() {
+  const p = confirmTarget.value
+  confirmTarget.value = null
+  if (!p) return
+  const key = portKey(p)
+  pageError.value = ''
+  await withPending(key, async () => {
+    try {
+      await invoke('remove_manual_port', { port: p.port, proto: p.proto })
+      await load()
+    } catch (e) {
+      pageError.value = String(e)
+      // 失败时也刷新：规则可能已被撤销、只是设置写入失败，状态要反映真实情况
+      await load()
+    }
+  })
+}
+
+// ===== 手动添加 =====
+const addOpen = ref(false)
+const addBusy = ref(false)
+const newPort = ref<number | string>('')
+const newProto = ref('tcp')
+const validNewPort = computed(() => {
+  const n = Number(newPort.value)
+  return Number.isInteger(n) && n >= 1 && n <= 65535
+})
+
+function openAdd() {
+  newPort.value = ''
+  newProto.value = 'tcp'
+  addOpen.value = true
+}
+
+async function submitAdd() {
+  if (!validNewPort.value || addBusy.value) return
+  addBusy.value = true
+  pageError.value = ''
+  try {
+    await invoke('add_manual_port', { port: Number(newPort.value), proto: newProto.value })
+    addOpen.value = false
+    await load()
+  } catch (e) {
+    pageError.value = String(e)
+  } finally {
+    addBusy.value = false
+  }
+}
+
+onMounted(load)
+</script>
+
+<style scoped>
+/* 局部按钮尺寸：全局 .btn 是 32px 高度，端口行里需要更紧凑 */
+.btn.tiny {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 4px;
+}
+.btn.tiny svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.error-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+  border: 1px solid oklch(0.7 0.15 60 / 0.4);
+  background: oklch(0.7 0.15 60 / 0.12);
+  color: oklch(0.75 0.14 60);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.notice-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+  border: 1px solid oklch(0.7 0.15 150 / 0.4);
+  background: oklch(0.7 0.15 150 / 0.12);
+  color: oklch(0.75 0.14 150);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.group {
+  margin-bottom: 18px;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--color-muted-foreground);
+}
+
+.rows {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.row:last-child {
+  border-bottom: none;
+}
+.row:hover {
+  background: var(--color-muted);
+}
+
+.port-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 84px;
+}
+.port-num {
+  font-family: ui-monospace, monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.port-proto {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+.name-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.bind-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.bind-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: oklch(0.75 0.14 75);
+  max-width: 340px;
+}
+
+.action-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.field {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-size: 13px;
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-muted-foreground);
+}
+</style>

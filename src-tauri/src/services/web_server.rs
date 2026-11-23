@@ -222,6 +222,11 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
                 }
             }
             Ok((local, serve_fut)) => {
+                // 放行实际监听端口：覆盖「用户在设置里改过端口」（此时 postinst 放行的
+                // 还是旧默认端口）与「headless 首次启动尚未跑过 postinst」两种情况。
+                // 幂等；无防火墙后端时静默；失败只记日志，不影响 Web 服务本身。
+                let _ = opx_core::services::firewall::allow_tcp(&[port]);
+
                 // 降级换口成功：实际端口回写 settings.json，applied 同步对齐
                 // （否则 supervisor 下一轮因 settings≠applied 无谓重启一次）
                 if port != bind_addr.port() {

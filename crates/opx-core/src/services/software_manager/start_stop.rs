@@ -339,12 +339,27 @@ pub async fn do_start_software(
 
     // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
     // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
-    for port in collect_configured_ports(&software, Some(&**provider)) {
-        if !health_check::is_port_free(port) {
+    let start_ports = collect_configured_ports(&software, Some(&**provider));
+    for port in &start_ports {
+        if !health_check::is_port_free(*port) {
             return Err(anyhow::anyhow!(
                 "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",
                 port
             ));
+        }
+    }
+
+    // 启动即放行：与安装时的放行互补，覆盖两种安装时未覆盖的情况 ——
+    // ① 用户在配置表单里改了端口（安装时放行的是默认端口）；
+    // ② 安装时放行失败（当时无权限 / 防火墙后端刚装好）。
+    // 幂等：已放行的端口不会重复写规则。失败只记日志，绝不阻断启动。
+    if !start_ports.is_empty() {
+        let (allowed, errors) = crate::services::firewall::allow_tcp(&start_ports);
+        if !allowed.is_empty() {
+            tracing::info!(?allowed, key = %software.key, "启动前已放行端口");
+        }
+        for e in errors {
+            tracing::warn!(key = %software.key, error = %e, "端口放行失败（不影响启动）");
         }
     }
 

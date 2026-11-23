@@ -66,4 +66,6 @@ export interface AppSettings {
    * false=新装待引导（前端强制进入 /setup）；true=已完成
    */
   first_run_done: boolean | null
+  /** 端口页「手动添加」的放行端口（不属于任何被管实例）；实际放行状态以系统防火墙为准 */
+  firewall_extra_ports: { port: number; proto: string }[]
 }

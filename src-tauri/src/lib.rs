@@ -163,6 +163,11 @@ pub fn run() {
             commands::dns_account::save_dns_account,
             commands::dns_account::delete_dns_account,
             commands::dns_account::test_dns_account,
+            commands::firewall::get_firewall_overview,
+            commands::firewall::set_firewall_port,
+            commands::firewall::add_manual_port,
+            commands::firewall::remove_manual_port,
+            commands::firewall::set_instance_bind_all,
             commands::springboot::list_springboot_apps,
             commands::springboot::upload_jar_file,
             commands::springboot::create_springboot_app,
@@ -388,6 +393,68 @@ fn setup_app(app: &mut tauri::App, headless: bool) -> Result<(), Box<dyn std::er
     let node_mgr_arc = node_mgr.clone();
     let node_exe_for_boot = node_exe.clone();
     let boot_sink = ctx_sink.clone();
+
+    // 防火墙端口全量校对（幂等）。
+    //
+    // 为什么要在启动时重放一遍：nftables 后端无法持久化到系统配置（我们不写
+    // /etc/nftables.conf，避免改坏用户的防火墙配置），重启后 `inet opx` 表就没了；
+    // 用户也可能手工清过 ufw/firewalld 规则。按「已装软件 + JAR + 站点 + 自身」
+    // 重放一遍，代价是几次 nft/ufw 调用，换来「重启后端口仍然通」。
+    // 失败只记日志：绝不能因为防火墙而拖垮启动。
+    {
+        let fw_sw = sw_mgr_arc.clone();
+        let fw_sb = app
+            .state::<std::sync::Arc<crate::services::springboot_manager::SpringBootManager>>()
+            .inner()
+            .clone();
+        let fw_wm = app
+            .state::<std::sync::Arc<opx_core::services::website_manager::WebsiteManager>>()
+            .inner()
+            .clone();
+        // 放到独立线程：ufw/nft 是外部进程调用，不能占住 async 运行时
+        std::thread::spawn(move || {
+            let providers_list = opx_core::services::software_manager::providers::all_providers();
+            let mut ports: Vec<u16> = Vec::new();
+            for sw in fw_sw.get_installed() {
+                let provider = providers_list.iter().find(|p| p.key() == sw.key);
+                ports.extend(
+                    opx_core::services::software_manager::start_stop::collect_configured_ports(
+                        &sw,
+                        provider.map(|p| &**p),
+                    ),
+                );
+            }
+            for app in fw_sb.export_apps() {
+                if let Some(p) = app.port {
+                    ports.push(p);
+                }
+            }
+            for site in fw_wm.list() {
+                if site.enabled {
+                    ports.push(site.listen);
+                    if site.ssl.enabled {
+                        ports.push(443);
+                    }
+                }
+            }
+            if let Ok(s) = opx_core::utils::settings::read_settings() {
+                ports.push(s.web_port);
+            }
+            ports.sort_unstable();
+            ports.dedup();
+            if ports.is_empty() {
+                return;
+            }
+            let (allowed, errors) = opx_core::services::firewall::allow_tcp(&ports);
+            if !allowed.is_empty() {
+                tracing::info!(?allowed, "启动时防火墙端口校对完成");
+            }
+            for e in errors {
+                tracing::warn!(error = %e, "启动时端口放行失败（不影响启动）");
+            }
+        });
+    }
+
     tauri::async_runtime::spawn(async move {
         opx_core::services::startup_bootstrap::run_bootstrap(
             sw_mgr_arc,

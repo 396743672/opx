@@ -122,6 +122,22 @@ pub struct AppSettings {
     /// Some(false) = 新装待引导；Some(true) = 已完成。
     #[serde(default)]
     pub first_run_done: Option<bool>,
+    /// 端口页「手动添加」的放行端口（不属于任何被管实例，如用户自建服务的 8080）。
+    /// 只记录用户意图；实际是否放行以系统防火墙查询结果为准。
+    #[serde(default)]
+    pub firewall_extra_ports: Vec<ManualPortRule>,
+}
+
+/// 端口页手动添加的放行端口。
+///
+/// `proto` 用字符串而非枚举：settings.json 是对用户可见的配置文件，
+/// 枚举反序列化遇到脏值会让整个设置文件读不出来（进而回落默认值，
+/// 丢掉用户的全部配置）。字符串 + 使用侧校验更抗损。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ManualPortRule {
+    pub port: u16,
+    /// "tcp" | "udp"
+    pub proto: String,
 }
 
 fn default_ninety() -> u32 {
@@ -201,6 +217,7 @@ impl Default for AppSettings {
             web_lan_access: false,
             web_port_auto: false,
             first_run_done: None,
+            firewall_extra_ports: Vec::new(),
         }
     }
 }
