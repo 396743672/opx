@@ -241,21 +241,19 @@ jobs:
           - macOS 自动更新可能受未签名限制，如失败请手动下载新版 dmg 覆盖
 
           ---
-          ## v0.5.10 版本内容
-
-          **新增**
-          - 防火墙按来源 IP / CIDR 限定放行：清单中所有端口（被管软件 / JAR 应用 / 站点 / opx 自身）均可配置来源，四种后端（ufw / firewalld / nftables / Windows 防火墙）均支持；添加端口弹窗可一次填多个来源
-          - 服务监听地址可视化配置：MySQL / Redis / MinIO 等可指定绑定 IP，打通 MySQL 1130 与 Redis protected mode 的远程连接限制
-          - 防火墙页展示启用状态与真实监听地址；安装软件后自动放行所需端口
-          - Web 入口内嵌进二进制，打包版自包含；统一上传部署的可执行定位与权限
+          ---
+          ## v0.5.11 版本内容
 
           **修复**
-          - 进程资源监控在 Linux 上虚高 N 倍：sysinfo 把线程当独立进程枚举，导致内存按线程数累加（MySQL 39 线程时 449 MB 被显示成 17.5 GB），现已排除线程伪进程
-          - MySQL 启动警告 MY-010915：生成的 my.cnf 补齐三个废弃 sql_mode 与 strict 同开，MySQL 8.x / 9.x 均不再告警
-          - firewalld 下 IPv6 网段（CIDR）来源规则被误判为 family=ipv4，已按 CIDR 地址部分正确判族
-          - 添加端口弹窗跑到页面左下角（缺失遮罩层样式）；软件卡片访问链接硬编码 127.0.0.1（Web 模式改用实际访问主机名）
-          - Linux：MySQL 启动路径 / basedir / 权限 / 用户、JDK 归档格式与畸形版本号、tar 包未剥顶层目录导致 java 路径错误、deb 脚本换行、nginx 源码构建、archive.rs 借用冲突（E0502）
-          - Linux 停止软件误判、开机启动 500、Web 新建站点点击无响应、Spring Boot 启动失败回滚状态卡死
+          - Windows 防火墙规则读取失败导致页面空白或长时间加载：`netsh show rule` 必须带 `name=all`（通配符与 `group` 参数均不被支持）；规则表改为按后端缓存，放行/撤销后增量维护，再次进入页面秒开
+          - 重置 Web 访问令牌后端口漂移到 17581 且回写配置：改为等待旧监听退出后再重绑 17580
+          - Linux 设置页缺少「访问令牌 / 扫码访问」区块，「对外访问」被挤成竖条：现与桌面端对齐并改为上下两行
+          - 默认监听地址优先选以太网，排除 VMware / VirtualBox / Hyper-V / Docker / WSL 等虚拟网卡，169.254 链路本地地址让位
+
+          **v0.5.10 起提供的能力**
+          - 防火墙按来源 IP / CIDR 限定放行：被管软件、JAR 应用、站点与 opx 自身四类端口，覆盖 ufw / firewalld / nftables / Windows 防火墙四种后端
+          - 服务监听地址可视化配置：MySQL / Redis / MinIO 等可指定绑定 IP，打通 MySQL 1130 与 Redis protected mode 远程连接限制
+          - Linux 进程内存虚高（线程被当作独立进程累加）、MySQL MY-010915 告警、firewalld IPv6 CIDR 判族、添加端口弹窗定位、访问链接硬编码 127.0.0.1 等一批修复
           EOF
           sed -i "s/__VERSION__/$VERSION/g" release-notes.md
           echo "=== release-notes.md ==="
