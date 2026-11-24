@@ -6,19 +6,27 @@
 //! 本层职责是「把系统里所有会监听端口的来源汇总成一张可操作的清单」：
 //! opx 自身 Web 入口 / 内置与自定义软件 / JAR 应用 / 站点 / 用户手动添加。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tauri::State;
 
 use opx_core::models::settings::ManualPortRule;
 use opx_core::services::firewall::{self, BackendInfo, PortRule, Proto};
-use opx_core::services::software_manager::providers;
+use opx_core::services::software_manager::config_editor;
+use opx_core::services::software_manager::netutils;
+use opx_core::services::software_manager::providers::{self, ConfigContext};
 use opx_core::services::software_manager::start_stop::collect_configured_ports;
 use opx_core::services::software_manager::SoftwareManager;
 use opx_core::services::springboot_manager::SpringBootManager;
 use opx_core::services::website_manager::WebsiteManager;
 use opx_core::utils::settings::{read_settings, write_settings_file};
 use opx_core::audited;
+
+/// 各 provider 表示「监听地址」的字段名，按优先级排列。
+///
+/// `bind-address` 是 MySQL 在 my.cnf 里的写法（连字符，与 `bind_address` 不同键）。
+const BIND_KEYS: [&str; 6] = ["bind", "bind_address", "bind-address", "bind_ip", "listen_host", "host"];
 
 /// 端口清单里的一条记录（一个来源 × 一个端口）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -36,10 +44,15 @@ pub struct FirewallPortEntry {
     pub instance_id: Option<String>,
     /// 防火墙当前是否已放行
     pub allowed: bool,
-    /// 服务实际监听地址（能从配置判定时给出）
+    /// 服务监听地址
     pub bind: Option<String>,
     /// true = 仅监听回环地址，即便放行防火墙也无法从外部访问
     pub bind_local_only: bool,
+    /// `listen` = 取自真实监听套接字（最可信）；`config` = 取自配置/默认值；
+    /// `unknown` = 未运行且无配置可推断
+    pub bind_source: String,
+    /// 能否由 opx 一键改成 0.0.0.0（配置或 schema 里有可写的地址字段）
+    pub bind_fixable: bool,
 }
 
 /// 端口页的完整数据。
@@ -67,8 +80,7 @@ fn bind_of(
     config: &serde_json::Value,
     schema: Option<&opx_core::models::software::ConfigSchema>,
 ) -> Option<String> {
-    const KEYS: [&str; 5] = ["bind", "bind_address", "bind_ip", "listen_host", "host"];
-    for key in KEYS {
+    for key in BIND_KEYS {
         // 1. 实例显式配置优先
         if let Some(v) = config.get(key).and_then(|v| v.as_str()) {
             let v = v.trim();
@@ -89,6 +101,31 @@ fn bind_of(
     None
 }
 
+/// 找到「opx 可以改」的监听地址字段。
+///
+/// 优先实例 config 里已有的键（改它不会引入新键），其次 provider schema 声明的键
+/// （如 MySQL 的 `bind-address`）。都找不到返回 None：说明该软件的监听地址写死在
+/// 程序或私有配置里，一键改无法生效，前端应隐藏按钮并提示手动改。
+fn bind_key_of(
+    config: &serde_json::Value,
+    schema: Option<&opx_core::models::software::ConfigSchema>,
+) -> Option<&'static str> {
+    for key in BIND_KEYS {
+        if config
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return Some(key);
+        }
+    }
+    let schema = schema?;
+    BIND_KEYS
+        .into_iter()
+        .find(|k| schema.fields.iter().any(|f| f.key == *k))
+}
+
 /// 是否为「仅本机」地址。
 ///
 /// 用标准库判定而不是字符串前缀：`127.0.0.1.example.com` 这种主机名以 `127.`
@@ -104,6 +141,64 @@ fn is_loopback(bind: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 一条端口的监听信息。
+struct BindView {
+    addr: Option<String>,
+    local_only: bool,
+    /// "listen" | "config" | "unknown"
+    source: &'static str,
+}
+
+/// 端口 → (地址, 是否仅本机)。同端口可能有多条监听记录（`0.0.0.0` 与 `::`、
+/// 多网卡分别绑），取「最宽松」的那条——只要有一条不是回环，外部就能连上。
+fn live_binds() -> HashMap<u16, (String, bool)> {
+    let mut map: HashMap<u16, (String, bool)> = HashMap::new();
+    for b in netutils::listening_binds() {
+        map.entry(b.port)
+            .and_modify(|cur| {
+                if cur.1 && !b.local_only {
+                    *cur = (b.addr.clone(), false);
+                }
+            })
+            .or_insert((b.addr, b.local_only));
+    }
+    map
+}
+
+/// 判定某端口的监听地址：**真实套接字优先**，服务没跑时才退回配置推断。
+///
+/// 为什么不只看配置：监听地址可能写在程序自己生成的配置文件里（MySQL 的
+/// `my.cnf` 的 `bind-address`）、命令行参数里、甚至代码里。配置推断会漏，
+/// 而漏掉的后果就是「放行了防火墙却连不上」查不出来。真实套接字不会有假。
+fn bind_view(
+    live: &HashMap<u16, (String, bool)>,
+    port: u16,
+    fallback: Option<String>,
+) -> BindView {
+    if let Some((addr, local_only)) = live.get(&port) {
+        return BindView {
+            addr: Some(addr.clone()),
+            local_only: *local_only,
+            source: "listen",
+        };
+    }
+    match fallback {
+        Some(addr) => {
+            let local_only = is_loopback(&addr);
+            BindView {
+                addr: Some(addr),
+                local_only,
+                source: "config",
+            }
+        }
+        None => BindView {
+            addr: None,
+            local_only: false,
+            source: "unknown",
+        },
+    }
+}
+
 /// 汇总所有端口来源 + 防火墙放行状态。
 #[tauri::command]
 pub fn get_firewall_overview(
@@ -112,7 +207,7 @@ pub fn get_firewall_overview(
     wm: State<'_, Arc<WebsiteManager>>,
 ) -> FirewallOverview {
     let kind = firewall::backend();
-    let backend = firewall::info(kind);
+    let backend = firewall::info(firewall::detection());
     let settings = read_settings().unwrap_or_default();
 
     // 读不到规则（非 root / 后端异常）时不阻断清单展示：用户需要看到
@@ -124,10 +219,21 @@ pub fn get_firewall_overview(
     let is_allowed = |rule: PortRule| allowed_rules.contains(&rule);
 
     let mut ports: Vec<FirewallPortEntry> = Vec::new();
+    // 真实监听地址只采一次，五个来源共用（采集要读 /proc 或跑 netstat）
+    let live = live_binds();
 
     // ---- 1. opx 自身 Web 入口 ----
     // bind 由 web_lan_access 决定（见 services/web_server）：false = 127.0.0.1。
     let web_port = settings.web_port;
+    let b = bind_view(
+        &live,
+        web_port,
+        Some(if settings.web_lan_access {
+            "0.0.0.0".to_string()
+        } else {
+            "127.0.0.1".to_string()
+        }),
+    );
     ports.push(FirewallPortEntry {
         port: web_port,
         proto: "tcp".to_string(),
@@ -136,12 +242,10 @@ pub fn get_firewall_overview(
         detail: String::new(),
         instance_id: None,
         allowed: is_allowed(PortRule::tcp(web_port)),
-        bind: Some(if settings.web_lan_access {
-            "0.0.0.0".to_string()
-        } else {
-            "127.0.0.1".to_string()
-        }),
-        bind_local_only: !settings.web_lan_access,
+        bind: b.addr,
+        bind_local_only: b.local_only,
+        bind_source: b.source.to_string(),
+        bind_fixable: false,
     });
 
     // ---- 2. 内置软件 + 自定义软件 ----
@@ -149,9 +253,9 @@ pub fn get_firewall_overview(
     for sw in sm.get_installed() {
         let provider = providers_list.iter().find(|p| p.key() == sw.key);
         let schema = provider.and_then(|p| p.config_schema());
-        let bind = bind_of(&sw.config, schema.as_ref());
-        let local_only = bind.as_deref().map(is_loopback).unwrap_or(false);
+        let fixable = bind_key_of(&sw.config, schema.as_ref()).is_some();
         for port in collect_configured_ports(&sw, provider.map(|p| &**p)) {
+            let b = bind_view(&live, port, bind_of(&sw.config, schema.as_ref()));
             ports.push(FirewallPortEntry {
                 port,
                 proto: "tcp".to_string(),
@@ -166,8 +270,10 @@ pub fn get_firewall_overview(
                 },
                 instance_id: Some(sw.id.clone()),
                 allowed: is_allowed(PortRule::tcp(port)),
-                bind: bind.clone(),
-                bind_local_only: local_only,
+                bind: b.addr,
+                bind_local_only: b.local_only,
+                bind_source: b.source.to_string(),
+                bind_fixable: fixable,
             });
         }
     }
@@ -176,6 +282,7 @@ pub fn get_firewall_overview(
     // Spring Boot 默认监听 0.0.0.0，端口未知时不列出（表单里没填、JAR 里也没读到）
     for app in sb.export_apps() {
         let Some(port) = app.port else { continue };
+        let b = bind_view(&live, port, Some("0.0.0.0".to_string()));
         ports.push(FirewallPortEntry {
             port,
             proto: "tcp".to_string(),
@@ -184,8 +291,10 @@ pub fn get_firewall_overview(
             detail: String::new(),
             instance_id: None,
             allowed: is_allowed(PortRule::tcp(port)),
-            bind: Some("0.0.0.0".to_string()),
-            bind_local_only: false,
+            bind: b.addr,
+            bind_local_only: b.local_only,
+            bind_source: b.source.to_string(),
+            bind_fixable: false,
         });
     }
 
@@ -201,6 +310,7 @@ pub fn get_firewall_overview(
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| site.name.clone());
+        let b = bind_view(&live, site.listen, Some("0.0.0.0".to_string()));
         ports.push(FirewallPortEntry {
             port: site.listen,
             proto: "tcp".to_string(),
@@ -209,10 +319,13 @@ pub fn get_firewall_overview(
             detail,
             instance_id: None,
             allowed: is_allowed(PortRule::tcp(site.listen)),
-            bind: Some("0.0.0.0".to_string()),
-            bind_local_only: false,
+            bind: b.addr,
+            bind_local_only: b.local_only,
+            bind_source: b.source.to_string(),
+            bind_fixable: false,
         });
         if site.ssl.enabled && site.listen != 443 {
+            let b = bind_view(&live, 443, Some("0.0.0.0".to_string()));
             ports.push(FirewallPortEntry {
                 port: 443,
                 proto: "tcp".to_string(),
@@ -221,8 +334,10 @@ pub fn get_firewall_overview(
                 detail: "SSL".to_string(),
                 instance_id: None,
                 allowed: is_allowed(PortRule::tcp(443)),
-                bind: Some("0.0.0.0".to_string()),
-                bind_local_only: false,
+                bind: b.addr,
+                bind_local_only: b.local_only,
+                bind_source: b.source.to_string(),
+                bind_fixable: false,
             });
         }
     }
@@ -231,6 +346,7 @@ pub fn get_firewall_overview(
     for extra in &settings.firewall_extra_ports {
         let Some(proto) = Proto::parse(&extra.proto) else { continue };
         let rule = PortRule { port: extra.port, proto };
+        let b = bind_view(&live, extra.port, None);
         ports.push(FirewallPortEntry {
             port: extra.port,
             proto: proto.as_str().to_string(),
@@ -239,8 +355,10 @@ pub fn get_firewall_overview(
             detail: String::new(),
             instance_id: None,
             allowed: is_allowed(rule),
-            bind: None,
-            bind_local_only: false,
+            bind: b.addr,
+            bind_local_only: b.local_only,
+            bind_source: b.source.to_string(),
+            bind_fixable: false,
         });
     }
 
@@ -335,12 +453,15 @@ pub fn remove_manual_port(port: u16, proto: String) -> Result<(), String> {
     })
 }
 
-/// 把某实例的监听地址改为 `0.0.0.0`（仅改配置，需重启该实例才生效）。
+/// 把某实例的监听地址改成「对外可访问地址」（仅改配置，需重启该实例才生效）。
+///
+/// 目标地址优先取系统配置的「对外访问地址」（`service_bind_address`），未配置
+/// 时回退 `0.0.0.0`：前者能精确绑到某块网卡（多网卡机器上更可控），后者总是可达。
 ///
 /// 两种情形都要覆盖：
 /// - 实例配置里已有 `bind`（用户改过）→ 直接覆盖；
 /// - 实例配置里没有该键（用户从没动过，默认值写在 provider schema 里，
-///   例如 consul/redis 默认 `127.0.0.1`）→ 用 schema 声明的键名写入 `0.0.0.0`，
+///   例如 consul/redis 默认 `127.0.0.1`）→ 用 schema 声明的键名写入目标地址，
 ///   相当于显式覆盖默认值。
 ///
 /// 找不到这类字段时明确报错而不是静默成功 —— 否则用户会以为已改好，
@@ -350,8 +471,30 @@ pub fn set_instance_bind_all(
     sm: State<'_, Arc<SoftwareManager>>,
     installed_id: String,
 ) -> Result<(), String> {
-    const KEYS: [&str; 3] = ["bind", "bind_address", "bind_ip"];
+    let target_addr = {
+        let configured = read_settings()
+            .map(|s| s.service_bind_address.trim().to_string())
+            .unwrap_or_default();
+        if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
+            netutils::default_service_bind()
+        } else {
+            configured
+        }
+    };
+    set_instance_bind(sm, installed_id, target_addr)
+}
 
+/// 同 [`set_instance_bind_all`]，但目标地址由调用方指定（配置页选中哪个地址就绑哪个）。
+#[tauri::command]
+pub fn set_instance_bind(
+    sm: State<'_, Arc<SoftwareManager>>,
+    installed_id: String,
+    address: String,
+) -> Result<(), String> {
+    let address = address.trim().to_string();
+    if address.is_empty() {
+        return Err("监听地址不能为空".to_string());
+    }
     let software = sm
         .find_installed(&installed_id)
         .ok_or_else(|| format!("未找到安装记录: {installed_id}"))?;
@@ -360,20 +503,10 @@ pub fn set_instance_bind_all(
     let provider = providers_list.iter().find(|p| p.key() == software.key);
     let schema = provider.and_then(|p| p.config_schema());
 
-    let key = KEYS
-        .iter()
-        .find(|k| software.config.get(**k).is_some())
+    let key = bind_key_of(&software.config, schema.as_ref())
         .map(|k| k.to_string())
-        .or_else(|| {
-            schema.as_ref().and_then(|s| {
-                s.fields
-                    .iter()
-                    .find(|f| KEYS.contains(&f.key.as_str()))
-                    .map(|f| f.key.clone())
-            })
-        })
         .ok_or_else(|| {
-            "该软件的配置里没有可修改的监听地址字段（bind / bind_address / bind_ip），请到配置编辑中手动调整"
+            "该软件的监听地址不在可配置项里（bind / bind_address / bind-address / bind_ip），请在软件的配置文件中手动调整"
                 .to_string()
         })?;
 
@@ -383,11 +516,32 @@ pub fn set_instance_bind_all(
         config = serde_json::json!({});
     }
     if let Some(obj) = config.as_object_mut() {
-        obj.insert(key.clone(), serde_json::json!("0.0.0.0"));
+        obj.insert(key.clone(), serde_json::json!(address.clone()));
+    }
+
+    // 同步写进 provider 的配置文件：MySQL 的监听地址只认 my.cnf 里的
+    // `bind-address`，只改 installed.json 的话，重启后依旧只监听 127.0.0.1 ——
+    // 用户点完「改为对外地址」还是连不上，比不给按钮更糟。
+    if let (Some(provider), Some(schema)) = (provider, schema.as_ref()) {
+        let cctx = ConfigContext {
+            install_path: software.install_path.clone(),
+            version: software.version.clone(),
+            config: software.config.clone(),
+        };
+        if let Some(rel) = provider.config_file_path(&cctx) {
+            let full = std::path::Path::new(&software.install_path).join(rel);
+            if full.exists() {
+                let mut form = config_editor::FormData::new();
+                form.insert(key.clone(), serde_json::json!(address.clone()));
+                config_editor::write_form_to_config(&full, schema, &form)
+                    .map_err(|e| format!("写入配置文件失败：{e:#}"))?;
+            }
+        }
     }
 
     let target = software.name.clone();
-    audited!("set_instance_bind_all", target, key, {
+    let detail = format!("{key}={address}");
+    audited!("set_instance_bind_all", target, detail, {
         sm.update_config(&installed_id, config)
             .map_err(|e| format!("{e:#}"))
     })

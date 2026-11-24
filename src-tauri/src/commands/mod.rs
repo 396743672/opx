@@ -1,6 +1,7 @@
 pub mod app;
 pub mod audit;
 pub mod config;
+pub mod db_access;
 pub mod dns_account;
 pub mod firewall;
 pub mod http_registry;

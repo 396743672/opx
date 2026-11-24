@@ -11,8 +11,13 @@ pub enum HealthCheckResult {
 
 /// 执行健康检查调度
 /// - ProcessOnly: 进程存活即 Healthy（每轮复核 pid，中途退出返回 ProcessExited）
-/// - Tcp: 每 interval_ms 尝试连接 127.0.0.1:port，max_attempts 次
+/// - Tcp: 每 interval_ms 尝试连接 `probe_host:port`（默认 127.0.0.1），max_attempts 次
 /// - Http: GET url，期望 expected_status（不跟随重定向）
+///
+/// # 探测地址
+/// 服务若只绑到某块网卡（`bind-address=192.168.200.128`），探 127.0.0.1 必然
+/// 连接被拒 —— 进程明明活得好好的却被判「启动失败」。故调用方应传入由
+/// `netutils::probe_host_for_bind` 推导出的地址（见 [`run_health_check_on`]）。
 ///
 /// # PID 中途退出检测
 /// 入参 `pid: Option<u32>`：若提供，在每轮探测前复核进程是否存活。
@@ -23,6 +28,17 @@ pub async fn run_health_check(
     pid: Option<u32>,
     max_attempts: u32,
     interval_ms: u64,
+) -> HealthCheckResult {
+    run_health_check_on(spec, pid, max_attempts, interval_ms, "127.0.0.1").await
+}
+
+/// 同 [`run_health_check`]，但 TCP 探测用指定主机（跟随服务实际 bind 地址）。
+pub async fn run_health_check_on(
+    spec: &HealthCheckSpec,
+    pid: Option<u32>,
+    max_attempts: u32,
+    interval_ms: u64,
+    probe_host: &str,
 ) -> HealthCheckResult {
     // 每轮探测前复核进程存活：中途退出立即返回 ProcessExited（而非耗尽轮询判 Timeout）
     let pid_dead = || match pid {
@@ -42,7 +58,7 @@ pub async fn run_health_check(
                 if pid_dead() {
                     return HealthCheckResult::ProcessExited;
                 }
-                if tcp_probe("127.0.0.1", *port, Duration::from_millis(*timeout_ms)).await {
+                if tcp_probe(probe_host, *port, Duration::from_millis(*timeout_ms)).await {
                     return HealthCheckResult::Healthy;
                 }
                 tokio::time::sleep(Duration::from_millis(interval_ms)).await;

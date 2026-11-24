@@ -96,6 +96,22 @@ export default {
   webResetToken: 'Reset Token',
   webResetTokenOk: 'Confirm Reset',
   webResetting: 'Resetting…',
+  // External access address (global default for service bind)
+  serviceBindGroup: 'External Access',
+  serviceBindLabel: 'Default listen address for services',
+  serviceBindHint:
+    'Newly installed services (MySQL / Redis, …) listen on this address. With "local only" external devices cannot connect; on multi-NIC machines pick the NIC you expose. If DHCP changes the address, pick the new one — otherwise services fail to start on an address that no longer exists.',
+  serviceBindAuto: 'Auto ({address})',
+  serviceBindAutoHint: 'Auto = preferred local NIC address ({address})',
+  serviceBindRefresh: 'Refresh addresses',
+  serviceBindDetected: 'Detected on this host: ',
+  // Bind address field (ConfigFormTab BindAddress)
+  bindAllInterfaces: 'All interfaces (0.0.0.0)',
+  bindLoopbackOnly: 'Local only (127.0.0.1)',
+  bindHintEmpty: 'Empty = use the system "external access address"',
+  bindHintLoopback: 'Local only — remote clients cannot connect even if the firewall allows the port',
+  bindHintAll: 'Listening on all interfaces, reachable from outside',
+  bindHintSpecific: 'Listening on {address} only; any other address (including 127.0.0.1) will fail',
   // First-run setup (installer bootstrap design §5)
   setup: 'Initial Setup',
   setupSubtitle: 'A few basics and you are ready to go',
@@ -254,6 +270,20 @@ export default {
   configRequiredMissing: 'Please fill in required field: {field}',
   credsLockedHint: 'This instance has completed first initialization; the account/password below are now fixed in the data directory (e.g. .minio.sys / the system database) and cannot be changed within the app. To change them, use the instance’s “Reset” action to wipe its data directory, then re-enter the credentials and start (reset clears all data of the instance).',
   configEditSourceHint: 'Edit config file source directly, takes effect after save',
+  // Connectivity hints (bind can be right while the app layer still refuses)
+  remoteHintTitle: 'Still cannot connect from outside?',
+  remoteHintMysqlLocalOnly:
+    'Currently listening on {bind}: local only. Switch to an external address (e.g. {address}) and restart.',
+  remoteHintMysqlNeedGrant:
+    "MySQL only allows root@localhost, so remote clients get 1130 Host is not allowed. Create a matching account that allows remote hosts (same password as the init password).",
+  remoteHintMysqlGrant: 'Allow remote root login',
+  remoteHintMysqlGranting: 'Granting…',
+  remoteHintMysqlGranted: "root is now allowed to log in from any host (root@'%')",
+  remoteHintRedisLocalOnly:
+    'Currently listening on {bind}: local only. Switch to an external address (e.g. {address}) and restart.',
+  remoteHintRedisProtected:
+    'Protected mode is on and no password is set: Redis denies every non-loopback client (DENIED … protected mode). Set a password or turn protected mode off.',
+  remoteHintRedisDisableProtected: 'Turn protected mode off',
 
   // StartupSettingsDialog
   autoStartOnAppStart: 'Auto start on app launch',
@@ -295,6 +325,8 @@ export default {
   installing: 'Installing',
   downloading: 'Downloading',
   extracting: 'Extracting',
+  building: 'Compiling',
+  buildingHint: 'Compiling from source — this usually takes a few minutes, keep this page open',
   installCompleted: 'Install Completed',
   installFailed: 'Install Failed',
   nacosMysqlNotRunning: 'MySQL is not running or connection failed. Please start MySQL before starting Nacos',
@@ -771,6 +803,13 @@ export default {
     port: 'Port',
     portDesc: 'Listen port (1-65535)',
     bindAddress: 'Bind Address',
+    bindAddressDesc:
+      '127.0.0.1 = local only (remote gets 10061); 0.0.0.0 = all interfaces; or pick a specific NIC address. Restart the software after changing.',
+    redisBindDesc:
+      'Defaults to the system "external access address"; 127.0.0.1 means local only. Restart after changing.',
+    protectedMode: 'Protected mode',
+    protectedModeDesc:
+      'Redis protected mode only blocks unauthenticated non-loopback clients: while it is on and no password is set, every remote client is DENIED. Restart after changing.',
     maxConnections: 'Max Connections',
     charset: 'Charset',
     innodbBufferPool: 'InnoDB Buffer Pool Size',
@@ -991,21 +1030,51 @@ export default {
   firewallPorts: 'Ports & Firewall',
   firewallDesc: 'See every port a service will listen on, and allow or revoke firewall rules',
   firewallNoServiceHint: 'never starts or stops the firewall service',
+  firewallEnforce_enforced: 'Firewall is active — rules are in effect',
+  firewallEnforceDesc_enforced:
+    'Only the ports marked as allowed below are reachable from outside; revoking one immediately cuts external access to it.',
+  firewallEnforce_bookkeeping_only: 'Nothing is actually filtering traffic right now',
+  firewallEnforceDesc_bookkeeping_only:
+    'This machine only has nftables with an empty ruleset, so opx created an accept-everything bookkeeping table. In other words: every port is already reachable from outside, and the switches below only record intent — they do not change reachability. To really restrict access, first make sure SSH and opx itself are allowed, then enable ufw / firewalld yourself (opx will not do it for you and risk locking you out).',
+  firewallEnforce_system_blocking: 'System firewall rules are filtering traffic',
+  firewallEnforceDesc_system_blocking:
+    'nftables drop/reject rules were found but they are not opx-managed, so opx leaves them alone. Whether a port is reachable depends on those existing rules; the switches below do not change them.',
+  firewallEnforce_disabled: 'Firewall is not running — every port is reachable',
+  firewallEnforceDesc_disabled:
+    'The firewall is installed but not running, so nothing is being filtered. Rules marked as allowed below are already written to the firewall config and take effect once you start it.',
+  firewallEnforce_unknown: 'Cannot confirm whether the firewall is in effect',
+  firewallEnforceDesc_unknown:
+    'The system firewall rules could not be read (usually because opx is not running as root, or the platform is unsupported), so port protection cannot be verified.',
+  firewallEnforceChip_enforced: 'filtering',
+  firewallEnforceChip_bookkeeping_only: 'not filtering',
+  firewallEnforceChip_system_blocking: 'system filtering',
+  firewallEnforceChip_disabled: 'not filtering',
+  firewallEnforceChip_unknown: 'unknown',
   firewallBackend_ufw: 'ufw detected',
   firewallBackend_firewalld: 'firewalld detected',
   firewallBackend_nftables: 'nftables detected',
   firewallBackend_windows: 'Windows Firewall detected',
-  firewallBackend_none: 'No supported firewall detected',
-  firewallBackendNote_ufw:
-    'opx only maintains port rules and never enables or disables ufw. Rules go to the persistent layer, so they apply whenever ufw is enabled.',
-  firewallBackendNote_firewalld:
-    'opx only maintains port rules and never starts or stops firewalld. Rules are written as permanent and reload is attempted immediately.',
+  firewallBackend_none: 'No firewall opx can manage automatically',
+  firewallBackendNote_ufw_active:
+    'ufw is active. opx only maintains port rules and never enables or disables ufw.',
+  firewallBackendNote_ufw_inactive:
+    'ufw is installed but not active (Status: inactive). The toggles still work and rules are written to the ufw config, but they only take effect once you enable ufw — opx will not enable it for you.',
+  firewallBackendNote_firewalld_running:
+    'firewalld is running. opx only maintains port rules and never starts or stops firewalld. Rules are written as permanent and reload is attempted immediately.',
+  firewallBackendNote_firewalld_stopped:
+    'firewalld is installed but not running. The toggles still work and rules are written as permanent, but they only take effect once firewalld starts — opx will not start it for you.',
   firewallBackendNote_nftables:
-    'Only nftables is present (the default since Debian 13). opx keeps allowed ports in a dedicated table `inet opx` without touching existing rules; the table is rebuilt whenever opx starts, and dropping it breaks nothing.',
+    'No ufw or firewalld; only nftables is present (the default since Debian 13). opx keeps allowed ports in a dedicated table `inet opx` without touching existing rules; the table is rebuilt whenever opx starts, and dropping it breaks nothing.',
+  firewallBackendNote_nft_blocking:
+    'This system already has blocking nftables rules (drop/reject, usually from Docker or custom config). opx will not insert rules automatically — doing so may not actually allow the port, and a misplaced rule can take SSH down. Allow ports manually using the list below.',
+  firewallBackendNote_nft_unreadable:
+    'The nftables ruleset cannot be read (usually needs root), so opx cannot confirm it is safe to take over and leaves system rules untouched. Run opx as root or allow ports manually.',
   firewallBackendNote_windows:
     'opx only maintains inbound port rules (prefixed with opx-). Allowing a port requires running opx as administrator.',
-  firewallBackendNote_none:
-    'Neither ufw nor firewalld is present. Allow ports in your system firewall manually; opx will not touch raw iptables/nftables rules, which could break existing networking and lock you out.',
+  firewallBackendNote_no_tool:
+    'No ufw, firewalld or nftables found. Allow ports in your system firewall manually; opx will not touch raw iptables rules, which could break existing networking and lock you out.',
+  firewallBackendNote_unsupported_os:
+    'This platform has no port-level firewall API that opx can maintain. Please allow ports in the system firewall manually.',
   firewallGroupOpx: 'opx itself',
   firewallGroupSoftware: 'Installed software',
   firewallGroupJar: 'Applications (JAR)',
@@ -1018,9 +1087,11 @@ export default {
   firewallAddPortHint:
     'For ports that belong to no managed instance, e.g. a database only used by an internal service, or a service started by your own script.',
   firewallBindLocalOnly: 'listening on {addr} only',
-  firewallFixBind: 'Change to 0.0.0.0',
+  firewallBindLocalOnlyConfig: 'configured as {addr} (will still bind locally once started)',
+  firewallBindManualFix: 'edit the listen address in the software’s own config file',
+  firewallFixBind: 'Change to external address',
   firewallFixBindDone:
-    'Listen address of "{name}" changed to 0.0.0.0. Restart that service for it to take effect.',
+    'Listen address of "{name}" changed to the configured external address (0.0.0.0 when unset). Restart that service for it to take effect.',
   firewallRiskyPort: 'Database/middleware port: risky on the public internet — restrict source IPs',
   firewallReadError: 'Failed to read firewall rules',
   firewallEmpty: 'No ports to allow yet',

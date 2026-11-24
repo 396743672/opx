@@ -226,6 +226,11 @@ impl SoftwareProvider for PostgreSqlProvider {
         Ok(())
     }
 
+    /// *nix 上 `post_install` 要 `./configure && make && make install`。
+    fn post_install_builds(&self) -> bool {
+        crate::utils::platform::current_os() != "windows"
+    }
+
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         let working_dir = PathBuf::from(&ctx.install_path);
         let data_dir = working_dir.join("data");

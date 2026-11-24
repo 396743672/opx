@@ -237,10 +237,14 @@ impl SoftwareProvider for MySqlProvider {
             mysql_innodb_platform_settings(&crate::utils::platform::current_os());
 
         let mut file = File::create(&my_ini_path)?;
+        // 监听地址取「系统配置 → 对外访问地址」（默认本机首选网卡 IP）。
+        // 早前这里硬编码 127.0.0.1：安装完只能本机连，外部一律 10061，
+        // 而界面上又没有这个字段 —— 用户只能手改 my.cnf。
+        let bind = crate::services::software_manager::netutils::default_service_bind();
         let content = format!(
             "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\n\
 port=3306\n\
-bind-address=127.0.0.1\n\
+bind-address={bind}\n\
 character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
 default-storage-engine=INNODB\n\
 sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
@@ -255,6 +259,7 @@ innodb_write_io_threads={io_threads}\n\
 innodb_flush_method={flush_method}\n\
 innodb_doublewrite=1\n\
 lower_case_table_names={lower_case}\n",
+            bind = bind,
             thread_cache = thread_cache,
             buffer_pool = buffer_pool_mb,
             io_threads = io_threads,
@@ -382,11 +387,16 @@ lower_case_table_names={lower_case}\n",
         // 与 start_command 同：Linux/macOS 的 mysqladmin 在保留的顶层目录 bin/ 下
         let os = crate::utils::platform::current_os();
         let bin = mysql_bin_dir(Path::new(&ctx.install_path), &ctx.version, &os);
+        // 连接地址跟随实际 bind：只绑 192.168.200.128 时连 127.0.0.1 会被拒，
+        // 优雅停止会退化成强杀（有 InnoDB 未刷盘风险）。
+        let host = crate::services::software_manager::netutils::bind_from_config(&ctx.config)
+            .map(|b| crate::services::software_manager::netutils::probe_host_for_bind(&b))
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         Some(GracefulStopCommand {
             program: bin.join(exe_name("mysqladmin")).to_string_lossy().to_string(),
             args: vec![
                 "-h".to_string(),
-                "127.0.0.1".to_string(),
+                host,
                 "-P".to_string(),
                 port.to_string(),
                 "-u".to_string(),
@@ -396,6 +406,13 @@ lower_case_table_names={lower_case}\n",
             working_dir: PathBuf::from(&ctx.install_path),
             env_vars,
             timeout_secs: 30,
+        })
+    }
+
+    /// 与 `post_install` 写进 my.cnf 的 `bind-address` 保持一致。
+    fn install_defaults(&self) -> serde_json::Value {
+        serde_json::json!({
+            "bind-address": crate::services::software_manager::netutils::default_service_bind()
         })
     }
 
@@ -422,6 +439,19 @@ lower_case_table_names={lower_case}\n",
                     default_value: serde_json::json!(3306),
                     section: Some("[mysqld]".to_string()),
                     description_i18n: Some("configField.portDesc".to_string()),
+                },
+                // 监听地址必须可配：默认只绑本机时外部一律连不上（错误码 10061），
+                // 而这一项以前只写在生成的 my.cnf 里、界面上完全看不到。
+                // 默认值取系统配置的对外访问地址（不是写死的 127.0.0.1）。
+                ConfigField {
+                    key: "bind-address".to_string(),
+                    label_i18n: "configField.bindAddress".to_string(),
+                    field_type: ConfigFieldType::BindAddress,
+                    default_value: serde_json::json!(
+                        crate::services::software_manager::netutils::default_service_bind()
+                    ),
+                    section: Some("[mysqld]".to_string()),
+                    description_i18n: Some("configField.bindAddressDesc".to_string()),
                 },
                 ConfigField {
                     key: "max_connections".to_string(),

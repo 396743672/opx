@@ -268,6 +268,11 @@ impl SoftwareProvider for NginxProvider {
         Ok(())
     }
 
+    /// *nix 上 `post_install` 要 `./configure && make`，属编译阶段。
+    fn post_install_builds(&self) -> bool {
+        crate::utils::platform::current_os() != "windows"
+    }
+
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
         // 爬 nginx.org/en/download.html，正则提取版本号
         let url = "https://nginx.org/en/download.html";

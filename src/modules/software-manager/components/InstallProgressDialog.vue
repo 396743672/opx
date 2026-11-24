@@ -16,7 +16,13 @@
         <Icon icon="mdi:alert-circle" />
         <span>{{ task.error }}</span>
       </div>
-      <div class="prog-bar" :class="{ indeterminate: task.total == null && task.phase === 'downloading' }">
+      <div
+        class="prog-bar"
+        :class="{
+          indeterminate:
+            task.phase === 'building' || (task.total == null && task.phase === 'downloading'),
+        }"
+      >
         <i :style="{ width: percentDisplay + '%' }"></i>
       </div>
       <div class="prog-stats">
@@ -25,6 +31,7 @@
           <span v-if="task.total != null">/ {{ formatSize(task.total) }}</span>
         </span>
         <span v-else-if="task.phase === 'extracting'">{{ $t('extracting') }}</span>
+        <span v-else-if="task.phase === 'building'">{{ $t('buildingHint') }}</span>
         <span v-else-if="task.phase === 'failed'" class="text-destructive">{{ $t('installFailed') }}</span>
         <span v-else class="text-success">{{ $t('installCompleted') }}</span>
         <span class="tnum">{{ percentDisplay }}%</span>
@@ -67,6 +74,7 @@ const props = defineProps<{
 const phaseIcon = computed(() => {
   if (props.task.phase === 'downloading') return 'mdi:download'
   if (props.task.phase === 'extracting') return 'mdi:package-variant-closed'
+  if (props.task.phase === 'building') return 'mdi:hammer-wrench'
   if (props.task.phase === 'completed') return 'mdi:check-circle'
   return 'mdi:alert-circle'
 })
@@ -74,6 +82,7 @@ const phaseIcon = computed(() => {
 const phaseText = computed(() => {
   if (props.task.phase === 'downloading') return t('downloading')
   if (props.task.phase === 'extracting') return t('extracting')
+  if (props.task.phase === 'building') return t('building')
   if (props.task.phase === 'completed') return t('installCompleted')
   if (props.task.phase === 'failed') return t('installFailed')
   return ''
@@ -82,6 +91,7 @@ const phaseText = computed(() => {
 const percentDisplay = computed(() => {
   if (props.task.phase === 'downloading') return props.task.percent ?? 0
   if (props.task.phase === 'extracting') return props.task.percent ?? 0
+  if (props.task.phase === 'building') return 100
   if (props.task.phase === 'completed') return 100
   return 0
 })

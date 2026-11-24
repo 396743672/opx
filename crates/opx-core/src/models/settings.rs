@@ -126,6 +126,11 @@ pub struct AppSettings {
     /// 只记录用户意图；实际是否放行以系统防火墙查询结果为准。
     #[serde(default)]
     pub firewall_extra_ports: Vec<ManualPortRule>,
+    /// 对外访问地址（本机 IP）：服务配置里 127.0.0.1 这类默认绑定的替代值。
+    /// 空 / "auto" = 自动取本机首选非回环地址（见 netutils::default_service_bind）。
+    /// 可选 `0.0.0.0`（所有网卡）或 `127.0.0.1`（仅本机）。
+    #[serde(default)]
+    pub service_bind_address: String,
 }
 
 /// 端口页手动添加的放行端口。
@@ -218,6 +223,7 @@ impl Default for AppSettings {
             web_port_auto: false,
             first_run_done: None,
             firewall_extra_ports: Vec::new(),
+            service_bind_address: String::new(),
         }
     }
 }

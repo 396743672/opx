@@ -59,6 +59,29 @@ pub fn register_install_audit(install_id: &str, action: &str, target: &str, deta
         );
 }
 
+/// 安装登记时的初始 config：与 provider 的 `post_install` 写进配置文件的值保持一致。
+fn install_defaults_for(key: &str) -> serde_json::Value {
+    all_providers()
+        .into_iter()
+        .find(|p| p.key() == key)
+        .map(|p| p.install_defaults())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// 通知前端「开始源码编译」（仅对有构建步骤的 provider）。
+///
+/// 编译阶段没有任何进度可比（`make` 不报百分比），前端据此把进度条切成
+/// 不确定态并显示「编译中」，而不是停在上一步的「解压中 99%」。
+fn emit_build_phase(sink: &Arc<dyn EventSink>, install_id: &str, builds: bool) {
+    if !builds {
+        return;
+    }
+    emit_event(
+        sink,
+        serde_json::json!({ "install_id": install_id, "phase": "building" }),
+    );
+}
+
 fn emit_event(sink: &Arc<dyn EventSink>, payload: serde_json::Value) {
     // 终态（failed / completed）顺带补写审计完成记录：这是安装任务唯一的完成出口，
     // 覆盖 install_software / install_custom / install_from_builtin 的全部失败分支。
@@ -294,7 +317,7 @@ pub async fn install_software(
             install_time: now,
             status: SoftwareStatus::Unknown,
             port: 0,
-            config: serde_json::json!({}),
+            config: install_defaults_for(&params.key),
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
@@ -756,6 +779,7 @@ pub async fn download_and_extract(
             params.version.clone(),
             install_path.to_string_lossy().to_string(),
         );
+        emit_build_phase(&sink, &install_id, provider.post_install_builds());
         provider.post_install(&ctx)?;
     }
 
@@ -1144,6 +1168,11 @@ async fn install_from_builtin(
                 params.version.clone(),
                 install_path.to_string_lossy().to_string(),
             );
+            emit_build_phase(
+                &sink,
+                &install_id,
+                provider.post_install_builds(),
+            );
             provider.post_install(&ctx)?;
         }
 
@@ -1169,7 +1198,7 @@ async fn install_from_builtin(
             install_time: now,
             status: SoftwareStatus::Unknown,
             port: 0,
-            config: serde_json::json!({}),
+            config: install_defaults_for(&params.key),
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,

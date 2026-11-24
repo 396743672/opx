@@ -377,6 +377,10 @@ pub enum ConfigFieldType {
     /// 数值 + 单位下拉：值形如 "256mb"/"512M"，数字可填、单位只能从 units 里选（防手写单位出错）
     Size { units: Vec<String> },
     Boolean,
+    /// 服务监听地址：前端渲染成「输入框 + 本机地址快捷选项」，并提示
+    /// 「仅本机 / 所有网卡 / 特定网卡」的差别。候选地址由 shell 的
+    /// `list_local_addresses` 提供（本机可能有多块网卡）。
+    BindAddress,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

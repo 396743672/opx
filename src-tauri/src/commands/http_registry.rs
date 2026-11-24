@@ -46,7 +46,7 @@ use opx_http::AppContext;
 // ApiError 自 opx-http 顶层 re-export（桌面专属命令的 409 信封用）
 use opx_http::ApiError;
 
-use crate::commands::{audit, config, dns_account, firewall, lock_screen, node_app, software, springboot, stack, system, website};
+use crate::commands::{audit, config, db_access, dns_account, firewall, lock_screen, node_app, software, springboot, stack, system, website};
 use crate::services::dns_account::DnsAccountManager;
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
@@ -494,6 +494,28 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             let installed_id: String = arg(&args, "installed_id")?;
             let sm = h.state::<Arc<SoftwareManager>>();
             ok(firewall::set_instance_bind_all(sm, installed_id))
+        })
+    });
+    let h = handle.clone();
+    reg.register("set_instance_bind", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let address: String = arg(&args, "address")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(firewall::set_instance_bind(sm, installed_id, address))
+        })
+    });
+    reg.register("list_local_addresses", |_ctx, _args| {
+        Box::pin(async move { val(system::list_local_addresses()) })
+    });
+    let h = handle.clone();
+    reg.register("allow_mysql_remote", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(db_access::allow_mysql_remote(sm, installed_id))
         })
     });
 

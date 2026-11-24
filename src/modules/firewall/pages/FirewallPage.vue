@@ -15,13 +15,32 @@
       </template>
     </PageHeader>
 
+    <!-- 生效状态：和「装没装」是两回事。系统没有拦截规则时，下面的开关不会改变可达性 -->
+    <div
+      v-if="overview"
+      class="flex items-start gap-2.5 rounded-lg border p-3 mb-3"
+      :class="enforceClass"
+    >
+      <Icon :icon="enforcementIcon" class="text-xl flex-shrink-0 mt-0.5" />
+      <div class="min-w-0">
+        <p class="font-semibold text-sm">{{ $t(`firewallEnforce_${enforcement}`) }}</p>
+        <p class="text-xs mt-1 leading-relaxed opacity-90">
+          {{ $t(`firewallEnforceDesc_${enforcement}`) }}
+        </p>
+      </div>
+    </div>
+
     <!-- 后端状态：明确「opx 不改防火墙服务状态」这一边界，避免用户以为能在这里关防火墙 -->
     <div v-if="overview" class="panel">
       <div class="flex items-center gap-2 flex-wrap">
-        <Icon :icon="backendIcon" class="text-xl" :class="canManage ? 'text-emerald-500' : 'text-amber-500'" />
+        <Icon :icon="backendIcon" class="text-xl" :class="backendHealthy ? 'text-emerald-500' : 'text-amber-500'" />
         <span class="font-semibold text-sm">{{ backendTitle }}</span>
         <span class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
           {{ overview.backend.kind }}
+        </span>
+        <!-- 一眼可见「到底有没有在拦」 -->
+        <span class="text-[11px] px-1.5 py-0.5 rounded" :class="enforceChipClass">
+          {{ $t(`firewallEnforceChip_${enforcement}`) }}
         </span>
         <span class="text-[11px] text-muted-foreground">· {{ $t('firewallNoServiceHint') }}</span>
       </div>
@@ -84,16 +103,20 @@
           <div v-if="p.bind_local_only" class="bind-cell">
             <span class="bind-warn">
               <Icon icon="mdi:laptop" />
-              {{ $t('firewallBindLocalOnly', { addr: p.bind || '127.0.0.1' }) }}
+              {{ bindWarnText(p) }}
             </span>
             <button
-              v-if="p.instance_id"
+              v-if="p.instance_id && p.bind_fixable"
               class="btn ghost tiny"
               :disabled="pending.has(portKey(p))"
               @click="fixBind(p)"
             >
               {{ $t('firewallFixBind') }}
             </button>
+            <!-- 监听地址写死在程序或私有配置里：不给假按钮，直接告诉用户去哪改 -->
+            <span v-else-if="p.instance_id" class="bind-manual">
+              {{ $t('firewallBindManualFix') }}
+            </span>
           </div>
 
           <div class="action-cell">
@@ -195,19 +218,78 @@ const pageError = ref('')
 const pending = ref<Set<string>>(new Set())
 
 const canManage = computed(() => overview.value?.backend.available === true)
+/** 可管理 且 防火墙确实在生效（装了没启用时不该显示绿色「已保护」） */
+const backendHealthy = computed(() => canManage.value && overview.value?.backend.active !== false)
 
-const backendIcon = computed(() => (canManage.value ? 'mdi:shield-check' : 'mdi:shield-off-outline'))
+const backendIcon = computed(() => (backendHealthy.value ? 'mdi:shield-check' : 'mdi:shield-off-outline'))
 const backendTitle = computed(() => {
   const kind = overview.value?.backend.kind ?? 'none'
   return t(`firewallBackend_${kind}`)
 })
+/**
+ * 说明按「判定依据」取词条（`ufw_active` / `ufw_inactive` / `nft_blocking` …），
+ * 而不是按后端名：同一个 ufw 在「生效」和「装了没启用」两种状态下必须说不同的话，
+ * 否则用户会以为端口已经放开。
+ */
 const backendNote = computed(() => {
-  const kind = overview.value?.backend.kind ?? 'none'
-  const key = `firewallBackendNote_${kind}`
+  const reason = overview.value?.backend.reason ?? 'no_tool'
+  const key = `firewallBackendNote_${reason}`
   const text = t(key)
   // 词条缺失时 vue-i18n 会把 key 原样返回，回落到后端给的兜底说明
   return text === key ? (overview.value?.backend.note ?? '') : text
 })
+
+/** 规则到底有没有在拦（后端判定；不是「装没装」） */
+const enforcement = computed(() => overview.value?.backend.enforcement ?? 'unknown')
+
+const enforcementIcon = computed(() => {
+  switch (enforcement.value) {
+    case 'enforced':
+      return 'mdi:shield-check'
+    case 'system_blocking':
+      return 'mdi:alert-outline'
+    case 'unknown':
+      return 'mdi:alert-outline'
+    default:
+      return 'mdi:shield-off-outline'
+  }
+})
+
+/** 已经是纯静态类名，避免 Tailwind 扫不到动态拼接的类 */
+const enforceClass = computed(() => {
+  switch (enforcement.value) {
+    case 'enforced':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    case 'system_blocking':
+      return 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+    case 'unknown':
+      return 'border-border bg-muted/40 text-foreground'
+    default:
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  }
+})
+
+const enforceChipClass = computed(() => {
+  switch (enforcement.value) {
+    case 'enforced':
+      return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+    case 'system_blocking':
+      return 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+    default:
+      return 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+  }
+})
+
+/**
+ * 「仅监听本机」的文案分两种：取自真实套接字（正在跑，可信）与取自配置
+ * （没在跑，只是预期）。混为一谈会让用户以为服务已经在拦或已经在听。
+ */
+function bindWarnText(p: FirewallPortEntry): string {
+  const addr = p.bind || '127.0.0.1'
+  return p.bind_source === 'listen'
+    ? t('firewallBindLocalOnly', { addr })
+    : t('firewallBindLocalOnlyConfig', { addr })
+}
 
 const GROUP_META: Record<FirewallPortSource, { icon: string; titleKey: string }> = {
   opx: { icon: 'mdi:application-cog-outline', titleKey: 'firewallGroupOpx' },
@@ -476,6 +558,11 @@ onMounted(load)
   font-size: 11px;
   color: oklch(0.75 0.14 75);
   max-width: 340px;
+}
+.bind-manual {
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+  opacity: 0.85;
 }
 
 .action-cell {

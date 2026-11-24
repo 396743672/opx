@@ -113,6 +113,25 @@ pub trait SoftwareProvider: Send + Sync {
         None
     }
 
+    /// `post_install` 里是否包含**源码编译**（redis / nginx / postgresql 在 *nix 上）。
+    ///
+    /// 编译在解压之后、动辄几分钟且没有百分比可言。不告诉前端「现在在编译」，
+    /// 界面就会一直停在「解压中 99%」，用户以为卡死（实测 Redis 8.8.0）。
+    fn post_install_builds(&self) -> bool {
+        false
+    }
+
+    /// 安装登记时写入 `installed.json` 的初始 config。
+    ///
+    /// 为什么需要：`read_config_form` 读的是 installed.json 里的 config（缺失才用
+    /// schema 默认值），而 `post_install` 已经把实际值写进了配置文件。两边不一致时，
+    /// 用户打开配置页看到的是 A、按下保存却把 B 写回文件——例如 Redis 安装时因为
+    /// 「对外监听且无密码」把 `protected-mode no` 写进 redis.conf，而表单默认值是
+    /// `yes`，一次无意的保存就会把外部访问重新掐断。
+    fn install_defaults(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+
     /// 配置文件路径（相对 install_path；None 表示无配置文件，如 MinIO/RustFS）
     fn config_file_path(&self, _ctx: &ConfigContext) -> Option<PathBuf> {
         None
@@ -431,7 +450,10 @@ mod tests {
         let cmd = p.graceful_stop_command(&ctx).expect("redis 应有优雅停止命令");
         let idx = cmd.args.iter().position(|a| a == "-a").expect("应带 -a");
         assert_eq!(cmd.args[idx + 1], "s3cret");
-        assert_eq!(cmd.args[0], "-p");
+        // 停止命令必须显式指定主机（默认回环），否则只绑某块网卡的实例停不掉
+        assert_eq!(cmd.args[0], "-h");
+        assert_eq!(cmd.args[1], "127.0.0.1");
+        assert_eq!(cmd.args.last().map(String::as_str), Some("shutdown"));
     }
 
     /// P1-3 补完：MySQL 密码落盘后应产出 `mysqladmin shutdown` 优雅停止，

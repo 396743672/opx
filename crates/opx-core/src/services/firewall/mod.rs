@@ -1,4 +1,12 @@
-//! 防火墙端口规则维护（跨平台：ufw / firewalld / Windows 防火墙）。
+//! 防火墙端口规则维护（跨平台：ufw / firewalld / nftables / Windows 防火墙）。
+//!
+//! ## 后端自动判定（Linux）
+//!
+//! 不看「装了哪个命令」就算了，而是按**谁真正在生效**排序（见 [`decide`]）：
+//! ufw 生效 → ufw；firewalld 运行 → firewalld；都没生效才退回「装了谁」，
+//! 最后才是裸 nftables。原因很实际：Debian 上常见 `ufw` 已装但 `Status: inactive`，
+//! 而真正过滤流量的是 firewalld/Docker 的规则 —— 这时往 ufw 写规则等于什么也没做，
+//! 用户看到「已放行」却连不上，比不显示更糟。
 //!
 //! ## 设计边界（三条，改动前先读）
 //!
@@ -109,47 +117,316 @@ impl BackendKind {
     }
 }
 
+/// 判定依据：为什么落到这个后端。前端按 code 取 i18n 词条。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// Windows 高级防火墙
+    Windows,
+    /// 非 Linux/Windows 平台（macOS 没有端口级命令行接口）
+    UnsupportedOs,
+    /// ufw 已安装且正在生效
+    UfwActive,
+    /// ufw 已安装但没启用：规则写进配置，待用户启用后生效
+    UfwInactive,
+    /// firewalld 已安装且正在运行
+    FirewalldRunning,
+    /// firewalld 已安装但没有运行
+    FirewalldStopped,
+    /// 没有托管防火墙，接管裸 nftables（独立表，纯加法）
+    Nftables,
+    /// 系统已有 nftables 拦截规则，不接管
+    NftBlocking,
+    /// nftables 规则集读不到（通常是非 root），无法确认安全，不接管
+    NftUnreadable,
+    /// 没有任何可用的防火墙工具
+    NoTool,
+}
+
+impl Reason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::Windows => "windows",
+            Reason::UnsupportedOs => "unsupported_os",
+            Reason::UfwActive => "ufw_active",
+            Reason::UfwInactive => "ufw_inactive",
+            Reason::FirewalldRunning => "firewalld_running",
+            Reason::FirewalldStopped => "firewalld_stopped",
+            Reason::Nftables => "nftables",
+            Reason::NftBlocking => "nft_blocking",
+            Reason::NftUnreadable => "nft_unreadable",
+            Reason::NoTool => "no_tool",
+        }
+    }
+
+    /// 该后端是否**正在生效**。false 表示「已安装未启用」：规则能写、但现在不拦也不放。
+    pub fn active(self) -> bool {
+        matches!(
+            self,
+            Reason::Windows | Reason::UfwActive | Reason::FirewalldRunning | Reason::Nftables
+        )
+    }
+
+    fn note(self) -> &'static str {
+        match self {
+            Reason::Windows => "已检测到 Windows 防火墙。放行端口需要以管理员身份运行 opx。",
+            Reason::UnsupportedOs => "当前系统没有可自动维护的端口级防火墙。",
+            Reason::UfwActive => "已检测到 ufw 且正在生效。opx 只维护端口规则，不会启用或停用 ufw。",
+            Reason::UfwInactive => {
+                "已检测到 ufw，但当前未启用（Status: inactive）。放行规则会写入 ufw 配置，待你启用 ufw 后生效；opx 不会替你启用。"
+            }
+            Reason::FirewalldRunning => {
+                "已检测到 firewalld 且正在运行。opx 只维护端口规则，不会启动或停止 firewalld。"
+            }
+            Reason::FirewalldStopped => {
+                "已检测到 firewalld，但当前没有运行。放行规则会写入永久配置，待 firewalld 启动后生效；opx 不会替你启动。"
+            }
+            Reason::Nftables => {
+                "已检测到 nftables（系统无自定义拦截规则）。opx 在独立表 inet opx 中维护放行端口，不修改系统现有规则；规则随 opx 启动自动重建。"
+            }
+            Reason::NftBlocking => {
+                "系统已存在 nftables 拦截规则（drop/reject，常来自 Docker 或自定义配置），opx 不会自动插入规则以免影响现有链路。请手动放行端口。"
+            }
+            Reason::NftUnreadable => {
+                "无法读取 nftables 规则集（通常需要 root 权限），无法确认自动接管是否安全，因此不改动系统规则。"
+            }
+            Reason::NoTool => {
+                "未检测到 ufw、firewalld 或 nftables。请在系统防火墙中手动放行端口；opx 不会改动 iptables 裸规则。"
+            }
+        }
+    }
+}
+
+/// 探测结果：后端 + 判定依据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Detection {
+    pub kind: BackendKind,
+    pub reason: Reason,
+}
+
+/// 「规则到底有没有在拦」——和「装没装 / 启没启」是两个不同的问题。
+///
+/// 这个区分是页面的核心：当系统没有任何拦截规则时（典型的 Debian 13 空规则集），
+/// 所有端口本来就能从外部访问，页面上的「放行/撤销」只是登记，**不改变可达性**。
+/// 不把这件事说清楚，用户就会以为开关失效、或以为端口已经被保护。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Enforcement {
+    /// 防火墙在拦：只有显式放行的端口可以从外部访问
+    Enforced,
+    /// 只有 opx 建的登记表（policy accept + 纯 accept），系统不拦任何入站
+    BookkeepingOnly,
+    /// 系统有自己的拦截规则，但不是 opx 管的那套
+    SystemBlocking,
+    /// 防火墙装了但没启用
+    Disabled,
+    /// 规则读不到 / 平台不支持，无法判定
+    Unknown,
+}
+
+impl Enforcement {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Enforcement::Enforced => "enforced",
+            Enforcement::BookkeepingOnly => "bookkeeping_only",
+            Enforcement::SystemBlocking => "system_blocking",
+            Enforcement::Disabled => "disabled",
+            Enforcement::Unknown => "unknown",
+        }
+    }
+}
+
+/// 由判定依据推出「是否在拦截」。Windows 需要额外看配置文件开关，故传入。
+fn enforcement_of(reason: Reason, windows_on: bool) -> Enforcement {
+    match reason {
+        Reason::Windows => {
+            if windows_on {
+                Enforcement::Enforced
+            } else {
+                Enforcement::Disabled
+            }
+        }
+        Reason::UfwActive | Reason::FirewalldRunning => Enforcement::Enforced,
+        // opx 的独立表是 `policy accept` + 纯 accept 规则：只登记，不拦任何东西
+        Reason::Nftables => Enforcement::BookkeepingOnly,
+        Reason::NftBlocking => Enforcement::SystemBlocking,
+        Reason::NftUnreadable | Reason::UnsupportedOs => Enforcement::Unknown,
+        Reason::UfwInactive | Reason::FirewalldStopped | Reason::NoTool => Enforcement::Disabled,
+    }
+}
+
 /// 给前端展示的后端状态。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BackendInfo {
-    /// "ufw" | "firewalld" | "windows" | "none"
+    /// "ufw" | "firewalld" | "nftables" | "windows" | "none"
     pub kind: String,
     /// 是否可自动维护规则（false 时前端只显示指引，不显示放行开关）
     pub available: bool,
+    /// 防火墙当前是否正在生效（已安装未启用 = false，规则要等启用后才起作用）
+    pub active: bool,
+    /// 规则是否真的在拦截入站流量（见 [`Enforcement`]）
+    pub enforcement: String,
+    /// 判定依据 code（`ufw_active` / `firewalld_stopped` / `nft_blocking` …），前端据此取词条
+    pub reason: String,
     /// 面向用户的说明（前端有 i18n 时优先用前端词条，本字段作兜底）
     pub note: String,
 }
 
-/// 探测受支持的防火墙后端。
+/// 系统里各防火墙工具的「装了没 / 在用没」。抽成纯数据是为了让 [`decide`] 可单测。
+#[derive(Debug, Clone, Copy, Default)]
+struct Caps {
+    ufw_installed: bool,
+    ufw_active: bool,
+    firewalld_installed: bool,
+    firewalld_active: bool,
+    nft_installed: bool,
+}
+
+/// 裸 nftables 的可接管性。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NftState {
+    /// 没装 nft
+    Missing,
+    /// 装 ufw/firewalld 时不必探测（两种情况都不会选 nft）
+    Skipped,
+    /// 规则集为空或只有 accept → 纯加法，安全
+    Clean,
+    /// 已有 drop/reject → 不接管
+    Blocking,
+    /// 读不到（权限不足）→ 无法确认安全，不接管
+    Unreadable,
+}
+
+/// 纯判定：给定工具状态，选出该用哪个后端。
 ///
-/// 探测只看「命令是否存在」，**不看防火墙是否已启用** —— 见模块文档第 1 条。
-/// Linux 上 ufw 优先于 firewalld（同机并存时 ufw 通常是实际生效的那层；
-/// 两者同时 active 属用户配置异常，按其首选处理）。
-pub fn detect() -> BackendKind {
+/// 排序原则是「**谁真正在生效**」优先，其次才是「装了谁」：
+/// 1. ufw 正在生效 → ufw；
+/// 2. firewalld 正在运行 → firewalld（**ufw 装了但没启用时不能抢**：那样规则写进
+///    ufw 配置却拦不住任何东西，用户会以为已放行，而真正过滤流量的是 firewalld）；
+/// 3. 都没生效：ufw 装了 → ufw（规则先落盘，启用即生效）；再轮到 firewalld；
+/// 4. 都没有 → 裸 nftables（仅在无拦截规则时）；
+/// 5. 都不行 → None，交给人工。
+fn decide(c: Caps, nft: NftState) -> Detection {
+    let det = |kind, reason| Detection { kind, reason };
+    if c.ufw_active {
+        return det(BackendKind::Ufw, Reason::UfwActive);
+    }
+    if c.firewalld_active {
+        return det(BackendKind::Firewalld, Reason::FirewalldRunning);
+    }
+    if c.ufw_installed {
+        return det(BackendKind::Ufw, Reason::UfwInactive);
+    }
+    if c.firewalld_installed {
+        return det(BackendKind::Firewalld, Reason::FirewalldStopped);
+    }
+    match nft {
+        NftState::Clean => det(BackendKind::Nftables, Reason::Nftables),
+        NftState::Blocking => det(BackendKind::None, Reason::NftBlocking),
+        NftState::Unreadable => det(BackendKind::None, Reason::NftUnreadable),
+        NftState::Missing | NftState::Skipped => det(BackendKind::None, Reason::NoTool),
+    }
+}
+
+/// 探测当前系统实际可用的防火墙后端。
+pub fn detect() -> Detection {
     if cfg!(windows) {
-        return BackendKind::Windows;
+        return Detection { kind: BackendKind::Windows, reason: Reason::Windows };
     }
     if cfg!(target_os = "macos") {
         // macOS 的 Application Firewall 没有端口放行的命令行接口，不纳入支持
-        return BackendKind::None;
+        return Detection { kind: BackendKind::None, reason: Reason::UnsupportedOs };
     }
-    // `ufw --version` 不需要 root（`ufw show added` 需要），用它判存在性
-    if command_ok("ufw", &["--version"]) {
-        return BackendKind::Ufw;
+    // `ufw --version` / `firewall-cmd --version` / `nft --version` 都不需要 root
+    let ufw_installed = command_ok("ufw", &["--version"]);
+    let firewalld_installed = command_ok("firewall-cmd", &["--version"]);
+    let caps = Caps {
+        ufw_installed,
+        // 装了才问状态：没装时问一次就是白 spawn 一个进程
+        ufw_active: ufw_installed && ufw_enabled(),
+        firewalld_installed,
+        firewalld_active: firewalld_installed && firewalld_running(),
+        nft_installed: command_ok("nft", &["--version"]),
+    };
+    let nft = if ufw_installed || firewalld_installed {
+        NftState::Skipped
+    } else {
+        probe_nft(caps.nft_installed)
+    };
+    decide(caps, nft)
+}
+
+/// ufw 是否正在生效。
+///
+/// 两条信号：`ufw status`（root 下的权威答案）与 `/etc/ufw/ufw.conf` 的 `ENABLED=yes`
+///（非 root 也能读）。只认 active —— `Status: inactive` 表示装了没开，此时写规则
+///不会生效，UI 必须说清楚，否则用户会以为端口已放行。
+fn ufw_enabled() -> bool {
+    if let Some(out) = run_raw("ufw", &["status"]) {
+        if out.contains("Status:") {
+            return parse_ufw_status(&out);
+        }
+        // 非 root 会打成「ERROR: You need to be root」，没有 Status 行 → 落到配置文件
     }
-    if command_ok("firewall-cmd", &["--version"]) {
-        return BackendKind::Firewalld;
-    }
-    // Debian 13 / 精简系统：只有 nftables。见模块文档第 2 条的安全条件。
-    if command_ok("nft", &["--version"]) {
-        match run("nft", &["list", "ruleset"]) {
-            // 规则集为空或只有 accept：独立表是纯加法，安全接管
-            Ok(text) if !has_blocking_rules(&text) => return BackendKind::Nftables,
-            // 已有 drop/reject（或读不到，无法确认安全）→ 交给人工
-            _ => return BackendKind::None,
+    std::fs::read_to_string("/etc/ufw/ufw.conf")
+        .map(|s| parse_ufw_conf(&s))
+        .unwrap_or(false)
+}
+
+/// firewalld 是否正在运行。
+///
+/// 先问 `firewall-cmd --state`（输出 `running` / `not running`），失败再用
+/// `systemctl is-active` 兜底 —— 容器里没有 D-Bus 时前者会报授权失败，
+/// 但 systemctl 在多数容器里也查不到服务，此时按「没运行」处理是安全侧。
+fn firewalld_running() -> bool {
+    if let Some(out) = run_raw("firewall-cmd", &["--state"]) {
+        if parse_firewalld_state(&out) {
+            return true;
+        }
+        if out.to_ascii_lowercase().contains("not running") {
+            return false;
         }
     }
-    BackendKind::None
+    run_raw("systemctl", &["is-active", "firewalld"])
+        .map(|o| o.trim().eq_ignore_ascii_case("active"))
+        .unwrap_or(false)
+}
+
+fn probe_nft(installed: bool) -> NftState {
+    if !installed {
+        return NftState::Missing;
+    }
+    match run("nft", &["list", "ruleset"]) {
+        // 规则集为空或只有 accept：独立表是纯加法，安全接管
+        Ok(text) if !has_blocking_rules(&text) => NftState::Clean,
+        Ok(_) => NftState::Blocking,
+        Err(_) => NftState::Unreadable,
+    }
+}
+
+/// `ufw status` 是否为 active（`Status: active`，容忍缩进与大小写）。
+fn parse_ufw_status(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.trim()
+            .strip_prefix("Status:")
+            .map(|rest| rest.trim().eq_ignore_ascii_case("active"))
+            .unwrap_or(false)
+    })
+}
+
+/// `/etc/ufw/ufw.conf` 里的 `ENABLED=yes`。
+fn parse_ufw_conf(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        !line.starts_with('#')
+            && line
+                .split_once('=')
+                .map(|(k, v)| k.trim().eq_ignore_ascii_case("ENABLED") && v.trim().eq_ignore_ascii_case("yes"))
+                .unwrap_or(false)
+    })
+}
+
+/// `firewall-cmd --state` 是否输出 `running`（输出可能带 stderr 里的告警行）。
+fn parse_firewalld_state(text: &str) -> bool {
+    text.lines().any(|l| l.trim().eq_ignore_ascii_case("running"))
 }
 
 /// 规则集里是否存在会让包「被拒绝/丢弃」的规则。
@@ -172,40 +449,66 @@ fn has_blocking_rules(ruleset: &str) -> bool {
 }
 
 /// 带缓存的探测结果（后端在进程生命周期内不会变）。
-pub fn backend() -> BackendKind {
-    static CACHE: OnceLock<BackendKind> = OnceLock::new();
+///
+/// 缓存是有意为之：`get_firewall_overview` 每次刷新都会调，探测要跑 3-5 个子进程。
+/// 代价是用户在 opx 运行期间启停防火墙后需重启 opx 才能换后端 —— 这与
+/// 「opx 不启停防火墙服务」的边界一致，用户改防火墙本来就该重启一次。
+pub fn detection() -> Detection {
+    static CACHE: OnceLock<Detection> = OnceLock::new();
     *CACHE.get_or_init(detect)
 }
 
+/// 只需要后端类型时的便捷入口。
+pub fn backend() -> BackendKind {
+    detection().kind
+}
+
 /// 后端信息（供 UI 展示）。
-pub fn info(kind: BackendKind) -> BackendInfo {
-    let (available, note) = match kind {
-        BackendKind::Ufw => (
-            true,
-            "已检测到 ufw。opx 只维护端口规则，不会启用或停用 ufw。",
-        ),
-        BackendKind::Firewalld => (
-            true,
-            "已检测到 firewalld。opx 只维护端口规则，不会启动或停止 firewalld。",
-        ),
-        BackendKind::Nftables => (
-            true,
-            "已检测到 nftables（无自定义拦截规则）。opx 在独立表 inet opx 中维护放行端口，不修改系统现有规则；规则随 opx 启动自动重建。",
-        ),
-        BackendKind::Windows => (
-            true,
-            "已检测到 Windows 防火墙。放行端口需要以管理员身份运行 opx。",
-        ),
-        BackendKind::None => (
-            false,
-            "未检测到 ufw 或 firewalld。请在系统防火墙中手动放行端口；opx 不会改动 iptables/nftables 裸规则。",
-        ),
-    };
+pub fn info(det: Detection) -> BackendInfo {
+    // 只在真有 Windows 后端时才去问 netsh：其它情况白 spawn 一个进程没意义
+    let windows_on = det.reason != Reason::Windows || windows_firewall_on();
     BackendInfo {
-        kind: kind.as_str().to_string(),
-        available,
-        note: note.to_string(),
+        kind: det.kind.as_str().to_string(),
+        available: det.kind != BackendKind::None,
+        active: det.reason.active(),
+        enforcement: enforcement_of(det.reason, windows_on).as_str().to_string(),
+        reason: det.reason.as_str().to_string(),
+        note: det.reason.note().to_string(),
     }
+}
+
+/// Windows 防火墙是否在拦（三个配置文件任一开启即算）。
+///
+/// 解析失败按「已开启」处理：宁可少报一次「未保护」，也不要误报「没开防火墙」
+/// 让用户白排查一遍。非 Windows 平台不会走到这里。
+fn windows_firewall_on() -> bool {
+    if !cfg!(windows) {
+        return true;
+    }
+    run_raw("netsh", &["advfirewall", "show", "allprofiles", "state"])
+        .map(|t| parse_netsh_state_on(&t))
+        .unwrap_or(true)
+}
+
+/// 解析 `netsh advfirewall show allprofiles state` 的输出。
+///
+/// 中英文输出都要认：`State ON` / `状态 启用`。只要有一个配置文件是 ON 就算在拦。
+fn parse_netsh_state_on(text: &str) -> bool {
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        let is_state_line = lower.contains("state") || line.contains("状态");
+        if !is_state_line {
+            continue;
+        }
+        let on = lower.split_whitespace().any(|t| t == "on")
+            || line.split_whitespace().any(|t| t == "启用");
+        let off = lower.split_whitespace().any(|t| t == "off")
+            || line.split_whitespace().any(|t| t == "禁用");
+        if on && !off {
+            return true;
+        }
+    }
+    false
 }
 
 /// 列出当前已放行的端口。
@@ -728,6 +1031,17 @@ fn command_ok(program: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// 执行命令并按「不管退出码」返回合并输出。
+///
+/// 探测状态必须用这个：`ufw status`、`firewall-cmd --state` 在「未启用」时退出码
+/// 非零，但输出里正带着我们要的状态；用 [`run`] 会把这句话当成错误丢掉。
+fn run_raw(program: &str, args: &[&str]) -> Option<String> {
+    let out = hidden(program).args(args).output().ok()?;
+    let mut merged = String::from_utf8_lossy(&out.stdout).into_owned();
+    merged.push_str(&String::from_utf8_lossy(&out.stderr));
+    Some(merged)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,10 +1139,150 @@ ufw allow 8080/tcp\n";
 
     #[test]
     fn info_marks_none_unavailable() {
-        assert!(!info(BackendKind::None).available);
-        assert!(info(BackendKind::Ufw).available);
-        assert_eq!(info(BackendKind::Firewalld).kind, "firewalld");
-        assert_eq!(info(BackendKind::Nftables).kind, "nftables");
+        let none = Detection { kind: BackendKind::None, reason: Reason::NoTool };
+        assert!(!info(none).available);
+        assert!(!info(none).active);
+        let ufw = Detection { kind: BackendKind::Ufw, reason: Reason::UfwActive };
+        assert!(info(ufw).available);
+        assert!(info(ufw).active);
+        assert_eq!(info(ufw).kind, "ufw");
+        assert_eq!(
+            info(Detection { kind: BackendKind::Firewalld, reason: Reason::FirewalldStopped }).kind,
+            "firewalld"
+        );
+        assert_eq!(
+            info(Detection { kind: BackendKind::Nftables, reason: Reason::Nftables }).kind,
+            "nftables"
+        );
+    }
+
+    /// 判定矩阵：这次改动的全部意义都在这几条上。
+    #[test]
+    fn decides_by_what_is_actually_running() {
+        let only_ufw = Caps { ufw_installed: true, ufw_active: true, ..Default::default() };
+        assert_eq!(
+            decide(only_ufw, NftState::Skipped),
+            Detection { kind: BackendKind::Ufw, reason: Reason::UfwActive }
+        );
+
+        let only_fwd = Caps {
+            firewalld_installed: true,
+            firewalld_active: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(only_fwd, NftState::Skipped),
+            Detection { kind: BackendKind::Firewalld, reason: Reason::FirewalldRunning }
+        );
+
+        // 🔴 核心回归：ufw 装了但没启用，firewalld 在跑 → 必须选 firewalld。
+        // 选 ufw 会把规则写进不生效的配置里，用户看到「已放行」却连不上。
+        let both = Caps {
+            ufw_installed: true,
+            ufw_active: false,
+            firewalld_installed: true,
+            firewalld_active: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(both, NftState::Skipped),
+            Detection { kind: BackendKind::Firewalld, reason: Reason::FirewalldRunning }
+        );
+
+        // 都没生效：ufw 装了就先落盘，启用即生效
+        let ufw_off = Caps { ufw_installed: true, ..Default::default() };
+        assert_eq!(
+            decide(ufw_off, NftState::Skipped),
+            Detection { kind: BackendKind::Ufw, reason: Reason::UfwInactive }
+        );
+        let fwd_off = Caps { firewalld_installed: true, ..Default::default() };
+        assert_eq!(
+            decide(fwd_off, NftState::Skipped),
+            Detection { kind: BackendKind::Firewalld, reason: Reason::FirewalldStopped }
+        );
+
+        // 没有任何托管防火墙 → 裸 nftables（仅在无拦截规则时）
+        let bare = Caps { nft_installed: true, ..Default::default() };
+        assert_eq!(
+            decide(bare, NftState::Clean),
+            Detection { kind: BackendKind::Nftables, reason: Reason::Nftables }
+        );
+        assert_eq!(
+            decide(bare, NftState::Blocking),
+            Detection { kind: BackendKind::None, reason: Reason::NftBlocking }
+        );
+        assert_eq!(
+            decide(bare, NftState::Unreadable),
+            Detection { kind: BackendKind::None, reason: Reason::NftUnreadable }
+        );
+        assert_eq!(
+            decide(Caps::default(), NftState::Missing),
+            Detection { kind: BackendKind::None, reason: Reason::NoTool }
+        );
+    }
+
+    /// 「未启用」不能算生效 —— 否则 UI 不会提示「规则待启用后生效」。
+    #[test]
+    fn inactive_reasons_are_not_active() {
+        assert!(!Reason::UfwInactive.active());
+        assert!(!Reason::FirewalldStopped.active());
+        assert!(!Reason::NoTool.active());
+        assert!(Reason::UfwActive.active());
+        assert!(Reason::FirewalldRunning.active());
+        assert!(Reason::Nftables.active());
+    }
+
+    /// 「装没装」和「有没有在拦」必须分开：Debian 13 这类只有 nftables 且规则集为空的
+    /// 机器，端口页显示「已放行」但系统根本不拦——不说清楚用户会以为规则失效。
+    #[test]
+    fn enforcement_reflects_real_blocking() {
+        assert_eq!(enforcement_of(Reason::UfwActive, true), Enforcement::Enforced);
+        assert_eq!(enforcement_of(Reason::FirewalldRunning, true), Enforcement::Enforced);
+        assert_eq!(
+            enforcement_of(Reason::Nftables, true),
+            Enforcement::BookkeepingOnly,
+            "opx 的独立表是 policy accept + 纯 accept，不拦任何入站"
+        );
+        assert_eq!(enforcement_of(Reason::NftBlocking, true), Enforcement::SystemBlocking);
+        assert_eq!(enforcement_of(Reason::UfwInactive, true), Enforcement::Disabled);
+        assert_eq!(enforcement_of(Reason::FirewalldStopped, true), Enforcement::Disabled);
+        assert_eq!(enforcement_of(Reason::NoTool, true), Enforcement::Disabled);
+        assert_eq!(enforcement_of(Reason::NftUnreadable, true), Enforcement::Unknown);
+        // Windows 要看三个配置文件的实际开关
+        assert_eq!(enforcement_of(Reason::Windows, true), Enforcement::Enforced);
+        assert_eq!(enforcement_of(Reason::Windows, false), Enforcement::Disabled);
+    }
+
+    #[test]
+    fn parses_netsh_profile_state() {
+        assert!(parse_netsh_state_on(
+            "域配置文件 设置:\n----------------------------------------------------------------------\n状态                                 启用\n"
+        ));
+        assert!(parse_netsh_state_on(
+            "Domain Profile Settings:\nState                                 ON\n"
+        ));
+        assert!(!parse_netsh_state_on(
+            "Domain Profile Settings:\nState                                 OFF\n"
+        ));
+        assert!(!parse_netsh_state_on(""), "空输出按「没开」处理由调用方决定，解析层返回 false");
+    }
+
+    /// 状态解析：真实输出形态（含非 root 的报错文本）都要能吃。
+    #[test]
+    fn parses_firewall_states() {
+        assert!(parse_ufw_status("Status: active\nLogging: on (low)\n"));
+        assert!(!parse_ufw_status("Status: inactive\n"));
+        // 非 root 的报错里没有 Status 行
+        assert!(!parse_ufw_status("ERROR: You need to be root to run this script\n"));
+        assert!(parse_ufw_conf("# comment\nENABLED=yes\n"));
+        assert!(!parse_ufw_conf("ENABLED=no\n"));
+        assert!(!parse_ufw_conf("#ENABLED=yes\n"), "注释掉的不能算启用");
+        assert!(parse_firewalld_state("running\n"));
+        assert!(!parse_firewalld_state("not running\n"));
+        assert!(
+            parse_firewalld_state("Authorization failed.\nEnsure polkit is running.\nrunning\n"),
+            "合并了 stderr 告警行时仍要能认出 running"
+        );
     }
 
     #[test]

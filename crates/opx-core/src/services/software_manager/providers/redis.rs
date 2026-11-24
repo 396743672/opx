@@ -85,31 +85,14 @@ impl SoftwareProvider for RedisProvider {
     }
 
     fn post_install(&self, ctx: &InstallContext) -> Result<()> {
-        // 修复 zip 自带的 redis.conf 中 bare `requirepass`（无值）语法错误。
-        // 保留原始配置文件的所有注释和设置，仅修复问题行。
+        // 包自带的 redis.conf 是「只监听本机 + 保护模式开」的安全默认值，
+        // 但 opx 的实际场景就是要对外提供服务：安装后按系统配置改写监听地址，
+        // 并在「对外监听且没密码」时关掉保护模式（否则外部连接一律 DENIED）。
         let conf_path = ctx.install_dir().join("redis.conf");
         if conf_path.exists() {
             let raw = std::fs::read_to_string(&conf_path)?;
-            // 将 bare `requirepass`（无值或空值）替换为注释
-            let fixed = raw
-                .lines()
-                .map(|line| {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("requirepass")
-                        && trimmed["requirepass".len()..].trim().is_empty()
-                    {
-                        // 将 bare requirepass 注释掉，避免语法错误
-                        if line.trim_start().starts_with('#') {
-                            line.to_string()
-                        } else {
-                            format!("#{}", line)
-                        }
-                    } else {
-                        line.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let bind = crate::services::software_manager::netutils::default_service_bind();
+            let fixed = rewrite_redis_conf(&raw, &bind);
             std::fs::write(&conf_path, fixed.as_bytes())?;
         }
 
@@ -120,6 +103,22 @@ impl SoftwareProvider for RedisProvider {
             super::run_build_steps(ctx.install_dir(), "Redis", steps)?;
         }
         Ok(())
+    }
+
+    /// *nix 上 `post_install` 要跑 `make`（上游不提供预编译二进制）。
+    fn post_install_builds(&self) -> bool {
+        crate::utils::platform::current_os() != "windows"
+    }
+
+    /// 与 `post_install` 写进 redis.conf 的值保持一致（否则表单默认值会把配置改回去）。
+    fn install_defaults(&self) -> serde_json::Value {
+        let bind = crate::services::software_manager::netutils::default_service_bind();
+        let protected = if bind_is_external(&bind) && !bind.is_empty() {
+            "no"
+        } else {
+            "yes"
+        };
+        serde_json::json!({ "bind": bind, "protected-mode": protected })
     }
 
     fn fetch_remote_versions(&self) -> Option<Vec<CatalogVersion>> {
@@ -230,10 +229,28 @@ impl SoftwareProvider for RedisProvider {
                 ConfigField {
                     key: "bind".to_string(),
                     label_i18n: "configField.bind".to_string(),
-                    field_type: ConfigFieldType::Text,
-                    default_value: serde_json::json!("127.0.0.1"),
+                    field_type: ConfigFieldType::BindAddress,
+                    default_value: serde_json::json!(
+                        crate::services::software_manager::netutils::default_service_bind()
+                    ),
                     section: None,
-                    description_i18n: None,
+                    description_i18n: Some("configField.redisBindDesc".to_string()),
+                },
+                // protected mode 是 Redis 的安全网：**只认「默认用户有没有密码」**，
+                // 与 bind 无关。无密码 + 对外监听时它会把所有外部连接 DENIED，
+                // 表现为「端口通了但一操作就报 DENIED … protected mode」。
+                // 用 Select(yes/no) 而非 Boolean：Redis 配置只认 yes/no，
+                // 写成 `protected-mode false` 会直接启动失败（config 解析报错）。
+                ConfigField {
+                    key: "protected-mode".to_string(),
+                    label_i18n: "configField.protectedMode".to_string(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec!["yes".to_string(), "no".to_string()],
+                        labels: vec![],
+                    },
+                    default_value: serde_json::json!("yes"),
+                    section: None,
+                    description_i18n: Some("configField.protectedModeDesc".to_string()),
                 },
                 ConfigField {
                     key: "maxmemory".to_string(),
@@ -298,24 +315,102 @@ impl SoftwareProvider for RedisProvider {
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 6379 });
-        let mut args = vec!["-p".to_string(), port.to_string(), "shutdown".to_string()];
+        // 只绑某块网卡时 redis-cli 连 127.0.0.1 会被拒 → 优雅停止退化成强杀
+        let host = crate::services::software_manager::netutils::bind_from_config(&ctx.config)
+            .map(|b| crate::services::software_manager::netutils::probe_host_for_bind(&b))
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let mut args = vec!["-h".to_string(), host, "-p".to_string(), port.to_string()];
         if let Some(pw) = ctx.config.get("requirepass").and_then(|v| v.as_str()) {
             if !pw.is_empty() {
-                args.insert(1, "-a".to_string());
-                args.insert(2, pw.to_string());
+                args.push("-a".to_string());
+                args.push(pw.to_string());
             }
         }
+        args.push("shutdown".to_string());
+
+        // *nix 上源码编译产物在 <install>/src/redis-cli；Windows 包内在安装根。
+        let root = PathBuf::from(&ctx.install_path);
+        let cli = if crate::utils::platform::current_os() == "windows" {
+            root.join(exe_name("redis-cli"))
+        } else {
+            let built = root.join("src").join("redis-cli");
+            if built.exists() { built } else { root.join(exe_name("redis-cli")) }
+        };
         Some(GracefulStopCommand {
-            program: PathBuf::from(&ctx.install_path)
-                .join(exe_name("redis-cli").as_str())
-                .to_string_lossy()
-                .to_string(),
+            program: cli.to_string_lossy().to_string(),
             args,
             working_dir: PathBuf::from(&ctx.install_path),
             env_vars: std::collections::BTreeMap::new(),
             timeout_secs: 10,
         })
     }
+}
+
+/// `bind` 里是否含有对外可达的地址（`0.0.0.0` / 具体网卡 IP 都算）。
+///
+/// 不能复用 `probe_host_for_bind`：通配地址会被它归一成 `127.0.0.1`（连接用），
+/// 而判断「是否对外」时 `0.0.0.0` 恰恰是最外露的一种。
+fn bind_is_external(bind: &str) -> bool {
+    bind.split_whitespace()
+        .map(|t| t.trim().trim_start_matches('-'))
+        .filter(|t| !t.is_empty())
+        .any(|t| match t.parse::<std::net::IpAddr>() {
+            Ok(ip) => !ip.is_loopback(),
+            Err(_) => !t.eq_ignore_ascii_case("localhost"),
+        })
+}
+
+/// 改写 redis.conf 里与「能不能从外部连上」相关的三行：`bind` / `protected-mode` /
+/// 裸 `requirepass`（包内自带的空值写法是语法错误，原样启动会直接失败）。
+///
+/// 未出现的指令追加到文件末尾 —— Redis 对同名单值指令「后者生效」，追加是安全的。
+fn rewrite_redis_conf(raw: &str, bind: &str) -> String {
+    let bind = bind.trim();
+    let has_password = raw.lines().any(|line| {
+        let t = line.trim();
+        !t.starts_with('#')
+            && t.starts_with("requirepass")
+            && !t["requirepass".len()..].trim().is_empty()
+    });
+    let need_protected = !(bind_is_external(bind) && !has_password);
+
+    let mut out: Vec<String> = Vec::new();
+    let mut saw_bind = false;
+    let mut saw_protected = false;
+    for line in raw.lines() {
+        let t = line.trim();
+        let is_directive = !t.starts_with('#') && !t.is_empty();
+        if is_directive && (t == "bind" || t.starts_with("bind ")) {
+            out.push(format!("bind {bind}"));
+            saw_bind = true;
+            continue;
+        }
+        if is_directive && t.starts_with("protected-mode") {
+            out.push(format!(
+                "protected-mode {}",
+                if need_protected { "yes" } else { "no" }
+            ));
+            saw_protected = true;
+            continue;
+        }
+        // 裸 `requirepass`（无值）会被 Redis 判语法错误
+        if is_directive && t.starts_with("requirepass") && t["requirepass".len()..].trim().is_empty()
+        {
+            out.push(format!("#{}", line));
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    if !saw_bind {
+        out.push(format!("bind {bind}"));
+    }
+    if !saw_protected {
+        out.push(format!(
+            "protected-mode {}",
+            if need_protected { "yes" } else { "no" }
+        ));
+    }
+    out.join("\n")
 }
 
 /// 在 release 的 assets 中找 cygwin.zip（不含 with-Service）
@@ -333,4 +428,65 @@ fn find_cygwin_asset(release: &serde_json::Value) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bind_is_external, rewrite_redis_conf};
+
+    const SAMPLE: &str = "\
+# Redis configuration file
+bind 127.0.0.1 -::1
+protected-mode yes
+port 6379
+requirepass
+";
+
+    /// 安装后必须能对外连：bind 换成系统地址，且「无密码 + 对外监听」要关保护模式。
+    #[test]
+    fn rewrites_bind_and_disables_protected_mode_without_password() {
+        let out = rewrite_redis_conf(SAMPLE, "192.168.200.128");
+        assert!(out.contains("bind 192.168.200.128"), "{out}");
+        // 旧行（含 -::1）必须被替换而不是追加
+        assert!(!out.contains("-::1"), "{out}");
+        assert!(out.contains("protected-mode no"), "{out}");
+        // 裸 requirepass 是语法错误，必须被注释掉
+        assert!(out.contains("#requirepass"), "{out}");
+    }
+
+    /// 有密码时保护模式留着也无害（Redis 只在「默认用户无密码」时才拦外部连接）。
+    #[test]
+    fn keeps_protected_mode_when_password_set() {
+        let raw = "bind 127.0.0.1\nprotected-mode yes\nrequirepass s3cret\n";
+        let out = rewrite_redis_conf(raw, "10.0.0.5");
+        assert!(out.contains("bind 10.0.0.5"), "{out}");
+        assert!(out.contains("protected-mode yes"), "{out}");
+        assert!(out.contains("requirepass s3cret"), "{out}");
+    }
+
+    /// 只绑本机时保护模式无需关闭（本来也出不去）。
+    #[test]
+    fn keeps_protected_mode_for_loopback_bind() {
+        let out = rewrite_redis_conf("bind 0.0.0.0\nprotected-mode no\n", "127.0.0.1");
+        assert!(out.contains("bind 127.0.0.1"), "{out}");
+        assert!(out.contains("protected-mode yes"), "{out}");
+    }
+
+    /// 缺指令时要追加（Redis 后者生效），不能静默不改。
+    #[test]
+    fn appends_missing_directives() {
+        let out = rewrite_redis_conf("port 6379\n", "192.168.1.2");
+        assert!(out.contains("bind 192.168.1.2"), "{out}");
+        assert!(out.contains("protected-mode no"), "{out}");
+    }
+
+    #[test]
+    fn bind_external_detection() {
+        assert!(bind_is_external("0.0.0.0"));
+        assert!(bind_is_external("::"));
+        assert!(bind_is_external("192.168.200.128"));
+        assert!(bind_is_external("127.0.0.1 10.0.0.5"));
+        assert!(!bind_is_external("127.0.0.1 -::1"));
+        assert!(!bind_is_external("localhost"));
+    }
 }
