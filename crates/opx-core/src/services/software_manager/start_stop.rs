@@ -31,6 +31,7 @@ use crate::event::EventSink;
 use crate::models::software::{InstalledSoftware, SoftwareStatus};
 use crate::services::software_manager::health_check;
 use crate::services::software_manager::lifecycle;
+use crate::services::software_manager::netutils;
 use crate::services::software_manager::providers::{self, HealthContext, StartContext};
 use crate::services::software_manager::SoftwareManager;
 use crate::utils::topo::topo_layers;
@@ -339,12 +340,27 @@ pub async fn do_start_software(
 
     // 启动前端口占用校验：逐个检查配置中声明的端口是否已被占用，被占用则拒绝启动。
     // 放在此处（重启流程已先停旧进程）可避免把软件自身占用的端口误判为冲突。
-    for port in collect_configured_ports(&software, Some(&**provider)) {
-        if !health_check::is_port_free(port) {
+    let start_ports = collect_configured_ports(&software, Some(&**provider));
+    for port in &start_ports {
+        if !health_check::is_port_free(*port) {
             return Err(anyhow::anyhow!(
                 "端口 {} 已被占用，无法启动。请修改配置端口或停止占用该端口的程序后重试。",
                 port
             ));
+        }
+    }
+
+    // 启动即放行：与安装时的放行互补，覆盖两种安装时未覆盖的情况 ——
+    // ① 用户在配置表单里改了端口（安装时放行的是默认端口）；
+    // ② 安装时放行失败（当时无权限 / 防火墙后端刚装好）。
+    // 幂等：已放行的端口不会重复写规则。失败只记日志，绝不阻断启动。
+    if !start_ports.is_empty() {
+        let (allowed, errors) = crate::services::firewall::allow_tcp(&start_ports);
+        if !allowed.is_empty() {
+            tracing::info!(?allowed, key = %software.key, "启动前已放行端口");
+        }
+        for e in errors {
+            tracing::warn!(key = %software.key, error = %e, "端口放行失败（不影响启动）");
         }
     }
 
@@ -631,6 +647,11 @@ pub async fn do_start_software(
     let pid_for_check = pid;
     let init_sql_path_for_cleanup = init_sql_path.clone();
     let post_start_for_check = post_start;
+    // 健康检查要探「服务真正监听的那个地址」：只绑网卡时探 127.0.0.1 会被拒，
+    // 进程活着也会被判启动失败（MySQL / Redis 绑 192.168.200.128 实测踩到）。
+    let probe_host = netutils::bind_from_config(&software.config)
+        .map(|b| netutils::probe_host_for_bind(&b))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     tokio::spawn(async move {
         // 健康检查前先检查进程是否存活（避免进程崩溃后误报"健康检查超时"）
         let pid_alive =
@@ -665,7 +686,8 @@ pub async fn do_start_software(
             return;
         }
         // 60 次 × 1s = 最多 60s，给慢启动软件（如 MinIO/RustFS）足够 ready 时间
-        let result = health_check::run_health_check(&spec, Some(pid), 60, 1000).await;
+        let result =
+            health_check::run_health_check_on(&spec, Some(pid), 60, 1000, &probe_host).await;
         match result {
             health_check::HealthCheckResult::Healthy => {
                 let _ = manager_clone.update_runtime_fields(
@@ -742,20 +764,22 @@ pub async fn do_start_software(
                 let dead_pid = pid;
                 let _ = tokio::task::spawn_blocking(move || lifecycle::stop_one(dead_pid)).await;
                 lifecycle::unregister(&installed_id_clone);
+                // 带上探测地址：只绑网卡时探回环会超时，用户需要知道「探的是哪里」才能判断
+                let why = format!("健康检查超时（未能连接 {probe_host}）");
                 let _ = manager_clone.update_runtime_fields(
                     &installed_id_clone,
                     SoftwareStatus::Error,
                     None,
                     None,
                     None,
-                    Some("健康检查超时".to_string()),
+                    Some(why.clone()),
                 );
                 lifecycle::emit_status_changed(
                     &sink_for_check,
                     &installed_id_clone,
                     SoftwareStatus::Error,
                     None,
-                    Some("健康检查超时".to_string()),
+                    Some(why),
                 );
             }
             health_check::HealthCheckResult::ProcessExited => {

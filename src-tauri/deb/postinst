@@ -1,7 +1,31 @@
 #!/bin/sh
-# deb/rpm post-install（安装引导设计 §6）：装配 systemd 服务并启动。
+# deb/rpm post-install（安装引导设计 §6）：放行自身端口 + 装配 systemd 服务并启动。
 # 升级路径同样走这里（restart 覆盖旧进程）；数据根 /var/lib/opx 不会被触碰。
 set -e
+
+# --- 防火墙：放行 opx 自身的 Web 管理端口（默认 17580）---
+#
+# 只加端口规则，**不启用也不重启防火墙服务** —— 机器该不该开防火墙是用户决定，
+# opx 只保证「需要放行的端口已放行」（见 crates/opx-core/src/services/firewall 的边界说明）。
+# 所有失败都用 `|| true` 吞掉：装不上包比「端口没放行」严重得多。
+#
+# 端口可用环境变量覆盖（批量部署时改过端口的情况）：
+#   OPX_WEB_PORT=18080 dpkg -i opx.deb
+OPX_WEB_PORT="${OPX_WEB_PORT:-17580}"
+if command -v ufw >/dev/null 2>&1; then
+    ufw allow "${OPX_WEB_PORT}/tcp" >/dev/null 2>&1 || true
+    echo "  已在 ufw 放行 ${OPX_WEB_PORT}/tcp（未改动 ufw 启用状态）"
+elif command -v firewall-cmd >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="${OPX_WEB_PORT}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    echo "  已在 firewalld 放行 ${OPX_WEB_PORT}/tcp（未改动 firewalld 运行状态）"
+elif command -v nft >/dev/null 2>&1; then
+    # Debian 13+ 默认只有 nftables。规则集为空时端口本就可达，无需在此建表；
+    # opx 启动后会在「端口与防火墙」页统一维护（独立表 inet opx）。
+    echo "  检测到 nftables：无拦截规则时端口默认可达；opx 启动后统一维护放行规则"
+else
+    echo "  未检测到 ufw / firewalld / nftables；若启用了其它防火墙，请手动放行 ${OPX_WEB_PORT}/tcp"
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
     mkdir -p /var/lib/opx

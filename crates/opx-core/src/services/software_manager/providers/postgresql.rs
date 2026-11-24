@@ -24,26 +24,57 @@ const CREATE_NO_WINDOW: u32 = 0;
 const TAGS_URL: &str = "https://api.github.com/repos/postgres/postgres/tags?per_page=100";
 /// EDB 官方 Windows x64 二进制基址（PostgreSQL 官方 Windows 包由 EDB 构建并分发）。
 const EDB_BASE: &str = "https://get.enterprisedb.com/postgresql";
-/// 远程版本发现最多取几个 major（每个 major 只取当前最新 minor；EDB 只构建当前支持版本）。
+/// PostgreSQL 官方源码分发基址（EDB 已停供 Linux/macOS 新版二进制，只能源码编译）。
+const PG_SOURCE_BASE: &str = "https://ftp.postgresql.org/pub/source";
+///阿里云 PostgreSQL 源码镜像（无代理环境首选，实测 200）。
+const PG_SOURCE_ALIYUN: &str = "https://mirrors.aliyun.com/postgresql/source";
+/// 远程版本发现最多取几个 major（每个 major 只取当前最新 minor）。
 const REMOTE_MAX_VERSIONS: usize = 3;
 
-/// 指定平台的官方二进制包 URL + 归档格式（EDB 构建，Windows/Linux/macOS 均提供）。
-/// 构建号 `-1` 为 EDB 首个构建；实测不存在的版本会返回 403（可据此判断版本真伪）。
+/// 源码包文件名（`postgresql-{version}.tar.gz`，官方与镜像一致）。
+fn source_asset(version: &str) -> String {
+    format!("postgresql-{version}.tar.gz")
+}
+
+/// 指定平台的官方包 URL + 归档格式。
+///
+/// 回归（2026-11-23 实测）：EDB 仅保留 Windows 二进制（`get.enterprisedb.com`
+/// Windows 全版本 200），Linux/macOS 二进制**全部 403**（官方下载页只列到 9.3）。
+/// 故 *nix 改走官方源码 tar.gz（阿里云镜像 + 官方兜底，装后源码编译）。
 fn archive_url_for(version: &str, os: &str) -> (String, ArchiveFormat) {
-    match os {
-        "linux" => (
-            format!("{}/postgresql-{}-linux-x64-binaries.tar.gz", EDB_BASE, version),
-            ArchiveFormat::TarGz,
-        ),
-        "macos" => (
-            format!("{}/postgresql-{}-osx-x86_64-binaries.tar.gz", EDB_BASE, version),
-            ArchiveFormat::TarGz,
-        ),
-        _ => (
+    if os == "windows" {
+        (
             format!("{}/postgresql-{}-1-windows-x64-binaries.zip", EDB_BASE, version),
             ArchiveFormat::Zip,
-        ),
+        )
+    } else {
+        let asset = source_asset(version);
+        (format!("{PG_SOURCE_BASE}/v{version}/{asset}"), ArchiveFormat::TarGz)
     }
+}
+
+/// 下载镜像列表：Windows 仅 EDB；*nix 阿里云镜像优先 + 官方兜底（均无代理可达）。
+fn archive_mirrors_for(version: &str, os: &str) -> Vec<MirrorSource> {
+    if os == "windows" {
+        return vec![MirrorSource {
+            name: "i18n:postgresqlOfficial".to_string(),
+            url: archive_url_for(version, os).0,
+            builtin: None,
+        }];
+    }
+    let asset = source_asset(version);
+    vec![
+        MirrorSource {
+            name: "i18n:aliyunMirror".to_string(),
+            url: format!("{PG_SOURCE_ALIYUN}/v{version}/{asset}"),
+            builtin: None,
+        },
+        MirrorSource {
+            name: "i18n:postgresqlOfficial".to_string(),
+            url: format!("{PG_SOURCE_BASE}/v{version}/{asset}"),
+            builtin: None,
+        },
+    ]
 }
 
 /// 纯解析：从标签列表提取「当前支持的 major + 各 major 最新 minor」，按 major 降序取前 N 个。
@@ -98,17 +129,13 @@ impl SoftwareProvider for PostgreSqlProvider {
     fn key(&self) -> &str { "postgresql" }
 
     fn catalog_entry(&self) -> CatalogEntry {
-        // P2-1：运行时按 OS 选官方包，替代编译期 #[cfg(windows)] 锁（非 Windows 构建不再空目录）。
-        // ⚠️ Linux/macOS 的 EDB 官方 URL 待跨平台环境验证（本会话仅 Windows 可验证）。
+        // 运行时按 OS 选包：Windows EDB 二进制 / *nix 官方源码（装后编译）。
         let version = "16.4".to_string();
-        let (url, format) = archive_url_for(&version, crate::utils::platform::current_os());
+        let os = crate::utils::platform::current_os();
+        let (_, format) = archive_url_for(&version, &os);
         let versions = vec![CatalogVersion {
             version: version.clone(),
-            mirrors: vec![MirrorSource {
-                name: "i18n:postgresqlOfficial".to_string(),
-                url,
-                builtin: None,
-            }],
+            mirrors: archive_mirrors_for(&version, &os),
             archive: ArchiveInfo { format, size: None, sha256: None },
         }];
         CatalogEntry {
@@ -160,15 +187,11 @@ impl SoftwareProvider for PostgreSqlProvider {
         let versions: Vec<CatalogVersion> = parse_supported_versions(&tags)
             .into_iter()
             .map(|v| {
-                let (url, format) = archive_url_for(&v, os);
+                let (_, format) = archive_url_for(&v, &os);
                 CatalogVersion {
-                    mirrors: vec![MirrorSource {
-                        name: "i18n:postgresqlOfficial".to_string(),
-                        url,
-                        builtin: None,
-                    }],
+                    mirrors: archive_mirrors_for(&v, &os),
                     version: v,
-                    // EDB 不发布校验和文件（.sha256 / .md5 均 403），故 size/sha256 留空
+                    // 源码包无发布校验和，size/sha256 留空
                     archive: ArchiveInfo { format, size: None, sha256: None },
                 }
             })
@@ -180,7 +203,33 @@ impl SoftwareProvider for PostgreSqlProvider {
         }
     }
 
-    fn post_install(&self, _ctx: &InstallContext) -> Result<()> { Ok(()) }
+    fn post_install(&self, ctx: &InstallContext) -> Result<()> {
+        // 回归：EDB 已停供 Linux/macOS 新版二进制，*nix 改走官方源码包 → 在此编译。
+        // 源码 tar.gz 解压保留顶层 `postgresql-{version}/`，configure/make 需在该目录执行；
+        // `make install --prefix=<install_path>` 产出 bin/{initdb,postgres,pg_ctl} 到安装根。
+        if crate::utils::platform::current_os() != "windows" {
+            let src_dir = ctx.install_dir().join(source_asset(&ctx.version).trim_end_matches(".tar.gz"));
+            if !src_dir.is_dir() {
+                return Err(anyhow::anyhow!(
+                    "PostgreSQL 源码目录缺失：{}（解压布局异常，无法编译）",
+                    src_dir.display()
+                ));
+            }
+            let prefix = format!("--prefix={}", ctx.install_path);
+            let steps: &[(&str, &[&str])] = &[
+                ("./configure", &[prefix.as_str()]),
+                ("make", &[]),
+                ("make", &["install"]),
+            ];
+            super::run_build_steps(&src_dir, "PostgreSQL", steps)?;
+        }
+        Ok(())
+    }
+
+    /// *nix 上 `post_install` 要 `./configure && make && make install`。
+    fn post_install_builds(&self) -> bool {
+        crate::utils::platform::current_os() != "windows"
+    }
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
         let working_dir = PathBuf::from(&ctx.install_path);
@@ -395,12 +444,31 @@ mod tests {
         let (w_url, w_fmt) = archive_url_for("16.4", "windows");
         assert!(w_url.ends_with("-windows-x64-binaries.zip"));
         assert_eq!(w_fmt, ArchiveFormat::Zip);
+        // 回归：EDB 已停供 Linux/macOS 新版二进制（全版本 403），改走官方源码包
         let (l_url, l_fmt) = archive_url_for("16.4", "linux");
-        assert!(l_url.ends_with("-linux-x64-binaries.tar.gz"));
+        assert!(l_url.ends_with("/v16.4/postgresql-16.4.tar.gz"));
         assert_eq!(l_fmt, ArchiveFormat::TarGz);
         let (m_url, m_fmt) = archive_url_for("16.4", "macos");
-        assert!(m_url.ends_with("-osx-x86_64-binaries.tar.gz"));
+        assert!(m_url.ends_with("/v16.4/postgresql-16.4.tar.gz"));
         assert_eq!(m_fmt, ArchiveFormat::TarGz);
+    }
+
+    #[test]
+    fn archive_mirrors_source_for_unix() {
+        // Linux/macOS 需用阿里云镜像优先 + 官方兜底（无代理环境可装）
+        let mirrors = archive_mirrors_for("18.6", "linux");
+        assert_eq!(mirrors.len(), 2);
+        assert!(mirrors[0].url.contains("mirrors.aliyun.com"));
+        assert!(mirrors[1].url.contains("ftp.postgresql.org"));
+        assert!(mirrors.iter().all(|m| m.url.ends_with(".tar.gz")));
+    }
+
+    #[test]
+    fn archive_mirrors_windows_keeps_edb_only() {
+        // Windows 仍用 EDB 二进制（实测 200），无需镜像
+        let mirrors = archive_mirrors_for("18.6", "windows");
+        assert_eq!(mirrors.len(), 1);
+        assert!(mirrors[0].url.contains("get.enterprisedb.com"));
     }
 
     #[test]
@@ -412,9 +480,11 @@ mod tests {
         let os = "linux";
         #[cfg(target_os = "macos")]
         let os = "macos";
-        assert_eq!(
-            entry.versions[0].mirrors[0].url,
-            archive_url_for("16.4", os).0
+        // *nix 首个镜像是阿里云、官方兜底第二；Windows 仅 EDB —— 均含 archive_url_for 结果
+        let expected = archive_url_for("16.4", os).0;
+        assert!(
+            entry.versions[0].mirrors.iter().any(|m| m.url == expected),
+            "builtin 镜像应含 {expected}"
         );
     }
 }

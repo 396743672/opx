@@ -122,6 +122,32 @@ pub struct AppSettings {
     /// Some(false) = 新装待引导；Some(true) = 已完成。
     #[serde(default)]
     pub first_run_done: Option<bool>,
+    /// 端口页「手动添加」的放行端口（不属于任何被管实例，如用户自建服务的 8080）。
+    /// 只记录用户意图；实际是否放行以系统防火墙查询结果为准。
+    #[serde(default)]
+    pub firewall_extra_ports: Vec<ManualPortRule>,
+    /// 对外访问地址（本机 IP）：服务配置里 127.0.0.1 这类默认绑定的替代值。
+    /// 空 / "auto" = 自动取本机首选非回环地址（见 netutils::default_service_bind）。
+    /// 可选 `0.0.0.0`（所有网卡）或 `127.0.0.1`（仅本机）。
+    #[serde(default)]
+    pub service_bind_address: String,
+}
+
+/// 端口页手动添加的放行端口。
+///
+/// `proto` 用字符串而非枚举：settings.json 是对用户可见的配置文件，
+/// 枚举反序列化遇到脏值会让整个设置文件读不出来（进而回落默认值，
+/// 丢掉用户的全部配置）。字符串 + 使用侧校验更抗损。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ManualPortRule {
+    pub port: u16,
+    /// "tcp" | "udp"
+    pub proto: String,
+    /// 来源限定（可选）：空 = 对任意来源放行；非空 = 每个元素一条「仅该来源」
+    /// 的规则（单 IP 或 CIDR）。一个端口的全部来源规则作为一组管理（开关/删除
+    /// 都是整组），避免「3 条规则 3 行」把清单撑爆。
+    #[serde(default)]
+    pub sources: Vec<String>,
 }
 
 fn default_ninety() -> u32 {
@@ -201,6 +227,8 @@ impl Default for AppSettings {
             web_lan_access: false,
             web_port_auto: false,
             first_run_done: None,
+            firewall_extra_ports: Vec::new(),
+            service_bind_address: String::new(),
         }
     }
 }

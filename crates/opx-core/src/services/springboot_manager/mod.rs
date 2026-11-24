@@ -101,7 +101,12 @@ impl SpringBootManager {
         let app_dir = paths::data_dir().join("springboot").join(&params.name);
         std::fs::create_dir_all(&app_dir)?;
         let target_jar = app_dir.join("app.jar");
+        // 覆盖前先放开旧文件权限：上传暂存件可能带只读位/0600，`fs::copy` 会连带继承，
+        // 之后再换包就会 `Permission denied`（Windows 只读属性 / Unix 0444）。
+        paths::relax_file_permissions(&target_jar);
         std::fs::copy(src, &target_jar)?;
+        // jar 不是敏感文件：统一 0644，保证 java 进程可读、后续换包可覆盖
+        paths::relax_file_permissions(&target_jar);
         // ponytail: 存相对路径 springboot/{name}/app.jar，避免 data_dir 绝对路径写死
         let jar_path = format!("springboot/{}/app.jar", params.name);
 

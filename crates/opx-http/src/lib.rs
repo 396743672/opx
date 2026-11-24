@@ -89,6 +89,10 @@ pub fn router_with_assets(
         .route("/api/health", get(health))
         .route("/api/{cmd}", post(api::dispatch))
         .route("/api/ws-ticket", post(ws::issue_ticket))
+        // axum 对 `Bytes` 提取器默认只放行 2 MB，会把 Web 端上传 JAR（真实包 20–150 MB）
+        // 直接拒成 413。这里放宽到 300 MB：对应 200 MB 原始文件经 base64 膨胀 33% 后的体积，
+        // 上限由 `upload_jar_file` 自己再校验（见 src-tauri commands/springboot.rs）。
+        .layer(axum::extract::DefaultBodyLimit::max(300 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

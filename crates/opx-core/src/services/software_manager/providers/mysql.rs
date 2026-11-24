@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::models::software::{
     ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, ConfigField,
@@ -47,7 +47,74 @@ fn mysql_official_url(version: &str, os: &str) -> String {
     )
 }
 
+/// 定位 MySQL 程序 bin 目录（回归：`os error 2`）。
+///
+/// 背景：Windows 的 zip 经 `extract_zip_flatten` 剥掉顶层目录，`bin/mysqld.exe`
+/// 直接在安装根；但 Linux/macOS 的 tar.xz/tar.gz **保留顶层目录**
+/// （`mysql-8.4.11-linux-glibc2.28-x86_64/bin/mysqld`），若仍按安装根拼接
+/// `bin/mysqld` 就会触发 `启动失败：没有那个文件或目录 (os error 2)`。
+///
+/// 策略（按优先级）：
+/// 1. 安装根下 `bin/` 存在 → 直接返回（Windows / 已平铺的存量安装）；
+/// 2. 预期顶层目录 `<asset 去扩展名>/bin/` 存在 → 返回；
+/// 3. 扫描安装根下唯一含 `bin/` 的子目录兜底（兼容自定义包名）。
+fn mysql_bin_dir(install_path: &std::path::Path, version: &str, os: &str) -> PathBuf {
+    let direct = install_path.join("bin");
+    if direct.is_dir() {
+        return direct;
+    }
+    let (asset, _) = mysql_asset(version, os);
+    let top = asset
+        .trim_end_matches(".tar.xz")
+        .trim_end_matches(".tar.gz")
+        .trim_end_matches(".zip");
+    let nested = install_path.join(top).join("bin");
+    if nested.is_dir() {
+        return nested;
+    }
+    if let Ok(entries) = std::fs::read_dir(install_path) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join("bin");
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    // 都不存在：返回预期路径，让启动报错依然指向明确位置（而非回退到错误的根 bin）
+    nested
+}
+
+/// `--basedir` 应指向程序根（bin 的父目录）：errmsg.sys / lib/private 等资源都在该目录下，
+/// 指到 install_path（含 data/ 与 my.cnf 的外层）会导致启动报 "Can't find error-message file"。
+fn mysql_basedir(install_path: &std::path::Path, version: &str, os: &str) -> PathBuf {
+    mysql_bin_dir(install_path, version, os)
+        .parent()
+        .filter(|p| p != &install_path)
+        .unwrap_or(install_path)
+        .to_path_buf()
+}
+
+/// 返回相对 `install_path` 的程序路径（供 `StartCommand.program` 使用，配合 working_dir）。
+fn mysql_program(install_path: &std::path::Path, version: &str, os: &str, base: &str) -> String {
+    let bin = mysql_bin_dir(install_path, version, os);
+    let rel = bin
+        .strip_prefix(install_path)
+        .unwrap_or(std::path::Path::new("bin"));
+    rel.join(exe_name(base))
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 /// MySQL 配置文件名：Windows 用 `my.ini`，Unix 用 `my.cnf`。
+/// MySQL 8.0+ 的 sql_mode。
+///
+/// NO_ZERO_DATE / NO_ZERO_IN_DATE / ERROR_FOR_DIVISION_BY_ZERO 自 8.0 起标记
+/// 废弃，官方要求它们与 strict mode 同时启用或同时不启用，否则启动即打印
+/// MY-010915 警告；9.x 仍接受这三者（同样警告），计划在后续版本并入 strict。
+/// 因此这里显式带上三者 + STRICT_TRANS_TABLES，8.x/9.x 都不报警告。
+const MYSQL_SQL_MODE: &str =
+    "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO";
+
 fn mysql_config_file_name() -> &'static str {
     if crate::utils::platform::current_os() == "windows" {
         "my.ini"
@@ -175,15 +242,21 @@ impl SoftwareProvider for MySqlProvider {
         let thread_cache = cpu_count * 4;
         // io_threads: CPU 核数（最少 4），用于 innodb_read_io_threads / innodb_write_io_threads
         let io_threads = cpu_count.max(4);
+        let (flush_method, lower_case) =
+            mysql_innodb_platform_settings(&crate::utils::platform::current_os());
 
         let mut file = File::create(&my_ini_path)?;
+        // 监听地址取「系统配置 → 对外访问地址」（默认本机首选网卡 IP）。
+        // 早前这里硬编码 127.0.0.1：安装完只能本机连，外部一律 10061，
+        // 而界面上又没有这个字段 —— 用户只能手改 my.cnf。
+        let bind = crate::services::software_manager::netutils::default_service_bind();
         let content = format!(
             "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqld]\n\
 port=3306\n\
-bind-address=127.0.0.1\n\
+bind-address={bind}\n\
 character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
 default-storage-engine=INNODB\n\
-sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
+sql_mode={sql_mode}\n\
 max_connections=151\n\
 thread_cache_size={thread_cache}\n\
 innodb_buffer_pool_size={buffer_pool}M\n\
@@ -192,31 +265,44 @@ innodb_flush_log_at_trx_commit=1\n\
 innodb_lock_wait_timeout=50\n\
 innodb_read_io_threads={io_threads}\n\
 innodb_write_io_threads={io_threads}\n\
-innodb_flush_method=normal\n\
+innodb_flush_method={flush_method}\n\
 innodb_doublewrite=1\n\
-lower_case_table_names=1\n",
+lower_case_table_names={lower_case}\n",
+            bind = bind,
+            sql_mode = MYSQL_SQL_MODE,
             thread_cache = thread_cache,
             buffer_pool = buffer_pool_mb,
             io_threads = io_threads,
+            flush_method = flush_method,
+            lower_case = lower_case,
         );
         file.write_all(content.as_bytes())?;
         Ok(())
     }
 
     fn start_command(&self, ctx: &StartContext) -> Result<StartCommand> {
-        // extract_zip_flatten 已剥掉 zip 顶层目录，install_path 即 MySQL 程序目录根
-        // bin/mysqld.exe 直接在 install_path/bin/ 下
+        // 程序 bin 目录按 OS 定位：Windows zip 已 flatten（install_path/bin），
+        // Linux/macOS tar 保留顶层目录（install_path/mysql-{ver}-{os}/bin）。
+        let os = crate::utils::platform::current_os();
         let working_dir = PathBuf::from(&ctx.install_path);
         let data_dir = working_dir.join("data");
+        let mysqld_program = mysql_program(&working_dir, &ctx.version, &os, "mysqld");
+        let basedir = mysql_basedir(&working_dir, &ctx.version, &os);
+        let run_as = mysql_run_as_user_arg();
+
+        let mut init_args = vec![
+            "--initialize-insecure".to_string(),
+            "--basedir=".to_string() + &basedir.to_string_lossy(),
+            "--datadir=".to_string() + &data_dir.to_string_lossy(),
+            "--log-error=".to_string() + &data_dir.join("mysql-init.err").to_string_lossy(),
+        ];
+        if let Some(user_arg) = &run_as {
+            init_args.push(user_arg.clone());
+        }
 
         let init_command = StartCommand {
-            program: format!("bin/{}", exe_name("mysqld")),
-            args: vec![
-                "--initialize-insecure".to_string(),
-                "--basedir=".to_string() + &ctx.install_path,
-                "--datadir=".to_string() + &data_dir.to_string_lossy(),
-                "--log-error=".to_string() + &data_dir.join("mysql-init.err").to_string_lossy(),
-            ],
+            program: mysqld_program.clone(),
+            args: init_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir: working_dir.clone(),
             remove_envs: Vec::new(),
@@ -240,10 +326,13 @@ lower_case_table_names=1\n",
             .unwrap_or(false);
         let mut main_args = vec![
             format!("--defaults-file={}", mysql_config_file_name()),
-            "--basedir=".to_string() + &ctx.install_path,
+            "--basedir=".to_string() + &basedir.to_string_lossy(),
             "--datadir=".to_string() + &working_dir.join("data").to_string_lossy(),
             "--console".to_string(),
         ];
+        if let Some(user_arg) = &run_as {
+            main_args.push(user_arg.clone());
+        }
 
         if initialized {
             // 防御性清理：已初始化不应再有初始化密码临时文件，删除可能残留的明文文件
@@ -268,7 +357,7 @@ lower_case_table_names=1\n",
         }
 
         Ok(StartCommand {
-            program: format!("bin/{}", exe_name("mysqld")),
+            program: mysqld_program,
             args: main_args,
             env_vars: std::collections::BTreeMap::new(),
             working_dir,
@@ -305,15 +394,19 @@ lower_case_table_names=1\n",
             .unwrap_or(if ctx.port > 0 { ctx.port } else { 3306 });
         let mut env_vars = std::collections::BTreeMap::new();
         env_vars.insert("MYSQL_PWD".to_string(), password.to_string());
+        // 与 start_command 同：Linux/macOS 的 mysqladmin 在保留的顶层目录 bin/ 下
+        let os = crate::utils::platform::current_os();
+        let bin = mysql_bin_dir(Path::new(&ctx.install_path), &ctx.version, &os);
+        // 连接地址跟随实际 bind：只绑 192.168.200.128 时连 127.0.0.1 会被拒，
+        // 优雅停止会退化成强杀（有 InnoDB 未刷盘风险）。
+        let host = crate::services::software_manager::netutils::bind_from_config(&ctx.config)
+            .map(|b| crate::services::software_manager::netutils::probe_host_for_bind(&b))
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         Some(GracefulStopCommand {
-            program: PathBuf::from(&ctx.install_path)
-                .join("bin")
-                .join(exe_name("mysqladmin"))
-                .to_string_lossy()
-                .to_string(),
+            program: bin.join(exe_name("mysqladmin")).to_string_lossy().to_string(),
             args: vec![
                 "-h".to_string(),
-                "127.0.0.1".to_string(),
+                host,
                 "-P".to_string(),
                 port.to_string(),
                 "-u".to_string(),
@@ -323,6 +416,13 @@ lower_case_table_names=1\n",
             working_dir: PathBuf::from(&ctx.install_path),
             env_vars,
             timeout_secs: 30,
+        })
+    }
+
+    /// 与 `post_install` 写进 my.cnf 的 `bind-address` 保持一致。
+    fn install_defaults(&self) -> serde_json::Value {
+        serde_json::json!({
+            "bind-address": crate::services::software_manager::netutils::default_service_bind()
         })
     }
 
@@ -349,6 +449,19 @@ lower_case_table_names=1\n",
                     default_value: serde_json::json!(3306),
                     section: Some("[mysqld]".to_string()),
                     description_i18n: Some("configField.portDesc".to_string()),
+                },
+                // 监听地址必须可配：默认只绑本机时外部一律连不上（错误码 10061），
+                // 而这一项以前只写在生成的 my.cnf 里、界面上完全看不到。
+                // 默认值取系统配置的对外访问地址（不是写死的 127.0.0.1）。
+                ConfigField {
+                    key: "bind-address".to_string(),
+                    label_i18n: "configField.bindAddress".to_string(),
+                    field_type: ConfigFieldType::BindAddress,
+                    default_value: serde_json::json!(
+                        crate::services::software_manager::netutils::default_service_bind()
+                    ),
+                    section: Some("[mysqld]".to_string()),
+                    description_i18n: Some("configField.bindAddressDesc".to_string()),
                 },
                 ConfigField {
                     key: "max_connections".to_string(),
@@ -422,5 +535,120 @@ lower_case_table_names=1\n",
 
     fn working_dir(&self, ctx: &WorkingDirContext) -> PathBuf {
         PathBuf::from(&ctx.install_path)
+    }
+}
+
+/// Unix 下 mysqld 拒绝以 root 直接运行（`Fatal error: Please read "Security" section ...
+/// run mysqld as root`），必须显式 `--user=<当前用户>`；root 环境显式指定即被接受。
+/// 返回 None 表示无需添加（Windows）或无法获取用户名（保持原行为）。
+fn mysql_run_as_user_arg() -> Option<String> {
+    if crate::utils::platform::current_os() == "windows" {
+        return None;
+    }
+    std::process::Command::new("whoami")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|u| format!("--user={u}"))
+}
+
+/// InnoDB 平台相关设置（回归：`innodb_flush_method=normal` 是 Windows 专用值，
+/// Linux 启动报 `Error while setting value 'normal' to 'innodb-flush-method'`；
+/// `lower_case_table_names=1` 也是 Windows 默认，Unix 应为 0）。
+fn mysql_innodb_platform_settings(os: &str) -> (&'static str, &'static str) {
+    if os == "windows" {
+        ("normal", "1")
+    } else {
+        ("fsync", "0")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir()
+            .join(format!("opx_mysql_bin_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// 8.0+ 官方要求：三个废弃 mode 与 strict 必须同时启用/同时不启用，
+    /// 只写 STRICT_TRANS_TABLES 会在启动时报 MY-010915（实测确认）。
+    #[test]
+    fn sql_mode_includes_deprecated_modes_alongside_strict() {
+        assert!(MYSQL_SQL_MODE.contains("STRICT_TRANS_TABLES"));
+        for mode in ["NO_ZERO_DATE", "NO_ZERO_IN_DATE", "ERROR_FOR_DIVISION_BY_ZERO"] {
+            assert!(MYSQL_SQL_MODE.contains(mode), "{mode} 缺失会触发 MY-010915 警告");
+        }
+    }
+
+    #[test]
+    fn bin_dir_uses_direct_bin_when_flattened() {
+        // Windows zip / 手动平铺的存量安装：bin 直接在安装根
+        let root = temp_root("flat");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "windows");
+        assert_eq!(dir, root.join("bin"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bin_dir_finds_nested_top_level_dir_on_linux() {
+        // 回归：官方 tar.xz 保留顶层目录，mysqld 不在安装根 bin/
+        let root = temp_root("nested");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "linux");
+        assert_eq!(dir, nested);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bin_dir_falls_back_to_scanning_single_subdir() {
+        // 顶层目录名与预期不符时（如自定义包），扫描含 bin/ 的子目录兜底
+        let root = temp_root("scan");
+        let nested = root.join("custom-layout").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let dir = mysql_bin_dir(&root, "8.4.11", "linux");
+        assert_eq!(dir, nested);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn innodb_platform_settings_are_os_specific() {
+        assert_eq!(mysql_innodb_platform_settings("windows"), ("normal", "1"));
+        // 回归：Linux 不接受 normal，lower_case 也须为 0
+        assert_eq!(mysql_innodb_platform_settings("linux"), ("fsync", "0"));
+        assert_eq!(mysql_innodb_platform_settings("macos"), ("fsync", "0"));
+    }
+
+    #[test]
+    fn basedir_is_program_root_not_install_root() {
+        // 回归：errmsg.sys / lib/private 在顶层子目录，basedir 指错会导致主进程启动即退出
+        let root = temp_root("basedir");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let basedir = mysql_basedir(&root, "8.4.11", "linux");
+        assert_eq!(basedir, root.join("mysql-8.4.11-linux-glibc2.28-x86_64"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn program_is_relative_to_install_root() {
+        let root = temp_root("program");
+        let nested = root.join("mysql-8.4.11-linux-glibc2.28-x86_64").join("bin");
+        fs::create_dir_all(&nested).unwrap();
+        let prog = mysql_program(&root, "8.4.11", "linux", "mysqld");
+        assert_eq!(
+            prog,
+            format!("mysql-8.4.11-linux-glibc2.28-x86_64/bin/{}", exe_name("mysqld"))
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

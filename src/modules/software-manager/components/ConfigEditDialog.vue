@@ -91,6 +91,21 @@
         <Icon icon="mdi:information-outline" /> {{ $t('configEditRestartHint') }}
       </div>
 
+      <!-- 连接可达性：监听地址对了，应用层还可能继续拦（MySQL 1130 / Redis protected mode） -->
+      <div v-if="remoteHint" class="remote-hint">
+        <div class="remote-hint-head">
+          <Icon icon="mdi:alert-outline" />
+          <span>{{ $t('remoteHintTitle') }}</span>
+        </div>
+        <div class="remote-hint-body">{{ remoteHint.text }}</div>
+        <div v-if="remoteHint.action" class="remote-hint-actions">
+          <button class="btn btn-sm" :disabled="granting" @click="runRemoteFix">
+            <Icon :icon="remoteHint.action === 'mysql-grant' ? 'mdi:account-key-outline' : 'mdi:shield-off-outline'" />
+            {{ remoteHint.actionLabel }}
+          </button>
+        </div>
+      </div>
+
       <div class="dialog-footer">
         <button class="btn" @click="$emit('close')">{{ $t('cancel') }}</button>
         <button class="btn" :disabled="!dirty || saving" @click="onSave(true)">{{ $t('save') }}</button>
@@ -203,7 +218,91 @@ onMounted(async () => {
   } catch (e) {
     console.error('get schema failed:', e)
   }
+  try {
+    const res = await invoke<{ effective: string }>('list_local_addresses')
+    if (res?.effective) suggestedAddress.value = res.effective
+  } catch {
+    // 探测失败退回 0.0.0.0（总是可达）
+  }
 })
+
+// ---- 连接可达性提示：地址绑对了，应用层还可能拦 ----
+const suggestedAddress = ref('0.0.0.0')
+const granting = ref(false)
+
+function isLoopbackBind(v: string) {
+  return v === '127.0.0.1' || v === '::1' || v.toLowerCase() === 'localhost'
+}
+
+const remoteHint = computed<null | {
+  text: string
+  action: 'mysql-grant' | 'redis-protected' | null
+  actionLabel?: string
+}>(() => {
+  if (tab.value !== 'form') return null
+  const fd = (formTabRef.value as any)?.formData
+  if (!fd) return null
+  const bindKey =
+    props.software.key === 'mysql' ? 'bind-address' : props.software.key === 'redis' ? 'bind' : null
+  if (!bindKey) return null
+  const bind = String(fd[bindKey] ?? '').trim()
+  if (!bind) return null
+
+  if (props.software.key === 'mysql') {
+    if (isLoopbackBind(bind)) {
+      return {
+        text: t('remoteHintMysqlLocalOnly', { bind, address: suggestedAddress.value }),
+        action: null,
+      }
+    }
+    // 外部可达 → 账号层面还要允许远程主机，否则客户端拿到 1130
+    return {
+      text: t('remoteHintMysqlNeedGrant'),
+      action: 'mysql-grant',
+      actionLabel: granting.value ? t('remoteHintMysqlGranting') : t('remoteHintMysqlGrant'),
+    }
+  }
+
+  if (isLoopbackBind(bind)) {
+    return {
+      text: t('remoteHintRedisLocalOnly', { bind, address: suggestedAddress.value }),
+      action: null,
+    }
+  }
+  // Redis 的 protected-mode 是 yes/no 字符串（配置只认这两个值）
+  const protectedOn = String(fd['protected-mode'] ?? 'yes').trim() !== 'no'
+  const hasPassword = String(fd['requirepass'] ?? '').trim() !== ''
+  if (protectedOn && !hasPassword) {
+    return {
+      text: t('remoteHintRedisProtected'),
+      action: 'redis-protected',
+      actionLabel: t('remoteHintRedisDisableProtected'),
+    }
+  }
+  return null
+})
+
+async function runRemoteFix() {
+  if (!remoteHint.value?.action) return
+  if (remoteHint.value.action === 'mysql-grant') {
+    granting.value = true
+    try {
+      const msg = await invoke<string>('allow_mysql_remote', { installedId: props.software.id })
+      toast(msg || t('remoteHintMysqlGranted'), 'ok')
+    } catch (e) {
+      toast(typeof e === 'string' ? e : String((e as Error)?.message ?? e), 'err')
+    } finally {
+      granting.value = false
+    }
+    return
+  }
+  // Redis：把表单里的保护模式改成关（仍需用户保存并重启才生效）
+  const fd = (formTabRef.value as any)?.formData
+  if (fd) {
+    fd['protected-mode'] = 'no'
+    dirty.value = true
+  }
+}
 
 async function switchTab(tabName: 'form' | 'source' | 'backups') {
   if (tab.value === tabName) return
@@ -448,6 +547,34 @@ async function onSaveAndRestart() {
 .hint-bar svg {
   width: 14px;
   height: 14px;
+}
+/* 连接可达性提示（监听地址外的第二道门：账号来源 / protected mode） */
+.remote-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in oklch, #d9822b 40%, transparent);
+  background: color-mix(in oklch, #d9822b 10%, transparent);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.remote-hint-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #d9822b;
+  margin-bottom: 4px;
+}
+.remote-hint-head svg {
+  width: 14px;
+  height: 14px;
+}
+.remote-hint-body {
+  color: var(--color-muted-foreground);
+}
+.remote-hint-actions {
+  margin-top: 8px;
 }
 .dialog-footer {
   display: flex;

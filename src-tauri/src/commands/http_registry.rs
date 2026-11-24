@@ -46,7 +46,7 @@ use opx_http::AppContext;
 // ApiError 自 opx-http 顶层 re-export（桌面专属命令的 409 信封用）
 use opx_http::ApiError;
 
-use crate::commands::{audit, config, dns_account, lock_screen, node_app, software, springboot, stack, system, website};
+use crate::commands::{audit, config, db_access, dns_account, firewall, lock_screen, node_app, software, springboot, stack, system, website};
 use crate::services::dns_account::DnsAccountManager;
 use crate::services::node_app_manager::NodeAppManager;
 use crate::services::software_manager::SoftwareManager;
@@ -346,6 +346,15 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             ok(springboot::list_springboot_dependency_candidates(sw).await)
         })
     });
+    // Web 端 JAR 上传：浏览器选中文件后读为 base64 传入，后端落盘到 data_dir/uploads。
+    // 桌面端走 Tauri dialog（selectJar），不经此命令。
+    reg.register("upload_jar_file", |_ctx, args| {
+        Box::pin(async move {
+            let name: String = arg(&args, "name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            ok(springboot::upload_jar_file(name, data_base64).await)
+        })
+    });
     reg.register("read_jar_info", |_ctx, args| {
         Box::pin(async move {
             let jar_path: String = arg(&args, "jar_path")?;
@@ -441,6 +450,83 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             let id: String = arg(&args, "id")?;
             let m = h.state::<Arc<DnsAccountManager>>();
             ok(dns_account::test_dns_account(m, id).await)
+        })
+    });
+
+    // ===== firewall 端口规则（5；只维护端口规则，不启停防火墙服务）=====
+    // Web 入口是主要使用场景（用户在浏览器里管理远端服务器），必须挂全。
+    let h = handle.clone();
+    reg.register("get_firewall_overview", move |_ctx, _args| {
+        let h = h.clone(); // Fn 闭包按调用克隆（future 须 'static）
+        Box::pin(async move {
+            let sm = h.state::<Arc<SoftwareManager>>();
+            let sb = h.state::<Arc<SpringBootManager>>();
+            let wm = h.state::<Arc<WebsiteManager>>();
+            val(firewall::get_firewall_overview(sm, sb, wm))
+        })
+    });
+    reg.register("set_firewall_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            let allow: bool = arg(&args, "allow")?;
+            // 缺省 = 全网规则；传了来源则只操作「仅该来源」那条
+            let source: Option<String> = arg(&args, "source")?;
+            ok(firewall::set_firewall_port(port, proto, allow, source))
+        })
+    });
+    reg.register("set_firewall_port_sources", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            let sources: Option<Vec<String>> = arg(&args, "sources")?;
+            ok(firewall::set_firewall_port_sources(port, proto, sources))
+        })
+    });
+    reg.register("add_manual_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            let sources: Option<Vec<String>> = arg(&args, "sources")?;
+            ok(firewall::add_manual_port(port, proto, sources))
+        })
+    });
+    reg.register("remove_manual_port", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            ok(firewall::remove_manual_port(port, proto))
+        })
+    });
+    let h = handle.clone();
+    reg.register("set_instance_bind_all", move |_ctx, args| {
+        let h = h.clone(); // Fn 闭包按调用克隆（future 须 'static）
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(firewall::set_instance_bind_all(sm, installed_id))
+        })
+    });
+    let h = handle.clone();
+    reg.register("set_instance_bind", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let address: String = arg(&args, "address")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(firewall::set_instance_bind(sm, installed_id, address))
+        })
+    });
+    reg.register("list_local_addresses", |_ctx, _args| {
+        Box::pin(async move { val(system::list_local_addresses()) })
+    });
+    let h = handle.clone();
+    reg.register("allow_mysql_remote", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let installed_id: String = arg(&args, "installed_id")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(db_access::allow_mysql_remote(sm, installed_id))
         })
     });
 
@@ -953,6 +1039,18 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
         })
     });
     let h = handle.clone();
+    reg.register("upload_site_bundle_data", move |_ctx, args| {
+        let h = h.clone();
+        Box::pin(async move {
+            let id: String = arg(&args, "id")?;
+            let loc_path: String = arg(&args, "loc_path")?;
+            let file_name: String = arg(&args, "file_name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            let sm = h.state::<Arc<SoftwareManager>>();
+            ok(website::upload_site_bundle_data(sm, id, loc_path, file_name, data_base64))
+        })
+    });
+    let h = handle.clone();
     reg.register("generate_self_signed_cert", move |_ctx, args| {
         let h = h.clone();
         Box::pin(async move {
@@ -996,6 +1094,14 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     });
 
     // ===== node_app 写命令（5；NodeApp 模块写操作，前端会调）=====
+    // Web 端没有本机文件路径，入口 js 由浏览器读成 base64 传上来先落盘
+    reg.register("upload_node_entry", |_ctx, args| {
+        Box::pin(async move {
+            let name: String = arg(&args, "name")?;
+            let data_base64: String = arg(&args, "data_base64")?;
+            ok(node_app::upload_node_entry(name, data_base64).await)
+        })
+    });
     let h = handle.clone();
     reg.register("add_node_app", move |_ctx, args| {
         let h = h.clone();

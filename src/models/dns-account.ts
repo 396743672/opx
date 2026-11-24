@@ -1,4 +1,6 @@
 /** 与 Rust src-tauri/src/models/dns_account.rs 对齐 */
+import { newId } from '@/utils/id'
+
 export interface DnsAccount {
   id: string
   name: string
@@ -24,7 +26,7 @@ export const CRED_FIELDS: Record<ProviderId, { idLabel: string; secretLabel: str
 
 export function emptyAccount(): DnsAccount {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     name: '',
     provider: 'cloudflare',
     token: '',

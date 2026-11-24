@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { listen, type UnlistenFn } from '@/utils/transport'
 
-type InstallPhase = 'downloading' | 'extracting' | 'completed' | 'failed'
+type InstallPhase = 'downloading' | 'extracting' | 'building' | 'completed' | 'failed'
 
 interface InstallTask {
   id: string
@@ -26,6 +26,7 @@ export const useInstallStore = defineStore('install', () => {
       (t) =>
         t.phase === 'downloading' ||
         t.phase === 'extracting' ||
+        t.phase === 'building' ||
         t.phase === 'failed',
     )
   })
@@ -71,6 +72,9 @@ export const useInstallStore = defineStore('install', () => {
       task.percent = payload.percent ?? null
     } else if (payload.phase === 'extracting') {
       task.percent = payload.percent ?? 0
+    } else if (payload.phase === 'building') {
+      // 源码编译没有百分比：界面切成不确定进度，别让用户以为卡在 99%
+      task.percent = null
     } else if (payload.phase === 'completed') {
       task.installedId = payload.installed_id ?? null
       // 完成 3 秒后清理

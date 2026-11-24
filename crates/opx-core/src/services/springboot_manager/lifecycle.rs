@@ -21,6 +21,21 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
     crate::services::software_manager::health_check::is_process_alive(pid)
 }
 
+/// 定位 JDK/JRE 里的 `java` 可执行文件。
+///
+/// 走 [`crate::utils::exec::resolve_bin`]：正常安装是 `<根>/bin/java[e]`，但存量安装
+/// 可能多一层（`apps/jdk/<ver>/jdk-<ver>/bin/java`，历史 tar 解压没剥顶层目录），
+/// 直接拼 `bin/java` 必然报「java 不存在」。安装侧已在
+/// `utils::archive::flatten_single_root` 修好新装，这里负责让**存量装坏的实例不重装也能跑**。
+///
+/// 找到后顺手补齐执行位（存量的 `bin/java` 可能是 0644 → `os error 13`）。
+fn resolve_java_bin(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let exec = if cfg!(windows) { "java.exe" } else { "java" };
+    let found = crate::utils::exec::resolve_bin(root, exec)?;
+    crate::utils::exec::ensure_executable(&found);
+    Some(found)
+}
+
 /// 启动 Spring Boot 应用
 pub async fn start_app(
     app_id: &str,
@@ -43,6 +58,19 @@ pub async fn start_app(
                     return Err(format!("前置依赖 [{}] 未运行，请先启动后再试", dep.name));
                 }
             }
+        }
+    }
+
+    // 启动即放行端口：JAR 的端口写在表单/配置里，和内置软件一样会遇到
+    // 「服务起来了但外部连不上」。失败只记日志（见 services::firewall 边界说明），
+    // 绝不阻断启动。
+    if let Some(port) = app.port {
+        let (allowed, errors) = crate::services::firewall::allow_tcp(&[port]);
+        if !allowed.is_empty() {
+            tracing::info!(port, "JAR 启动前已放行端口");
+        }
+        for e in errors {
+            tracing::warn!(port, error = %e, "JAR 端口放行失败（不影响启动）");
         }
     }
 
@@ -80,26 +108,16 @@ pub async fn start_app(
         ))),
     };
     let java_home = std::path::Path::new(&jdk.install_path);
-    let java_bin = if cfg!(windows) {
-        let p = java_home.join("bin").join("java.exe");
-        if p.exists() {
-            p
-        } else {
+    let java_exec = if cfg!(windows) { "java.exe" } else { "java" };
+    let java_bin = match resolve_java_bin(java_home) {
+        Some(p) => p,
+        None => {
+            let expected = java_home.join("bin").join(java_exec);
             return Err(fail(format!(
-                "JDK [{}] 的 java.exe 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
+                "JDK [{}] 的 {} 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
                 jdk.name,
-                p.display()
-            )));
-        }
-    } else {
-        let p = java_home.join("bin").join("java");
-        if p.exists() {
-            p
-        } else {
-            return Err(fail(format!(
-                "JDK [{}] 的 java 不存在：{}（目录可能已被移动或卸载，请在编辑中重新选择 JDK）",
-                jdk.name,
-                p.display()
+                java_exec,
+                expected.display()
             )));
         }
     };
@@ -697,5 +715,37 @@ mod tests {
             .expect("缺 jdk_installed_id 字段的 apps.json 仍须能反序列化");
         assert_eq!(store.applications.len(), 1, "缺字段不应清空整个应用列表");
         assert_eq!(store.applications[0].jdk_installed_id, "", "缺失字段应回退为空串");
+    }
+
+    /// 回归：存量安装把官方包多解了一层（`<ver>/jdk-<ver>/bin/java`），
+    /// 解析必须能兜底找到，否则用户不重装就永远起不来。
+    #[test]
+    fn resolve_java_bin_finds_nested_layout() {
+        let exec = if cfg!(windows) { "java.exe" } else { "java" };
+        let root = std::env::temp_dir().join(format!("opx_jdk_{}", uuid::Uuid::new_v4()));
+
+        // 正常结构：<root>/bin/java
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin").join(exec), b"x").unwrap();
+        assert_eq!(
+            super::resolve_java_bin(&root).unwrap(),
+            root.join("bin").join(exec)
+        );
+
+        // 多一层结构：<root>/jdk-25/bin/java
+        std::fs::remove_dir_all(root.join("bin")).unwrap();
+        let nested = root.join("jdk-25.0.5.1+2");
+        std::fs::create_dir_all(nested.join("bin")).unwrap();
+        std::fs::write(nested.join("bin").join(exec), b"x").unwrap();
+        assert_eq!(
+            super::resolve_java_bin(&root).unwrap(),
+            nested.join("bin").join(exec)
+        );
+
+        // 找不到就返回 None（让上层给出明确报错，而不是静默用错路径）
+        std::fs::remove_dir_all(&nested).unwrap();
+        assert!(super::resolve_java_bin(&root).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

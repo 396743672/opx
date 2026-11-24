@@ -80,12 +80,45 @@ impl Autostart for Unsupported {
 }
 
 /// 用户主目录（`$HOME`；Windows 用 `$USERPROFILE`）。
+///
+/// systemd 服务（本项目的 `opx-svc` 经 `xvfb-run` 启动）默认**不注入 HOME**，导致
+/// 环境变量为空、`set_autostart` 报「无法确定用户主目录（$HOME）」500（实测服务器）。
+/// 因此增加两级 fallback：先从环境变量取，Unix 下再查 `/etc/passwd`（getpwuid），
+/// 两者都失败才返回 None。桌面正常会话仍走环境变量，行为不变。
 pub fn home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let var = std::env::var_os("USERPROFILE");
     #[cfg(not(windows))]
     let var = std::env::var_os("HOME");
-    var.map(PathBuf::from).filter(|p| !p.as_os_str().is_empty())
+
+    // fallback：从 passwd 数据库按当前 uid 取 home（systemd 无 HOME 场景）
+    #[cfg(unix)]
+    let passwd_home: Option<PathBuf> = unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() {
+            None
+        } else {
+            let home = std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy();
+            if home.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(home.into_owned()))
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let passwd_home: Option<PathBuf> = None;
+
+    pick_home(var, passwd_home.as_deref())
+}
+
+/// 纯函数：给定环境变量值与 fallback home，返回应采用的 home。
+/// 供单测覆盖「env 缺失 → 用 fallback」逻辑，不必改动真实进程环境。
+fn pick_home(env_home: Option<std::ffi::OsString>, fallback: Option<&Path>) -> Option<PathBuf> {
+    if let Some(p) = env_home.map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()) {
+        return Some(p);
+    }
+    fallback.map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -99,6 +132,28 @@ mod tests {
         assert!(!b.is_enabled());
         assert!(b.enable(Path::new("/x/opx")).is_ok(), "enable 应为幂等 no-op");
         assert!(b.disable().is_ok());
+    }
+
+    /// 回归：systemd 服务无 HOME 环境变量时，必须用 passwd fallback，
+    /// 否则 set_autostart 报「无法确定用户主目录」500。
+    #[test]
+    fn pick_home_falls_back_when_env_missing_or_empty() {
+        use std::ffi::OsString;
+        let fallback = Path::new("/root");
+        // env 有值 → 优先用 env（桌面正常会话行为不变）
+        assert_eq!(
+            pick_home(Some(OsString::from("/home/alice")), Some(fallback)),
+            Some(PathBuf::from("/home/alice"))
+        );
+        // env 缺失 → 用 passwd fallback（systemd 场景）
+        assert_eq!(pick_home(None, Some(fallback)), Some(PathBuf::from("/root")));
+        // env 为空串 → 跳过，用 fallback
+        assert_eq!(
+            pick_home(Some(OsString::from("")), Some(fallback)),
+            Some(PathBuf::from("/root"))
+        );
+        // 两者都无 → None
+        assert_eq!(pick_home(None, None), None);
     }
 
     #[test]

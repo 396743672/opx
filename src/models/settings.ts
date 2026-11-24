@@ -66,4 +66,11 @@ export interface AppSettings {
    * false=新装待引导（前端强制进入 /setup）；true=已完成
    */
   first_run_done: boolean | null
+  /** 端口页「手动添加」的放行端口（不属于任何被管实例）；实际放行状态以系统防火墙为准 */
+  firewall_extra_ports: { port: number; proto: string }[]
+  /**
+   * 对外访问地址（本机 IP）：服务配置里 127.0.0.1 这类默认绑定的替代值。
+   * 空 / "auto" = 自动取本机首选非回环地址；可填 0.0.0.0（所有网卡）或具体网卡 IP。
+   */
+  service_bind_address: string
 }

@@ -84,9 +84,15 @@ pub fn version_major(version: &str) -> Option<u32> {
     }
 }
 
+/// JDK 内置工具（`java` / `jcmd`）的路径。
+///
+/// 统一走 [`crate::utils::exec::resolve_bin`]：正常安装是 `<home>/bin/<name>`，
+/// 存量安装可能多一层目录；拼死路径会让 attach 注入失败并降级为强杀。
 fn jdk_binary(home: &Path, name: &str) -> PathBuf {
-    home.join("bin")
-        .join(if cfg!(windows) { format!("{}.exe", name) } else { name.to_string() })
+    crate::utils::exec::resolve_bin(home, name).unwrap_or_else(|| {
+        home.join("bin")
+            .join(if cfg!(windows) { format!("{}.exe", name) } else { name.to_string() })
+    })
 }
 
 /// 判断是不是**带 attach API 的 JDK**（而非 JRE）。

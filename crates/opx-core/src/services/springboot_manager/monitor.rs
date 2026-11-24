@@ -126,9 +126,9 @@ fn run_jdk_tool(
     } else {
         tool.to_string()
     };
+    // 走统一的可执行文件定位：存量 JDK 安装可能多一层目录，拼死 `bin/` 会找不到工具
     let exe = jdk_path
-        .map(|p| Path::new(p).join("bin").join(&exe_name))
-        .filter(|p| p.exists())
+        .and_then(|p| crate::utils::exec::resolve_bin(Path::new(p), tool))
         .unwrap_or_else(|| PathBuf::from(&exe_name));
 
     let argv = build_tool_args(pid, args, pos);
