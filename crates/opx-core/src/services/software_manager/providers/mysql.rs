@@ -106,6 +106,15 @@ fn mysql_program(install_path: &std::path::Path, version: &str, os: &str, base: 
 }
 
 /// MySQL 配置文件名：Windows 用 `my.ini`，Unix 用 `my.cnf`。
+/// MySQL 8.0+ 的 sql_mode。
+///
+/// NO_ZERO_DATE / NO_ZERO_IN_DATE / ERROR_FOR_DIVISION_BY_ZERO 自 8.0 起标记
+/// 废弃，官方要求它们与 strict mode 同时启用或同时不启用，否则启动即打印
+/// MY-010915 警告；9.x 仍接受这三者（同样警告），计划在后续版本并入 strict。
+/// 因此这里显式带上三者 + STRICT_TRANS_TABLES，8.x/9.x 都不报警告。
+const MYSQL_SQL_MODE: &str =
+    "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO";
+
 fn mysql_config_file_name() -> &'static str {
     if crate::utils::platform::current_os() == "windows" {
         "my.ini"
@@ -247,7 +256,7 @@ port=3306\n\
 bind-address={bind}\n\
 character-set-server=utf8mb4\ncollation-server=utf8mb4_unicode_ci\n\
 default-storage-engine=INNODB\n\
-sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES\n\
+sql_mode={sql_mode}\n\
 max_connections=151\n\
 thread_cache_size={thread_cache}\n\
 innodb_buffer_pool_size={buffer_pool}M\n\
@@ -260,6 +269,7 @@ innodb_flush_method={flush_method}\n\
 innodb_doublewrite=1\n\
 lower_case_table_names={lower_case}\n",
             bind = bind,
+            sql_mode = MYSQL_SQL_MODE,
             thread_cache = thread_cache,
             buffer_pool = buffer_pool_mb,
             io_threads = io_threads,
@@ -566,6 +576,16 @@ mod tests {
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    /// 8.0+ 官方要求：三个废弃 mode 与 strict 必须同时启用/同时不启用，
+    /// 只写 STRICT_TRANS_TABLES 会在启动时报 MY-010915（实测确认）。
+    #[test]
+    fn sql_mode_includes_deprecated_modes_alongside_strict() {
+        assert!(MYSQL_SQL_MODE.contains("STRICT_TRANS_TABLES"));
+        for mode in ["NO_ZERO_DATE", "NO_ZERO_IN_DATE", "ERROR_FOR_DIVISION_BY_ZERO"] {
+            assert!(MYSQL_SQL_MODE.contains(mode), "{mode} 缺失会触发 MY-010915 警告");
+        }
     }
 
     #[test]

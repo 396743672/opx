@@ -133,6 +133,15 @@
 
           <div class="action-cell">
             <button
+              class="btn"
+              :disabled="!canManage || pending.has(portKey(p))"
+              :title="$t('firewallEditSource')"
+              @click="openEditSource(p)"
+            >
+              <Icon icon="mdi:account-key-outline" />
+              {{ $t('firewallEditSource') }}
+            </button>
+            <button
               class="btn tiny"
               :class="p.allowed ? 'primary' : ''"
               :disabled="!canManage || pending.has(portKey(p))"
@@ -140,14 +149,6 @@
             >
               <Icon :icon="p.allowed ? 'mdi:check' : 'mdi:lock-outline'" />
               {{ p.allowed ? $t('firewallAllowed') : $t('firewallDenied') }}
-            </button>
-            <button
-              class="btn ghost tiny"
-              :disabled="!canManage || pending.has(portKey(p))"
-              :title="$t('firewallEditSource')"
-              @click="openEditSource(p)"
-            >
-              <Icon icon="mdi:account-key-outline" />
             </button>
             <button
               v-if="p.source === 'manual'"

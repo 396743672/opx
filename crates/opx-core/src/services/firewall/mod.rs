@@ -719,10 +719,8 @@ fn ufw_args(action: &str, rule: &PortRule) -> Vec<String> {
 
 /// firewalld 富规则的规范形态（add/remove 同形）。
 fn firewalld_rich_rule(rule: &PortRule, source: &str) -> String {
-    let family = match source.trim().parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V6(_)) => "ipv6",
-        _ => "ipv4",
-    };
+    // 按 CIDR 的地址部分判族：IpAddr::parse 不接受 "/"，IPv6 CIDR 会被误判为 ipv4
+    let family = if source_is_v6(source) { "ipv6" } else { "ipv4" };
     format!(
         "rule family={family} source address={src} port port={port} protocol={proto} accept",
         src = source.trim(),
@@ -1486,6 +1484,9 @@ ufw allow 8080/tcp\n";
         assert_eq!(parse_firewalld_rich_rules(listed), vec![sourced]);
         let v6 = PortRule::sourced(9100, Proto::Tcp, "fe80::1");
         assert!(firewalld_rich_rule(&v6, "fe80::1").contains("family=ipv6"));
+        // IPv6 CIDR 同样必须 ipv6（曾因 IpAddr::parse 不接受 "/" 而误判成 ipv4）
+        let v6cidr = PortRule::sourced(9100, Proto::Tcp, "2001:db8::/32");
+        assert!(firewalld_rich_rule(&v6cidr, "2001:db8::/32").contains("family=ipv6"));
     }
 
     #[test]

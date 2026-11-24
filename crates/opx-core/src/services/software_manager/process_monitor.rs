@@ -64,27 +64,61 @@ pub fn sample_processes_slow(pids: &[u32]) -> Vec<ProcessSample> {
     sample_with(&mut PROCESS_SYS_SLOW.lock().unwrap_or_else(|e| e.into_inner()), pids)
 }
 
+/// Linux 上 sysinfo 0.31 把 `/proc/<pid>/task/<tid>` 的每个线程当独立进程枚举，
+/// 且每个线程都报**同一份进程 RSS/CPU**。这些「线程伪进程」的 parent 是真实进程，
+/// 若不排除，会被下面的后代累加逻辑全算进去 —— 实测 mysqld 39 线程时
+/// 449MB × 39 = 17.5GB 的虚高读数。线程的开销已包含在父进程自身采样里，
+/// 必须跳过。Windows/macOS 上 `tasks()` 返回 None，集合为空，行为不变。
+fn thread_pids(system: &System) -> std::collections::HashSet<u32> {
+    system
+        .processes()
+        .values()
+        .filter_map(|p| p.tasks())
+        .flat_map(|tasks| tasks.iter().map(|t| t.as_u32()))
+        .collect()
+}
+
+/// 纯累加规则：根进程自身 + 所有**真后代**（排除线程伪进程），供采样与单测共用。
+/// `sample` 回调返回 (cpu%, mem_bytes)，测试可注入假数据，避免依赖真实进程树。
+fn aggregate_sample(
+    pid: u32,
+    tree: &std::collections::HashMap<u32, Option<u32>>,
+    threads: &std::collections::HashSet<u32>,
+    mut sample: impl FnMut(u32) -> Option<(f64, u64)>,
+) -> Option<ProcessSample> {
+    let (mut cpu, mut mem) = sample(pid)?;
+    for (&child_pid, _) in tree {
+        if child_pid == pid
+            || threads.contains(&child_pid)
+            || !is_descendant(tree, child_pid, pid)
+        {
+            continue;
+        }
+        if let Some((c, m)) = sample(child_pid) {
+            cpu += c;
+            mem += m;
+        }
+    }
+    Some(ProcessSample { pid, cpu_usage: cpu, mem_bytes: mem })
+}
+
 fn sample_with(system: &mut System, pids: &[u32]) -> Vec<ProcessSample> {
     system.refresh_processes(ProcessesToUpdate::All);
     let tree = snapshot_tree(system);
+    let threads = thread_pids(system);
     pids.iter()
         .filter_map(|&pid| {
             let root = system.process(Pid::from_u32(pid))?;
-            let mut cpu = root.cpu_usage() as f64;
-            let mut mem = root.memory();
-            for (child_pid, _) in &tree {
-                if *child_pid == pid || !is_descendant(&tree, *child_pid, pid) {
-                    continue;
+            let root_cpu = root.cpu_usage() as f64;
+            let root_mem = root.memory();
+            aggregate_sample(pid, &tree, &threads, |p| {
+                if p == pid {
+                    Some((root_cpu, root_mem))
+                } else {
+                    system
+                        .process(Pid::from_u32(p))
+                        .map(|proc| (proc.cpu_usage() as f64, proc.memory()))
                 }
-                if let Some(p) = system.process(Pid::from_u32(*child_pid)) {
-                    cpu += p.cpu_usage() as f64;
-                    mem += p.memory();
-                }
-            }
-            Some(ProcessSample {
-                pid,
-                cpu_usage: cpu,
-                mem_bytes: mem,
             })
         })
         .collect()
@@ -148,6 +182,32 @@ mod tests {
     fn descendant_detection_handles_missing_pid() {
         let tree = tree(&[(1u32, None)]);
         assert!(!is_descendant(&tree, 777, 1), "树里没有的 pid 不算后代");
+    }
+
+    /// Linux 上 sysinfo 0.31 把 `/proc/<pid>/task/<tid>` 的线程当独立进程枚举，
+    /// 每个线程都报同一份进程 RSS。若把这些「线程伪进程」当后代累加，内存会被乘以
+    /// 线程数（实测 mysqld 39 线程：449MB 被显示成 17.5GB）。
+    /// 用假数据验证：39 个线程伪进程被排除，真实子进程仍被累加。
+    #[test]
+    fn aggregate_excludes_thread_pids_but_keeps_real_children() {
+        // 进程 100 是根；101..140 是它的 39 个线程（各报同一份 449MB）；
+        // 200 是它真正的子进程（另占 100MB）；300 是无关进程。
+        let mut tree: std::collections::HashMap<u32, Option<u32>> = [(100u32, None)].into_iter().collect();
+        let mut threads = std::collections::HashSet::new();
+        for tid in 101..=139 {
+            tree.insert(tid, Some(100));
+            threads.insert(tid);
+        }
+        tree.insert(200, Some(100)); // 真子进程
+        tree.insert(300, None); // 无关
+
+        let mem = |pid: u32| if (100..=139).contains(&pid) { 449 * 1024 * 1024 } else { 100 * 1024 * 1024 };
+        let sample = aggregate_sample(100, &tree, &threads, |pid| Some((0.0, mem(pid)))).unwrap();
+        // 只有自身 449MB + 真子进程 100MB；39 个线程不重复计入
+        assert_eq!(sample.mem_bytes, (449 + 100) * 1024 * 1024, "线程不应被累加");
+        // 不带线程集合时（Windows 语义）：线程伪进程会被算进来，正是要避免的旧行为
+        let no_filter = aggregate_sample(100, &tree, &std::collections::HashSet::new(), |pid| Some((0.0, mem(pid)))).unwrap();
+        assert_eq!(no_filter.mem_bytes, 40 * 449 * 1024 * 1024 + 100 * 1024 * 1024);
     }
 
     /// 真实进程树：spawn 一个**持有大常驻内存**的子进程，验证其内存被累加进父进程采样。
