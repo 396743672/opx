@@ -28,7 +28,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use opx_http::{static_files, token, AppContext, AppState, TicketStore, WsEventSink};
 
@@ -105,7 +105,7 @@ pub fn banner_lines(
 ///
 /// 返回 `Ok(())` 表示已对齐（含无需变更）；`Err` 仅在 token 读盘失败等
 /// 致命场景（此时不动机上已有 server）。
-pub fn sync(app: &AppHandle) -> Result<(), String> {
+pub async fn sync<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let state = app.state::<WebServerState>();
     let headless = state.headless;
 
@@ -126,8 +126,11 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // 先停旧任务（端口/token 变更都要重启）
-    abort_current(app);
+    // 先停旧任务（端口/token 变更都要重启）。必须 await 任务真正退出：
+    // JoinHandle::abort() 只是发取消信号，立刻启动新 server 会撞上旧 listener
+    // 尚未 drop → 17580 绑定失败 → headless 自动漂移到 17581（实测 Web token
+    // 重置后 17580 拒绝连接）。await 保证端口释放后再绑定。
+    abort_current(app).await;
 
     if !want.enabled {
         *state.applied.lock().unwrap_or_else(|e| e.into_inner()) = Some(want);
@@ -288,7 +291,7 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
 }
 
 /// abort 当前 server 任务（若在跑）。
-fn abort_current(app: &AppHandle) {
+async fn abort_current<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<WebServerState>();
     // MutexGuard 先落绑定再取值：guard 的 Drop 不能晚于 state（E0597）
     let taken = {
@@ -298,6 +301,8 @@ fn abort_current(app: &AppHandle) {
     drop(state);
     if let Some(task) = taken {
         task.abort();
+        // 等任务真正结束：abort 不保证 listener 已 drop，端口可能仍被占用。
+        let _ = task.await;
         tracing::info!("web server 任务已终止（配置变更/重启）");
     }
 }
@@ -305,14 +310,16 @@ fn abort_current(app: &AppHandle) {
 /// 2s 轮询 supervisor：覆盖 Tauri IPC 与 HTTP 两条设置写入路径 +
 /// token 文件外部变更（如手工重置）。首跑立即对齐（不等首个 2s）。
 pub fn spawn_supervisor(app: &AppHandle) {
-    if let Err(e) = sync(app) {
-        tracing::error!("web server 初始对齐失败: {e}");
-    }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // 首跑立即对齐（原为 spawn 外同步调用；sync 改 async 后移入任务内，
+        // 行为等价且保证 abort→绑定串行）。
+        if let Err(e) = sync(&handle).await {
+            tracing::error!("web server 初始对齐失败: {e}");
+        }
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if let Err(e) = sync(&handle) {
+            if let Err(e) = sync(&handle).await {
                 tracing::warn!("web server 对齐失败: {e}");
             }
         }

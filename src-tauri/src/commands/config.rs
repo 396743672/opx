@@ -82,14 +82,22 @@ pub fn get_web_token() -> Result<String, String> {
 /// 重置 Web 访问令牌：重生成 → 受限写盘 → 触发 server 重启（若在跑）。
 /// 旧会话的 Bearer 立即失效（重启后的 AppState 持新 token），前端 401 后
 /// 由 TokenGate 引导重新输入。返回新令牌供设置页展示/拼 URL。
-#[tauri::command]
-pub async fn reset_web_token(app: tauri::AppHandle) -> Result<String, String> {
+///
+/// 核心逻辑泛型化，供 Tauri IPC 命令与 HTTP registry 共用（两者 AppHandle
+/// 运行时类型不同：Wry vs MockRuntime）。
+pub async fn reset_web_token_inner<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<String, String> {
     let t = opx_http::token::generate();
     opx_http::token::store(&t).map_err(|e| format!("令牌写盘失败: {e}"))?;
     // 强制对齐：applied 中的旧 token 与新 token 必然不同 → supervisor 语义
-    // 下 sync 会重启 server；此处直接同步调用拿到确定性的重启结果。
-    crate::services::web_server::sync(&app)?;
+    // 下 sync 会重启 server；await 到新 server 真正绑定完成再返回，避免前端
+    // 拿到新 token 后立刻请求撞上旧 server 已停/新 server 未起的窗口。
+    crate::services::web_server::sync(app).await?;
     Ok(t)
+}
+
+#[tauri::command]
+pub async fn reset_web_token(app: tauri::AppHandle) -> Result<String, String> {
+    reset_web_token_inner(&app).await
 }
 
 /// 读取 Web 访问入口 URL 列表（批次 4.6，设置页「扫码访问」区用）。

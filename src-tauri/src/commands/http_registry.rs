@@ -1181,17 +1181,20 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
     reg.register("auto_check", |_ctx, _args| {
         Box::pin(async move { Err(ApiError::desktop_only("auto_check")) })
     });
-    // 批次 4.5：token 查看/重置为桌面专属——令牌明文不得经 HTTP 响应回传
-    //（Web 端重置后新令牌无法送回浏览器，等于把所有会话锁在门外）
+    // token 查看/重置/扫码 URL：Web 端也已放行（用户选择「完全对齐桌面端」）。
+    // 安全性由「所有 /api/* 均受 Bearer 保护」保证——调用方必须先持有有效
+    // token，不存在匿名拿到令牌的路径。前端 reset 后须 setToken(新值) 更新
+    // sessionStorage，否则 server 重启后旧 token 失效会被 401 踢出。
     reg.register("get_web_token", |_ctx, _args| {
-        Box::pin(async move { Err(ApiError::desktop_only("get_web_token")) })
+        Box::pin(async move { ok(config::get_web_token()) })
     });
-    reg.register("reset_web_token", |_ctx, _args| {
-        Box::pin(async move { Err(ApiError::desktop_only("reset_web_token")) })
+    let h = handle.clone();
+    reg.register("reset_web_token", move |_ctx, _args| {
+        let h = h.clone();
+        Box::pin(async move { ok(config::reset_web_token_inner(&h).await) })
     });
-    // 批次 4.6：访问 URL 列表（含令牌明文），同 get_web_token 桌面专属理由
     reg.register("get_web_access_urls", |_ctx, _args| {
-        Box::pin(async move { Err(ApiError::desktop_only("get_web_access_urls")) })
+        Box::pin(async move { ok(config::get_web_access_urls()) })
     });
 
     reg
