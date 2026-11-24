@@ -55,6 +55,12 @@ const routes = [
     meta: { title: 'nodeApps' },
   },
   {
+    path: '/firewall',
+    name: 'firewall',
+    component: () => import('@/modules/firewall/pages/FirewallPage.vue'),
+    meta: { title: 'firewallPorts' },
+  },
+  {
     path: '/audit',
     name: 'audit',
     component: () => import('@/modules/audit/pages/AuditLogPage.vue'),

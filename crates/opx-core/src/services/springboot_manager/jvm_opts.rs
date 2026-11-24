@@ -6,23 +6,27 @@ use crate::utils::process::hidden;
 use super::parse_java_major;
 
 /// `<home>/bin/java`（Windows 下优先 `java.exe`）
+///
+/// 走统一的可执行文件定位：Linux 的 JDK 是 `<home>/bin/java`，Windows 是
+/// `<home>/bin/java.exe`，而**存量安装**可能多一层（`<home>/jdk-25/bin/java`）。
+/// 这里若直接拼 `bin/java`，第二种目录会让 `detect_jdk_version` 返回 None，
+/// 前端表现为「选了 JDK 但 GC 下拉框没有推荐项」。
 fn java_bin(home: &Path) -> PathBuf {
-    let base = home.join("bin").join("java");
-    if cfg!(windows) {
-        let exe = base.with_extension("exe");
-        if exe.exists() {
-            return exe;
-        }
-    }
-    base
+    crate::utils::exec::resolve_bin(home, "java").unwrap_or_else(|| {
+        home.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
+    })
 }
 
 /// 跑一次 `java -version` 并返回它写到 stderr 的全文（JVM 一贯写 stderr）。
 fn java_version_output(home: &Path) -> Option<String> {
     let java = java_bin(home);
-    if !java.exists() {
+    if !java.is_file() {
         return None;
     }
+    // 存量安装的 `bin/java` 可能是 0644（历史解压未恢复权限），此时 spawn 会
+    // 直接 `os error 13`，版本探测返回 None，前端表现为「选了 JDK 但没有推荐 GC」。
+    // 探测前先补可执行位，纯读操作、幂等。
+    crate::utils::exec::ensure_executable(&java);
     let output = hidden(&java).arg("-version").output().ok()?;
     Some(String::from_utf8_lossy(&output.stderr).into_owned())
 }

@@ -212,8 +212,30 @@ npm run tauri:build
 - 支持拖拽、双击最大化/还原、最小化/最大化/关闭按钮
 - 随主题切换自动更新样式
 
+### 端口与防火墙
+- **一个页面看清所有对外端口**：opx 自身 Web 入口、内置软件、JAR 应用、站点、手动添加，五类来源汇总成一张清单，逐个显示「已放行 / 未放行」，可一键开关。
+- **只维护端口规则，绝不启停防火墙服务**。opx 不会 `ufw enable`、不会 `systemctl start firewalld`——机器该不该开防火墙由你决定，opx 只保证需要的端口是放行状态。规则写入持久配置层，日后启用防火墙时自动生效。
+- **自动判断用哪个防火墙后端**：优先选**正在生效**的那个——ufw 处于 `Status: active` → ufw；firewalld 正在运行 → firewalld；两者都没启用时才退回「装了谁」（ufw 优先），最后才是裸 nftables。这条顺序是必要的：Debian 上常见 `ufw` 已装但 `inactive`，此时往 ufw 写规则等于什么都没做，用户看到「已放行」却连不上。已安装但未启用时页面会标「未启用」并说明规则要等启用后才生效。
+- **支持 ufw（Debian/Ubuntu 系）、firewalld（RHEL/Fedora/SUSE/openEuler 系）、nftables（Debian 13+ 默认只装这个）与 Windows 防火墙**。nftables 只在系统规则集为空或没有任何 `drop`/`reject` 时接管——此时 opx 新建**独立表 `inet opx`**（`policy accept` + 纯 accept 规则），是纯加法，删掉它也不影响系统；一旦已有拦截规则就只给人工指引，**绝不改 iptables 裸规则、不往别人的链里插规则**——插错位置可能"看着放行了实际仍被 drop"，甚至把 SSH 一起挡掉、机器失联。nftables 规则不写入 `/etc/nftables.conf`，改由 opx 启动时全量重建。
+- **安装即放行**：Linux 上装完软件立刻按 provider 声明的端口放行；启动时再按实际配置校正一次（覆盖你改过端口的情况）。JAR 启动、站点保存/启用同样自动放行。放行失败只记日志，绝不让安装或启动失败。
+- **页面顶部直接回答「防火墙到底有没有在生效」**：除了显示后端类型，还给出规则是否真的在拦截——`拦截中`（只有放行的端口可达）、`未拦截`（装了没启用，或只有 opx 的登记表）、`系统拦截中`（拦截规则不是 opx 建的）。**这一点很关键**：Debian 13 的默认规则集是空的，opx 建的独立表是 `policy accept`，此时所有端口本来就对外可达，开关只记录「建议放行」，不会改变能否连上——页面会用醒目横幅说清楚，而不是让你以为开关失效。
+- **监听地址取真实套接字**：直接读 `/proc/net/tcp`、`/proc/net/tcp6`（Windows 用 `netstat`），而不是猜配置文件。服务没在跑时才回退到配置或 provider 默认值，并在文案上区分「仅监听（实际）」与「配置为（启动后仍只监听本机）」。**这**是「防火墙放行了却连不上」的真正原因——包括 MySQL 把 `bind-address=127.0.0.1` 写在 `my.cnf` 里这种配置里根本看不到的情况。
+- **第二道门可一键处理**：标「仅监听 127.0.0.1」时会提供「改为 0.0.0.0」，改完会**同时写入配置文件**（如 MySQL 的 `my.cnf`，写入前自动备份）并提示重启该软件；监听地址写死在程序里、opx 无法代改的软件只给提示，不放一个点了没用的按钮。MySQL 的绑定地址也已作为可配置项出现在配置编辑里。
+- **对外访问地址收进系统配置**：设置页「对外访问 → 服务默认监听地址」会列出本机所有网卡地址（Docker / VPN / 双网卡都能看清），由你指定要对外的那块；新装服务的默认监听地址就用它，不再写死 `127.0.0.1`。MySQL 的 `bind-address` 与 Redis 的 `bind` 也在各自配置页里可视化编辑（输入框 + 本机地址快捷选项 + 「仅本机 / 所有网卡 / 指定网卡」的可达性提示）。
+- **绑定到具体网卡不再被误判启动失败**：健康检查与优雅停止改为跟随实际监听地址（`0.0.0.0`/`::` 才回落 `127.0.0.1`）。此前 MySQL/Redis 绑 `192.168.200.128` 时进程明明已起来，健康检查却探回环超时，界面报「启动失败」。
+- **应用层的第二道门也一并处理**：MySQL 只允许 `root@localhost` 时，外部客户端会拿到 `1130 Host ... is not allowed`——配置页会给出提示，并提供「允许 root 远程登录」（用已保存的初始化密码在实例内创建/更新 `root@'%'`，需用户手动确认）。Redis 的 `protected-mode` 只认「默认用户有没有密码」，与 bind 无关：无密码 + 对外监听时必须关（安装时自动按此规则写入，配置页也会提示并可一键切换），否则外部连接一律 `DENIED … protected mode`。
+- **源码编译阶段可见**：Redis / nginx / PostgreSQL 在 *nix 上需要现场编译，界面会显示「编译中」（不确定进度条）而不是停在「解压中 99%」让人以为卡死。
+- **按来源 IP 放行端口**：清单里**每一个端口**（被管软件 / JAR 应用 / 站点 / opx 自身 / 手动添加）都可用行内「来源限定」按钮配置来源 IP / 网段（CIDR，可多个）：填了来源则只放行这些地址（行内以芯片展示），保存为整组覆盖；「添加端口」同样支持。「已放行」开关按组同步（撤销时全网规则与来源规则一起撤）。ufw / firewalld（富规则）/ nftables（拼接集合）/ Windows（remoteip）四种后端均支持。
+- **自身端口随包放行**：deb/rpm 的 `postinst` 会自动放行 17580/tcp（可用 `OPX_WEB_PORT` 覆盖），引导页也会显示当前端口的真实放行状态。
+- 数据库类高危端口（3306/5432/6379/27017 等）带风险提示；手动添加的端口支持 TCP/UDP 选择，可随时移除并撤销规则。
+- **多网卡机器填来源 IP 要按实际出口网卡**：来源限定匹配的是**连接方到达服务器时的源地址**。例如管理机同时有以太网 `192.168.0.7` 和 VMware 虚拟网卡 `192.168.200.1`，访问 `192.168.200.128` 走的是虚拟网卡，此时来源必须填 `192.168.200.1`；填以太网地址会一直被拒（源 IP 不匹配＝DROP，和端口是否「已放行」无关）。
+- **MySQL 生成配置消除启动警告**：新装实例的 `my.cnf` 里 `sql_mode` 同时包含 `STRICT_TRANS_TABLES` 与三个废弃模式（`NO_ZERO_DATE` / `NO_ZERO_IN_DATE` / `ERROR_FOR_DIVISION_BY_ZERO`）。MySQL 8.0+ 要求这三者与 strict 模式同开或同关，只开 strict 会在启动时打印 MY-010915 警告；9.x 仍接受该组合。存量实例可在配置里补上这三项并重启消除警告。
+
 ### 无头模式与 Linux 服务
 - `opx --headless` 无窗口运行——浏览器即唯一入口（Web 管理界面，默认端口 17580）。适合无桌面环境的服务器。
+- 浏览器里同样能注册 Spring Boot 应用：无头/Web 模式把「浏览」换成上传按钮，JAR 直接传到服务器 `data/uploads/`（上限 200 MB），无需先通过 shell 把文件放到服务器上。
+- 另外两处上传同理：站点的静态包（站点路由里选「上传」）与 Node 应用入口文件，在 Web 模式下都由浏览器直接选文件上传——站点 zip 暂存到 `<nginx>/sites-data/.pending/`、保存站点时解压；Node 入口落到 `data/uploads/node/`、保存时复制进 `node-apps/<应用名>/`，与桌面端落点完全一致。
+- 部署产物会归一权限，保证「后续还能覆盖、非 root 的 Web 服务也能读」：上传的 JAR / Node 入口为 0644（Windows 清只读位，否则下次换包覆盖会 Permission denied）；解压出的站点目录统一为目录 0755 / 文件 0644（nginx worker 往往不是 opx 的运行用户，0600 会直接变成 HTTP 403）。
 - 全新安装首启默认开启 Web 入口与局域网访问，并强制进入一次性引导页（语言 / 端口 / 局域网开关，含 HTTP 明文风险提示）。含令牌的完整访问地址会打印到控制台（systemd 下 `journalctl -u opx`）。
 - 端口冲突自愈：默认端口（17580）或自动挑选端口被占用时，自动向后重试至 17599 并回写实际端口；用户显式配置的端口被占则明确报错、绝不静默漂移。
 - Linux 包（deb / rpm）内置 systemd 单元与维护脚本（安装即 `systemctl enable --now opx`）。数据根通过 `OPX_APP_ROOT` 环境变量指向 `/var/lib/opx`——该变量可把整套便携布局（settings.json / apps / config / logs）重定向到任意目录。未设置该变量且从系统前缀直接运行（如 `/usr/bin/opx`）时，用户级数据回退到 `$XDG_DATA_HOME/opx`（默认 `~/.local/share/opx`），不再写二进制所在目录。
@@ -344,8 +366,8 @@ rm -rf dist
 | 命令 | 产物 | 路径 | 用途 |
 |---|---|---|---|
 | `npm run tauri:build` | MSI + NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/{msi,nsis}/` + `target/release/opx.exe` | 完整发版分发 |
-| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.4_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
-| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.4_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
+| `npm run tauri:build:nsis` | 仅 NSIS 安装包 + 免安装 exe | `src-tauri/target/release/bundle/nsis/opx_0.5.10_x64-setup.exe` + `target/release/opx.exe` | 普通用户分发（国内推荐，无需 WiX） |
+| `npm run tauri:build:msi` | 仅 MSI 安装包 + 免安装 exe | `src-tauri/target/release/bundle/msi/opx_0.5.10_x64_en-US.msi` + `target/release/opx.exe` | 企业部署（组策略友好） |
 | `npm run tauri:build:debug` | Debug 安装包 + Debug 免安装 exe | `src-tauri/target/debug/bundle/nsis/` + `target/debug/opx.exe` | 快速验证打包流程 |
 | `npm run tauri:dev` | 开发模式运行（不产文件） | — | 开发调试，热重载 |
 | `npm run build` | 前端静态资源 | `dist/` | 仅前端构建验证 |
@@ -371,7 +393,7 @@ rm -rf dist
 6. 发版前确认 `git status` 干净、已提交推送
 
 ### 版本号管理
-打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.4`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
+打包版本来自 `tauri.conf.json` 的 `version` 字段（当前 `0.5.10`）。发新版本时同步更新 `tauri.conf.json`、`package.json` 与 `Cargo.toml` 的 `version`，保持一致——CI 发版仅在新版本号没有对应 `v<版本>` tag 时触发。
 
 - **常见问题**：
   - 缺少 Rust 环境：需从 https://rustup.rs/ 安装

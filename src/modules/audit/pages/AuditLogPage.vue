@@ -108,6 +108,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@/utils/ipc'
 import { save } from '@tauri-apps/plugin-dialog'
+import { isDesktop } from '@/utils/transport'
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
@@ -215,6 +216,11 @@ async function loadAll() {
 }
 
 async function onExport() {
+  // 导出依赖桌面端「另存为」对话框；浏览器里没有该插件，直接调只会抛 JS 异常
+  if (!isDesktop) {
+    toast(t('webDesktopOnlyHint'), 'err')
+    return
+  }
   exporting.value = true
   try {
     const dest = await save({ defaultPath: 'audit-log.csv', title: t('auditExport') })

@@ -5,6 +5,23 @@ use std::path::Path;
 
 use crate::models::software::ArchiveFormat;
 
+/// 解包后恢复归档里记录的 unix 权限位（`0` / 无记录时保持系统默认）。
+///
+/// 为什么必须做：`File::create` 一律落 0644，Linux 官方包里的 `bin/java`、`bin/node`、
+/// `sbin/nginx` 等可执行文件会失去执行位，启动直接 `权限不够 (os error 13)`。
+/// 反过来，站点静态包又不能带执行位/不可读位——那由 [`normalize_public_mode`] 收口。
+#[cfg(unix)]
+fn apply_unix_mode(path: &Path, mode: Option<u32>) {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(bits) = mode.filter(|m| *m != 0) else {
+        return;
+    };
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(bits & 0o7777));
+}
+
+#[cfg(not(unix))]
+fn apply_unix_mode(_path: &Path, _mode: Option<u32>) {}
+
 /// 解压进度回调：(已解压字节数, 总字节数)。
 /// 约定与 installer.rs 内「下载进度回调」一致：由调用方在闭包里节流后 emit install-progress 事件
 /// （phase/percent 字段对齐下载），便于前端统一处理。extract 已知总量故省去 Option。
@@ -40,6 +57,10 @@ where
                 }
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
+            // 回归：zip 也记录 unix 权限（`external_attributes` 高位），旧实现只 `File::create`
+            // 一律落成 0644，Linux 包里 bin/ 下的可执行文件就丢了执行位 → `os error 13`。
+            // Windows 打的 zip 通常没有 unix 模式，返回 None 时保持默认。
+            apply_unix_mode(&outpath, file.unix_mode());
         }
         extracted += size;
         on_progress(extracted, total);
@@ -115,9 +136,11 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
     let mut extracted: u64 = 0;
     for entry in archive.entries()? {
         let mut entry = entry?;
-        let header = entry.header();
-        let entry_size = header.size()?;
-        let entry_type = header.entry_type();
+        // 一次取出 header 里的标量，避免后续 `&mut entry` 与 `header` 借用冲突（E0502）。
+        let (entry_size, entry_type, entry_mode) = {
+            let header = entry.header();
+            (header.size()?, header.entry_type(), header.mode()?)
+        };
         let outpath = dest_dir.join(entry.path()?.to_path_buf());
         match entry_type {
             tar::EntryType::Directory => {
@@ -127,8 +150,19 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
                 if let Some(parent) = outpath.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let mut outfile = std::fs::File::create(&outpath)?;
-                std::io::copy(&mut entry, &mut outfile)?;
+                // 回归：必须恢复 tar 记录的文件模式。旧实现用 File::create（默认 0644），
+                // 导致 Linux 官方包内 bin/mysqld / sbin/nginx 等可执行文件解压后失去执行位，
+                // 启动报 `权限不够 (os error 13)`。
+                {
+                    use std::io::Write;
+                    let mut outfile = std::fs::File::create(&outpath)?;
+                    std::io::copy(&mut entry, &mut outfile)?;
+                    outfile.flush()?;
+                }
+                #[cfg(unix)]
+                apply_unix_mode(&outpath, Some(entry_mode));
+                #[cfg(not(unix))]
+                let _ = entry_mode;
             }
             // 软/硬链接等其它类型：当前软件包不含，跳过以保证安装流程不中断
             _ => {}
@@ -136,6 +170,37 @@ fn unpack_tar<R: Read, F: FnMut(u64, u64)>(
         extracted += entry_size;
         on_progress(extracted, total);
     }
+    Ok(())
+}
+
+/// tar 解包后把「唯一的顶层目录」内容上提到 `dest_dir` 根。
+///
+/// 为什么不能像 zip 那样边解边剥：tar.gz / tar.xz 是**不可回退的流**，解压前无法
+/// 预扫描条目路径判断是否存在公共顶层目录。故采用「先按原样解，再拍平」：
+/// 若 `dest_dir` 下只有一个目录、没有其它条目，就把它的子项逐个 `rename` 上来并删掉
+/// 该空目录（同盘 rename 是元数据操作，代价可忽略）。
+///
+/// 必须做的原因：官方 Linux 包都是「顶层目录 + 内容」结构——
+/// Adoptium `jdk-25.0.5.1+2/bin/java`、nginx `nginx-1.27.x/sbin/nginx`、
+/// PostgreSQL 源码包 `configure`。不拍平则 `bin/java`、`configure` 都找不到，
+/// 实测表现为应用卡片报「JDK 的 java 不存在：…/apps/jdk/<ver>/bin/java」。
+pub fn flatten_single_root(dest_dir: &Path) -> Result<()> {
+    let entries: Vec<_> = fs::read_dir(dest_dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    if entries.len() != 1 || !entries[0].file_type()?.is_dir() {
+        return Ok(());
+    }
+    let root = entries[0].path();
+    let children: Vec<_> = fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
+    // 先全量校验目标名不冲突，再动作：中途发现冲突会留下「拍一半」的畸形目录。
+    for child in &children {
+        if dest_dir.join(child.file_name()).exists() {
+            return Ok(());
+        }
+    }
+    for child in children {
+        fs::rename(child.path(), dest_dir.join(child.file_name()))?;
+    }
+    let _ = fs::remove_dir(&root);
     Ok(())
 }
 
@@ -210,10 +275,51 @@ where
                 }
             }
             std::io::copy(&mut file, &mut std::fs::File::create(&outpath)?)?;
+            apply_unix_mode(&outpath, file.unix_mode());
         }
         extracted += size;
         on_progress(extracted, total);
     }
+    Ok(())
+}
+
+/// 把静态站点目录统一成「Web 服务器可读」的权限：目录 `0755`、文件 `0644`。
+///
+/// 站点内容由 nginx worker 读取，而 worker 往往不是 opx 的运行用户（Linux 上通常是
+/// `nobody` / `nginx`）。若上传包是按 `0600` 落盘的（或进程 umask 是 `077`），
+/// 文件属主之外的读请求会被拒，浏览器端表现为 **403 Forbidden**，日志里是
+/// `Permission denied`——排查时很难联想到「上传权限」。
+///
+/// 静态站点不需要任何执行位，故这里**收回**执行位而不保留：带着 `0755` 的 HTML
+/// 只是噪声，更重要的是避免上传包里的脚本被误执行。
+#[cfg(unix)]
+pub fn normalize_public_mode(root: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn walk(dir: &Path) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ft = entry.file_type()?;
+            if ft.is_dir() {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o755));
+                walk(&path)?;
+            } else if ft.is_file() {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o644));
+            }
+            // 软链保持原样：改权限会作用到目标文件，可能影响站点目录之外的内容
+        }
+        Ok(())
+    }
+
+    walk(root)?;
+    // 根目录本身也要可被 worker 进入（否则其下所有文件都 403）
+    let _ = fs::set_permissions(root, fs::Permissions::from_mode(0o755));
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn normalize_public_mode(_root: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -365,6 +471,150 @@ mod tests {
         extract_tar_xz(&xz_path, &out, |_, _| {}).unwrap();
         let got = std::fs::read_to_string(out.join("sub").join("hello.txt")).unwrap();
         assert_eq!(got, "hello xz");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn extract_tar_gz_preserves_executable_mode() {
+        // 回归：MySQL/Linux 官方 tar.xz 内 bin/mysqld 为 0755，旧实现用 File::create
+        // 解压后变成 0644 → 启动报 `权限不够 (os error 13)`。
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_tar_mode_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tar_path = dir.join("app.tar");
+        {
+            let f = std::fs::File::create(&tar_path).unwrap();
+            let mut tb = tar::Builder::new(f);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(3);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tb.append_data(&mut header, "bin/mysqld", &b"abc"[..]).unwrap();
+            tb.into_inner().unwrap();
+        }
+        let gz_path = dir.join("app.tar.gz");
+        {
+            let mut src = std::io::BufReader::new(std::fs::File::open(&tar_path).unwrap());
+            let gz = std::fs::File::create(&gz_path).unwrap();
+            let mut dst = flate2::write::GzEncoder::new(gz, flate2::Compression::default());
+            std::io::copy(&mut src, &mut dst).unwrap();
+            dst.finish().unwrap();
+        }
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_tar_gz(&gz_path, &out, |_, _| {}).unwrap();
+        let mode = std::fs::metadata(out.join("bin").join("mysqld"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "解压后应保留 tar 内的可执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：zip 也记录 unix 权限（`external_attributes` 高位）。旧实现只 `File::create`，
+    /// 解出来一律 0644 —— Linux 软件若以 zip 分发，`bin/` 下的可执行文件就会 `os error 13`。
+    #[test]
+    #[cfg(unix)]
+    fn extract_zip_preserves_executable_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_zip_mode_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("app.zip");
+        {
+            let f = std::fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(0o755);
+            zw.start_file("bin/node", opts).unwrap();
+            zw.write_all(b"#!/bin/sh\n").unwrap();
+            zw.finish().unwrap();
+        }
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_zip(&zip_path, &out, |_, _| {}).unwrap();
+        let mode = std::fs::metadata(out.join("bin").join("node"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "解压后应保留 zip 内的可执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 站点静态包要「nginx worker 可读」：目录 0755 / 文件 0644，且收回执行位。
+    #[test]
+    #[cfg(unix)]
+    fn normalize_public_mode_makes_site_files_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("opx_site_mode_{}", uuid::Uuid::new_v4()));
+        let sub = dir.join("assets");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("index.html"), b"<h1>hi</h1>").unwrap();
+        std::fs::write(sub.join("app.js"), b"//").unwrap();
+        // 模拟 umask 077 / 只读包：先全设成 0600/0700
+        for p in [dir.clone(), sub.clone()] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        for p in [dir.join("index.html"), sub.join("app.js")] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        normalize_public_mode(&dir).unwrap();
+
+        let mode_of = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_of(&dir), 0o755, "站点根目录必须可进入");
+        assert_eq!(mode_of(&sub), 0o755, "子目录必须可进入");
+        assert_eq!(mode_of(&dir.join("index.html")), 0o644, "文件必须可读");
+        assert_eq!(mode_of(&sub.join("app.js")), 0o644, "文件必须可读且不带执行位");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回归：Adoptium 官方 Linux 包是 `jdk-25.0.5.1+2/bin/java` 单顶层目录结构，
+    /// 不拍平会让 `apps/jdk/<ver>/bin/java` 不存在（应用卡片报「java 不存在」）。
+    #[test]
+    fn flatten_single_root_hoists_single_top_dir() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(out.join("jdk-25.0.5.1+2").join("bin")).unwrap();
+        std::fs::write(out.join("jdk-25.0.5.1+2").join("bin").join("java"), b"#!/bin/sh").unwrap();
+        std::fs::write(out.join("jdk-25.0.5.1+2").join("release"), b"JAVA_VERSION=25").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("bin").join("java").exists(), "bin/java 应被上提到根");
+        assert!(out.join("release").exists(), "release 应被上提到根");
+        assert!(!out.join("jdk-25.0.5.1+2").exists(), "空顶层目录应被删除");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 已经拍平（多个同级条目）的目录不能被误动。
+    #[test]
+    fn flatten_single_root_keeps_multi_entry_dirs() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(out.join("bin")).unwrap();
+        std::fs::write(out.join("bin").join("x"), b"x").unwrap();
+        std::fs::write(out.join("README"), b"r").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("bin").join("x").exists());
+        assert!(out.join("README").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 只有单个「文件」（非目录）时也不能被搬走/吞掉。
+    #[test]
+    fn flatten_single_root_ignores_single_file() {
+        let dir = std::env::temp_dir().join(format!("opx_flat_{}", uuid::Uuid::new_v4()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("only.bin"), b"data").unwrap();
+
+        flatten_single_root(&out).unwrap();
+
+        assert!(out.join("only.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

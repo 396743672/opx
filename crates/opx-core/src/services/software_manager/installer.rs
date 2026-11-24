@@ -15,6 +15,7 @@ use crate::models::software::{
     InstalledSoftware, MirrorSource, SoftwareStatus,
 };
 use crate::services::software_manager::providers::{all_providers, InstallContext};
+use crate::services::software_manager::start_stop::collect_configured_ports;
 use crate::services::software_manager::SoftwareManager;
 use crate::utils::{archive, download, paths};
 use chrono::Utc;
@@ -56,6 +57,29 @@ pub fn register_install_audit(install_id: &str, action: &str, target: &str, deta
             install_id.to_string(),
             (action.to_string(), target.to_string(), detail.to_string()),
         );
+}
+
+/// 安装登记时的初始 config：与 provider 的 `post_install` 写进配置文件的值保持一致。
+fn install_defaults_for(key: &str) -> serde_json::Value {
+    all_providers()
+        .into_iter()
+        .find(|p| p.key() == key)
+        .map(|p| p.install_defaults())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// 通知前端「开始源码编译」（仅对有构建步骤的 provider）。
+///
+/// 编译阶段没有任何进度可比（`make` 不报百分比），前端据此把进度条切成
+/// 不确定态并显示「编译中」，而不是停在上一步的「解压中 99%」。
+fn emit_build_phase(sink: &Arc<dyn EventSink>, install_id: &str, builds: bool) {
+    if !builds {
+        return;
+    }
+    emit_event(
+        sink,
+        serde_json::json!({ "install_id": install_id, "phase": "building" }),
+    );
 }
 
 fn emit_event(sink: &Arc<dyn EventSink>, payload: serde_json::Value) {
@@ -116,6 +140,30 @@ impl ThrottledEmitter {
         } else {
             false
         }
+    }
+}
+
+/// 安装完成后把该实例声明的端口同步到系统防火墙（Linux ufw/firewalld、Windows）。
+///
+/// 只在「内置软件」的两条安装路径调用（在线镜像 / 本地内置资源）。失败只记日志：
+/// 见 `crate::services::firewall` 模块文档第 3 条 —— 放行失败绝不能导致「装不上」。
+///
+/// 此处实例的 config 尚为空，端口取 provider schema 的默认值；用户在配置表单里
+/// 改过端口时，启动路径（`start_stop::do_start_software`）会按实际 config 再校正。
+fn allow_ports_after_install(installed: &InstalledSoftware, key: &str) {
+    let Some(provider) = all_providers().into_iter().find(|p| p.key() == key) else {
+        return;
+    };
+    let ports = collect_configured_ports(installed, Some(&*provider));
+    if ports.is_empty() {
+        return;
+    }
+    let (allowed, errors) = crate::services::firewall::allow_tcp(&ports);
+    if !allowed.is_empty() {
+        eprintln!("[firewall] 安装 {} 后已放行端口: {:?}", key, allowed);
+    }
+    for e in errors {
+        eprintln!("[firewall] 放行 {} 端口失败（不影响安装）: {}", key, e);
     }
 }
 
@@ -269,7 +317,7 @@ pub async fn install_software(
             install_time: now,
             status: SoftwareStatus::Unknown,
             port: 0,
-            config: serde_json::json!({}),
+            config: install_defaults_for(&params.key),
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
@@ -287,6 +335,8 @@ pub async fn install_software(
             depends_on: vec![],
             auto_restart: false,
         };
+        // 安装即放行端口（失败不影响安装，见 allow_ports_after_install 文档）
+        allow_ports_after_install(&installed, &params.key);
         manager.add_installed(installed)?;
 
         if params.key == "jre" && params.set_as_default_jre {
@@ -451,6 +501,7 @@ pub async fn install_custom(
             archive::extract_zip(archive_path, &install_path, on_progress)?;
         } else {
             archive::extract_tar_gz(archive_path, &install_path, on_progress)?;
+            archive::flatten_single_root(&install_path)?;
         }
 
         emit_event(
@@ -689,10 +740,13 @@ pub async fn download_and_extract(
                 archive::extract_zip_flatten(&cache_path2, &install_path2, on_progress)
             }
             ArchiveFormat::TarGz => {
-                archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)
+                archive::extract_tar_gz(&cache_path2, &install_path2, on_progress)?;
+                // 官方 Linux 包多为「顶层目录 + 内容」，tar 流无法预扫描，只能解完再拍平
+                archive::flatten_single_root(&install_path2)
             }
             ArchiveFormat::TarXz => {
-                archive::extract_tar_xz(&cache_path2, &install_path2, on_progress)
+                archive::extract_tar_xz(&cache_path2, &install_path2, on_progress)?;
+                archive::flatten_single_root(&install_path2)
             }
             ArchiveFormat::Executable => {
                 let dest_file = install_path2.join(
@@ -725,6 +779,7 @@ pub async fn download_and_extract(
             params.version.clone(),
             install_path.to_string_lossy().to_string(),
         );
+        emit_build_phase(&sink, &install_id, provider.post_install_builds());
         provider.post_install(&ctx)?;
     }
 
@@ -1106,11 +1161,17 @@ async fn install_from_builtin(
         );
 
         // 7. post_install
-        if let Some(provider) = all_providers().into_iter().find(|p| p.key() == params.key) {
+        let provider_opt = all_providers().into_iter().find(|p| p.key() == params.key);
+        if let Some(provider) = &provider_opt {
             let ctx = InstallContext::new(
                 params.key.clone(),
                 params.version.clone(),
                 install_path.to_string_lossy().to_string(),
+            );
+            emit_build_phase(
+                &sink,
+                &install_id,
+                provider.post_install_builds(),
             );
             provider.post_install(&ctx)?;
         }
@@ -1137,7 +1198,7 @@ async fn install_from_builtin(
             install_time: now,
             status: SoftwareStatus::Unknown,
             port: 0,
-            config: serde_json::json!({}),
+            config: install_defaults_for(&params.key),
             is_custom: false,
             auto_start_on_app_start: false,
             startup_order: 0,
@@ -1154,6 +1215,8 @@ async fn install_from_builtin(
             depends_on: vec![],
             auto_restart: false,
         };
+        // 安装即放行端口（失败不影响安装，见 allow_ports_after_install 文档）
+        allow_ports_after_install(&installed, &params.key);
         manager.add_installed(installed)?;
 
         if params.key == "jre" && params.set_as_default_jre {

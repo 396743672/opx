@@ -31,7 +31,12 @@
         </div>
         <div class="flex gap-2">
           <input v-model="l.root" class="input flex-1 font-mono" :placeholder="$t('staticRoot')" :readonly="!!l.root && l.source === 'Upload'" :title="l.root && l.source === 'Upload' ? $t('uploadPathReadonly') : ''" />
+          <!-- 桌面端：原生文件对话框；Web 端：浏览器没有本机路径，只能 <input type=file> 读成 base64 传给后端 -->
           <button v-if="l.source === 'Upload' && isDesktop" class="btn" @click="upload(l)"><Icon icon="mdi:upload" /> {{ $t('uploadZip') }}</button>
+          <label v-else-if="l.source === 'Upload'" class="btn upload-btn" :class="{ disabled: !!uploading }">
+            <Icon icon="mdi:upload" /> {{ uploading ? $t('uploading') : $t('uploadZip') }}
+            <input type="file" accept=".zip,application/zip" class="file-input" :disabled="!!uploading" @change="onWebUpload(l, $event)" />
+          </label>
         </div>
       </div>
 
@@ -87,6 +92,7 @@
 import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
+import { fileToBase64 } from '@/utils/file'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isDesktop } from '@/utils/transport'
 import type { SiteLocation } from '@/models/website'
@@ -97,6 +103,8 @@ const emit = defineEmits<{ 'update:modelValue': [SiteLocation[]] }>()
 const model = props.modelValue
 const locked = props.locked ?? false
 const uploadError = ref('')
+/** Web 端上传中：用于禁用按钮与文案反馈（zip 可能几十 MB，读入+传输有可感知耗时） */
+const uploading = ref(false)
 
 function add() {
   model.push({
@@ -140,6 +148,35 @@ async function upload(l: SiteLocation) {
     uploadError.value = String(e)
   }
 }
+
+/**
+ * Web 端上传：浏览器给不出本机路径，读成 base64 交后端落盘。
+ *
+ * 后端仍返回同一个 `_pending_/…zip` 标记，解压与换 root 由「保存站点」时的
+ * `save_website` 统一完成——两条上传路径的落点完全一致，不会出现行为差异。
+ */
+async function onWebUpload(l: SiteLocation, e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  uploadError.value = ''
+  uploading.value = true
+  try {
+    const dataBase64 = await fileToBase64(file)
+    l.root = await invoke<string>('upload_site_bundle_data', {
+      id: props.siteId,
+      locPath: l.path,
+      fileName: file.name,
+      dataBase64,
+    })
+    emit('update:modelValue', model)
+  } catch (err) {
+    uploadError.value = typeof err === 'string' ? err : String(err)
+  } finally {
+    uploading.value = false
+    input.value = '' // 允许重复选同一文件
+  }
+}
 </script>
 
 <style scoped>
@@ -154,4 +191,7 @@ async function upload(l: SiteLocation) {
 .btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-card); color: var(--color-foreground); font-size: 13px; cursor: pointer; }
 .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
 .btn.danger { color: #e5484d; }
+/* Web 端上传：<label> 包住隐藏 input，点击 label 即触发文件选择 */
+.upload-btn.disabled { opacity: 0.6; cursor: not-allowed; }
+.file-input { display: none; }
 </style>

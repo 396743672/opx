@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::models::software::{
-    ArchiveFormat, ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource,
+    ArchiveInfo, CatalogEntry, CatalogVersion, MirrorSource,
     SoftwareCategory,
 };
 
@@ -66,14 +66,13 @@ impl SoftwareProvider for JreProvider {
                 if let Ok(body) = r.text() {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(bin) = json.get(0) {
-                            let default_ver = format!("{}", major);
-                            let ver = bin["version"]["semver"].as_str().unwrap_or(&default_ver);
+                            let ver = super::jdk::version_from_asset(bin, major);
                             let link = bin["binary"]["package"]["link"].as_str();
                             if let Some(url) = link {
                                 versions.push(CatalogVersion {
-                                    version: ver.to_string(),
+                                    version: ver,
                                     mirrors: vec![MirrorSource { name: "i18n:official".to_string(), url: url.to_string(), builtin: None }],
-                                    archive: ArchiveInfo { format: ArchiveFormat::Zip, size: None, sha256: None },
+                                    archive: ArchiveInfo { format: super::jdk::archive_format_for_url(url), size: None, sha256: None },
                                 });
                             }
                         }

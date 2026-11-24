@@ -19,7 +19,13 @@
             <div class="file-row">
               <input class="input input-mono flex-1" :value="form.jar_path" readonly placeholder="..." />
               <button v-if="isDesktop" class="btn" @click="selectJar">{{ $t('browse') }}</button>
+              <!-- Web 端：浏览器无法访问服务器文件系统，选文件后 base64 上传到服务器 -->
+              <label v-else class="btn upload-btn">
+                {{ jarUploading ? $t('uploading') : $t('browse') }}
+                <input type="file" accept=".jar" class="file-input" :disabled="jarUploading" @change="onWebJarSelected" />
+              </label>
             </div>
+            <div v-if="jarUploadError" class="text-xs text-destructive mt-1">{{ jarUploadError }}</div>
           </div>
 
           <!-- App name -->
@@ -262,6 +268,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isDesktop } from '@/utils/transport'
+import { invoke } from '@/utils/ipc'
+import { fileToBase64 } from '@/utils/file'
 import { useI18n } from 'vue-i18n'
 import { useSpringBootStore } from '../stores/springboot'
 import type { SpringBootApp, JvmOptsTemplate, JarInfo, GcOption, GcUnsupportedReason } from '@/models/springboot'
@@ -423,6 +431,10 @@ function generateOptimalParams() {
   extraFlagsText.value = flags.join('\n')
   recommendedClicked.value = true
 }
+
+// Web 端 JAR 上传状态
+const jarUploading = ref(false)
+const jarUploadError = ref('')
 
 // Form state
 const form = reactive({
@@ -625,36 +637,61 @@ onMounted(async () => {
   }
 })
 
+/** 选中/上传 JAR 后的公共处理：设路径与名称、读端口、识别 Spring Boot 版本 */
+async function applyJarPath(path: string, displayName: string) {
+  form.jar_path = path
+  if (!form.name) {
+    form.name = displayName.replace(/\.jar$/i, '')
+  }
+  // ponytail: 自动从 JAR 内 application.yml/properties 读取端口
+  try {
+    const port = await store.readJarPort(path)
+    if (port !== null && port > 0) form.port = port
+  } catch (e) {
+    console.error('读取 JAR 端口失败:', e)
+  }
+  // 识别构建该 JAR 的 Spring Boot 版本 → 提示所需运行时
+  // （3.x/4.x 需 17+，选错会在启动时直接 UnsupportedClassVersionError）
+  jarInfoLoading.value = true
+  try {
+    jarInfo.value = await store.readJarInfo(path)
+  } catch (e) {
+    console.error('读取 JAR 信息失败:', e)
+    jarInfo.value = null
+  } finally {
+    jarInfoLoading.value = false
+  }
+}
+
+/** 桌面端：Tauri dialog 选本地文件 */
 async function selectJar() {
   const selected = await open({
     multiple: false,
     filters: [{ name: 'JAR', extensions: ['jar'] }],
   })
   if (selected && typeof selected === 'string') {
-    form.jar_path = selected
-    if (!form.name) {
-      const parts = selected.split(/[\\/]/)
-      const filename = parts[parts.length - 1] || ''
-      form.name = filename.replace(/\.jar$/i, '')
-    }
-    // ponytail: 自动从 JAR 内 application.yml/properties 读取端口
-    try {
-      const port = await store.readJarPort(selected)
-      if (port !== null && port > 0) form.port = port
-    } catch (e) {
-      console.error('读取 JAR 端口失败:', e)
-    }
-    // 识别构建该 JAR 的 Spring Boot 版本 → 提示所需运行时
-    // （3.x/4.x 需 17+，选错会在启动时直接 UnsupportedClassVersionError）
-    jarInfoLoading.value = true
-    try {
-      jarInfo.value = await store.readJarInfo(selected)
-    } catch (e) {
-      console.error('读取 JAR 信息失败:', e)
-      jarInfo.value = null
-    } finally {
-      jarInfoLoading.value = false
-    }
+    const parts = selected.split(/[\\/]/)
+    await applyJarPath(selected, parts[parts.length - 1] || '')
+  }
+}
+
+/** Web 端：读浏览器文件为 base64 → 上传到服务器落盘 → 用返回的服务端路径继续 */
+async function onWebJarSelected(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  jarUploadError.value = ''
+  jarUploading.value = true
+  try {
+    const dataBase64 = await fileToBase64(file)
+    const savedPath = await invoke<string>('upload_jar_file', { name: file.name, dataBase64 })
+    await applyJarPath(savedPath, file.name)
+  } catch (err) {
+    console.error('Web JAR 上传失败:', err)
+    jarUploadError.value = typeof err === 'string' ? err : String(err)
+  } finally {
+    jarUploading.value = false
+    input.value = '' // 允许重复选同一文件
   }
 }
 
@@ -888,6 +925,19 @@ async function save() {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+/* Web 端上传按钮：label 包住隐藏的 file input，点击即触发选文件 */
+.upload-btn {
+  position: relative;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
 }
 .flex-1 {
   flex: 1;

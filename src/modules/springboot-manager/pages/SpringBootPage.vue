@@ -248,6 +248,11 @@ interface ImportSummary { apps: number; warnings: string[] }
 
 async function doExport() {
   showExportDialog.value = false
+  // 导出走桌面端「另存为」对话框：Web 模式没有插件，直接调会抛 JS 异常
+  if (!isDesktop) {
+    toast(t('webDesktopOnlyHint'), 'err')
+    return
+  }
   try {
     const filePath = await save({ filters: [{ name: 'OPX Export', extensions: ['zip'] }], defaultPath: 'opx-springboot-export.zip' })
     if (!filePath) return

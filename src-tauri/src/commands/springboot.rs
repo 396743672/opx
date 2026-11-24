@@ -43,6 +43,58 @@ pub async fn create_springboot_app(
     })
 }
 
+/// Web 端上传 JAR：接收 base64 字节，写到 data_dir/uploads/，返回绝对路径供注册表单使用。
+///
+/// 桌面端走 Tauri dialog 选本地文件（selectJar）；Web 浏览器无法访问服务器文件系统，
+/// 故经此命令把浏览器选中的文件传到服务器落盘。文件名严格 sanitize 防路径穿越，
+/// 单次上限 200MB（base64 解码后），超限拒绝避免内存/磁盘打满。
+#[tauri::command]
+pub async fn upload_jar_file(name: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine as _;
+
+    let safe = safe_upload_name(&name);
+    if safe.is_empty() {
+        return Err("文件名不合法（仅支持字母、数字、点、下划线、连字符）".to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("文件数据 base64 解码失败: {e}"))?;
+    const MAX: usize = 200 * 1024 * 1024;
+    if bytes.len() > MAX {
+        return Err(format!("文件超过 {} MB 上限", MAX / 1024 / 1024));
+    }
+
+    let dir = opx_core::utils::paths::data_dir().join("uploads");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建上传目录失败: {e}"))?;
+    // 加时间戳前缀避免同名覆盖，同时保留 .jar 后缀供 jar 解析
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let file_name = format!("{ts}_{safe}");
+    let path = dir.join(&file_name);
+    opx_core::utils::paths::write_file_restricted(&path, &bytes)
+        .map_err(|e| format!("写入上传文件失败: {e}"))?;
+    // 上传的 jar 不是敏感文件：放开成 0644（Windows 清只读位）。
+    // 否则 `create_app` 用 `fs::copy` 会把这套权限带到 `app.jar`，下次换包覆盖就失败。
+    opx_core::utils::paths::relax_file_permissions(&path);
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// 上传文件名白名单：只保留 basename 与 `[A-Za-z0-9._-]`，杜绝 `../` 穿越。
+///
+/// 不依赖 `Path`：Windows 的反斜杠在 Unix 上不是分隔符，会整串留下（实测同一输入
+/// 两侧结果不同）。这里显式按 `/` 与 `\` 两种分隔符取 basename，行为与平台无关。
+///
+/// `pub(crate)`：Node 入口上传（`upload_node_entry`）复用同一套净化规则，
+/// 避免两处各自实现后行为漂移。
+pub(crate) fn safe_upload_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    base.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+        .collect()
+}
+
 #[tauri::command]
 pub async fn update_springboot_app(
     manager: State<'_, Arc<SpringBootManager>>,
@@ -235,7 +287,12 @@ fn replace_jar_file(
     let backup_path = backup_dir.join(format!("{}.{}.bak", fname.to_string_lossy(), timestamp));
 
     std::fs::copy(old_jar, &backup_path).map_err(|e| anyhow::anyhow!("备份失败: {}", e))?;
+    // 覆盖前先放开旧 jar 的权限：`fs::copy` 会继承源权限位，若之前是从上传包
+    // 复制来的只读文件（Windows 只读属性 / Unix 0444），这里会直接 Permission denied。
+    opx_core::utils::paths::relax_file_permissions(old_jar);
     std::fs::copy(new_jar, old_jar).map_err(|e| anyhow::anyhow!("替换 JAR 失败: {}", e))?;
+    // 换包后同样归一，保证下一次换包仍可覆盖
+    opx_core::utils::paths::relax_file_permissions(old_jar);
 
     let new_version =
         crate::services::springboot_manager::read_jar_version(new_jar.to_str().unwrap_or(""))
@@ -312,7 +369,14 @@ pub async fn get_recommended_jvm_opts(
     let jdk = software_mgr
         .find_installed(&jdk_installed_id)
         .ok_or("所选 JDK 未找到")?;
-    let version = jvm_opts::detect_jdk_version(&jdk.install_path).ok_or("无法检测 JDK 版本")?;
+    // 首选跑一次 `java -version`（最可靠：能识别 1.8.0_xxx 这类写法）。
+    // 跑不起来（目录被移动 / 缺执行位 / 存量安装多一层目录）时退回**已记录的版本号**，
+    // 让 GC 下拉框的「推荐」标注仍然可用——这比整块参数拿不到、只能吃默认目录强。
+    let version = jvm_opts::detect_jdk_version(&jdk.install_path)
+        .or_else(|| {
+            crate::services::springboot_manager::parse_java_major(&jdk.version)
+        })
+        .ok_or("无法检测 JDK 版本")?;
     // 厂商只影响 GC 目录里 Shenandoah 的可用性：Oracle 的任何版本都不含它，
     // 选中会在启动时 `Unrecognized VM option` 直接失败（OpenJDK wiki 明文）。
     let oracle = jvm_opts::is_oracle_runtime(std::path::Path::new(&jdk.install_path));
@@ -1139,5 +1203,18 @@ mod tests {
         assert_eq!(info.max_jdk, Some(21));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 回归：Web 上传文件名必须剥离路径、过滤危险字符，杜绝 `../` 穿越写盘。
+    #[test]
+    fn safe_upload_name_strips_path_and_dangerous_chars() {
+        assert_eq!(super::safe_upload_name("app.jar"), "app.jar");
+        assert_eq!(super::safe_upload_name("my-app_v2.1.jar"), "my-app_v2.1.jar");
+        // 路径穿越：只取 basename
+        assert_eq!(super::safe_upload_name("../../etc/passwd"), "passwd");
+        assert_eq!(super::safe_upload_name("C:\\secret\\evil$(id).jar"), "evilid.jar");
+        // 纯危险字符 → 空（调用方拒绝）
+        assert_eq!(super::safe_upload_name("../"), "");
+        assert_eq!(super::safe_upload_name("..."), "...");
     }
 }

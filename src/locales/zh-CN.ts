@@ -33,6 +33,8 @@ export default {
   cancel: '取消',
   confirm: '确认',
   close: '关闭',
+  runtimeErrorTitle: '运行出错',
+  runtimeErrorUnknown: '未知错误',
   install: '安装',
     batchInstall: '批量安装',
     deselect: '取消选择',
@@ -94,6 +96,22 @@ export default {
   webResetToken: '重置令牌',
   webResetTokenOk: '确认重置',
   webResetting: '重置中…',
+  // 对外访问地址（服务 bind 的全局默认值）
+  serviceBindGroup: '对外访问',
+  serviceBindLabel: '服务默认监听地址',
+  serviceBindHint:
+    '新安装的 MySQL / Redis 等服务默认监听该地址。选「仅本机」时外部设备无法连接；多网卡机器请指定要对外的那块网卡。地址随 DHCP 变化后需回来重选，否则服务会绑到不存在的地址上启动失败。',
+  serviceBindAuto: '自动（{address}）',
+  serviceBindAutoHint: '自动 = 本机首选网卡地址（{address}）',
+  serviceBindRefresh: '刷新地址',
+  serviceBindDetected: '本机检测到：',
+  // 监听地址字段（ConfigFormTab 的 BindAddress）
+  bindAllInterfaces: '所有网卡（0.0.0.0）',
+  bindLoopbackOnly: '仅本机（127.0.0.1）',
+  bindHintEmpty: '未填写时按系统「对外访问地址」监听',
+  bindHintLoopback: '仅本机可访问，外部一律连不上（即使防火墙已放行）',
+  bindHintAll: '监听所有网卡，外部可直接访问',
+  bindHintSpecific: '仅监听 {address}，其它地址（含 127.0.0.1）都连不上',
   // 首次运行引导（安装引导设计 §5）
   setup: '初始设置',
   setupSubtitle: '完成几项基础配置即可开始使用',
@@ -107,6 +125,9 @@ export default {
   setupLan: '允许局域网访问',
   setupLanRisk: '警告：HTTP 为明文传输，局域网内设备可嗅探令牌，请仅在可信网络中开启',
   setupLanOffHint: '关闭后仅服务器本机可访问；远程管理可用 SSH 隧道：ssh -L 17580:127.0.0.1:17580 user@server',
+  setupFwAllowed: '系统防火墙已放行 {port}/tcp',
+  setupFwNotAllowed: '系统防火墙尚未放行 {port}/tcp，完成后可在「端口与防火墙」页一键放行',
+  setupFwNoBackend: '未检测到 ufw / firewalld；若启用了其它防火墙，请手动放行 {port}/tcp',
   setupFinish: '完成设置',
   setupSkip: '跳过，稍后在设置中配置',
   setupNewAddr: '入口地址已变更',
@@ -247,6 +268,19 @@ export default {
   configRequiredMissing: '请填写必填项：{field}',
   credsLockedHint: '该实例已完成首次初始化，以下账号密码已固化于数据目录（如 .minio.sys / 系统库），初始化完成后不可在应用内修改。如需更改，请使用实例的「重置」功能清空数据目录，随后重新填写凭据并启动（重置会清空该实例全部数据）。',
   configEditSourceHint: '直接编辑配置文件源码，保存后生效',
+  // 配置页「连接可达性」提示（监听地址对了，应用层还可能拦）
+  remoteHintTitle: '外部仍然连不上？',
+  remoteHintMysqlLocalOnly:
+    '当前监听 {bind}：只有本机能连。改成对外地址（如 {address}）并重启后才能被外部访问。',
+  remoteHintMysqlNeedGrant:
+    'MySQL 只允许 root@localhost 登录，外部客户端会报 1130 Host is not allowed。可在实例内创建允许远程登录的同名账号（密码沿用初始化密码）。',
+  remoteHintMysqlGrant: '允许 root 远程登录',
+  remoteHintMysqlGranting: '授权中…',
+  remoteHintMysqlGranted: '已允许 root 从任意主机登录（root@\'%\'）',
+  remoteHintRedisLocalOnly: '当前监听 {bind}：只有本机能连。改成对外地址（如 {address}）并重启后才能被外部访问。',
+  remoteHintRedisProtected:
+    '保护模式开着且没有访问密码：Redis 会拒绝所有非本机连接（DENIED … protected mode）。可设置访问密码，或关闭保护模式。',
+  remoteHintRedisDisableProtected: '关闭保护模式',
 
   // StartupSettingsDialog
   autoStartOnAppStart: '应用启动时自动拉起',
@@ -273,6 +307,7 @@ export default {
   httpUrl: 'HTTP URL',
   customConfigFile: '配置文件（相对路径，可选）',
   browse: '浏览',
+  uploading: '上传中…',
   saveAndStart: '保存并启动',
 
   // UninstallBlockedDialog
@@ -287,6 +322,8 @@ export default {
   installing: '安装中',
   downloading: '下载中',
   extracting: '解压中',
+  building: '编译中',
+  buildingHint: '正在从源码编译，通常需要数分钟，请勿关闭页面',
   installCompleted: '安装完成',
   installFailed: '安装失败',
   nacosMysqlNotRunning: 'MySQL 数据库未运行或连接失败，请先启动 MySQL 后再启动 Nacos',
@@ -763,6 +800,12 @@ export default {
     port: '端口',
     portDesc: '监听端口（1-65535）',
     bindAddress: '绑定地址',
+    bindAddressDesc:
+      '127.0.0.1 = 仅本机可连（外部报 10061）；0.0.0.0 = 所有网卡；也可选具体网卡 IP。改后需重启该软件。',
+    redisBindDesc: '默认取系统「对外访问地址」；填 127.0.0.1 则仅本机可连。改后需重启。',
+    protectedMode: '保护模式',
+    protectedModeDesc:
+      'Redis 保护模式只拦截「无密码 + 非本机」的连接：未设访问密码时若开着它，外部一律 DENIED。改后需重启。',
     maxConnections: '最大连接数',
     charset: '字符集',
     innodbBufferPool: 'InnoDB 缓冲池大小',
@@ -978,6 +1021,89 @@ export default {
   templateDevEnv: '联调环境（MySQL+Redis+Nginx）',
   templateCacheWeb: '缓存与网关（Redis+Nginx）',
   templateObjectStorage: '对象存储（MinIO）',
+
+  // ===== 端口与防火墙 =====
+  firewallPorts: '端口与防火墙',
+  firewallDesc: '集中查看会监听端口的服务，并放行或撤销系统防火墙规则',
+  firewallNoServiceHint: '不启停防火墙服务',
+  firewallEnforce_enforced: '防火墙已启用，规则生效中',
+  firewallEnforceDesc_enforced:
+    '只有下面标记为「已放行」的端口可以从外部访问；撤销放行会立即断开该端口的外部连接。',
+  firewallEnforce_bookkeeping_only: '当前没有任何防火墙在拦截',
+  firewallEnforceDesc_bookkeeping_only:
+    '这台机器只有 nftables 且规则集是空的，opx 只建了一张「全部接受」的登记表。也就是说：所有端口本来就能从外部访问，下面的开关只是记录「建议放行」，不会改变能不能连上。要真正限制访问，请先确保 SSH 与 opx 自身端口已放行，再自行启用 ufw / firewalld（opx 不代劳，避免把你锁在门外）。',
+  firewallEnforce_system_blocking: '系统有自己的防火墙规则在拦截',
+  firewallEnforceDesc_system_blocking:
+    '检测到 nftables 的 drop/reject 规则，但不是 opx 建的，所以 opx 不接管。端口是否可达取决于这些既有规则，下面的开关不会写入系统规则。',
+  firewallEnforce_disabled: '防火墙未启用，所有端口对外可达',
+  firewallEnforceDesc_disabled:
+    '防火墙已安装但没有运行，现在没有任何拦截规则。下面标记为「已放行」的规则已写入防火墙配置，等你启用防火墙后才会生效。',
+  firewallEnforce_unknown: '无法确认防火墙是否生效',
+  firewallEnforceDesc_unknown:
+    '未能读取系统防火墙规则（通常是非 root 运行或平台不支持），因此无法判断端口是否受保护。',
+  firewallEnforceChip_enforced: '拦截中',
+  firewallEnforceChip_bookkeeping_only: '未拦截',
+  firewallEnforceChip_system_blocking: '系统拦截中',
+  firewallEnforceChip_disabled: '未拦截',
+  firewallEnforceChip_unknown: '未知',
+  firewallBackend_ufw: '已检测到 ufw',
+  firewallBackend_firewalld: '已检测到 firewalld',
+  firewallBackend_nftables: '已检测到 nftables',
+  firewallBackend_windows: '已检测到 Windows 防火墙',
+  firewallBackend_none: '未检测到可自动接管的防火墙',
+  firewallBackendNote_ufw_active:
+    'ufw 正在生效。opx 只维护端口放行规则，不会启用或停用 ufw。',
+  firewallBackendNote_ufw_inactive:
+    'ufw 已安装但当前未启用（Status: inactive）。放行开关仍可操作，规则会写入 ufw 配置，但要等你启用 ufw 后才真正生效；opx 不会替你启用。',
+  firewallBackendNote_firewalld_running:
+    'firewalld 正在运行。opx 只维护端口放行规则，不会启动或停止 firewalld。规则写入永久配置并尝试立即 reload。',
+  firewallBackendNote_firewalld_stopped:
+    'firewalld 已安装但当前没有运行。放行开关仍可操作，规则会写入永久配置，但要等 firewalld 启动后才真正生效；opx 不会替你启动。',
+  firewallBackendNote_nftables:
+    '系统没有 ufw / firewalld，只有 nftables（Debian 13 起的默认）。opx 在独立表 inet opx 中维护放行端口，不修改系统现有规则；该表随 opx 启动自动重建，删除它也不会影响现有网络。',
+  firewallBackendNote_nft_blocking:
+    '系统已有 nftables 拦截规则（drop/reject，通常来自 Docker 或自定义配置）。opx 不会自动插入规则——那样既可能没真正放行，又可能把 SSH 一起挡掉。请按下方端口清单手动放行。',
+  firewallBackendNote_nft_unreadable:
+    '无法读取 nftables 规则集（通常需要 root 权限），无法确认自动接管是否安全，因此不改动系统规则。请用 root 运行 opx，或手动放行端口。',
+  firewallBackendNote_windows:
+    'opx 只维护入站端口规则（规则名以 opx- 开头）。放行操作需要以管理员身份运行 opx。',
+  firewallBackendNote_no_tool:
+    '系统里没有 ufw、firewalld 或 nftables。请在系统防火墙中手动放行端口；opx 不会改动 iptables 裸规则，以免误伤现有网络配置导致失联。',
+  firewallBackendNote_unsupported_os:
+    '当前系统没有可自动维护的端口级防火墙。请在系统防火墙中手动放行端口。',
+  firewallGroupOpx: 'opx 自身',
+  firewallGroupSoftware: '已装软件',
+  firewallGroupJar: '应用管理（JAR）',
+  firewallGroupSite: '站点',
+  firewallGroupManual: '手动添加',
+  firewallOpxEntry: 'opx Web 管理入口',
+  firewallAllowed: '已放行',
+  firewallDenied: '未放行',
+  firewallAddPort: '添加端口',
+  firewallAddPortHint:
+    '用于放行不属于任何被管实例的端口，例如只给内网某个服务用的数据库、自建脚本启动的服务。要限定某软件的端口来源：先在上面把它「撤销放行」，再在这里添加同端口的来源限定规则。',
+  firewallAddPortSource: '来源 IP（可选，逗号分隔）',
+  firewallAddPortSourceHint: '留空 = 对任意来源放行；填写后仅这些 IP / 网段（CIDR）可以访问，如 192.168.200.1 或 10.0.0.0/8。',
+  firewallAddPortSourceInvalid: '来源地址格式不正确：只支持 IP 或 CIDR（如 192.168.200.1、10.0.0.0/8），多个用逗号分隔。',
+  firewallSourceOnly: '仅限 {source} 访问',
+  firewallEditSource: '来源限定',
+  firewallEditSourceTitle: '来源限定 · 端口 {port}',
+  firewallEditSourceHint:
+    '保存会覆盖该端口现有的全部放行规则：填来源则只放行这些地址，留空则对任意来源放行。',
+  firewallEditSourceDone: '端口 {port} 的来源限定已更新',
+  firewallBindLocalOnly: '仅监听 {addr}',
+  firewallBindLocalOnlyConfig: '配置为 {addr}（启动后仍只监听本机）',
+  firewallBindManualFix: '需在软件自身的配置文件中修改监听地址',
+  firewallFixBind: '改为对外地址',
+  firewallFixBindDone:
+    '已把「{name}」的监听地址改为系统配置的对外地址（未配置时为 0.0.0.0），请重启该软件后生效。',
+  firewallRiskyPort: '数据库/中间件端口：对公网开放风险较高，建议限制来源 IP',
+  firewallReadError: '读取防火墙规则失败',
+  firewallEmpty: '还没有需要放行的端口',
+  firewallEmptyDesc: '安装软件或添加站点后，这里会自动列出它们占用的端口。',
+  firewallRemoveManualConfirm: '移除 {port} 的手动放行记录并撤销规则？',
+  firewallNodeHint:
+    'Node 应用的监听端口由应用代码自身决定，opx 无法预先读取；需要放行时请用右上角「添加端口」。',
 
   // ===== 操作记录（审计日志）=====
   auditLog: '操作记录',

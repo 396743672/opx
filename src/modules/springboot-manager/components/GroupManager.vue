@@ -51,6 +51,7 @@
 import { ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import type { AppGroup } from '@/models/springboot'
+import { newId } from '@/utils/id'
 import { useSpringBootStore } from '../stores/springboot'
 
 const props = defineProps<{
@@ -66,7 +67,7 @@ const localGroups = ref<(AppGroup & { _showEnv?: boolean })[]>(
 
 function addGroup() {
   localGroups.value.push({
-    id: crypto.randomUUID(),
+    id: newId(),
     name: '',
     order: localGroups.value.length,
     depends_on: [],

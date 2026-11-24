@@ -39,11 +39,30 @@ use crate::utils::{process, website};
 /// ## 为何 `pub`
 /// 可重导出给壳层 `commands::website::set_site_conf`（手写 conf 落盘后也要
 /// `nginx -t` + reload），避免壳层再抄一份平台分支各自漂移。
-pub fn run_nginx(install_path: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+/// 决定调用哪个 nginx 可执行文件。
+///
+/// Windows 一直是 `<install>/nginx.exe`。非 Windows 此前写死 `"nginx"`（靠 PATH），
+/// 但 opx 自建的 nginx 在 `<install>/sbin/nginx`，**根本不在 PATH 里** →
+/// 保存站点时 `nginx -t` 报 `os error 2`，表现为「上传静态包后保存失败」（实测 Debian 13）。
+/// 现在优先用自建路径，只有在它不存在时才退回 PATH（给系统包安装的 nginx 留出口）。
+pub fn nginx_program(install_path: &Path) -> std::path::PathBuf {
     #[cfg(windows)]
-    let program = install_path.join("nginx.exe");
+    {
+        install_path.join("nginx.exe")
+    }
     #[cfg(not(windows))]
-    let program = "nginx";
+    {
+        let built = install_path.join("sbin").join("nginx");
+        if built.is_file() {
+            built
+        } else {
+            std::path::PathBuf::from("nginx")
+        }
+    }
+}
+
+pub fn run_nginx(install_path: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    let program = nginx_program(install_path);
 
     process::hidden(program)
         .args(args)
@@ -156,4 +175,29 @@ pub fn sync_site_files(sites_dir: &Path, sites: &[Site]) -> std::io::Result<()> 
         }
     }
     Ok(())
+}
+#[cfg(all(test, unix))]
+mod tests {
+    use super::nginx_program;
+
+    /// 回归：自建 nginx 在 `<install>/sbin/nginx`，非 Windows 必须优先用它。
+    /// 此前写死 `"nginx"`（PATH 查找），服务器上必然 `os error 2`——
+    /// 表现为「上传静态包后保存站点失败」。
+    #[test]
+    fn nginx_program_prefers_self_built_binary() {
+        let dir = std::env::temp_dir().join(format!("opx_nginx_program_{}", std::process::id()));
+        let sbin = dir.join("sbin");
+        std::fs::create_dir_all(&sbin).unwrap();
+        let bin = sbin.join("nginx");
+        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
+        assert_eq!(nginx_program(&dir), bin, "存在自建二进制时应返回 sbin/nginx");
+
+        std::fs::remove_file(&bin).unwrap();
+        assert_eq!(
+            nginx_program(&dir),
+            std::path::PathBuf::from("nginx"),
+            "自建二进制不存在时退回 PATH"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

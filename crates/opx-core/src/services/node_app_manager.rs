@@ -83,8 +83,12 @@ impl NodeAppManager {
         // 隔离外部 module 类型（父目录可能存在 "type":"module" 的 package.json），
         // 让运行目录内的 .js 按 CommonJS 解析，避免 require 报错
         let _ = fs::write(app_dir.join("package.json"), "{ \"type\": \"commonjs\" }\n");
-        fs::copy(src, app_dir.join(format!("{}.js", name)))
-            .map_err(|e| format!("复制入口文件失败: {}", e))?;
+        let target = app_dir.join(format!("{}.js", name));
+        // 覆盖前放开旧入口权限（上传暂存件可能带只读位/0600，copy 会继承），
+        // 复制后再归一成 0644：入口只需被 node 读取，且下次换入口必须能覆盖。
+        paths::relax_file_permissions(&target);
+        fs::copy(src, &target).map_err(|e| format!("复制入口文件失败: {}", e))?;
+        paths::relax_file_permissions(&target);
         Ok(Self::entry_rel(name))
     }
 

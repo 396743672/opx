@@ -87,7 +87,12 @@
           <label>{{ $t('entryPath') }}</label>
           <div class="row">
             <input v-model="form.entry_path" class="input" :placeholder="$t('entryPath')" />
-            <button class="btn" @click="browse"><Icon icon="mdi:folder-open" /> {{ $t('browse') }}</button>
+            <!-- 桌面端用原生对话框；Web 端没有本机路径，只能选文件后上传到服务器 -->
+            <button v-if="isDesktop" class="btn" @click="browse"><Icon icon="mdi:folder-open" /> {{ $t('browse') }}</button>
+            <label v-else class="btn upload-btn" :class="{ disabled: uploading }">
+              <Icon icon="mdi:upload" /> {{ uploading ? $t('uploading') : $t('browse') }}
+              <input type="file" accept=".js,.mjs,.cjs,.ts" class="file-input" :disabled="uploading" @change="onWebEntry" />
+            </label>
           </div>
         </div>
         <div class="field">
@@ -144,7 +149,8 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Icon } from '@iconify/vue'
 import { invoke } from '@/utils/ipc'
-import { listen, type UnlistenFn } from '@/utils/transport'
+import { listen, isDesktop, type UnlistenFn } from '@/utils/transport'
+import { fileToBase64 } from '@/utils/file'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
@@ -171,6 +177,8 @@ const form = ref({
 })
 const installedNodes = ref<InstalledSoftware[]>([])
 const entryChanged = ref(false)
+/** Web 端入口上传中（读入 + 传输有可感知耗时） */
+const uploading = ref(false)
 const acting = ref<Record<string, 'start' | 'stop'>>({})
 
 // 预设模板：一键填充常用启动参数（入口仍由用户选择）
@@ -264,6 +272,33 @@ async function browse() {
     if (editTarget.value?.id && !confirm(t('replaceEntryConfirm'))) return
     form.value.entry_path = r
     entryChanged.value = true
+  }
+}
+
+/**
+ * Web 端上传入口文件：读成 base64 → 后端落到 `uploads/node/` → 拿返回路径当 entry_path。
+ *
+ * 真正运行时用的仍是 `node-apps/<name>/<name>.js`（后端保存时复制过去），
+ * 暂存文件只做一次中转，因此这里不需要处理"运行目录"的权限/覆盖问题。
+ */
+async function onWebEntry(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (editTarget.value?.id && !confirm(t('replaceEntryConfirm'))) {
+    input.value = ''
+    return
+  }
+  uploading.value = true
+  try {
+    const dataBase64 = await fileToBase64(file)
+    form.value.entry_path = await invoke<string>('upload_node_entry', { name: file.name, dataBase64 })
+    entryChanged.value = true
+  } catch (err) {
+    alert(String(err))
+  } finally {
+    uploading.value = false
+    input.value = '' // 允许重复选同一文件
   }
 }
 
@@ -383,6 +418,9 @@ onBeforeUnmount(() => {
 .btn.danger:hover { opacity: 0.9; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-sm { height: 26px; padding: 0 9px; font-size: 12px; }
+/* Web 端上传：<label> 包隐藏 input，点击 label 即触发文件选择 */
+.upload-btn.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.file-input { display: none; }
 .logbox { background: #0d1117; color: #58a6ff; font-family: ui-monospace, monospace; font-size: 12px; padding: 12px; overflow-y: auto; max-height: 55vh; border-radius: 6px; }
 .logbox pre { margin: 0; white-space: pre-wrap; word-break: break-all; line-height: 1.4; }
 .empty-hint { color: var(--color-muted-foreground); text-align: center; padding: 24px 0; }

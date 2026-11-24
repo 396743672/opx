@@ -64,9 +64,20 @@ pub(crate) fn run_build_steps(
                 )
             })?;
         if !out.status.success() {
-            let tail = String::from_utf8_lossy(&out.stderr);
-            let tail = tail.lines().rev().take(8).collect::<Vec<_>>();
-            let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+            // 合并 stdout + stderr 取尾部：autoconf 系（nginx `./configure`）把失败原因
+            // 写在 **stdout**，只看 stderr 会得到一条没有任何信息的「退出码 Some(1)」
+            // ——实测 nginx 缺 PCRE 时用户只看到「退出码 Some(1)」，无法自救。
+            let mut merged = String::from_utf8_lossy(&out.stdout).into_owned();
+            merged.push_str(&String::from_utf8_lossy(&out.stderr));
+            let tail = merged
+                .lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(anyhow::anyhow!(
                 "{what} 源码构建失败：`{program}` 退出码 {:?}\n{}",
                 out.status.code(),
@@ -100,6 +111,25 @@ pub trait SoftwareProvider: Send + Sync {
     /// 表单 schema（None 表示无表单，如自定义软件）
     fn config_schema(&self) -> Option<ConfigSchema> {
         None
+    }
+
+    /// `post_install` 里是否包含**源码编译**（redis / nginx / postgresql 在 *nix 上）。
+    ///
+    /// 编译在解压之后、动辄几分钟且没有百分比可言。不告诉前端「现在在编译」，
+    /// 界面就会一直停在「解压中 99%」，用户以为卡死（实测 Redis 8.8.0）。
+    fn post_install_builds(&self) -> bool {
+        false
+    }
+
+    /// 安装登记时写入 `installed.json` 的初始 config。
+    ///
+    /// 为什么需要：`read_config_form` 读的是 installed.json 里的 config（缺失才用
+    /// schema 默认值），而 `post_install` 已经把实际值写进了配置文件。两边不一致时，
+    /// 用户打开配置页看到的是 A、按下保存却把 B 写回文件——例如 Redis 安装时因为
+    /// 「对外监听且无密码」把 `protected-mode no` 写进 redis.conf，而表单默认值是
+    /// `yes`，一次无意的保存就会把外部访问重新掐断。
+    fn install_defaults(&self) -> serde_json::Value {
+        serde_json::json!({})
     }
 
     /// 配置文件路径（相对 install_path；None 表示无配置文件，如 MinIO/RustFS）
@@ -420,7 +450,10 @@ mod tests {
         let cmd = p.graceful_stop_command(&ctx).expect("redis 应有优雅停止命令");
         let idx = cmd.args.iter().position(|a| a == "-a").expect("应带 -a");
         assert_eq!(cmd.args[idx + 1], "s3cret");
-        assert_eq!(cmd.args[0], "-p");
+        // 停止命令必须显式指定主机（默认回环），否则只绑某块网卡的实例停不掉
+        assert_eq!(cmd.args[0], "-h");
+        assert_eq!(cmd.args[1], "127.0.0.1");
+        assert_eq!(cmd.args.last().map(String::as_str), Some("shutdown"));
     }
 
     /// P1-3 补完：MySQL 密码落盘后应产出 `mysqladmin shutdown` 优雅停止，
@@ -466,6 +499,31 @@ mod tests {
         assert!(
             p.graceful_stop_command(&ctx).is_none(),
             "无密码时应返回 None（回退强杀）"
+        );
+    }
+
+    /// 回归：构建步骤失败时，报错必须带上 **stdout** 尾部。
+    ///
+    /// `./configure`（autoconf 系）把失败原因写 stdout，此前只取 stderr，
+    /// 用户拿到的错误是「`./configure` 退出码 Some(1)」后面什么都没有——
+    /// 实测 nginx 缺 PCRE 时就是这样，完全无法自救。
+    #[test]
+    fn build_step_failure_reports_stdout_tail() {
+        let dir = std::env::temp_dir();
+        #[cfg(unix)]
+        let steps: &[(&str, &[&str])] =
+            &[("sh", &["-c", "echo 'the HTTP rewrite module requires PCRE'; exit 1"])];
+        #[cfg(windows)]
+        let steps: &[(&str, &[&str])] = &[(
+            "cmd",
+            &["/C", "echo the HTTP rewrite module requires PCRE && exit 1"],
+        )];
+        let err = super::run_build_steps(&dir, "Nginx", steps)
+            .expect_err("退出码非 0 必须报错")
+            .to_string();
+        assert!(
+            err.contains("PCRE"),
+            "报错应包含 stdout 中的失败原因，实际：{err}"
         );
     }
 }

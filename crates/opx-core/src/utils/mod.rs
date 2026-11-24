@@ -5,6 +5,7 @@
 
 pub mod archive;
 pub mod download;
+pub mod exec;
 pub mod http;
 pub mod local_ip;
 pub mod paths;

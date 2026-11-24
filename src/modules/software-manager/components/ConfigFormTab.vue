@@ -12,7 +12,7 @@
           v-for="field in visibleFields"
           :key="field.key"
           class="field"
-          :class="{ full: isPort(field) || isTextarea(field) }"
+          :class="{ full: isPort(field) || isTextarea(field) || isBindAddress(field) }"
         >
         <label class="form-field-label" :class="{ danger: isEphemeral(field) }">{{ $t(field.label_i18n) }}</label>
         <input
@@ -22,6 +22,32 @@
           :placeholder="String(field.default_value ?? '')"
           :disabled="credsLocked && lockedKeys.includes(field.key)"
         />
+        <div v-else-if="isBindAddress(field)" class="bind-field">
+          <input
+            v-model="formData[field.key]"
+            class="input mono"
+            :placeholder="String(field.default_value ?? '')"
+            spellcheck="false"
+          />
+          <!-- 本机可能有多个地址（Docker/VPN/双网卡）：点选比手抄 IP 更不容易绑错 -->
+          <div class="bind-chips">
+            <button
+              v-for="c in bindCandidates"
+              :key="c.value"
+              type="button"
+              class="bind-chip"
+              :class="{ active: formData[field.key] === c.value }"
+              @click="formData[field.key] = c.value"
+            >
+              <Icon :icon="c.icon" />
+              <span>{{ c.label }}</span>
+            </button>
+          </div>
+          <div class="bind-hint" :class="bindHintClass(field)">
+            <Icon :icon="bindHintIcon(field)" />
+            <span>{{ bindHint(field) }}</span>
+          </div>
+        </div>
         <textarea
           v-else-if="isTextarea(field)"
           v-model="formData[field.key]"
@@ -89,12 +115,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { Icon } from '@iconify/vue'
+import { useI18n } from 'vue-i18n'
 import { invoke } from '@/utils/ipc'
 import type { ConfigField, ConfigSchema, FormData, InstalledSoftware } from '@/models/software'
 
 const props = defineProps<{ software: InstalledSoftware; schema: ConfigSchema | null }>()
 const emit = defineEmits<{ 'update:dirty': [boolean] }>()
 
+const { t } = useI18n()
 const loading = ref(true)
 const formData = ref<FormData>({})
 
@@ -103,6 +131,7 @@ async function loadForm() {
     loading.value = false
     return
   }
+  if (props.schema.fields.some(isBindAddress)) loadBindCandidates()
   loading.value = true
   try {
     formData.value = await invoke<FormData>('read_config_form', {
@@ -115,6 +144,72 @@ async function loadForm() {
 }
 
 onMounted(loadForm)
+
+// ---- 监听地址（BindAddress）----
+// 本机可能有多个地址（Docker / VPN / 双网卡），让用户点选而不是手抄 IP。
+interface BindCandidate {
+  value: string
+  label: string
+  icon: string
+}
+const bindCandidates = ref<BindCandidate[]>([])
+let bindCandidatesLoaded = false
+
+async function loadBindCandidates() {
+  if (bindCandidatesLoaded) return
+  bindCandidatesLoaded = true
+  try {
+    const res = await invoke<{
+      addresses: { address: string; interface: string; loopback: boolean; ipv6: boolean }[]
+    }>('list_local_addresses')
+    bindCandidates.value = [
+      { value: '0.0.0.0', label: t('bindAllInterfaces'), icon: 'mdi:earth' },
+      ...(res.addresses ?? [])
+        .filter((a) => !a.loopback)
+        .map((a) => ({
+          value: a.address,
+          label: `${a.address} · ${a.interface}`,
+          icon: a.ipv6 ? 'mdi:ip-network-outline' : 'mdi:ethernet',
+        })),
+      { value: '127.0.0.1', label: t('bindLoopbackOnly'), icon: 'mdi:laptop' },
+    ]
+  } catch (e) {
+    // 探测失败不阻断表单：用户仍可手填地址
+    console.error('list local addresses failed:', e)
+    bindCandidatesLoaded = false
+  }
+}
+
+function isBindAddress(f: ConfigField) {
+  return f.field_type.type === 'BindAddress'
+}
+
+function bindValue(f: ConfigField): string {
+  return String(formData.value[f.key] ?? '').trim()
+}
+function isLoopbackBind(v: string) {
+  return v === '127.0.0.1' || v === '::1' || v.toLowerCase() === 'localhost'
+}
+function isWildcardBind(v: string) {
+  return v === '0.0.0.0' || v === '::' || v === '*'
+}
+function bindHint(f: ConfigField): string {
+  const v = bindValue(f)
+  if (!v) return t('bindHintEmpty')
+  if (isLoopbackBind(v)) return t('bindHintLoopback')
+  if (isWildcardBind(v)) return t('bindHintAll')
+  return t('bindHintSpecific', { address: v })
+}
+function bindHintClass(f: ConfigField) {
+  const v = bindValue(f)
+  return { warn: !v || isLoopbackBind(v), ok: !isLoopbackBind(v) }
+}
+function bindHintIcon(f: ConfigField) {
+  const v = bindValue(f)
+  if (!v || isLoopbackBind(v)) return 'mdi:alert-outline'
+  if (isWildcardBind(v)) return 'mdi:earth'
+  return 'mdi:check-network-outline'
+}
 
 // schema 是父组件异步加载的（初始可能为 null），加载完成后重新读表单
 watch(() => props.schema, (newSchema) => {
@@ -317,6 +412,67 @@ defineExpose({ formData, validateRequired })
   font-size: 11px;
   color: var(--color-muted-foreground);
   margin-top: 4px;
+}
+/* 监听地址：输入框 + 本机网卡快捷选项 + 可达性提示 */
+.bind-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.input.mono {
+  font-family: var(--font-mono);
+}
+.bind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.bind-chip svg {
+  width: 13px;
+  height: 13px;
+}
+.bind-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-foreground);
+}
+.bind-chip.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+.bind-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-muted-foreground);
+}
+.bind-hint svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.bind-hint.warn {
+  color: #d9822b;
+}
+.bind-hint.ok {
+  color: var(--color-muted-foreground);
 }
 .loading,
 .empty {

@@ -11,8 +11,13 @@ pub enum HealthCheckResult {
 
 /// 执行健康检查调度
 /// - ProcessOnly: 进程存活即 Healthy（每轮复核 pid，中途退出返回 ProcessExited）
-/// - Tcp: 每 interval_ms 尝试连接 127.0.0.1:port，max_attempts 次
+/// - Tcp: 每 interval_ms 尝试连接 `probe_host:port`（默认 127.0.0.1），max_attempts 次
 /// - Http: GET url，期望 expected_status（不跟随重定向）
+///
+/// # 探测地址
+/// 服务若只绑到某块网卡（`bind-address=192.168.200.128`），探 127.0.0.1 必然
+/// 连接被拒 —— 进程明明活得好好的却被判「启动失败」。故调用方应传入由
+/// `netutils::probe_host_for_bind` 推导出的地址（见 [`run_health_check_on`]）。
 ///
 /// # PID 中途退出检测
 /// 入参 `pid: Option<u32>`：若提供，在每轮探测前复核进程是否存活。
@@ -23,6 +28,17 @@ pub async fn run_health_check(
     pid: Option<u32>,
     max_attempts: u32,
     interval_ms: u64,
+) -> HealthCheckResult {
+    run_health_check_on(spec, pid, max_attempts, interval_ms, "127.0.0.1").await
+}
+
+/// 同 [`run_health_check`]，但 TCP 探测用指定主机（跟随服务实际 bind 地址）。
+pub async fn run_health_check_on(
+    spec: &HealthCheckSpec,
+    pid: Option<u32>,
+    max_attempts: u32,
+    interval_ms: u64,
+    probe_host: &str,
 ) -> HealthCheckResult {
     // 每轮探测前复核进程存活：中途退出立即返回 ProcessExited（而非耗尽轮询判 Timeout）
     let pid_dead = || match pid {
@@ -42,7 +58,7 @@ pub async fn run_health_check(
                 if pid_dead() {
                     return HealthCheckResult::ProcessExited;
                 }
-                if tcp_probe("127.0.0.1", *port, Duration::from_millis(*timeout_ms)).await {
+                if tcp_probe(probe_host, *port, Duration::from_millis(*timeout_ms)).await {
                     return HealthCheckResult::Healthy;
                 }
                 tokio::time::sleep(Duration::from_millis(interval_ms)).await;
@@ -110,17 +126,51 @@ pub fn is_port_free(port: u16) -> bool {
     lo_free && any_free
 }
 
+/// 进程是否仍在真正运行。
+///
+/// 关键：sysinfo 会把 **zombie（Z，已退出但父进程未 wait 回收）** 也列入
+/// `sys.process(pid)`。被管软件由 opx 直接 spawn，若某轮 stop 后子进程退出成为
+/// zombie（父进程未 wait），旧实现据此判「仍存活」→ 强杀对 zombie 无效 → UI 永远
+/// 报「PID 未能停止」（实测 Linux 上 MySQL/MinIO 均中招，进程实际是 Z 状态）。
+/// Unix 下显式排除 Zombie；Windows 无该状态，保留原判断。
 pub fn is_process_alive(pid: u32) -> bool {
     let mut sys = sysinfo::System::new();
     // 单 PID 刷新，比 refresh_processes(All) 快 10-50 倍
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]));
-    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+    match sys.process(sysinfo::Pid::from_u32(pid)) {
+        Some(p) => !is_zombie(p.status()),
+        None => false,
+    }
+}
+
+/// 把「zombie 视为已死」的判断抽成纯函数，便于跨平台单测（见 tests）。
+#[cfg(unix)]
+fn is_zombie(status: sysinfo::ProcessStatus) -> bool {
+    matches!(status, sysinfo::ProcessStatus::Zombie)
+}
+
+#[cfg(not(unix))]
+fn is_zombie(_status: sysinfo::ProcessStatus) -> bool {
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// 回归：zombie 进程必须被视为「已死」，否则 opx spawn 的子进程退出后
+    /// 未 wait 回收变成 Z 状态时，stop 会误判「PID 未能停止」并永远卡在 Error。
+    #[cfg(unix)]
+    #[test]
+    fn zombie_status_is_treated_as_dead() {
+        use sysinfo::ProcessStatus;
+        assert!(is_zombie(ProcessStatus::Zombie));
+        // 正常态不能被误判为已死
+        assert!(!is_zombie(ProcessStatus::Run));
+        assert!(!is_zombie(ProcessStatus::Sleep));
+        assert!(!is_zombie(ProcessStatus::Idle));
+    }
 
     #[test]
     fn is_port_free_detects_any_interface_listener() {

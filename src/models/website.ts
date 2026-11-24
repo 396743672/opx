@@ -1,4 +1,6 @@
 // 与 Rust src-tauri/src/models/website.rs 对齐（serde 无 tag 的 unit 枚举 → 字符串）
+import { newId } from '@/utils/id'
+
 export type LocationKind = 'Static' | 'Proxy'
 export type StaticSource = 'Dir' | 'Upload'
 
@@ -49,7 +51,7 @@ export interface Site {
 /** 新建空站点（前端生成 id），默认含前端静态路由 + API 代理路由，适配前后端分离部署 */
 export function emptySite(): Site {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     name: '',
     server_name: '',
     listen: 80,

@@ -176,6 +176,8 @@ export type ConfigFieldType =
   | { type: 'Select'; options: string[]; labels?: string[] }
   | { type: 'Size'; units: string[] }
   | { type: 'Boolean' }
+  /** 监听地址：输入框 + 本机网卡地址快捷选项 */
+  | { type: 'BindAddress' }
 
 /// 卸载安全性报告
 export interface UninstallSafetyReport {

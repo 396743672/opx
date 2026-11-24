@@ -540,6 +540,49 @@
             />
           </div>
         </div>
+
+        <!-- 对外访问地址：服务 bind 的全局默认值（MySQL/Redis 等 127.0.0.1 → 本机 IP） -->
+        <div class="px-5 pt-4 pb-1">
+          <h3 class="text-sm font-semibold tracking-tight">{{ $t('serviceBindGroup') }}</h3>
+        </div>
+        <div class="px-5 pb-4 divide-y divide-border">
+          <div class="flex items-start justify-between gap-4 py-3">
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-sm">{{ $t('serviceBindLabel') }}</span>
+              <div class="text-xs text-muted-foreground">{{ $t('serviceBindHint') }}</div>
+              <div v-if="localAddresses.length" class="text-xs text-muted-foreground font-mono break-all">
+                {{ $t('serviceBindDetected') }}{{ localAddresses.map((a) => a.address).join('、') }}
+              </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <select
+                v-model="serviceBindValue"
+                class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
+              >
+                <option value="">{{ $t('serviceBindAuto', { address: serviceBindEffective || '—' }) }}</option>
+                <option
+                  v-for="a in localAddresses.filter((x) => !x.loopback)"
+                  :key="a.address"
+                  :value="a.address"
+                >
+                  {{ a.address }} · {{ a.interface }}
+                </option>
+                <option value="0.0.0.0">0.0.0.0</option>
+                <option value="127.0.0.1">127.0.0.1</option>
+                <!-- 已配置但当前未探测到（网卡换了/DHCP 变了）：保留可见，避免静默改值 -->
+                <option
+                  v-if="serviceBindValue && !localAddresses.some((a) => a.address === serviceBindValue) && !['0.0.0.0','127.0.0.1'].includes(serviceBindValue)"
+                  :value="serviceBindValue"
+                >
+                  {{ serviceBindValue }}
+                </option>
+              </select>
+              <button class="btn text-xs h-8 px-2" :title="$t('serviceBindRefresh')" @click="loadLocalAddresses">
+                <Icon icon="mdi:refresh" />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -635,6 +678,12 @@ const webLanAccessValue = ref(false)
 // 用户手动改过端口 → 保存时清除 web_port_auto（端口从此视为显式配置，
 // 被占时后端 D6 报错而非继续降级。安装引导设计 §4 契约）
 const webPortTouched = ref(false)
+// 对外访问地址（服务 bind 的全局默认值；'' = 自动取本机首选地址）
+const serviceBindValue = ref('')
+const serviceBindEffective = ref('')
+const localAddresses = ref<
+  { address: string; interface: string; loopback: boolean; ipv6: boolean }[]
+>([])
 const webToken = ref('')
 const webServerErrorMsg = ref('')
 const webResetConfirming = ref(false)
@@ -643,6 +692,20 @@ const webResetting = ref(false)
 const webLanUrl = ref('')
 const webQrDataUrl = ref('')
 let unlistenServerError: UnlistenFn | null = null
+
+/** 探测本机地址候选（多网卡机器上让用户自己指定对外地址） */
+async function loadLocalAddresses() {
+  try {
+    const res = await invoke<{
+      addresses: { address: string; interface: string; loopback: boolean; ipv6: boolean }[]
+      effective: string
+    }>('list_local_addresses')
+    localAddresses.value = res.addresses ?? []
+    serviceBindEffective.value = res.effective ?? ''
+  } catch (e) {
+    console.error('list local addresses failed:', e)
+  }
+}
 
 async function openWebUi() {
   if (!webToken.value) return
@@ -709,6 +772,7 @@ onMounted(async () => {
   unlistenServerError = await listen<string>('web-server-error', (e) => {
     webServerErrorMsg.value = e.payload ?? ''
   })
+  await loadLocalAddresses()
 })
 
 onUnmounted(() => {
@@ -799,6 +863,7 @@ watch(
       webEnabledValue.value = s.web_enabled ?? false
       webPortValue.value = s.web_port ?? 17580
       webLanAccessValue.value = s.web_lan_access ?? false
+      serviceBindValue.value = s.service_bind_address ?? ''
     }
   },
   { immediate: true }
@@ -815,7 +880,7 @@ watch(themeValue, (mode) => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value, webEnabledValue, webPortValue, webLanAccessValue],
+  [closeActionValue, askOnCloseValue, githubProxyValue, proxyValue, autoCheckUpdateValue, acmeStagingValue, alertSystemCpuValue, alertSystemMemValue, alertProcessCpuValue, alertProcessMemValue, metricsRetainDaysValue, snapshotKeepValue, webhookUrlValue, webhookFormatValue, webhookSecretValue, smtpEnabledValue, smtpHostValue, smtpPortValue, smtpUserValue, smtpPassValue, smtpToValue, ddnsEnabledValue, ddnsProviderValue, ddnsCloudflareTokenValue, ddnsAliyunKeyValue, ddnsAliyunSecretValue, ddnsDnspodIdValue, ddnsDnspodKeyValue, ddnsHuaweiKeyValue, ddnsHuaweiSecretValue, ddnsDomainsText, ddnsIpv6Value, webEnabledValue, webPortValue, webLanAccessValue, serviceBindValue],
   () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, 400)
@@ -882,6 +947,7 @@ async function save() {
   settingsStore.settings.web_port = webPortValue.value
   if (webPortTouched.value) settingsStore.settings.web_port_auto = false
   settingsStore.settings.web_lan_access = webLanAccessValue.value
+  settingsStore.settings.service_bind_address = serviceBindValue.value
   await settingsStore.saveSettings()
 }
 

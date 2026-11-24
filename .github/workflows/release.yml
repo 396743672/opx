@@ -241,7 +241,21 @@ jobs:
           - macOS 自动更新可能受未签名限制，如失败请手动下载新版 dmg 覆盖
 
           ---
-          版本内容见提交历史。
+          ## v0.5.10 版本内容
+
+          **新增**
+          - 防火墙按来源 IP / CIDR 限定放行：清单中所有端口（被管软件 / JAR 应用 / 站点 / opx 自身）均可配置来源，四种后端（ufw / firewalld / nftables / Windows 防火墙）均支持；添加端口弹窗可一次填多个来源
+          - 服务监听地址可视化配置：MySQL / Redis / MinIO 等可指定绑定 IP，打通 MySQL 1130 与 Redis protected mode 的远程连接限制
+          - 防火墙页展示启用状态与真实监听地址；安装软件后自动放行所需端口
+          - Web 入口内嵌进二进制，打包版自包含；统一上传部署的可执行定位与权限
+
+          **修复**
+          - 进程资源监控在 Linux 上虚高 N 倍：sysinfo 把线程当独立进程枚举，导致内存按线程数累加（MySQL 39 线程时 449 MB 被显示成 17.5 GB），现已排除线程伪进程
+          - MySQL 启动警告 MY-010915：生成的 my.cnf 补齐三个废弃 sql_mode 与 strict 同开，MySQL 8.x / 9.x 均不再告警
+          - firewalld 下 IPv6 网段（CIDR）来源规则被误判为 family=ipv4，已按 CIDR 地址部分正确判族
+          - 添加端口弹窗跑到页面左下角（缺失遮罩层样式）；软件卡片访问链接硬编码 127.0.0.1（Web 模式改用实际访问主机名）
+          - Linux：MySQL 启动路径 / basedir / 权限 / 用户、JDK 归档格式与畸形版本号、tar 包未剥顶层目录导致 java 路径错误、deb 脚本换行、nginx 源码构建、archive.rs 借用冲突（E0502）
+          - Linux 停止软件误判、开机启动 500、Web 新建站点点击无响应、Spring Boot 启动失败回滚状态卡死
           EOF
           sed -i "s/__VERSION__/$VERSION/g" release-notes.md
           echo "=== release-notes.md ==="

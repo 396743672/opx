@@ -34,3 +34,46 @@ pub fn get_last_startup_report() -> Option<opx_core::models::startup::StartupRep
 pub fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
+
+/// 本机网卡地址候选（设置页「对外访问地址」下拉 + 服务配置的 bind 快捷选项）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LocalAddressView {
+    pub address: String,
+    pub interface: String,
+    pub loopback: bool,
+    pub ipv6: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LocalAddressList {
+    pub addresses: Vec<LocalAddressView>,
+    /// 系统配置里显式选定的地址（空 = 自动）
+    pub configured: String,
+    /// 实际生效值：显式配置优先，否则本机首选非回环地址
+    pub effective: String,
+}
+
+/// 列出本机地址，供配置界面让用户在多网卡之间指定「对外访问地址」。
+///
+/// 多网卡机器（Docker / VPN / 双网卡）光靠文本输入很容易绑错地址，
+/// 绑到不存在的地址服务根本起不来，所以候选列表由后端探测、前端只做展示。
+#[tauri::command]
+pub fn list_local_addresses() -> LocalAddressList {
+    use opx_core::services::software_manager::netutils;
+    let configured = opx_core::utils::settings::read_settings()
+        .map(|s| s.service_bind_address.trim().to_string())
+        .unwrap_or_default();
+    LocalAddressList {
+        addresses: netutils::local_addresses()
+            .into_iter()
+            .map(|a| LocalAddressView {
+                address: a.address,
+                interface: a.interface,
+                loopback: a.loopback,
+                ipv6: a.ipv6,
+            })
+            .collect(),
+        effective: netutils::default_service_bind(),
+        configured,
+    }
+}
