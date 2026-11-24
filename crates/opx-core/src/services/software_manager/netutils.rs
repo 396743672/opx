@@ -199,10 +199,12 @@ pub struct LocalAddress {
     pub ipv6: bool,
 }
 
-/// 采集本机所有网卡地址；回环排最后，优先返回「像局域网地址」的那条。
+/// 采集本机所有网卡地址，按「可用性 → 网卡真实性」排序，回环垫底。
 ///
-/// 排序理由：列表第一项会被前端当作「推荐值」，而 Docker/VPN 网卡常出现
-/// 172.17.x / 10.8.x 这类地址，排在真实网卡前面会误导用户选错。
+/// 排序理由：列表第一项会被前端当作「推荐值」。多网卡机器上 VMware /
+/// VirtualBox / Hyper-V / Docker 的私有 IPv4 与真实以太网同级，若不把虚拟
+/// 网卡降级，平局会按网卡名字节序比较（`VMware…` < `以太网`）而选错；同时
+/// 有线以太网要排在 Wi-Fi 前面（「有以太网就用以太网」）。
 pub fn local_addresses() -> Vec<LocalAddress> {
     let mut out = Vec::new();
     let networks = sysinfo::Networks::new_with_refreshed_list();
@@ -234,32 +236,81 @@ pub fn local_addresses() -> Vec<LocalAddress> {
     out
 }
 
-/// 排序权重：局域网 IPv4 < 其它 IPv4 < IPv6 < 回环。
-fn rank(a: &LocalAddress) -> u8 {
+/// 排序权重：先按「地址能不能被外部连上」，再按「网卡是不是真的」。
+///
+/// 两级而非单一分值，是为了让「虚拟网卡的可用 IPv4」仍排在「真实网卡的
+/// IPv6 / 自分配地址」之前 —— 前者至少能用，后者绑上去大概率不通。
+///
+/// - 地址级：局域网/公网 IPv4 = 0，其它 IPv4 = 1，IPv6 = 2，链路本地 = 3
+/// - 网卡级：有线以太网 = 0，其它物理网卡（Wi-Fi / 未知）= 1，虚拟网卡 = 2
+/// - 回环：`(9, 9)` 永远垫底
+fn rank(a: &LocalAddress) -> (u8, u8) {
     if a.loopback {
-        3
-    } else if !a.ipv6 && is_private_v4(&a.address) {
-        0
-    } else if !a.ipv6 {
-        1
-    } else {
-        2
+        return (9, 9);
     }
+    (addr_rank(a), link_rank(&a.interface))
+}
+
+fn addr_rank(a: &LocalAddress) -> u8 {
+    if a.ipv6 {
+        2
+    } else if is_link_local_v4(&a.address) {
+        3
+    } else if is_private_v4(&a.address) {
+        0
+    } else {
+        1
+    }
+}
+
+fn link_rank(interface: &str) -> u8 {
+    if crate::utils::local_ip::is_virtual_adapter(interface) {
+        2
+    } else if is_ethernet_iface(interface) {
+        0
+    } else {
+        1
+    }
+}
+
+/// 有线以太网。优先它是因为「有以太网就用以太网」的直觉：有线通常更稳定，
+/// 服务器场景下也才是真正对外的链路。
+///
+/// 虚拟网卡的关键词判定不在这里 —— 统一走
+/// [`crate::utils::local_ip::is_virtual_adapter`]，避免两套规则各改一半。
+fn is_ethernet_iface(interface: &str) -> bool {
+    let n = interface.to_ascii_lowercase();
+    const MARKERS: &[&str] = &["以太网", "ethernet", "eth", "enp", "eno", "ens", "enx"];
+    MARKERS.iter().any(|m| n.contains(m))
 }
 
 fn is_private_v4(addr: &str) -> bool {
     let Ok(ip) = addr.parse::<std::net::Ipv4Addr>() else {
         return false;
     };
-    ip.is_private() || ip.is_link_local()
+    ip.is_private()
 }
 
-/// 本机首选对外地址（局域网 IPv4 优先，没网卡时返回 None）。
+fn is_link_local_v4(addr: &str) -> bool {
+    addr.parse::<std::net::Ipv4Addr>()
+        .map(|ip| ip.is_link_local())
+        .unwrap_or(false)
+}
+
+/// 从地址列表里挑「对外访问」首选值：回环排除，按 [`rank`] 取最小。
+///
+/// 不依赖入参顺序，纯函数便于测试本机多网卡/多地址时的取舍。
+pub fn pick_preferred(addrs: &[LocalAddress]) -> Option<String> {
+    addrs
+        .iter()
+        .filter(|a| !a.loopback)
+        .min_by(|a, b| rank(a).cmp(&rank(b)))
+        .map(|a| a.address.clone())
+}
+
+/// 本机首选对外地址（有线以太网的局域网 IPv4 优先，没网卡时返回 None）。
 pub fn preferred_local_address() -> Option<String> {
-    local_addresses()
-        .into_iter()
-        .find(|a| !a.loopback)
-        .map(|a| a.address)
+    pick_preferred(&local_addresses())
 }
 
 /// 系统配置里的「对外访问地址」；未配置（空/auto）时取本机首选地址。
@@ -471,5 +522,79 @@ mod tests {
         assert_eq!(list[0].address, "192.168.200.128");
         assert_eq!(list[1].address, "203.0.113.9");
         assert_eq!(list.last().unwrap().address, "::1");
+    }
+
+    fn la(address: &str, iface: &str) -> LocalAddress {
+        LocalAddress {
+            address: address.to_string(),
+            interface: iface.to_string(),
+            loopback: address.starts_with("127.") || address == "::1",
+            ipv6: address.contains(':'),
+        }
+    }
+
+    /// 有线以太网判定。虚拟网卡的关键词表统一在 `utils::local_ip`，
+    /// 其识别细节由那边的测试覆盖，这里只钉住「以太网 vs Wi-Fi」这条线。
+    #[test]
+    fn classifies_ethernet_interfaces() {
+        for n in ["以太网", "Ethernet", "以太网 2", "eth0", "enp3s0", "eno1", "ens33"] {
+            assert!(is_ethernet_iface(n), "{n} 应判为有线以太网");
+        }
+        for n in ["Wi-Fi", "WLAN", "wlp2s0", "wlan0", "en0"] {
+            assert!(!is_ethernet_iface(n), "{n} 不是有线以太网");
+        }
+    }
+
+    /// 真实场景：VMnet8 / WSL / 以太网 都是私有 IPv4，默认必须选以太网。
+    #[test]
+    fn prefers_physical_ethernet_over_virtual_nics() {
+        let addrs = vec![
+            la("192.168.23.1", "VMware Network Adapter VMnet8"),
+            la("172.28.96.1", "vEthernet (WSL (Hyper-V firewall))"),
+            la("192.168.0.7", "以太网"),
+        ];
+        assert_eq!(pick_preferred(&addrs).as_deref(), Some("192.168.0.7"));
+    }
+
+    /// 网线插着但没拿到 DHCP：以太网只剩 169.254 自分配地址，应让位给
+    /// Wi-Fi 的可用地址，否则绑上去外部一样连不通。
+    #[test]
+    fn prefers_usable_address_over_link_local() {
+        let addrs = vec![la("169.254.10.20", "以太网"), la("192.168.1.42", "Wi-Fi")];
+        assert_eq!(pick_preferred(&addrs).as_deref(), Some("192.168.1.42"));
+    }
+
+    /// 没有以太网时退到 Wi-Fi，而不是 Docker/VPN 虚拟网卡。
+    #[test]
+    fn falls_back_to_wifi_before_virtual() {
+        let addrs = vec![
+            la("172.17.0.1", "docker0"),
+            la("10.8.0.6", "tailscale0"),
+            la("192.168.1.42", "Wi-Fi"),
+        ];
+        assert_eq!(pick_preferred(&addrs).as_deref(), Some("192.168.1.42"));
+    }
+
+    /// 只有虚拟网卡时仍要给出地址（返回 None 会掉到 0.0.0.0，用户更难排查）。
+    #[test]
+    fn keeps_virtual_address_as_last_resort() {
+        let addrs = vec![la("192.168.23.1", "VMware Network Adapter VMnet8")];
+        assert_eq!(pick_preferred(&addrs).as_deref(), Some("192.168.23.1"));
+    }
+
+    /// 实机诊断（多网卡机器上核对推荐值是否落在真实网卡）：
+    /// `cargo test --lib live_local_address_order -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_local_address_order() {
+        for a in local_addresses() {
+            println!(
+                "{:<44} {:<40} {}",
+                a.interface,
+                a.address,
+                if a.ipv6 { "v6" } else { "v4" }
+            );
+        }
+        println!("preferred = {:?}", preferred_local_address());
     }
 }
