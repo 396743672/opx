@@ -44,6 +44,8 @@ pub struct FirewallPortEntry {
     pub instance_id: Option<String>,
     /// 防火墙当前是否已放行
     pub allowed: bool,
+    /// 来源限定（仅手动添加的端口会有）：非空 = 仅对这些 IP/CIDR 放行
+    pub sources: Vec<String>,
     /// 服务监听地址
     pub bind: Option<String>,
     /// true = 仅监听回环地址，即便放行防火墙也无法从外部访问
@@ -242,6 +244,7 @@ pub fn get_firewall_overview(
         detail: String::new(),
         instance_id: None,
         allowed: is_allowed(PortRule::tcp(web_port)),
+        sources: Vec::new(),
         bind: b.addr,
         bind_local_only: b.local_only,
         bind_source: b.source.to_string(),
@@ -270,6 +273,7 @@ pub fn get_firewall_overview(
                 },
                 instance_id: Some(sw.id.clone()),
                 allowed: is_allowed(PortRule::tcp(port)),
+                sources: Vec::new(),
                 bind: b.addr,
                 bind_local_only: b.local_only,
                 bind_source: b.source.to_string(),
@@ -291,6 +295,7 @@ pub fn get_firewall_overview(
             detail: String::new(),
             instance_id: None,
             allowed: is_allowed(PortRule::tcp(port)),
+            sources: Vec::new(),
             bind: b.addr,
             bind_local_only: b.local_only,
             bind_source: b.source.to_string(),
@@ -319,6 +324,7 @@ pub fn get_firewall_overview(
             detail,
             instance_id: None,
             allowed: is_allowed(PortRule::tcp(site.listen)),
+            sources: Vec::new(),
             bind: b.addr,
             bind_local_only: b.local_only,
             bind_source: b.source.to_string(),
@@ -334,6 +340,7 @@ pub fn get_firewall_overview(
                 detail: "SSL".to_string(),
                 instance_id: None,
                 allowed: is_allowed(PortRule::tcp(443)),
+                sources: Vec::new(),
                 bind: b.addr,
                 bind_local_only: b.local_only,
                 bind_source: b.source.to_string(),
@@ -345,7 +352,10 @@ pub fn get_firewall_overview(
     // ---- 5. 用户手动添加的端口 ----
     for extra in &settings.firewall_extra_ports {
         let Some(proto) = Proto::parse(&extra.proto) else { continue };
-        let rule = PortRule { port: extra.port, proto };
+        // 一条手动记录 = 一组规则：无来源 = 1 条全网规则；有来源 = 每来源 1 条。
+        // 全部规则都已放行才显示「已放行」（部分放行说明中途出错，须提示重开）。
+        let rules = manual_rules(extra.port, proto, &extra.sources);
+        let allowed = !rules.is_empty() && rules.iter().all(|r| allowed_rules.contains(r));
         let b = bind_view(&live, extra.port, None);
         ports.push(FirewallPortEntry {
             port: extra.port,
@@ -354,7 +364,8 @@ pub fn get_firewall_overview(
             label: String::new(),
             detail: String::new(),
             instance_id: None,
-            allowed: is_allowed(rule),
+            allowed,
+            sources: extra.sources.clone(),
             bind: b.addr,
             bind_local_only: b.local_only,
             bind_source: b.source.to_string(),
@@ -375,32 +386,69 @@ fn parse_proto(s: &str) -> Result<Proto, String> {
     Proto::parse(s).ok_or_else(|| format!("协议只能是 tcp 或 udp，收到「{s}」"))
 }
 
-/// 放行 / 撤销某个端口的规则。
+/// 手动端口记录展开成防火墙规则：无来源 = 1 条全网规则；有来源 = 每来源 1 条。
+/// 来源不合法的条目被丢弃（写入时已校验，这里只是防御历史脏数据）。
+fn manual_rules(port: u16, proto: Proto, sources: &[String]) -> Vec<PortRule> {
+    if sources.is_empty() {
+        return vec![PortRule { port, proto, source: None }];
+    }
+    sources
+        .iter()
+        .filter_map(|s| {
+            let s = s.trim();
+            firewall::validate_source(s).ok()?;
+            Some(PortRule { port, proto, source: Some(s.to_string()) })
+        })
+        .collect()
+}
+
+/// 放行 / 撤销某个端口的规则。`source` 为 Some 时只操作「仅该来源」那条规则。
 ///
 /// 返回 `true` 表示规则确实发生了变化，`false` 表示本来就是目标状态（幂等）。
 #[tauri::command]
-pub fn set_firewall_port(port: u16, proto: String, allow: bool) -> Result<bool, String> {
+pub fn set_firewall_port(
+    port: u16,
+    proto: String,
+    allow: bool,
+    source: Option<String>,
+) -> Result<bool, String> {
     let proto = parse_proto(&proto)?;
-    let rule = PortRule { port, proto };
-    let target = rule.spec();
+    let source = source.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(s) = &source {
+        firewall::validate_source(s).map_err(|e| format!("{e:#}"))?;
+    }
+    let rule = PortRule { port, proto, source };
+    let target = rule.spec_full();
     let detail = if allow { "放行" } else { "撤销" };
     let kind = firewall::backend();
     audited!("set_firewall_port", target, detail, {
         let changed = if allow {
-            firewall::allow(kind, rule)
+            firewall::allow(kind, &rule)
         } else {
-            firewall::revoke(kind, rule)
+            firewall::revoke(kind, &rule)
         };
         changed.map_err(|e| format!("{e:#}"))
     })
 }
 
 /// 手动添加一个放行端口（写入设置并立即放行）。
+///
+/// `sources` 为 None/空 = 对任意来源放行；非空 = 每个元素（IP/CIDR）一条
+/// 「仅该来源」的规则，全部作为一条手动记录管理。
 #[tauri::command]
-pub fn add_manual_port(port: u16, proto: String) -> Result<(), String> {
+pub fn add_manual_port(
+    port: u16,
+    proto: String,
+    sources: Option<Vec<String>>,
+) -> Result<(), String> {
     let proto = parse_proto(&proto)?;
     if port == 0 {
         return Err("端口不能为 0".to_string());
+    }
+    let mut sources = sources.unwrap_or_default();
+    sources.retain(|s| !s.trim().is_empty());
+    for s in &sources {
+        firewall::validate_source(s).map_err(|e| format!("{e:#}"))?;
     }
     let mut settings = read_settings().map_err(|e| format!("读取设置失败: {e}"))?;
     if settings
@@ -408,22 +456,25 @@ pub fn add_manual_port(port: u16, proto: String) -> Result<(), String> {
         .iter()
         .any(|p| p.port == port && p.proto == proto.as_str())
     {
-        return Err(format!("{} 已在列表中", PortRule { port, proto }.spec()));
+        return Err(format!("{} 已在列表中", PortRule::tcp(port).spec()));
     }
 
     let kind = firewall::backend();
-    let rule = PortRule { port, proto };
-    audited!("add_manual_port", rule.spec(), "", {
-        firewall::allow(kind, rule).map_err(|e| format!("{e:#}"))?;
+    let rules = manual_rules(port, proto, &sources);
+    audited!("add_manual_port", format!("{} ×{}", PortRule::tcp(port).spec(), rules.len()), "", {
+        for rule in &rules {
+            firewall::allow(kind, rule).map_err(|e| format!("{e:#}"))?;
+        }
         settings.firewall_extra_ports.push(ManualPortRule {
             port,
             proto: proto.as_str().to_string(),
+            sources,
         });
         write_settings_file(&settings).map_err(|e| format!("保存设置失败: {e}"))
     })
 }
 
-/// 移除手动添加的端口（从设置里删掉并撤销放行）。
+/// 移除手动添加的端口（从设置里删掉并撤销该端口的全部规则，含来源限定）。
 ///
 /// 只允许删手动添加的端口：软件/站点/JAR 的端口由各自实例决定，
 /// 从这里删会造成「配置还在、规则没了」的不一致，应去对应页面改端口。
@@ -431,6 +482,11 @@ pub fn add_manual_port(port: u16, proto: String) -> Result<(), String> {
 pub fn remove_manual_port(port: u16, proto: String) -> Result<(), String> {
     let proto = parse_proto(&proto)?;
     let mut settings = read_settings().map_err(|e| format!("读取设置失败: {e}"))?;
+    let entry = settings
+        .firewall_extra_ports
+        .iter()
+        .find(|p| p.port == port && p.proto == proto.as_str())
+        .cloned();
     let before = settings.firewall_extra_ports.len();
     settings
         .firewall_extra_ports
@@ -440,11 +496,19 @@ pub fn remove_manual_port(port: u16, proto: String) -> Result<(), String> {
     }
 
     let kind = firewall::backend();
-    let rule = PortRule { port, proto };
-    audited!("remove_manual_port", rule.spec(), "", {
+    let rules = entry
+        .as_ref()
+        .map(|e| manual_rules(port, proto, &e.sources))
+        .unwrap_or_else(|| vec![PortRule { port, proto, source: None }]);
+    audited!("remove_manual_port", PortRule::tcp(port).spec(), "", {
         // 撤销失败不回滚设置：防火墙规则可以手动清理，设置里留着会让用户
         // 永远删不掉这一项。宁可留下一条孤立规则，也不制造删不掉的条目。
-        let revoke_err = firewall::revoke(kind, rule).err();
+        let mut revoke_err = None;
+        for rule in &rules {
+            if let Err(e) = firewall::revoke(kind, rule) {
+                revoke_err.get_or_insert(e);
+            }
+        }
         write_settings_file(&settings).map_err(|e| format!("保存设置失败: {e}"))?;
         if let Some(e) = revoke_err {
             return Err(format!("已从列表移除，但撤销防火墙规则失败：{e:#}"));

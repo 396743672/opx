@@ -94,7 +94,19 @@
                 :title="$t('firewallRiskyPort')"
               />
             </div>
-            <div class="text-[11px] text-muted-foreground truncate">
+            <!-- 来源限定（仅手动端口可配）：一眼看出这条规则不是全网放行 -->
+            <div v-if="p.sources?.length" class="flex items-center gap-1 flex-wrap mt-0.5">
+              <span
+                v-for="s in p.sources"
+                :key="s"
+                class="src-chip"
+                :title="$t('firewallSourceOnly', { source: s })"
+              >
+                <Icon icon="mdi:account-key-outline" />
+                {{ s }}
+              </span>
+            </div>
+            <div v-else class="text-[11px] text-muted-foreground truncate">
               {{ p.detail || p.bind || '—' }}
             </div>
           </div>
@@ -174,7 +186,7 @@
             <Icon icon="mdi:plus" /> {{ $t('firewallAddPort') }}
           </div>
           <p class="confirm-msg">{{ $t('firewallAddPortHint') }}</p>
-          <div class="flex gap-2 mb-4">
+          <div class="flex gap-2 mb-3">
             <input
               v-model.number="newPort"
               type="number"
@@ -189,6 +201,13 @@
               <option value="udp">UDP</option>
             </select>
           </div>
+          <input
+            v-model="newSources"
+            class="field w-full mb-1"
+            :placeholder="$t('firewallAddPortSource')"
+            @keyup.enter="submitAdd"
+          />
+          <p class="confirm-msg !mb-4">{{ $t('firewallAddPortSourceHint') }}</p>
           <div class="confirm-actions">
             <button class="btn" @click="addOpen = false">{{ $t('cancel') }}</button>
             <button class="btn primary" :disabled="addBusy || !validNewPort" @click="submitAdd">
@@ -344,7 +363,20 @@ async function toggle(p: FirewallPortEntry) {
   pageError.value = ''
   pending.value.add(key)
   try {
-    await invoke('set_firewall_port', { port: p.port, proto: p.proto, allow: want })
+    // 手动端口带来源限定时是一组规则（每来源一条），逐条同步开关；
+    // 全网规则（无 sources）走单条调用。
+    if (p.source === 'manual' && p.sources?.length) {
+      for (const s of p.sources) {
+        await invoke('set_firewall_port', {
+          port: p.port,
+          proto: p.proto,
+          allow: want,
+          source: s,
+        })
+      }
+    } else {
+      await invoke('set_firewall_port', { port: p.port, proto: p.proto, allow: want })
+    }
     // 以系统为准重新拉取：同端口的其它来源行状态会一起变
     await load()
   } catch (e) {
@@ -411,23 +443,47 @@ const addOpen = ref(false)
 const addBusy = ref(false)
 const newPort = ref<number | string>('')
 const newProto = ref('tcp')
+/** 来源限定：逗号/空格分隔的 IP 或 CIDR，留空 = 对任意来源放行 */
+const newSources = ref('')
 const validNewPort = computed(() => {
   const n = Number(newPort.value)
   return Number.isInteger(n) && n >= 1 && n <= 65535
 })
 
+/** 客户端粗校验：非空 token 都像 IP/CIDR（具体合法性由后端 authoritative 校验） */
+function parseSources(raw: string): string[] | null {
+  const list = raw
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (list.length === 0) return null // 无来源 = 全网放行
+  const looksLikeAddr = (s: string) =>
+    /^[0-9a-fA-F.:]+$/.test(s) && /\d/.test(s) // 只含地址字符且至少有个数字
+  return list.every(looksLikeAddr) ? list : null
+}
+
 function openAdd() {
   newPort.value = ''
   newProto.value = 'tcp'
+  newSources.value = ''
   addOpen.value = true
 }
 
 async function submitAdd() {
   if (!validNewPort.value || addBusy.value) return
+  const sources = parseSources(newSources.value)
+  if (sources === null) {
+    pageError.value = t('firewallAddPortSourceInvalid')
+    return
+  }
   addBusy.value = true
   pageError.value = ''
   try {
-    await invoke('add_manual_port', { port: Number(newPort.value), proto: newProto.value })
+    await invoke('add_manual_port', {
+      port: Number(newPort.value),
+      proto: newProto.value,
+      sources,
+    })
     addOpen.value = false
     await load()
   } catch (e) {
@@ -441,6 +497,37 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 全屏遮罩：模板里两个 Teleport 弹窗（添加 / 移除确认）都靠它居中。
+   此前本页漏了这个定义，弹窗没有定位样式直接顺流排在页面末尾 ——
+   看起来像「跑到左下角」。与 DnsAccountsPage 等页的定义保持一致。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: oklch(0 0 0 / 0.5);
+  backdrop-filter: blur(4px);
+}
+
+/* 来源限定芯片（手动端口） */
+.src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-info, #3b82f6) 12%, transparent);
+  color: var(--color-info, #3b82f6);
+}
+.src-chip svg {
+  width: 11px;
+  height: 11px;
+}
+
 /* 局部按钮尺寸：全局 .btn 是 32px 高度，端口行里需要更紧凑 */
 .btn.tiny {
   height: 26px;

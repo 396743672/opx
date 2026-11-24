@@ -470,14 +470,17 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             let port: u16 = arg(&args, "port")?;
             let proto: String = arg(&args, "proto")?;
             let allow: bool = arg(&args, "allow")?;
-            ok(firewall::set_firewall_port(port, proto, allow))
+            // 缺省 = 全网规则；传了来源则只操作「仅该来源」那条
+            let source: Option<String> = arg(&args, "source")?;
+            ok(firewall::set_firewall_port(port, proto, allow, source))
         })
     });
     reg.register("add_manual_port", |_ctx, args| {
         Box::pin(async move {
             let port: u16 = arg(&args, "port")?;
             let proto: String = arg(&args, "proto")?;
-            ok(firewall::add_manual_port(port, proto))
+            let sources: Option<Vec<String>> = arg(&args, "sources")?;
+            ok(firewall::add_manual_port(port, proto, sources))
         })
     });
     reg.register("remove_manual_port", |_ctx, args| {

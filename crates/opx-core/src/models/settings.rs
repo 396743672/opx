@@ -143,6 +143,11 @@ pub struct ManualPortRule {
     pub port: u16,
     /// "tcp" | "udp"
     pub proto: String,
+    /// 来源限定（可选）：空 = 对任意来源放行；非空 = 每个元素一条「仅该来源」
+    /// 的规则（单 IP 或 CIDR）。一个端口的全部来源规则作为一组管理（开关/删除
+    /// 都是整组），避免「3 条规则 3 行」把清单撑爆。
+    #[serde(default)]
+    pub sources: Vec<String>,
 }
 
 fn default_ninety() -> u32 {

@@ -1084,8 +1084,14 @@ export default {
   firewallAllowed: 'Allowed',
   firewallDenied: 'Blocked',
   firewallAddPort: 'Add port',
+  firewallAddPortSource: 'Source IPs (optional, comma-separated)',
+  firewallAddPortSourceHint:
+    'Empty = allow from any source. When set, only these IPs / networks (CIDR) can reach the port, e.g. 192.168.200.1 or 10.0.0.0/8.',
+  firewallAddPortSourceInvalid:
+    'Invalid source address: only IP or CIDR is accepted (e.g. 192.168.200.1, 10.0.0.0/8), separate multiple entries with commas.',
+  firewallSourceOnly: 'Restricted to {source}',
   firewallAddPortHint:
-    'For ports that belong to no managed instance, e.g. a database only used by an internal service, or a service started by your own script.',
+    'For ports that belong to no managed instance, e.g. a database only used by an internal service, or a service started by your own script. To restrict a managed port by source: revoke it above, then re-add it here with source IPs.',
   firewallBindLocalOnly: 'listening on {addr} only',
   firewallBindLocalOnlyConfig: 'configured as {addr} (will still bind locally once started)',
   firewallBindManualFix: 'edit the listen address in the software’s own config file',

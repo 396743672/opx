@@ -57,6 +57,8 @@ export interface FirewallPortEntry {
   detail: string
   instance_id: string | null
   allowed: boolean
+  /** 来源限定（仅手动端口非空）：每个元素一条「仅该 IP/CIDR」的规则 */
+  sources: string[]
   bind: string | null
   bind_local_only: boolean
   /** 监听地址从哪来：真实监听套接字 / 配置推断 / 未知 */

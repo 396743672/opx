@@ -1081,7 +1081,11 @@ export default {
   firewallDenied: '未放行',
   firewallAddPort: '添加端口',
   firewallAddPortHint:
-    '用于放行不属于任何被管实例的端口，例如只给内网某个服务用的数据库、自建脚本启动的服务。',
+    '用于放行不属于任何被管实例的端口，例如只给内网某个服务用的数据库、自建脚本启动的服务。要限定某软件的端口来源：先在上面把它「撤销放行」，再在这里添加同端口的来源限定规则。',
+  firewallAddPortSource: '来源 IP（可选，逗号分隔）',
+  firewallAddPortSourceHint: '留空 = 对任意来源放行；填写后仅这些 IP / 网段（CIDR）可以访问，如 192.168.200.1 或 10.0.0.0/8。',
+  firewallAddPortSourceInvalid: '来源地址格式不正确：只支持 IP 或 CIDR（如 192.168.200.1、10.0.0.0/8），多个用逗号分隔。',
+  firewallSourceOnly: '仅限 {source} 访问',
   firewallBindLocalOnly: '仅监听 {addr}',
   firewallBindLocalOnlyConfig: '配置为 {addr}（启动后仍只监听本机）',
   firewallBindManualFix: '需在软件自身的配置文件中修改监听地址',

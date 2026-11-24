@@ -73,20 +73,43 @@ impl Proto {
 }
 
 /// 一条「放行某端口」的规则。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// `source` 为 `None` 表示对任意来源放行；`Some(ip_or_cidr)` 表示**仅该来源**
+/// 放行（单 IP 或 CIDR，如 `192.168.200.1` / `10.0.0.0/8`）。来源是规则身份的
+/// 一部分：同一个端口可以同时存在「全网放行」与「仅限某 IP」两条独立规则。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PortRule {
     pub port: u16,
     pub proto: Proto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl PortRule {
     pub fn tcp(port: u16) -> Self {
-        Self { port, proto: Proto::Tcp }
+        Self { port, proto: Proto::Tcp, source: None }
+    }
+
+    pub fn udp(port: u16) -> Self {
+        Self { port, proto: Proto::Udp, source: None }
+    }
+
+    /// 带来源限定的规则。
+    pub fn sourced(port: u16, proto: Proto, source: impl Into<String>) -> Self {
+        Self { port, proto, source: Some(source.into()) }
     }
 
     /// ufw / firewalld 通用的 `8080/tcp` 形态。
     pub fn spec(&self) -> String {
         format!("{}/{}", self.port, self.proto.as_str())
+    }
+
+    /// 人读的完整描述（含来源），用于日志与审计。
+    pub fn spec_full(&self) -> String {
+        match &self.source {
+            Some(s) => format!("{} from {}", self.spec(), s),
+            None => self.spec(),
+        }
     }
 }
 
@@ -524,7 +547,11 @@ pub fn list_allowed(kind: BackendKind) -> Result<Vec<PortRule>> {
         }
         BackendKind::Firewalld => {
             let text = run("firewall-cmd", &["--permanent", "--list-ports"])?;
-            Ok(parse_port_list(&text))
+            let mut rules = parse_port_list(&text);
+            // 来源限定规则存为富规则，端口列表里看不到，需另查
+            let rich = run("firewall-cmd", &["--permanent", "--list-rich-rules"]).unwrap_or_default();
+            rules.extend(parse_firewalld_rich_rules(&rich));
+            Ok(rules)
         }
         BackendKind::Windows => list_windows_rules(),
         BackendKind::Nftables => nft_list(),
@@ -533,20 +560,31 @@ pub fn list_allowed(kind: BackendKind) -> Result<Vec<PortRule>> {
 }
 
 /// 放行端口。已放行时返回 `Ok(false)`（幂等）。
-pub fn allow(kind: BackendKind, rule: PortRule) -> Result<bool> {
+pub fn allow(kind: BackendKind, rule: &PortRule) -> Result<bool> {
     validate(rule)?;
     // 先查：避免重复写入（ufw/firewalld 的重复添加多数是幂等的，但 Windows
     // 会累积同名规则，必须先判）
-    if list_allowed(kind)?.contains(&rule) {
+    if list_allowed(kind)?.contains(rule) {
         return Ok(false);
     }
     match kind {
         BackendKind::Ufw => {
-            run("ufw", &["allow", &rule.spec()])?;
+            let args = ufw_args("allow", rule);
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            run("ufw", &refs)?;
             Ok(true)
         }
         BackendKind::Firewalld => {
-            run("firewall-cmd", &["--permanent", &format!("--add-port={}", rule.spec())])?;
+            match &rule.source {
+                Some(src) => run(
+                    "firewall-cmd",
+                    &["--permanent", &format!("--add-rich-rule={}", firewalld_rich_rule(rule, src))],
+                )?,
+                None => run(
+                    "firewall-cmd",
+                    &["--permanent", &format!("--add-port={}", rule.spec())],
+                )?,
+            };
             reload_firewalld_best_effort();
             Ok(true)
         }
@@ -563,18 +601,32 @@ pub fn allow(kind: BackendKind, rule: PortRule) -> Result<bool> {
 }
 
 /// 撤销放行。本就没有该规则时返回 `Ok(false)`（幂等）。
-pub fn revoke(kind: BackendKind, rule: PortRule) -> Result<bool> {
+pub fn revoke(kind: BackendKind, rule: &PortRule) -> Result<bool> {
     validate(rule)?;
-    if !list_allowed(kind)?.contains(&rule) {
+    if !list_allowed(kind)?.contains(rule) {
         return Ok(false);
     }
     match kind {
         BackendKind::Ufw => {
-            run("ufw", &["delete", "allow", &rule.spec()])?;
+            let args = ufw_args("delete", rule);
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            run("ufw", &refs)?;
             Ok(true)
         }
         BackendKind::Firewalld => {
-            run("firewall-cmd", &["--permanent", &format!("--remove-port={}", rule.spec())])?;
+            match &rule.source {
+                Some(src) => run(
+                    "firewall-cmd",
+                    &[
+                        "--permanent",
+                        &format!("--remove-rich-rule={}", firewalld_rich_rule(rule, src)),
+                    ],
+                )?,
+                None => run(
+                    "firewall-cmd",
+                    &["--permanent", &format!("--remove-port={}", rule.spec())],
+                )?,
+            };
             reload_firewalld_best_effort();
             Ok(true)
         }
@@ -598,19 +650,85 @@ pub fn allow_many(kind: BackendKind, rules: &[PortRule]) -> (Vec<PortRule>, Vec<
     let mut ok = Vec::new();
     let mut errors = Vec::new();
     for rule in rules {
-        match allow(kind, *rule) {
-            Ok(_) => ok.push(*rule),
+        match allow(kind, rule) {
+            Ok(_) => ok.push(rule.clone()),
             Err(e) => errors.push(format!("{}: {e}", rule.spec())),
         }
     }
     (ok, errors)
 }
 
-fn validate(rule: PortRule) -> Result<()> {
+/// 来源字段校验：`None` 合法；`Some` 必须是可解析的 IP 或 CIDR。
+pub fn validate_source(source: &str) -> Result<()> {
+    let s = source.trim();
+    let fail = || anyhow!("来源地址不合法：「{s}」（应为 IP 或 CIDR，如 192.168.200.1 / 10.0.0.0/8）");
+    let (ip_part, prefix) = match s.split_once('/') {
+        Some((ip, p)) => (ip, p.parse::<u8>().map_err(|_| fail())?),
+        None => {
+            s.parse::<std::net::IpAddr>().map_err(|_| fail())?;
+            return Ok(());
+        }
+    };
+    let ip = ip_part.parse::<std::net::IpAddr>().map_err(|_| fail())?;
+    let max = match ip {
+        std::net::IpAddr::V4(_) => 32,
+        std::net::IpAddr::V6(_) => 128,
+    };
+    if prefix > max {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+fn validate(rule: &PortRule) -> Result<()> {
     if rule.port == 0 {
         return Err(anyhow!("端口不能为 0"));
     }
+    if let Some(src) = &rule.source {
+        validate_source(src)?;
+    }
     Ok(())
+}
+
+/// ufw 的规则参数。语法差异：`ufw allow <目标>` 只有一个 allow；`delete` 则是
+/// `ufw delete allow <目标>`。目标两种形态 —— 全网规则 `3306/tcp`；来源规则
+/// `from <src> to any port 3306 proto tcp`（allow/delete 同形，须拆成多参数 ——
+/// ufw 把带空格的单参数当规则文本原样处理，实测会报 "bad rule"）。
+fn ufw_args(action: &str, rule: &PortRule) -> Vec<String> {
+    let mut args = vec![action.to_string()];
+    if action == "delete" {
+        args.push("allow".to_string());
+    }
+    match &rule.source {
+        Some(src) => {
+            for tok in format!(
+                "from {} to any port {} proto {}",
+                src.trim(),
+                rule.port,
+                rule.proto.as_str()
+            )
+            .split_whitespace()
+            {
+                args.push(tok.to_string());
+            }
+        }
+        None => args.push(rule.spec()),
+    }
+    args
+}
+
+/// firewalld 富规则的规范形态（add/remove 同形）。
+fn firewalld_rich_rule(rule: &PortRule, source: &str) -> String {
+    let family = match source.trim().parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(_)) => "ipv6",
+        _ => "ipv4",
+    };
+    format!(
+        "rule family={family} source address={src} port port={port} protocol={proto} accept",
+        src = source.trim(),
+        port = rule.port,
+        proto = rule.proto.as_str()
+    )
 }
 
 /// 业务层最常用的入口：按端口号批量放行 TCP。
@@ -653,7 +771,7 @@ pub fn revoke_tcp(ports: &[u16]) -> Vec<String> {
     }
     ports
         .iter()
-        .filter_map(|p| revoke(kind, PortRule::tcp(*p)).err().map(|e| format!("{p}/tcp: {e}")))
+        .filter_map(|p| revoke(kind, &PortRule::tcp(*p)).err().map(|e| format!("{p}/tcp: {e}")))
         .collect()
 }
 
@@ -665,8 +783,39 @@ fn reload_firewalld_best_effort() {
     let _ = run("firewall-cmd", &["--reload"]);
 }
 
-fn windows_rule_name(rule: PortRule) -> String {
-    format!("opx-{}-{}", rule.port, rule.proto.as_str())
+/// netsh 规则名。来源编码进名字（`/` 在规则名里不可靠 → 换成 `_`；IP/CIDR 里
+/// 本来就没有 `_`，可无损还原），否则 `show rule` 默认输出看不到 RemoteIP，
+/// 来源规则会「消失」。
+fn windows_rule_name(rule: &PortRule) -> String {
+    match &rule.source {
+        Some(src) => format!(
+            "opx-{}-{}-src-{}",
+            rule.port,
+            rule.proto.as_str(),
+            src.trim().replace('/', "_")
+        ),
+        None => format!("opx-{}-{}", rule.port, rule.proto.as_str()),
+    }
+}
+
+/// 从规则名还原规则；形态不符返回 None。
+fn parse_windows_rule_name(name: &str) -> Option<PortRule> {
+    let rest = name.trim().strip_prefix("opx-")?;
+    let (port_s, tail) = rest.split_once('-')?;
+    let port = port_s.parse::<u16>().ok()?;
+    if port == 0 {
+        return None;
+    }
+    // `tcp` / `udp` 或 `tcp-src-192.168.200.1_32`
+    let (proto_s, source) = match tail.split_once("-src-") {
+        Some((p, encoded)) => {
+            // `_` 只可能来自 `/`（IP/CIDR 不含下划线）
+            (p, Some(encoded.replace('_', "/")))
+        }
+        None => (tail, None),
+    };
+    let proto = Proto::parse(proto_s)?;
+    Some(PortRule { port, proto, source })
 }
 
 fn list_windows_rules() -> Result<Vec<PortRule>> {
@@ -676,32 +825,32 @@ fn list_windows_rules() -> Result<Vec<PortRule>> {
     Ok(parse_netsh_rules(&text))
 }
 
-fn add_windows_rule(rule: PortRule) -> Result<()> {
+fn add_windows_rule(rule: &PortRule) -> Result<()> {
     let name = windows_rule_name(rule);
     let proto = if rule.proto == Proto::Tcp { "TCP" } else { "UDP" };
-    run(
-        "netsh",
-        &[
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            &format!("name={name}"),
-            "dir=in",
-            "action=allow",
-            "profile=any",
-            &format!("protocol={proto}"),
-            &format!("localport={}", rule.port),
-        ],
-    )
-    .map(|_| ())
-    .map_err(|e| {
-        // 最常见原因：非管理员运行。把 netsh 的原始报错补一句可操作提示。
-        anyhow!("{e}（Windows 下放行端口需要以管理员身份运行 opx）")
-    })
+    let mut args: Vec<String> = vec![
+        format!("name={name}"),
+        "dir=in".to_string(),
+        "action=allow".to_string(),
+        "profile=any".to_string(),
+        format!("protocol={proto}"),
+        format!("localport={}", rule.port),
+    ];
+    if let Some(src) = &rule.source {
+        args.push(format!("remoteip={}", src.trim()));
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut full: Vec<&str> = vec!["advfirewall", "firewall", "add", "rule"];
+    full.extend(arg_refs);
+    run("netsh", &full)
+        .map(|_| ())
+        .map_err(|e| {
+            // 最常见原因：非管理员运行。把 netsh 的原始报错补一句可操作提示。
+            anyhow!("{e}（Windows 下放行端口需要以管理员身份运行 opx）")
+        })
 }
 
-fn delete_windows_rule(rule: PortRule) -> Result<()> {
+fn delete_windows_rule(rule: &PortRule) -> Result<()> {
     let name = windows_rule_name(rule);
     run(
         "netsh",
@@ -753,6 +902,26 @@ fn nft_set_name(proto: Proto) -> &'static str {
     }
 }
 
+/// 来源限定规则的集合名：`<协议>_src` / `<协议>6_src`（IPv4 / IPv6 各一套）。
+/// 类型是 `<addr>_addr . inet_service` 拼接集合，元素形如 `192.168.200.1 . 3306`。
+fn nft_addr_set_name(proto: Proto, v6: bool) -> &'static str {
+    match (proto, v6) {
+        (Proto::Tcp, false) => "tcp_src",
+        (Proto::Tcp, true) => "tcp6_src",
+        (Proto::Udp, false) => "udp_src",
+        (Proto::Udp, true) => "udp6_src",
+    }
+}
+
+/// 来源地址属于哪个协议族（按 CIDR 的地址部分判定）。
+fn source_is_v6(source: &str) -> bool {
+    let ip_part = source.trim().split('/').next().unwrap_or("");
+    matches!(
+        ip_part.trim().parse::<std::net::IpAddr>(),
+        Ok(std::net::IpAddr::V6(_))
+    )
+}
+
 /// 读链内容（用于判断跳转规则是否已存在）。失败当空串处理。
 fn nft_chain_text() -> String {
     run("nft", &["list", "chain", NFT_FAMILY, NFT_TABLE, "input"]).unwrap_or_default()
@@ -787,29 +956,55 @@ fn nft_ensure_locked() -> Result<()> {
                 &["add", "set", NFT_FAMILY, NFT_TABLE, set, "{ type inet_service; }"],
             );
         }
+        for v6 in [false, true] {
+            let set = nft_addr_set_name(proto, v6);
+            if run("nft", &["list", "set", NFT_FAMILY, NFT_TABLE, set]).is_err() {
+                let _ = run(
+                    "nft",
+                    &[
+                        "add",
+                        "set",
+                        NFT_FAMILY,
+                        NFT_TABLE,
+                        set,
+                        // interval：元素可能带 CIDR 前缀（10.0.0.0/8），无此标志 add element 会拒
+                        if v6 {
+                            "{ type ipv6_addr . inet_service; flags interval; }"
+                        } else {
+                            "{ type ipv4_addr . inet_service; flags interval; }"
+                        },
+                    ],
+                );
+            }
+        }
     }
 
     // 历史版本的并发 bug 会留下重复跳转规则：发现重复就整链重建。
-    // 链里只有 opx 自己的两条规则，flush 是安全的；集合元素不受 flush 影响。
+    // 链里只有 opx 自己的规则，flush 是安全的；集合元素不受 flush 影响。
+    let needles: Vec<String> = [Proto::Tcp, Proto::Udp]
+        .iter()
+        .flat_map(|p| {
+            let port = nft_set_name(*p);
+            [
+                format!("@{port}"),
+                format!("@{}", nft_addr_set_name(*p, false)),
+                format!("@{}", nft_addr_set_name(*p, true)),
+            ]
+        })
+        .collect();
     let chain = nft_chain_text();
-    let tcp_n = chain.matches("@tcp_ports").count();
-    let udp_n = chain.matches("@udp_ports").count();
-    if tcp_n > 1 || udp_n > 1 {
-        tracing::warn!(
-            tcp_rules = tcp_n,
-            udp_rules = udp_n,
-            "nftables 存在重复跳转规则，重建 inet opx 链"
-        );
+    let dup = |n: &str| chain.matches(n).count() > 1;
+    if needles.iter().any(|n| dup(n)) {
+        tracing::warn!("nftables 存在重复跳转规则，重建 inet opx 链");
         run("nft", &["flush", "chain", NFT_FAMILY, NFT_TABLE, "input"])?;
     }
 
     // 补齐缺失的跳转规则（首次建表后 / 刚 flush 后 会走到这里）
     let chain = nft_chain_text();
     for proto in [Proto::Tcp, Proto::Udp] {
-        let set = nft_set_name(proto);
-        let needle = format!("@{set}");
         // 用「列表 @集合」而不是「tcp dport」判断：前者只出现在 opx 自己的规则里
-        if !chain.contains(&needle) {
+        let port_set = nft_set_name(proto);
+        if !chain.contains(&format!("@{port_set}")) {
             run(
                 "nft",
                 &[
@@ -820,10 +1015,33 @@ fn nft_ensure_locked() -> Result<()> {
                     "input",
                     proto.as_str(),
                     "dport",
-                    needle.as_str(),
+                    format!("@{port_set}").as_str(),
                     "accept",
                 ],
             )?;
+        }
+        // 来源限定规则：`ip saddr . tcp dport @tcp_src accept`（ip6 同理）
+        for (v6, family) in [(false, "ip"), (true, "ip6")] {
+            let set = nft_addr_set_name(proto, v6);
+            if !chain.contains(&format!("@{set}")) {
+                run(
+                    "nft",
+                    &[
+                        "add",
+                        "rule",
+                        NFT_FAMILY,
+                        NFT_TABLE,
+                        "input",
+                        family,
+                        "saddr",
+                        ".",
+                        proto.as_str(),
+                        "dport",
+                        format!("@{set}").as_str(),
+                        "accept",
+                    ],
+                )?;
+            }
         }
     }
     Ok(())
@@ -839,35 +1057,64 @@ fn nft_list() -> Result<Vec<PortRule>> {
     let _g = nft_lock();
     let mut out = Vec::new();
     for proto in [Proto::Tcp, Proto::Udp] {
-        let set = nft_set_name(proto);
         // 表或集合还没建 → 视为「没有放行」，不是错误（首次打开端口页即此状态）
-        let Ok(text) = run("nft", &["list", "set", NFT_FAMILY, NFT_TABLE, set]) else {
-            continue;
-        };
-        for port in parse_nft_elements(&text) {
-            out.push(PortRule { port, proto });
+        // 全网端口集
+        if let Ok(text) = run("nft", &["list", "set", NFT_FAMILY, NFT_TABLE, nft_set_name(proto)]) {
+            for port in parse_nft_elements(&text) {
+                out.push(PortRule { port, proto, source: None });
+            }
+        }
+        // 来源限定集（IPv4 / IPv6）
+        for v6 in [false, true] {
+            let set = nft_addr_set_name(proto, v6);
+            if let Ok(text) = run("nft", &["list", "set", NFT_FAMILY, NFT_TABLE, set]) {
+                for (src, port) in parse_nft_addr_elements(&text) {
+                    out.push(PortRule { port, proto, source: Some(src) });
+                }
+            }
         }
     }
     Ok(out)
 }
 
-fn nft_add(rule: PortRule) -> Result<()> {
+fn nft_add(rule: &PortRule) -> Result<()> {
     let _g = nft_lock();
     nft_ensure_locked()?;
-    let set = nft_set_name(rule.proto);
-    let elem = format!("{{ {} }}", rule.port);
-    run("nft", &["add", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()])?;
+    match &rule.source {
+        Some(src) => {
+            let set = nft_addr_set_name(rule.proto, source_is_v6(src));
+            let elem = format!("{{ {} . {} }}", src.trim(), rule.port);
+            run("nft", &["add", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()])?;
+        }
+        None => {
+            let set = nft_set_name(rule.proto);
+            let elem = format!("{{ {} }}", rule.port);
+            run("nft", &["add", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()])?;
+        }
+    }
     Ok(())
 }
 
-fn nft_remove(rule: PortRule) -> Result<()> {
+fn nft_remove(rule: &PortRule) -> Result<()> {
     let _g = nft_lock();
-    let set = nft_set_name(rule.proto);
-    let elem = format!("{{ {} }}", rule.port);
-    run(
-        "nft",
-        &["delete", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()],
-    )?;
+    match &rule.source {
+        Some(src) => {
+            let set = nft_addr_set_name(rule.proto, source_is_v6(src));
+            let elem = format!("{{ {} . {} }}", src.trim(), rule.port);
+            run(
+                "nft",
+                &["delete", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()],
+            )?;
+        }
+        None => {
+            let set = nft_set_name(rule.proto);
+            let elem = format!("{{ {} }}", rule.port);
+            run(
+                "nft",
+                &["delete", "element", NFT_FAMILY, NFT_TABLE, set, elem.as_str()],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -901,6 +1148,44 @@ pub fn parse_nft_elements(text: &str) -> Vec<u16> {
         .collect()
 }
 
+/// 解析来源拼接集合（`tcp_src` 等）的元素：`192.168.200.1 . 3306`。
+///
+/// 输出形如：
+/// ```text
+/// set tcp_src {
+///     type ipv4_addr . inet_service
+///     flags interval
+///     elements = { 192.168.200.1 . 3306, 10.0.0.0/8 . 5432 }
+/// }
+/// ```
+/// 地址与端口之间用 ` . ` 分隔；IPv4 地址本身含 `.`，必须从**最后一个点**切开
+/// （IPv6 地址无点，IPv4-mapped IPv6 `::ffff:a.b.c.d` 的最后一个点也是分隔符）。
+/// 解析失败的元素被跳过。
+pub fn parse_nft_addr_elements(text: &str) -> Vec<(String, u16)> {
+    let Some(pos) = text.find("elements") else {
+        return Vec::new();
+    };
+    let rest = &text[pos..];
+    let Some(open) = rest.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = rest[open..].find('}') else {
+        return Vec::new();
+    };
+    rest[open + 1..open + close]
+        .split(',')
+        .filter_map(|s| {
+            let s = s.trim();
+            let (addr, port) = s.rsplit_once('.')?;
+            let addr = addr.trim();
+            if addr.is_empty() {
+                return None;
+            }
+            Some((addr.to_string(), port.trim().parse::<u16>().ok()?))
+        })
+        .collect()
+}
+
 // ===================== 解析（纯函数，可单测） =====================
 
 /// 解析 `ufw show added` 的输出。
@@ -915,25 +1200,53 @@ pub fn parse_nft_elements(text: &str) -> Vec<u16> {
 /// ufw deny 23/tcp
 /// ufw allow from 10.0.0.0/8 to any port 5432 proto tcp
 /// ```
-/// 只收 `ufw allow <port>/<proto>` 这一种形态：
-/// - `deny` 不处理（opx 从不添加 deny 规则）；
-/// - 带来源的 `from ... to any port N proto tcp` 不收 —— 它们不是 opx 加的，
-///   收进来会导致 [`revoke`] 用错误语法删除而失败；
-/// - 无协议的 `ufw allow 3306`（同时开 tcp+udp）不收，同理避免误删。
+/// 收两种形态（都是 opx 自己写入的）：
+/// - `ufw allow <port>/<proto>`（全网放行）；
+/// - `ufw allow from <src> to any port <port> proto <proto>`（来源限定）。
+///
+/// 不收：`deny`（opx 从不添加）；无协议的 `ufw allow 3306`（同时开 tcp+udp，
+/// revoke 时用错误语法会删错）；`from` 行缺 `proto` 的同理跳过。
 pub fn parse_ufw_added(text: &str) -> Vec<PortRule> {
     let mut out = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         let Some(rest) = line.strip_prefix("ufw allow ") else { continue };
-        // 第一个 token 必须是 `<port>/<proto>`，否则不是我们维护的形态
-        let token = rest.split_whitespace().next().unwrap_or("");
-        if let Some(rule) = parse_port_token(token) {
+        if let Some(rule) = parse_ufw_rule(rest) {
             if !out.contains(&rule) {
                 out.push(rule);
             }
         }
     }
     out
+}
+
+/// `ufw allow ` 之后的文本 → 规则。
+fn parse_ufw_rule(rest: &str) -> Option<PortRule> {
+    let tokens = rest.split_whitespace().collect::<Vec<_>>();
+    match tokens.first().copied() {
+        // `from <src> to any port <port> proto <proto>`（必须先于端口形态判断：
+        // "from" 不含 '='，若先走端口臂会被 parse_port_token 拒掉）
+        Some("from") => {
+            if tokens.len() != 8 || tokens[2] != "to" || tokens[3] != "any" || tokens[4] != "port" {
+                return None;
+            }
+            let source = tokens[1].trim().to_string();
+            let port = tokens[5].parse::<u16>().ok()?;
+            let proto = Proto::parse(tokens[7])?;
+            (port != 0).then_some(PortRule { port, proto, source: Some(source) })
+        }
+        // `3306/tcp`（后面可能跟 comment '…'，忽略）
+        Some(token) if !token.contains('=') => {
+            let rule = parse_port_token(token)?;
+            // 第一个 token 是 `port/proto` 形态时，如果还有 from 子句（用户手敲的
+            // 混合写法），语义不明确，宁可不收
+            if tokens.iter().any(|t| *t == "from") {
+                return None;
+            }
+            Some(rule)
+        }
+        _ => None,
+    }
 }
 
 /// 解析 `firewall-cmd --permanent --list-ports` 的输出：`"3306/tcp 8080/tcp"`。
@@ -944,6 +1257,37 @@ pub fn parse_port_list(text: &str) -> Vec<PortRule> {
             if !out.contains(&rule) {
                 out.push(rule);
             }
+        }
+    }
+    out
+}
+
+/// 解析 `firewall-cmd --permanent --list-rich-rules` 的输出（每行一条富规则）。
+///
+/// 只收 opx 写入的形态：`rule family="ipv4" source address="1.2.3.4" port port="3306" protocol="tcp" accept`。
+/// 解析失败 / 缺字段的行跳过。
+pub fn parse_firewalld_rich_rules(text: &str) -> Vec<PortRule> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.contains("accept") {
+            continue;
+        }
+        let grab = |key: &str| -> Option<String> {
+            let start = line.find(key)? + key.len();
+            let rest = &line[start..];
+            let end = rest.find('"')?;
+            Some(rest[..end].to_string())
+        };
+        let (Some(source), Some(port), Some(proto)) = (
+            grab("source address=\""),
+            grab("port port=\"").and_then(|p| p.parse::<u16>().ok()),
+            grab("protocol=\"").and_then(|p| Proto::parse(&p)),
+        ) else {
+            continue;
+        };
+        if port != 0 {
+            out.push(PortRule { port, proto, source: Some(source) });
         }
     }
     out
@@ -962,16 +1306,11 @@ pub fn parse_netsh_rules(text: &str) -> Vec<PortRule> {
         if key != "Rule Name" && key != "规则名" && key != "規則名" {
             continue;
         }
-        let name = value.trim();
-        // 严格匹配 opx-<port>-<proto>，多一字少一字都不认
-        let Some(rest) = name.strip_prefix("opx-") else { continue };
-        let Some((port_s, proto_s)) = rest.rsplit_once('-') else { continue };
-        let (Ok(port), Some(proto)) = (port_s.parse::<u16>(), Proto::parse(proto_s)) else {
-            continue;
-        };
-        let rule = PortRule { port, proto };
-        if !out.contains(&rule) {
-            out.push(rule);
+        // 严格匹配 opx-<port>-<proto>[-src-<来源>]，多一字少一字都不认
+        if let Some(rule) = parse_windows_rule_name(value.trim()) {
+            if !out.contains(&rule) {
+                out.push(rule);
+            }
         }
     }
     out
@@ -985,7 +1324,7 @@ fn parse_port_token(token: &str) -> Option<PortRule> {
         return None;
     }
     let proto = Proto::parse(proto_s.trim())?;
-    Some(PortRule { port, proto })
+    Some(PortRule { port, proto, source: None })
 }
 
 // ===================== 命令执行 =====================
@@ -1047,7 +1386,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_ufw_added_only_plain_allow_forms() {
+    fn parses_ufw_added_plain_and_sourced_forms() {
         let sample = "Added user rules (see 'ufw status' for running firewall):\n\
 ufw allow 22/tcp\n\
 ufw allow 3306/tcp\n\
@@ -1055,6 +1394,8 @@ ufw allow 53/udp\n\
 ufw allow 8080/tcp comment 'opx-web'\n\
 ufw deny 23/tcp\n\
 ufw allow from 10.0.0.0/8 to any port 5432 proto tcp\n\
+ufw allow from 192.168.200.1 to any port 6379 proto udp\n\
+ufw allow from fe80::1/128 to any port 9100 proto tcp\n\
 ufw allow 3307\n\
 ufw allow 8080/tcp\n";
         let got = parse_ufw_added(sample);
@@ -1063,11 +1404,88 @@ ufw allow 8080/tcp\n";
             vec![
                 PortRule::tcp(22),
                 PortRule::tcp(3306),
-                PortRule { port: 53, proto: Proto::Udp },
+                PortRule { port: 53, proto: Proto::Udp, source: None },
                 PortRule::tcp(8080),
+                PortRule::sourced(5432, Proto::Tcp, "10.0.0.0/8"),
+                PortRule::sourced(6379, Proto::Udp, "192.168.200.1"),
+                PortRule::sourced(9100, Proto::Tcp, "fe80::1/128"),
             ],
-            "带 comment 的要收（opx 自己加的会带 comment）；deny/带来源/无协议/重复都不收"
+            "comment 形态要收；deny/无协议的 from 行/裸端口/重复都不收"
         );
+    }
+
+    #[test]
+    fn validate_source_accepts_ip_and_cidr_only() {
+        assert!(validate_source("192.168.200.1").is_ok());
+        assert!(validate_source("10.0.0.0/8").is_ok());
+        assert!(validate_source("fe80::1/128").is_ok());
+        assert!(validate_source("::1").is_ok());
+        // 非法：域名、缺前缀数字、超范围前缀、多余字符
+        assert!(validate_source("example.com").is_err());
+        assert!(validate_source("10.0.0.0/33").is_err());
+        assert!(validate_source("::1/129").is_err());
+        assert!(validate_source("192.168.1.1a").is_err());
+        assert!(validate_source("10.0.0.0/8 extra").is_err());
+    }
+
+    #[test]
+    fn parses_nft_addr_set_elements() {
+        let sample = "table inet opx {\n\
+\tset tcp_src {\n\
+\t\ttype ipv4_addr . inet_service\n\
+\t\tflags interval\n\
+\t\telements = { 192.168.200.1 . 3306, 10.0.0.0/8 . 5432 }\n\
+\t}\n\
+}";
+        assert_eq!(
+            parse_nft_addr_elements(sample),
+            vec![("192.168.200.1".to_string(), 3306), ("10.0.0.0/8".to_string(), 5432)]
+        );
+        // IPv6 地址不含 '.'，可安全分离
+        let v6 = "elements = { fe80::1 . 9100 }";
+        assert_eq!(parse_nft_addr_elements(v6), vec![("fe80::1".to_string(), 9100)]);
+        assert!(parse_nft_addr_elements("no elements here").is_empty());
+    }
+
+    #[test]
+    fn ufw_args_cover_both_rule_shapes() {
+        let plain = PortRule::tcp(3306);
+        assert_eq!(ufw_args("allow", &plain), vec!["allow", "3306/tcp"]);
+        let sourced = PortRule::sourced(5432, Proto::Tcp, "10.0.0.0/8");
+        assert_eq!(
+            ufw_args("delete", &sourced),
+            vec!["delete", "allow", "from", "10.0.0.0/8", "to", "any", "port", "5432", "proto", "tcp"]
+        );
+        assert_eq!(
+            ufw_args("allow", &sourced),
+            vec!["allow", "from", "10.0.0.0/8", "to", "any", "port", "5432", "proto", "tcp"]
+        );
+    }
+
+    #[test]
+    fn windows_rule_name_roundtrips_source() {
+        let sourced = PortRule::sourced(3306, Proto::Tcp, "192.168.200.1/32");
+        let name = windows_rule_name(&sourced);
+        assert_eq!(name, "opx-3306-tcp-src-192.168.200.1_32");
+        assert_eq!(parse_windows_rule_name(&name), Some(sourced));
+        // 全网规则不带 src 段
+        let plain = PortRule::tcp(17580);
+        assert_eq!(parse_windows_rule_name(&windows_rule_name(&plain)), Some(plain));
+    }
+
+    #[test]
+    fn firewalld_rich_rule_roundtrip() {
+        let sourced = PortRule::sourced(3306, Proto::Tcp, "10.0.0.0/8");
+        let rich = firewalld_rich_rule(&sourced, "10.0.0.0/8");
+        assert_eq!(
+            rich,
+            "rule family=ipv4 source address=10.0.0.0/8 port port=3306 protocol=tcp accept"
+        );
+        // firewalld --list-rich-rules 的真实输出：值带双引号
+        let listed = r#"rule family="ipv4" source address="10.0.0.0/8" port port="3306" protocol="tcp" accept"#;
+        assert_eq!(parse_firewalld_rich_rules(listed), vec![sourced]);
+        let v6 = PortRule::sourced(9100, Proto::Tcp, "fe80::1");
+        assert!(firewalld_rich_rule(&v6, "fe80::1").contains("family=ipv6"));
     }
 
     #[test]
@@ -1077,7 +1495,7 @@ ufw allow 8080/tcp\n";
             vec![
                 PortRule::tcp(3306),
                 PortRule::tcp(8080),
-                PortRule { port: 53, proto: Proto::Udp },
+                PortRule { port: 53, proto: Proto::Udp, source: None },
             ]
         );
         // 空输出（没有任何放行规则）不应崩
@@ -1103,7 +1521,7 @@ ufw allow 8080/tcp\n";
             parse_netsh_rules(sample),
             vec![
                 PortRule::tcp(3306),
-                PortRule { port: 53, proto: Proto::Udp },
+                PortRule { port: 53, proto: Proto::Udp, source: None },
             ],
             "只认 opx-<port>-<proto>，用户自建规则与畸形名都不纳入"
         );
@@ -1124,8 +1542,8 @@ ufw allow 8080/tcp\n";
 
     #[test]
     fn rejects_port_zero() {
-        assert!(allow(BackendKind::None, PortRule::tcp(0)).is_err());
-        assert!(revoke(BackendKind::None, PortRule::tcp(0)).is_err());
+        assert!(allow(BackendKind::None, &PortRule::tcp(0)).is_err());
+        assert!(revoke(BackendKind::None, &PortRule::tcp(0)).is_err());
     }
 
     /// 后端不支持时必须明确报错，不能静默「成功」——
@@ -1133,8 +1551,8 @@ ufw allow 8080/tcp\n";
     #[test]
     fn none_backend_errors_instead_of_silent_success() {
         assert!(list_allowed(BackendKind::None).is_err());
-        assert!(allow(BackendKind::None, PortRule::tcp(3306)).is_err());
-        assert!(revoke(BackendKind::None, PortRule::tcp(3306)).is_err());
+        assert!(allow(BackendKind::None, &PortRule::tcp(3306)).is_err());
+        assert!(revoke(BackendKind::None, &PortRule::tcp(3306)).is_err());
     }
 
     #[test]
