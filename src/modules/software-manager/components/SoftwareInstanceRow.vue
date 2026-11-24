@@ -122,6 +122,7 @@ import { Icon } from '@iconify/vue'
 import StatusBadge from './StatusBadge.vue'
 import { InstalledSoftware, SoftwareCategory, SoftwareStatus, type PortReport } from '@/models/software'
 import { translateError } from '@/utils/i18nError'
+import { webAccessHost } from '@/utils/accessHost'
 
 const { t, te } = useI18n()
 
@@ -184,7 +185,7 @@ const runtimePort = computed(() => {
 // 可网页访问的软件返回访问地址，否则 null（数据库/Kafka/JRE 等走非 HTTP 协议）
 const webUrl = computed(() => {
   const s = props.software
-  const host = '127.0.0.1'
+  const host = webAccessHost() // 依赖 settings store，settings 变更时随本 computed 重算
   const port = runtimePort.value
   switch (s.key) {
     case 'elasticsearch':

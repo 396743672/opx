@@ -218,7 +218,25 @@ pub fn get_firewall_overview(
         Ok(rules) => (rules, None),
         Err(e) => (Vec::new(), Some(format!("{e:#}"))),
     };
-    let is_allowed = |rule: PortRule| allowed_rules.contains(&rule);
+    // 该端口在系统防火墙里是否存在任意放行规则（含来源限定规则）：
+    // 只查全网规则会把「仅限某 IP」的端口误显示成未放行。
+    let has_any = |port: u16, proto: &str| -> bool {
+        allowed_rules
+            .iter()
+            .any(|r| r.port == port && r.proto.as_str() == proto)
+    };
+    // 该端口当前的「来源限定」规则（从系统防火墙读回展示——防火墙本身是
+    // 事实源，被管软件 / JAR / 站点 / opx 的端口都按此展示，不落设置）。
+    let sources_of = |port: u16, proto: &str| -> Vec<String> {
+        let mut out: Vec<String> = allowed_rules
+            .iter()
+            .filter(|r| r.port == port && r.proto.as_str() == proto && r.source.is_some())
+            .map(|r| r.source.clone().unwrap_or_default())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    };
 
     let mut ports: Vec<FirewallPortEntry> = Vec::new();
     // 真实监听地址只采一次，五个来源共用（采集要读 /proc 或跑 netstat）
@@ -243,8 +261,8 @@ pub fn get_firewall_overview(
         label: String::new(),
         detail: String::new(),
         instance_id: None,
-        allowed: is_allowed(PortRule::tcp(web_port)),
-        sources: Vec::new(),
+        allowed: has_any(web_port, "tcp"),
+        sources: sources_of(web_port, "tcp"),
         bind: b.addr,
         bind_local_only: b.local_only,
         bind_source: b.source.to_string(),
@@ -272,8 +290,8 @@ pub fn get_firewall_overview(
                     sw.version.clone()
                 },
                 instance_id: Some(sw.id.clone()),
-                allowed: is_allowed(PortRule::tcp(port)),
-                sources: Vec::new(),
+                allowed: has_any(port, "tcp"),
+                sources: sources_of(port, "tcp"),
                 bind: b.addr,
                 bind_local_only: b.local_only,
                 bind_source: b.source.to_string(),
@@ -294,8 +312,8 @@ pub fn get_firewall_overview(
             label: app.name.clone(),
             detail: String::new(),
             instance_id: None,
-            allowed: is_allowed(PortRule::tcp(port)),
-            sources: Vec::new(),
+            allowed: has_any(port, "tcp"),
+            sources: sources_of(port, "tcp"),
             bind: b.addr,
             bind_local_only: b.local_only,
             bind_source: b.source.to_string(),
@@ -323,8 +341,8 @@ pub fn get_firewall_overview(
             label: site.name.clone(),
             detail,
             instance_id: None,
-            allowed: is_allowed(PortRule::tcp(site.listen)),
-            sources: Vec::new(),
+            allowed: has_any(site.listen, "tcp"),
+            sources: sources_of(site.listen, "tcp"),
             bind: b.addr,
             bind_local_only: b.local_only,
             bind_source: b.source.to_string(),
@@ -339,8 +357,8 @@ pub fn get_firewall_overview(
                 label: site.name.clone(),
                 detail: "SSL".to_string(),
                 instance_id: None,
-                allowed: is_allowed(PortRule::tcp(443)),
-                sources: Vec::new(),
+                allowed: has_any(443, "tcp"),
+                sources: sources_of(443, "tcp"),
                 bind: b.addr,
                 bind_local_only: b.local_only,
                 bind_source: b.source.to_string(),
@@ -428,6 +446,63 @@ pub fn set_firewall_port(
             firewall::revoke(kind, &rule)
         };
         changed.map_err(|e| format!("{e:#}"))
+    })
+}
+
+/// 比较某端口规则现状与目标：返回需要撤销、需要写入的规则（纯函数，便于单测）。
+fn rules_diff(current: &[PortRule], target: &[PortRule]) -> (Vec<PortRule>, Vec<PortRule>) {
+    let to_revoke = current.iter().filter(|r| !target.contains(r)).cloned().collect();
+    let to_add = target.iter().filter(|r| !current.contains(r)).cloned().collect();
+    (to_revoke, to_add)
+}
+
+/// 整组设置某端口的放行来源（覆盖式，适用于所有端口来源：被管软件 / JAR /
+/// 站点 / opx 自身 / 手动端口）。
+///
+/// `sources` 空 = 对任意来源放行：撤销该端口现有全部规则（含来源限定），
+/// 写一条全网规则；非空 = 撤销该端口现有全部规则，再按来源逐条写入。
+/// 与 `set_firewall_port` 的单条操作不同，本命令保证端口规则集精确等于目标。
+#[tauri::command]
+pub fn set_firewall_port_sources(
+    port: u16,
+    proto: String,
+    sources: Option<Vec<String>>,
+) -> Result<(), String> {
+    let proto = parse_proto(&proto)?;
+    if port == 0 {
+        return Err("端口不能为 0".to_string());
+    }
+    let mut sources = sources.unwrap_or_default();
+    sources.retain(|s| !s.trim().is_empty());
+    for s in &sources {
+        firewall::validate_source(s).map_err(|e| format!("{e:#}"))?;
+    }
+
+    let kind = firewall::backend();
+    let target: Vec<PortRule> = if sources.is_empty() {
+        vec![PortRule { port, proto, source: None }]
+    } else {
+        sources
+            .iter()
+            .map(|s| PortRule { port, proto, source: Some(s.clone()) })
+            .collect()
+    };
+    audited!("set_firewall_port_sources", format!("{} ×{}", PortRule { port, proto, source: None }.spec(), target.len()), "", {
+        let current: Vec<PortRule> = firewall::list_allowed(kind)
+            .map_err(|e| format!("{e:#}"))?
+            .into_iter()
+            .filter(|r| r.port == port && r.proto == proto)
+            .collect();
+        // 先撤掉不在目标里的现有规则（全网 + 旧来源），再补上缺的目标规则；
+        // 两步都幂等，重复执行不会产生重复规则。
+        let (to_revoke, to_add) = rules_diff(&current, &target);
+        for r in &to_revoke {
+            firewall::revoke(kind, r).map_err(|e| format!("{e:#}"))?;
+        }
+        for r in &to_add {
+            firewall::allow(kind, r).map_err(|e| format!("{e:#}"))?;
+        }
+        Ok(())
     })
 }
 
@@ -673,5 +748,54 @@ mod tests {
         for v in ["0.0.0.0", "::", "192.168.1.5", "", "example.com", "127.0.0.1.example.com"] {
             assert!(!is_loopback(v), "{v} 不应判定为回环");
         }
+    }
+
+    /// set_firewall_port_sources 的 diff：目标与现状一致时不产生任何操作（幂等）。
+    #[test]
+    fn rules_diff_noop_when_target_matches_current() {
+        use super::rules_diff;
+        use opx_core::services::firewall::PortRule;
+
+        let cur = vec![
+            PortRule::tcp(3306),
+            PortRule::sourced(3306, opx_core::services::firewall::Proto::Tcp, "192.168.200.1"),
+        ];
+        let (revoke, add) = rules_diff(&cur, &cur);
+        assert!(revoke.is_empty() && add.is_empty());
+    }
+
+    /// 从「全网放行」切到「仅限某 IP」：必须撤掉全网规则（否则来源限定形同虚设）。
+    #[test]
+    fn rules_diff_switching_to_sourced_revokes_unrestricted() {
+        use super::rules_diff;
+        use opx_core::services::firewall::{PortRule, Proto};
+
+        let cur = vec![PortRule::tcp(6379)];
+        let target = vec![PortRule::sourced(6379, Proto::Tcp, "10.0.0.0/8")];
+        let (revoke, add) = rules_diff(&cur, &target);
+        assert_eq!(revoke, vec![PortRule::tcp(6379)]);
+        assert_eq!(add, vec![PortRule::sourced(6379, Proto::Tcp, "10.0.0.0/8")]);
+    }
+
+    /// 来源集合增删：只动差异部分，同端口多来源互不影响。
+    #[test]
+    fn rules_diff_updates_only_changed_sources() {
+        use super::rules_diff;
+        use opx_core::services::firewall::{PortRule, Proto};
+
+        let a = "192.168.200.1";
+        let b = "10.0.0.0/8";
+        let c = "172.16.0.5";
+        let cur = vec![
+            PortRule::sourced(8500, Proto::Tcp, a),
+            PortRule::sourced(8500, Proto::Tcp, b),
+        ];
+        let target = vec![
+            PortRule::sourced(8500, Proto::Tcp, b),
+            PortRule::sourced(8500, Proto::Tcp, c),
+        ];
+        let (revoke, add) = rules_diff(&cur, &target);
+        assert_eq!(revoke, vec![PortRule::sourced(8500, Proto::Tcp, a)]);
+        assert_eq!(add, vec![PortRule::sourced(8500, Proto::Tcp, c)]);
     }
 }

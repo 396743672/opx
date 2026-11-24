@@ -1090,6 +1090,11 @@ export default {
   firewallAddPortSourceInvalid:
     'Invalid source address: only IP or CIDR is accepted (e.g. 192.168.200.1, 10.0.0.0/8), separate multiple entries with commas.',
   firewallSourceOnly: 'Restricted to {source}',
+  firewallEditSource: 'Source restriction',
+  firewallEditSourceTitle: 'Source restriction · port {port}',
+  firewallEditSourceHint:
+    'Saving overwrites all existing allow rules for this port: fill in sources to allow only these addresses, or leave empty to allow from any source.',
+  firewallEditSourceDone: 'Source restriction for port {port} updated',
   firewallAddPortHint:
     'For ports that belong to no managed instance, e.g. a database only used by an internal service, or a service started by your own script. To restrict a managed port by source: revoke it above, then re-add it here with source IPs.',
   firewallBindLocalOnly: 'listening on {addr} only',

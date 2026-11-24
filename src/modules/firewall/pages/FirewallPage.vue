@@ -94,7 +94,7 @@
                 :title="$t('firewallRiskyPort')"
               />
             </div>
-            <!-- 来源限定（仅手动端口可配）：一眼看出这条规则不是全网放行 -->
+            <!-- 来源限定：一眼看出这条规则不是全网放行（从防火墙规则读回，所有端口来源都可能有） -->
             <div v-if="p.sources?.length" class="flex items-center gap-1 flex-wrap mt-0.5">
               <span
                 v-for="s in p.sources"
@@ -106,7 +106,7 @@
                 {{ s }}
               </span>
             </div>
-            <div v-else class="text-[11px] text-muted-foreground truncate">
+            <div class="text-[11px] text-muted-foreground truncate">
               {{ p.detail || p.bind || '—' }}
             </div>
           </div>
@@ -140,6 +140,14 @@
             >
               <Icon :icon="p.allowed ? 'mdi:check' : 'mdi:lock-outline'" />
               {{ p.allowed ? $t('firewallAllowed') : $t('firewallDenied') }}
+            </button>
+            <button
+              class="btn ghost tiny"
+              :disabled="!canManage || pending.has(portKey(p))"
+              :title="$t('firewallEditSource')"
+              @click="openEditSource(p)"
+            >
+              <Icon icon="mdi:account-key-outline" />
             </button>
             <button
               v-if="p.source === 'manual'"
@@ -211,6 +219,31 @@
           <div class="confirm-actions">
             <button class="btn" @click="addOpen = false">{{ $t('cancel') }}</button>
             <button class="btn primary" :disabled="addBusy || !validNewPort" @click="submitAdd">
+              {{ $t('confirm') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    <!-- 来源限定编辑（所有端口行可用：保存覆盖该端口全部放行规则） -->
+    <Teleport to="body">
+      <div v-if="editTarget" class="overlay" @click.self="editTarget = null">
+        <div class="confirm-box">
+          <div class="confirm-title">
+            <Icon icon="mdi:account-key-outline" />
+            {{ $t('firewallEditSourceTitle', { port: editTarget.port }) }}
+          </div>
+          <p class="confirm-msg">{{ $t('firewallEditSourceHint') }}</p>
+          <input
+            v-model="editSources"
+            class="field w-full mb-1"
+            :placeholder="$t('firewallAddPortSource')"
+            @keyup.enter="submitEditSource"
+          />
+          <p class="confirm-msg !mb-4">{{ $t('firewallAddPortSourceHint') }}</p>
+          <div class="confirm-actions">
+            <button class="btn" @click="editTarget = null">{{ $t('cancel') }}</button>
+            <button class="btn primary" :disabled="editBusy" @click="submitEditSource">
               {{ $t('confirm') }}
             </button>
           </div>
@@ -363,16 +396,29 @@ async function toggle(p: FirewallPortEntry) {
   pageError.value = ''
   pending.value.add(key)
   try {
-    // 手动端口带来源限定时是一组规则（每来源一条），逐条同步开关；
-    // 全网规则（无 sources）走单条调用。
-    if (p.source === 'manual' && p.sources?.length) {
-      for (const s of p.sources) {
-        await invoke('set_firewall_port', {
-          port: p.port,
-          proto: p.proto,
-          allow: want,
-          source: s,
-        })
+    // 来源限定规则（每来源一条）逐条同步开关；全网规则走单条调用。
+    // sources 由清单从防火墙规则读回，所有端口来源（软件/JAR/站点/opx）都可能有。
+    if (p.sources?.length) {
+      if (want) {
+        for (const s of p.sources) {
+          await invoke('set_firewall_port', {
+            port: p.port,
+            proto: p.proto,
+            allow: true,
+            source: s,
+          })
+        }
+      } else {
+        // 撤销：全网规则 + 每条来源规则一起撤，避免留下半开状态
+        await invoke('set_firewall_port', { port: p.port, proto: p.proto, allow: false })
+        for (const s of p.sources) {
+          await invoke('set_firewall_port', {
+            port: p.port,
+            proto: p.proto,
+            allow: false,
+            source: s,
+          })
+        }
       }
     } else {
       await invoke('set_firewall_port', { port: p.port, proto: p.proto, allow: want })
@@ -490,6 +536,49 @@ async function submitAdd() {
     pageError.value = String(e)
   } finally {
     addBusy.value = false
+  }
+}
+
+// ===== 来源限定编辑（所有端口行可用；保存 = 整组覆盖该端口规则）=====
+const editTarget = ref<FirewallPortEntry | null>(null)
+const editBusy = ref(false)
+/** 来源限定：逗号/空格分隔的 IP 或 CIDR，留空 = 对任意来源放行 */
+const editSources = ref('')
+
+function openEditSource(p: FirewallPortEntry) {
+  pageError.value = ''
+  editTarget.value = p
+  editSources.value = (p.sources ?? []).join(', ')
+}
+
+async function submitEditSource() {
+  const p = editTarget.value
+  if (!p || editBusy.value) return
+  // 留空 = 撤销来源限定（全网放行）；非空但格式不对才报错
+  let sources: string[] = []
+  if (editSources.value.trim()) {
+    const parsed = parseSources(editSources.value)
+    if (parsed === null) {
+      pageError.value = t('firewallAddPortSourceInvalid')
+      return
+    }
+    sources = parsed
+  }
+  editBusy.value = true
+  pageError.value = ''
+  try {
+    await invoke('set_firewall_port_sources', {
+      port: p.port,
+      proto: p.proto,
+      sources,
+    })
+    editTarget.value = null
+    showNotice(t('firewallEditSourceDone', { port: p.port }))
+    await load()
+  } catch (e) {
+    pageError.value = String(e)
+  } finally {
+    editBusy.value = false
   }
 }
 

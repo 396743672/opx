@@ -1086,6 +1086,11 @@ export default {
   firewallAddPortSourceHint: '留空 = 对任意来源放行；填写后仅这些 IP / 网段（CIDR）可以访问，如 192.168.200.1 或 10.0.0.0/8。',
   firewallAddPortSourceInvalid: '来源地址格式不正确：只支持 IP 或 CIDR（如 192.168.200.1、10.0.0.0/8），多个用逗号分隔。',
   firewallSourceOnly: '仅限 {source} 访问',
+  firewallEditSource: '来源限定',
+  firewallEditSourceTitle: '来源限定 · 端口 {port}',
+  firewallEditSourceHint:
+    '保存会覆盖该端口现有的全部放行规则：填来源则只放行这些地址，留空则对任意来源放行。',
+  firewallEditSourceDone: '端口 {port} 的来源限定已更新',
   firewallBindLocalOnly: '仅监听 {addr}',
   firewallBindLocalOnlyConfig: '配置为 {addr}（启动后仍只监听本机）',
   firewallBindManualFix: '需在软件自身的配置文件中修改监听地址',

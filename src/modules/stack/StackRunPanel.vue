@@ -93,6 +93,7 @@ import { computed, ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { isDesktop } from '@/utils/transport'
+import { webAccessHost } from '@/utils/accessHost'
 import { useStackStore } from '@/stores/stack'
 import LogViewerDialog from '@/modules/software-manager/components/LogViewerDialog.vue'
 import LogViewer from '@/modules/springboot-manager/components/LogViewer.vue'
@@ -163,9 +164,10 @@ function portOf(item: StackItem): number | null {
 async function openPort(item: StackItem) {
   const p = portOf(item)
   if (!p) return
+  const url = `http://${webAccessHost()}:${p}`
   // Web 模式无 opener 插件：退化为浏览器新开标签页
-  if (isDesktop) await openUrl(`http://127.0.0.1:${p}`)
-  else window.open(`http://127.0.0.1:${p}`, '_blank', 'noopener')
+  if (isDesktop) await openUrl(url)
+  else window.open(url, '_blank', 'noopener')
 }
 
 function openLogs(item: StackItem) {

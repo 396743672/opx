@@ -167,6 +167,7 @@ pub fn run() {
             commands::dns_account::test_dns_account,
             commands::firewall::get_firewall_overview,
             commands::firewall::set_firewall_port,
+            commands::firewall::set_firewall_port_sources,
             commands::firewall::add_manual_port,
             commands::firewall::remove_manual_port,
             commands::firewall::set_instance_bind_all,

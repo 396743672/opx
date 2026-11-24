@@ -475,6 +475,14 @@ pub fn build_registry<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> Regist
             ok(firewall::set_firewall_port(port, proto, allow, source))
         })
     });
+    reg.register("set_firewall_port_sources", |_ctx, args| {
+        Box::pin(async move {
+            let port: u16 = arg(&args, "port")?;
+            let proto: String = arg(&args, "proto")?;
+            let sources: Option<Vec<String>> = arg(&args, "sources")?;
+            ok(firewall::set_firewall_port_sources(port, proto, sources))
+        })
+    });
     reg.register("add_manual_port", |_ctx, args| {
         Box::pin(async move {
             let port: u16 = arg(&args, "port")?;
