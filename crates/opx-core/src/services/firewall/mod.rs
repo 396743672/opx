@@ -42,7 +42,8 @@
 //! `revoke` 不存在同样返回 `Ok(false)`。调用方可以无条件重复调用。
 
 use anyhow::{anyhow, Result};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
 
 use crate::utils::process::hidden;
 
@@ -114,7 +115,7 @@ impl PortRule {
 }
 
 /// 实际可用的防火墙后端。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BackendKind {
     /// Debian / Ubuntu 系
     Ufw,
@@ -488,8 +489,9 @@ pub fn backend() -> BackendKind {
 
 /// 后端信息（供 UI 展示）。
 pub fn info(det: Detection) -> BackendInfo {
-    // 只在真有 Windows 后端时才去问 netsh：其它情况白 spawn 一个进程没意义
-    let windows_on = det.reason != Reason::Windows || windows_firewall_on();
+    // 只在真有 Windows 后端时才去问 netsh：其它情况白 spawn 一个进程没意义。
+    // 走缓存版：get_firewall_overview 每次刷新都调 info()，而这条命令实测 ~195ms。
+    let windows_on = det.reason != Reason::Windows || windows_firewall_on_cached();
     BackendInfo {
         kind: det.kind.as_str().to_string(),
         available: det.kind != BackendKind::None,
@@ -513,6 +515,14 @@ fn windows_firewall_on() -> bool {
         .unwrap_or(true)
 }
 
+/// 进程级缓存的开关判定：`get_firewall_overview` 每次刷新都经 `info()` 走到这里，
+/// 而 `show allprofiles state` 要 spawn 一个 netsh（实测 ~195ms）。与 `detection()`
+/// 同理，防火墙开关在 opx 运行期不变（opx 不启停防火墙服务），缓存安全。
+fn windows_firewall_on_cached() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(windows_firewall_on)
+}
+
 /// 解析 `netsh advfirewall show allprofiles state` 的输出。
 ///
 /// 中英文输出都要认：`State ON` / `状态 启用`。只要有一个配置文件是 ON 就算在拦。
@@ -534,12 +544,78 @@ fn parse_netsh_state_on(text: &str) -> bool {
     false
 }
 
-/// 列出当前已放行的端口。
+/// 进程级规则表缓存。
+///
+/// 为什么要缓存：Windows 上 `netsh show rule name=all` 要枚举约 700 条规则、
+/// 解析 6000+ 行输出，实测约 700ms；opx 是本机这些 `opx-*` 规则的唯一写入方，
+/// 读回只用于展示与幂等判断。首次读一次，之后命中缓存，写入时增量维护。
+///
+/// 取舍（已与用户确认）：外部手动改系统防火墙，本进程内不会立即感知，需重启
+/// opx。opx 自己经 [`allow`]/[`revoke`] 的改动则即时反映。
+#[derive(Default)]
+struct RulesCache {
+    by_kind: RwLock<HashMap<BackendKind, Vec<PortRule>>>,
+}
+
+impl RulesCache {
+    fn get(&self, kind: BackendKind) -> Option<Vec<PortRule>> {
+        self.by_kind.read().ok()?.get(&kind).cloned()
+    }
+
+    fn put(&self, kind: BackendKind, rules: Vec<PortRule>) {
+        if let Ok(mut map) = self.by_kind.write() {
+            map.insert(kind, rules);
+        }
+    }
+
+    fn apply_add(&self, kind: BackendKind, rule: &PortRule) {
+        if let Ok(mut map) = self.by_kind.write() {
+            if let Some(rules) = map.get_mut(&kind) {
+                if !rules.contains(rule) {
+                    rules.push(rule.clone());
+                }
+            }
+        }
+    }
+
+    fn apply_remove(&self, kind: BackendKind, rule: &PortRule) {
+        if let Ok(mut map) = self.by_kind.write() {
+            if let Some(rules) = map.get_mut(&kind) {
+                rules.retain(|r| r != rule);
+            }
+        }
+    }
+}
+
+fn rules_cache() -> &'static RulesCache {
+    static CACHE: OnceLock<RulesCache> = OnceLock::new();
+    CACHE.get_or_init(RulesCache::default)
+}
+
+/// 列出当前已放行的端口（走进程缓存；写入方需同步维护，见 [`RulesCache`]）。
+pub fn list_allowed(kind: BackendKind) -> Result<Vec<PortRule>> {
+    list_allowed_with(kind, rules_cache(), load_allowed_fresh)
+}
+
+/// 可注入 loader 的缓存读取，便于单测验证「只加载一次」。
+fn list_allowed_with<F>(kind: BackendKind, cache: &RulesCache, load: F) -> Result<Vec<PortRule>>
+where
+    F: Fn(BackendKind) -> Result<Vec<PortRule>>,
+{
+    if let Some(cached) = cache.get(kind) {
+        return Ok(cached);
+    }
+    let rules = load(kind)?;
+    cache.put(kind, rules.clone());
+    Ok(rules)
+}
+
+/// 真正跑系统命令读取规则（不缓存）。
 ///
 /// 口径差异说明：ufw/firewalld 读的是**持久配置层**（`ufw show added` /
 /// `firewall-cmd --permanent --list-ports`），与「是否已 enable/start」无关，
 /// 与 [`allow`] 写入的层一致 —— 这样查询结果与实际维护的规则永远同源。
-pub fn list_allowed(kind: BackendKind) -> Result<Vec<PortRule>> {
+fn load_allowed_fresh(kind: BackendKind) -> Result<Vec<PortRule>> {
     match kind {
         BackendKind::Ufw => {
             let text = run("ufw", &["show", "added"])?;
@@ -567,12 +643,12 @@ pub fn allow(kind: BackendKind, rule: &PortRule) -> Result<bool> {
     if list_allowed(kind)?.contains(rule) {
         return Ok(false);
     }
-    match kind {
+    let changed = match kind {
         BackendKind::Ufw => {
             let args = ufw_args("allow", rule);
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             run("ufw", &refs)?;
-            Ok(true)
+            true
         }
         BackendKind::Firewalld => {
             match &rule.source {
@@ -586,18 +662,22 @@ pub fn allow(kind: BackendKind, rule: &PortRule) -> Result<bool> {
                 )?,
             };
             reload_firewalld_best_effort();
-            Ok(true)
+            true
         }
         BackendKind::Windows => {
             add_windows_rule(rule)?;
-            Ok(true)
+            true
         }
         BackendKind::Nftables => {
             nft_add(rule)?;
-            Ok(true)
+            true
         }
-        BackendKind::None => Err(anyhow!("未检测到受支持的防火墙后端，无法自动放行端口")),
+        BackendKind::None => return Err(anyhow!("未检测到受支持的防火墙后端，无法自动放行端口")),
+    };
+    if changed {
+        rules_cache().apply_add(kind, rule);
     }
+    Ok(changed)
 }
 
 /// 撤销放行。本就没有该规则时返回 `Ok(false)`（幂等）。
@@ -606,12 +686,12 @@ pub fn revoke(kind: BackendKind, rule: &PortRule) -> Result<bool> {
     if !list_allowed(kind)?.contains(rule) {
         return Ok(false);
     }
-    match kind {
+    let changed = match kind {
         BackendKind::Ufw => {
             let args = ufw_args("delete", rule);
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             run("ufw", &refs)?;
-            Ok(true)
+            true
         }
         BackendKind::Firewalld => {
             match &rule.source {
@@ -628,18 +708,22 @@ pub fn revoke(kind: BackendKind, rule: &PortRule) -> Result<bool> {
                 )?,
             };
             reload_firewalld_best_effort();
-            Ok(true)
+            true
         }
         BackendKind::Windows => {
             delete_windows_rule(rule)?;
-            Ok(true)
+            true
         }
         BackendKind::Nftables => {
             nft_remove(rule)?;
-            Ok(true)
+            true
         }
-        BackendKind::None => Err(anyhow!("未检测到受支持的防火墙后端，无法撤销端口放行")),
+        BackendKind::None => return Err(anyhow!("未检测到受支持的防火墙后端，无法撤销端口放行")),
+    };
+    if changed {
+        rules_cache().apply_remove(kind, rule);
     }
+    Ok(changed)
 }
 
 /// 批量放行（用于安装时按 provider 声明的全部端口一次放行）。
@@ -816,10 +900,20 @@ fn parse_windows_rule_name(name: &str) -> Option<PortRule> {
     Some(PortRule { port, proto, source })
 }
 
+/// `netsh advfirewall firewall show rule` 的 `name=` 是微软文档标注的必填参数；
+/// 只传 `dir=in` 会以退出码 1 报「一个或多个重要的参数没有输入」，导致整个防火墙页读不到规则。
+/// `show rule name=opx-*` 的通配不支持，只能 `name=all` 全量列举再在解析层过滤。
+const NETSH_LIST_RULES_ARGS: &[&str] = &[
+    "advfirewall",
+    "firewall",
+    "show",
+    "rule",
+    "name=all",
+    "dir=in",
+];
+
 fn list_windows_rules() -> Result<Vec<PortRule>> {
-    // 用 `show rule name=opx-*` 不支持的缘故，只能全量列举再过滤；
-    // 加 `verbose` 太慢，这里用默认输出（含 Rule Name 行）。
-    let text = run("netsh", &["advfirewall", "firewall", "show", "rule", "dir=in"])?;
+    let text = run("netsh", NETSH_LIST_RULES_ARGS)?;
     Ok(parse_netsh_rules(&text))
 }
 
@@ -1291,7 +1385,7 @@ pub fn parse_firewalld_rich_rules(text: &str) -> Vec<PortRule> {
     out
 }
 
-/// 解析 `netsh advfirewall firewall show rule dir=in` 的输出，挑出 opx 加的规则。
+/// 解析 `netsh advfirewall firewall show rule name=all dir=in` 的输出，挑出 opx 加的规则。
 ///
 /// 每条规则是一段「键: 值」块，规则名行为 `Rule Name:  opx-3306-tcp`
 /// （中文系统为 `规则名:  opx-3306-tcp`）。只认 `opx-<port>-<tcp|udp>` 命名，
@@ -1534,6 +1628,24 @@ ufw allow 8080/tcp\n";
         assert_eq!(parse_netsh_rules(sample), vec![PortRule::tcp(17580)]);
     }
 
+    /// `netsh advfirewall firewall show rule` 的 `name=` 是必填参数（微软文档
+    /// "Required"）；只传 `dir=in` 在 Windows 11 上直接报「一个或多个重要的参数没有输入」，
+    /// 整个防火墙页读不到任何规则。此测试锁定参数里必须含 `name=all`。
+    #[test]
+    fn netsh_show_rule_includes_required_name_all() {
+        let args = super::NETSH_LIST_RULES_ARGS;
+        assert!(args.contains(&"name=all"), "show rule 必须传 name=all，实际: {args:?}");
+        assert!(args.contains(&"dir=in"), "仍需限定入站规则，实际: {args:?}");
+    }
+
+    /// 真机验证（仅 Windows）：修复后的命令能被 netsh 接受；原命令 `dir=in` 会退出码 1。
+    #[cfg(windows)]
+    #[test]
+    fn netsh_show_rule_command_succeeds_on_windows() {
+        let rules = super::list_windows_rules();
+        assert!(rules.is_ok(), "show rule name=all dir=in 应成功，实际: {rules:?}");
+    }
+
     #[test]
     fn spec_and_proto_roundtrip() {
         assert_eq!(PortRule::tcp(8080).spec(), "8080/tcp");
@@ -1684,6 +1796,73 @@ ufw allow 8080/tcp\n";
             "Domain Profile Settings:\nState                                 OFF\n"
         ));
         assert!(!parse_netsh_state_on(""), "空输出按「没开」处理由调用方决定，解析层返回 false");
+    }
+
+    /// Windows 防火墙开关判定必须走进程级缓存：get_firewall_overview 每次
+    /// 刷新都会调 info()，而 show allprofiles state 要 spawn 一个 netsh（实测 ~195ms）。
+    /// 开关状态与 detection() 同理在进程生命周期内不变，重复 spawn 纯属浪费。
+    /// 此测试锁定缓存函数存在且连续调用结果稳定（非 Windows 恒 true）。
+    #[test]
+    fn windows_firewall_on_is_process_cached() {
+        let a = super::windows_firewall_on_cached();
+        let b = super::windows_firewall_on_cached();
+        assert_eq!(a, b, "开关判定必须进程级稳定，不能每次重新探测");
+        if !cfg!(windows) {
+            assert!(a, "非 Windows 平台不该探测，直接视为不拦");
+        }
+    }
+
+    /// 规则表缓存：首次加载后不再重复跑系统命令（Windows 上 netsh 全量约 700ms）。
+    #[test]
+    fn rules_cache_loads_only_once() {
+        use std::cell::Cell;
+        let cache = super::RulesCache::default();
+        let calls = Cell::new(0);
+        let loader = |_kind| {
+            calls.set(calls.get() + 1);
+            Ok(vec![PortRule::tcp(1234)])
+        };
+        let a = super::list_allowed_with(BackendKind::Ufw, &cache, &loader).unwrap();
+        let b = super::list_allowed_with(BackendKind::Ufw, &cache, &loader).unwrap();
+        assert_eq!(a, vec![PortRule::tcp(1234)]);
+        assert_eq!(b, a);
+        assert_eq!(calls.get(), 1, "第二次必须命中缓存，不能再跑系统命令");
+    }
+
+    /// 不同后端各存一份，绝不串味（Windows 与 ufw 规则互不影响）。
+    #[test]
+    fn rules_cache_isolated_per_kind() {
+        use std::cell::Cell;
+        let cache = super::RulesCache::default();
+        let calls = Cell::new(0);
+        let loader = |kind: BackendKind| {
+            calls.set(calls.get() + 1);
+            Ok(vec![PortRule::tcp(if kind == BackendKind::Ufw { 1111 } else { 2222 })])
+        };
+        let ufw = super::list_allowed_with(BackendKind::Ufw, &cache, &loader).unwrap();
+        let win = super::list_allowed_with(BackendKind::Windows, &cache, &loader).unwrap();
+        assert_eq!(ufw, vec![PortRule::tcp(1111)]);
+        assert_eq!(win, vec![PortRule::tcp(2222)]);
+        assert_eq!(calls.get(), 2, "两个后端各加载一次");
+    }
+
+    /// opx 写入后增量维护缓存：allow 加一条、revoke 去一条，且不重复。
+    #[test]
+    fn rules_cache_tracks_opx_writes() {
+        let cache = super::RulesCache::default();
+        cache.put(BackendKind::Windows, vec![PortRule::tcp(3306)]);
+        let added = PortRule::sourced(3306, Proto::Tcp, "10.0.0.0/8");
+        cache.apply_add(BackendKind::Windows, &added);
+        cache.apply_add(BackendKind::Windows, &added); // 幂等
+        let rules = cache.get(BackendKind::Windows).unwrap();
+        assert_eq!(rules, vec![PortRule::tcp(3306), added.clone()]);
+
+        cache.apply_remove(BackendKind::Windows, &PortRule::tcp(3306));
+        let rules = cache.get(BackendKind::Windows).unwrap();
+        assert_eq!(rules, vec![added.clone()], "撤销全网规则不影响来源规则");
+
+        cache.apply_remove(BackendKind::Windows, &added);
+        assert!(cache.get(BackendKind::Windows).unwrap().is_empty());
     }
 
     /// 状态解析：真实输出形态（含非 root 的报错文本）都要能吃。

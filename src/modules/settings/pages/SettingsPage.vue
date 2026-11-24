@@ -494,9 +494,9 @@
             <Icon icon="mdi:alert-outline" class="text-base flex-shrink-0" />
             <span>{{ $t('webLanWarning') }}</span>
           </div>
-          <!-- token 查看/重置 + 打开浏览器：桌面专属（token 明文不经 HTTP 回传，
-               Web 端重置后新令牌无法送回浏览器） -->
-          <div v-if="isDesktop" class="flex items-center justify-between gap-4 py-3">
+          <!-- token 查看/重置 + 打开浏览器：两端均展示（HTTP 入口受 Bearer 保护；
+               重置后前端 setToken 写回新令牌，不会被踢） -->
+          <div class="flex items-center justify-between gap-4 py-3">
             <div class="flex flex-col gap-1 min-w-0">
               <span class="text-sm">{{ $t('webTokenLabel') }}</span>
               <div class="text-xs text-muted-foreground font-mono break-all">{{ webToken || '—' }}</div>
@@ -546,15 +546,15 @@
           <h3 class="text-sm font-semibold tracking-tight">{{ $t('serviceBindGroup') }}</h3>
         </div>
         <div class="px-5 pb-4 divide-y divide-border">
-          <div class="flex items-start justify-between gap-4 py-3">
-            <div class="flex flex-col gap-1 min-w-0">
+          <div class="flex flex-col gap-2 py-3">
+            <div class="flex flex-col gap-1">
               <span class="text-sm">{{ $t('serviceBindLabel') }}</span>
               <div class="text-xs text-muted-foreground">{{ $t('serviceBindHint') }}</div>
               <div v-if="localAddresses.length" class="text-xs text-muted-foreground font-mono break-all">
                 {{ $t('serviceBindDetected') }}{{ localAddresses.map((a) => a.address).join('、') }}
               </div>
             </div>
-            <div class="flex items-center gap-2 flex-shrink-0">
+            <div class="flex items-center gap-2">
               <select
                 v-model="serviceBindValue"
                 class="h-8 px-2 text-sm rounded-md bg-muted border border-border outline-none focus:border-primary font-mono"
@@ -595,8 +595,7 @@ import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import QRCode from 'qrcode'
 import { invoke } from '@/utils/ipc'
-import { listen, isDesktop, type UnlistenFn } from '@/utils/transport'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { listen, isDesktop, getTransport, type UnlistenFn } from '@/utils/transport'
 import { toast } from '@/composables/useToast'
 import { useSettingsStore } from '@/stores/settings'
 import { useLockStore } from '@/stores/lock'
@@ -713,14 +712,26 @@ async function openWebUi() {
   // fragment 传 token：不随请求上送、不入访问日志（设计 D3 / ADR §3.4）。
   // router 兼容形态 `#/?token=`：裸 `#token=` 会被 hash 路由当路径改写销毁
   const url = `http://127.0.0.1:${port}/#/?token=${webToken.value}`
-  openUrl(url).catch(() => {})
+  // Web 模式无 Tauri opener 插件，window.open 两端通用（桌面 WebView 走系统浏览器）
+  window.open(url, '_blank', 'noopener')
 }
 
 async function resetWebToken() {
   webResetting.value = true
   try {
-    await invoke('reset_web_token')
-    webToken.value = await invoke<string>('get_web_token')
+    const next = await invoke<string>('reset_web_token')
+    // 重置会重启 web server。Web 模式若继续用旧 token 发请求，重启窗口期的
+    // 401 处理器会清掉刚写入的新 token 并弹 TokenGate（重置反而把自己踢出）。
+    // 复用 TokenGate 的成熟模式：写回新 token 后整页重载，干净重跑启动流程。
+    // 桌面模式 setToken 是空实现、reload 后重新读 IPC token，同样正确。
+    getTransport().setToken(next)
+    if (!isDesktop) {
+      window.location.reload()
+      return
+    }
+    // 桌面模式：IPC token 已从文件读新值，仅刷新展示与扫码 URL
+    webToken.value = next
+    await loadAccessUrls()
     webResetConfirming.value = false
     toast(t('webResetDone'), 'ok')
   } catch (e) {
@@ -730,17 +741,32 @@ async function resetWebToken() {
   }
 }
 
-/** 扫码地址一键复制（批次 4.6） */
+/** 扫码地址一键复制：优先 async clipboard，非安全上下文回退 execCommand */
 async function copyWebUrl() {
+  const text = webLanUrl.value
+  let done = false
   try {
-    await navigator.clipboard.writeText(webLanUrl.value)
-    toast(t('webCopyDone'), 'ok')
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      done = true
+    }
   } catch {
-    toast(t('webPasteFailed'), 'err')
+    /* 非安全上下文无 clipboard，走兜底 */
   }
+  if (!done) {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    done = document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+  toast(done ? t('webCopyDone') : t('webPasteFailed'), done ? 'ok' : 'err')
 }
 
-/** 取访问 URL 列表并渲染 LAN 二维码（批次 4.6；桌面专属命令，Web 模式静默） */
+/** 取访问 URL 列表并渲染 LAN 二维码（#token= 自动登录；两端均可用） */
 async function loadAccessUrls() {
   try {
     const urls = await invoke<string[]>('get_web_access_urls')
@@ -760,14 +786,14 @@ onMounted(async () => {
   } catch {
     autostartValue.value = false
   }
-  if (isDesktop) {
-    try {
-      webToken.value = await invoke<string>('get_web_token')
-    } catch {
-      webToken.value = ''
-    }
-    await loadAccessUrls()
+  // token / 扫码 URL 两端都加载：HTTP 入口已放行（受 Bearer 保护），
+  // Web 页展示的 token 就是当前会话持有的那一个，不扩大权限面。
+  try {
+    webToken.value = await invoke<string>('get_web_token')
+  } catch {
+    webToken.value = ''
   }
+  await loadAccessUrls()
   // 端口冲突等启动失败 → 后端 emit web-server-error，横幅显示（D6 明确报错）
   unlistenServerError = await listen<string>('web-server-error', (e) => {
     webServerErrorMsg.value = e.payload ?? ''

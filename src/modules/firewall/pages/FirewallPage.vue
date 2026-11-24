@@ -6,8 +6,8 @@
       :subtitle="$t('firewallDesc')"
     >
       <template #actions>
-        <button class="btn ghost" :disabled="loading" @click="load">
-          <Icon icon="mdi:refresh" /> {{ $t('refresh') }}
+        <button class="btn ghost" :disabled="loading || refreshing" @click="load()">
+          <Icon icon="mdi:refresh" :class="{ spinning: refreshing }" /> {{ $t('refresh') }}
         </button>
         <button class="btn primary" :disabled="!canManage" @click="openAdd">
           <Icon icon="mdi:plus" /> {{ $t('firewallAddPort') }}
@@ -265,8 +265,16 @@ import { portKey, type FirewallOverview, type FirewallPortEntry, type FirewallPo
 
 const { t } = useI18n()
 
-const overview = ref<FirewallOverview | null>(null)
+/**
+ * 上次成功拉取的清单，模块级缓存：跨页面切换立即渲染，不再白屏等待。
+ * Windows 上 get_firewall_overview 要跑 netsh（实测约 1s），Linux 约 75ms。
+ * 缓存只用于「先显示」，每次进入/刷新仍会后台拉新数据覆盖，不是陈旧事实源。
+ */
+let lastOverview: FirewallOverview | null = null
+
+const overview = ref<FirewallOverview | null>(lastOverview)
 const loading = ref(false)
+const refreshing = ref(false)
 const pageError = ref('')
 const pending = ref<Set<string>>(new Set())
 
@@ -374,14 +382,25 @@ function displayName(p: FirewallPortEntry): string {
   return p.label || '—'
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  // 有缓存时立即渲染旧清单，后台静默刷新（不闪 loading、不清空现有数据）。
+  // 无缓存时走首次加载态：loading=true 驱动 EmptyState 延后显示，避免闪一下「空」。
+  if (silent && lastOverview) {
+    refreshing.value = true
+  } else {
+    loading.value = true
+  }
   try {
-    overview.value = await invoke<FirewallOverview>('get_firewall_overview')
+    const fresh = await invoke<FirewallOverview>('get_firewall_overview')
+    overview.value = fresh
+    lastOverview = fresh
+    pageError.value = ''
   } catch (e) {
+    // 后台刷新失败时保留旧清单，只用错误条提示，不把已显示的数据清空
     pageError.value = String(e)
   } finally {
     loading.value = false
+    refreshing.value = false
   }
 }
 
@@ -583,7 +602,8 @@ async function submitEditSource() {
   }
 }
 
-onMounted(load)
+// 进入页面：有缓存就秒开旧清单并后台刷新，无缓存才走首屏加载态
+onMounted(() => load(true))
 </script>
 
 <style scoped>

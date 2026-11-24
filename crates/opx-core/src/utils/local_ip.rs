@@ -10,21 +10,48 @@
 //!   用于直接让框架跳过虚拟网卡做自探测。
 
 /// 需排除的虚拟/隧道网卡名称关键字（大小写不敏感，子串匹配）。
-#[cfg(windows)]
+///
+/// 跨平台共用：`ipconfig` 回退解析、Nacos / Spring Boot 广播 IP 的
+/// `ignored-interfaces`、以及「服务默认监听地址」的排序都引用这一份，
+/// 避免各模块各养一套关键词、改一处漏一处。
 const VIRTUAL_ADAPTER_HINTS: &[&str] = &[
+    // 虚拟机平台
     "vmware",
+    "vmnet",
     "virtualbox",
-    "vethernet",
+    "vboxnet",
+    "virtual",
     "hyper-v",
     "hyperv",
+    "vethernet",
+    // 容器 / 编排
+    "docker",
+    "br-",
+    "veth",
+    "virbr",
+    "cni",
+    "flannel",
+    "kube",
+    "wsl",
+    // 隧道 / VPN / 抓包
+    "tap",
+    "tun",
+    "tailscale",
+    "wireguard",
+    "zerotier",
     "teredo",
     "isatap",
     "6to4",
-    "bluetooth",
+    "npcap",
     "loopback",
-    "docker",
+    // 其它非对外的适配器
+    "bluetooth",
+    "蓝牙",
     "vpn",
 ];
+
+/// 网卡名前缀（WireGuard `wg0`、ZeroTier `zt…` 的完整名不固定）。
+const VIRTUAL_ADAPTER_PREFIXES: &[&str] = &["wg", "zt"];
 
 /// 返回本机真实 IPv4（不含回环 `127.*` / 链路本地 `169.254.*` / 虚拟网卡）。
 ///
@@ -104,11 +131,14 @@ fn extract_ipv4(line: &str) -> Option<String> {
         .map(|tok| tok.trim_end_matches(',').to_string())
 }
 
-/// 判断网卡名是否命中虚拟/隧道网卡关键字。
-#[cfg(windows)]
-fn is_virtual_adapter(name: &str) -> bool {
+/// 判断网卡名是否命中虚拟/隧道网卡关键字（跨平台，纯字符串判定）。
+///
+/// 公开给「服务默认监听地址」排序用：多网卡机器上虚拟网卡的私有 IPv4 与真实
+/// 以太网同级，必须降级才不会把默认值选到 VMware / WSL / Docker 上。
+pub fn is_virtual_adapter(name: &str) -> bool {
     let n = name.to_lowercase();
     VIRTUAL_ADAPTER_HINTS.iter().any(|h| n.contains(h))
+        || VIRTUAL_ADAPTER_PREFIXES.iter().any(|p| n.starts_with(p))
 }
 
 /// Spring Cloud `InetUtils` 的 `ignored-interfaces` 正则（默认剔除虚拟网卡）。
@@ -118,16 +148,32 @@ pub const IGNORED_INTERFACES: &str = "VMware.*,VirtualBox.*,vEthernet.*,.*Hyper-
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
     #[test]
     fn virtual_adapter_names_are_detected() {
+        // Windows
         assert!(is_virtual_adapter(
             "Ethernet adapter VMware Network Adapter VMnet8"
         ));
         assert!(is_virtual_adapter("vEthernet (WSL)"));
         assert!(is_virtual_adapter("Hyper-V Virtual Ethernet Adapter"));
+        assert!(is_virtual_adapter("VirtualBox Host-Only Network"));
+        // Linux / 容器 / 隧道
+        assert!(is_virtual_adapter("docker0"));
+        assert!(is_virtual_adapter("br-1a2b3c4d5e6f"));
+        assert!(is_virtual_adapter("virbr0"));
+        assert!(is_virtual_adapter("vboxnet0"));
+        assert!(is_virtual_adapter("tailscale0"));
+        assert!(is_virtual_adapter("wg0"));
+        assert!(is_virtual_adapter("ztabcdef"));
+        // 真实网卡不能被误杀
         assert!(!is_virtual_adapter("Ethernet adapter Ethernet"));
+        assert!(!is_virtual_adapter("以太网"));
+        assert!(!is_virtual_adapter("以太网 2"));
         assert!(!is_virtual_adapter("Wi-Fi"));
+        assert!(!is_virtual_adapter("wlp2s0"));
+        assert!(!is_virtual_adapter("enp3s0"));
+        assert!(!is_virtual_adapter("ens33"));
+        assert!(!is_virtual_adapter("eth0"));
     }
 
     #[cfg(windows)]
